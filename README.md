@@ -13,10 +13,10 @@ It will incrementally replace application behavior currently implemented in `ins
 - Ecto SQL: `~> 3.14`
 - Repository visibility: private
 - Runtime target: Fly.io
-- Database target: Fly Managed Postgres
-- External database backup archive: Cloudflare R2 bucket `insta-production`
+- Target production database: Fly Managed Postgres
+- Off-platform database backup archive: Cloudflare R2 bucket `insta-production`
 
-The old repository and Supabase production database remain the source of truth until each capability is migrated and verified. Do not repoint the web/mobile `supabase` submodules to this repository yet.
+The old repository remains the production source of truth until each capability is migrated and verified. Do not repoint the web/mobile `supabase` submodules to this repository yet.
 
 ## Local development
 
@@ -44,40 +44,43 @@ To connect Mithril to an existing PostgreSQL database, set `DATABASE_URL`.
 DATABASE_URL=ecto://user:password@host:5432/database mix phx.server
 ```
 
-## Production database
+## Database and backups
 
-The target production database is Fly Managed Postgres. During migration, Mithril can continue to connect to the current Supabase-hosted PostgreSQL database until parity and cutover are complete.
+Mithril's target live database is Fly Managed Postgres. PostgreSQL remains the transactional source of truth for bookings, users, pricing, payments, wallets, availability, and other relational state.
 
-Cloudflare R2 bucket `insta-production` is an external backup archive, not the live application database. Known backup artifacts include:
+Cloudflare R2 bucket `insta-production` is an independent database backup archive. It is not the live database and is not the application's primary object store.
+
+The known May 20, 2026 backup contains:
 
 ```text
 2026-05-20/26137003002/schema.sql.gz
 2026-05-20/26137003002/functions_triggers.sql.gz
 ```
 
-These artifacts are useful for reconstructing database structure and stored logic. Before treating an R2 backup set as a full disaster-recovery or migration source, verify that it also contains a data/full dump for production rows.
+Direct inspection confirms these files contain schema/functions/triggers but no table row data, so they are useful for migration rehearsal and compatibility analysis but cannot restore production records by themselves.
 
 See:
 
 - [`docs/infrastructure/cloudflare-r2.md`](docs/infrastructure/cloudflare-r2.md)
-- [`docs/infrastructure/fly-managed-postgres.md`](docs/infrastructure/fly-managed-postgres.md)
+- [`docs/migration/r2-backup-inspection-2026-05-20.md`](docs/migration/r2-backup-inspection-2026-05-20.md)
+- [`docs/migration/fly-managed-postgres.md`](docs/migration/fly-managed-postgres.md)
 
 ## Migration strategy
 
 Mithril uses a strangler migration rather than a big-bang replacement.
 
-1. Connect Phoenix/Ecto to the existing Supabase PostgreSQL database.
+1. Run Phoenix against the existing Supabase PostgreSQL database while application behavior moves into Mithril.
 2. Add read models for existing tables without changing production behavior.
 3. Move one vertical slice at a time from Edge Functions/RPCs into Phoenix contexts.
 4. Route selected traffic to Mithril behind feature flags.
 5. Move scheduled/background work after synchronous flows are stable.
-6. Provision and validate a Fly Managed Postgres target with required extensions, including PostGIS.
-7. Perform a rehearsal restore/import and compare schema, row counts, functions, triggers, constraints, and critical queries.
-8. Cut production database traffic to Fly Managed Postgres only after a fresh data sync and rollback plan are ready.
-9. Replace Supabase realtime/auth/storage dependencies separately where appropriate.
+6. Decouple public-schema authorization and foreign keys from Supabase Auth-specific database constructs.
+7. Rehearse restoring a transformed schema into Fly Managed Postgres.
+8. At database cutover, take a fresh complete dump/synchronization from live Supabase Postgres and restore it into Fly MPG.
+9. Replace Supabase realtime with Phoenix PubSub/Channels where appropriate.
 10. Retire Supabase-specific code only after parity, observability, rollback, and traffic verification.
 
-See [`docs/migration/supabase-to-phoenix.md`](docs/migration/supabase-to-phoenix.md) for the application cutover plan.
+See [`docs/migration/supabase-to-phoenix.md`](docs/migration/supabase-to-phoenix.md) for the broader cutover plan.
 
 ## Safety
 
