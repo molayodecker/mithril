@@ -1,6 +1,7 @@
 defmodule MithrilWeb.HealthControllerTest do
   use ExUnit.Case, async: true
-  use Phoenix.ConnTest
+
+  import Phoenix.ConnTest
 
   @endpoint MithrilWeb.Endpoint
 

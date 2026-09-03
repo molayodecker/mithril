@@ -46,23 +46,34 @@ During coexistence, both stacks use the same data model. New Mithril code should
 
 ## Migration order
 
-### Phase 0 — Foundation
+### Phase 0 — Foundation ✅
 
 - Phoenix application boots.
-- Ecto can connect to a non-production copy of the existing database.
+- Ecto connects through `DATABASE_URL`.
 - `/health` works.
-- CI runs formatting, compilation, and tests.
+- CI runs formatting, warnings-as-errors compilation, and tests.
 - Production credentials exist only in deployment secrets.
 
-### Phase 1 — Read-only parity
+Foundation landed in Mithril on 2026-09-03.
 
-Create Ecto schemas/query modules for the core existing tables used by:
+### Phase 1 — Read-only parity 🚧
+
+Start by mapping stable fields from the existing `public.bookings` table. The first endpoint is intentionally internal and protected by `MITHRIL_PARITY_TOKEN`:
+
+```text
+GET /internal/parity/bookings/:id
+x-mithril-parity-token: <server-side token>
+```
+
+This route is for Supabase-vs-Mithril comparison only. It must not be wired directly to customer clients.
+
+Continue read-only mappings for:
 
 1. users/profiles
 2. cleaners and availability
 3. services/pricing
 4. properties/addresses
-5. bookings and schedule groups
+5. schedule groups
 
 No writes move yet. Compare results against existing RPC/API responses.
 
@@ -108,4 +119,4 @@ Never run destructive Ecto migrations against production as part of application 
 
 ## First implementation target
 
-After foundation, start with **read-only booking retrieval and availability**. It exercises the real data model without creating duplicate bookings, charging customers, or sending notifications. Once parity is proven, move writes behind a feature flag.
+The first target is read-only booking retrieval. It exercises the real data model without creating duplicate bookings, charging customers, or sending notifications. Availability comes next after the current availability RPC/table behavior is inventoried.
