@@ -4,8 +4,7 @@ if database_url = System.get_env("DATABASE_URL") do
   config :mithril, Mithril.Repo,
     url: database_url,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
-    socket_options:
-      if(System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: [])
+    socket_options: if(System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: [])
 end
 
 if config_env() == :prod do
