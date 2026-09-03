@@ -1,10 +1,17 @@
-# Cloudflare R2 on Fly.io
+# Cloudflare R2 database backup archive
 
 ## Purpose
 
-Mithril runs on Fly.io and uses Cloudflare R2 bucket `insta-production` for production object storage.
+Cloudflare R2 bucket `insta-production` is an external archive for Instaclean PostgreSQL backup artifacts. It is not the live application database and Mithril should not treat it as a transactional datastore.
 
-PostgreSQL remains the source of truth for transactional and relational state. R2 is for object/blob data such as uploaded media, property photos, cleaner documents where appropriate, generated exports, and other file payloads.
+Known backup set:
+
+```text
+2026-05-20/26137003002/schema.sql.gz
+2026-05-20/26137003002/functions_triggers.sql.gz
+```
+
+The live migration target for PostgreSQL is Fly Managed Postgres.
 
 ## R2 endpoint
 
@@ -26,13 +33,38 @@ Region for S3-compatible clients:
 auto
 ```
 
+## What the known files represent
+
+Based on their names, the known artifacts appear to preserve database structure and stored database logic:
+
+- `schema.sql.gz`: tables, schemas, types, indexes, constraints, policies, extensions, or related DDL depending on how the backup job was produced.
+- `functions_triggers.sql.gz`: PostgreSQL functions and triggers or other extracted procedural database logic.
+
+Do not assume these two files contain production table rows. Before using an R2 backup set as a full migration or disaster-recovery source, verify that the same backup set also contains a data/full dump and inspect the backup manifest or generation script.
+
+Production rows that must be accounted for include customers, cleaners, bookings, services, payments, schedules, wallet/payout state, messages, and any other operational tables.
+
+## Backup verification
+
+For every backup set used for migration or recovery:
+
+1. Record the backup timestamp and source database version.
+2. Verify all expected artifacts are present.
+3. Verify compressed files can be decompressed successfully.
+4. Inspect SQL headers and contents before executing them.
+5. Confirm whether `schema.sql.gz` contains schema-only DDL or includes data statements.
+6. Locate and verify a data/full dump if table rows are stored separately.
+7. Record checksums and object sizes when possible.
+8. Test the complete restore into an isolated PostgreSQL database.
+9. Compare table counts, functions, triggers, constraints, policies, and representative queries with the source.
+
+The dated `2026-05-20` backup is useful for restore testing, but it must not be used as the final production cutover snapshot in September 2026 unless the missing changes since that date are intentionally accounted for. Use a fresh backup or direct database dump for the final migration.
+
 ## Credentials
 
-Create an R2 API token scoped to `insta-production`. Prefer the minimum permissions required by Mithril. For normal application object reads/writes, scope the token to Object Read & Write for this bucket only.
+If an automated restore/rehearsal job needs to fetch R2 objects, use a read-only API token scoped to `insta-production`.
 
-Never commit the Access Key ID or Secret Access Key.
-
-Configure Fly.io secrets:
+Never commit the Access Key ID or Secret Access Key. Configure credentials as Fly secrets or CI secrets only when a restore job actually needs them.
 
 ```bash
 fly secrets set \
@@ -40,7 +72,7 @@ fly secrets set \
   R2_SECRET_ACCESS_KEY='<secret-access-key>'
 ```
 
-Non-secret configuration can live in `fly.toml` or deployment environment:
+Non-secret configuration:
 
 ```text
 R2_BUCKET=insta-production
@@ -48,66 +80,20 @@ R2_ENDPOINT=https://90a7b11a99d10b148259091ea6b4207c.r2.cloudflarestorage.com
 R2_REGION=auto
 ```
 
-## Migration from Supabase Storage
+The normal Mithril web process does not need R2 backup credentials unless database backup/restore operations are intentionally implemented inside that runtime. Prefer a separate release task, CI job, or operator-run restore process instead of granting the application permanent backup-vault access.
 
-Do not replace object references blindly. Use a staged migration:
+## Restore boundary
 
-1. Inventory every Supabase Storage bucket and every database column containing object paths/URLs.
-2. Decide the destination prefix in `insta-production` for each source bucket.
-3. Copy objects to R2 while leaving Supabase Storage intact.
-4. Verify object counts, sizes, checksums where practical, and MIME metadata.
-5. Add a Mithril storage adapter that reads R2 first and can temporarily fall back to the legacy source during migration.
-6. Switch new uploads to R2.
-7. Backfill old database object references only when consumers no longer depend on Supabase URLs.
-8. Remove fallback reads after parity and retention checks.
-9. Delete legacy objects only under an explicit cleanup plan.
-
-## Suggested object prefixes
-
-Keep one production bucket but use explicit namespaces rather than a flat keyspace:
+R2 should remain independent of the Fly Managed Postgres automatic backups. This gives Instaclean two different recovery paths:
 
 ```text
-avatars/
-properties/
-cleaner-documents/
-booking-media/
-quick-tasks/
-cleaning-scans/
-exports/
+Supabase/current PostgreSQL
+        │
+        ├── external logical backup ──> Cloudflare R2
+        │
+        └── migration/cutover ────────> Fly Managed Postgres
+                                          │
+                                          └── Fly managed backups / recovery
 ```
 
-Preserve immutable object IDs in keys where possible. Avoid embedding customer names, phone numbers, email addresses, or other sensitive values in object keys.
-
-## Application boundary
-
-Mithril should expose a storage behaviour/interface rather than coupling business contexts directly to an S3 client. Suggested operations:
-
-```text
-put_object(key, body, content_type)
-get_object(key)
-delete_object(key)
-presign_get(key, expires_in)
-presign_put(key, expires_in, content_type)
-head_object(key)
-```
-
-Business contexts should store stable object keys in PostgreSQL, not provider-specific public URLs. This keeps Cloudflare R2 replaceable and makes signed URL generation a runtime concern.
-
-## Upload strategy
-
-For large user uploads, prefer presigned PUT URLs so mobile/web clients upload directly to R2 rather than proxying the full payload through a Fly Machine. Mithril authorizes the upload, chooses the object key, creates the signed URL, and records the resulting key after validation.
-
-## Security
-
-- Keep the bucket private unless a specific public delivery path is intentionally designed.
-- Use short-lived presigned URLs for private objects.
-- Scope R2 credentials to `insta-production` only.
-- Separate application credentials from migration/import credentials if bulk migration requires broader permissions.
-- Do not log signed URLs, access keys, or private object contents.
-- Treat identity documents and private property instructions as high-sensitivity objects.
-
-## Data synchronization
-
-If `insta-production` already contains the authoritative object set, Mithril does not need to copy R2 data into Fly.io local disk. Fly Machine root filesystems are not the durable object store. Mithril should access R2 remotely through the S3-compatible API.
-
-For one-time migration jobs from Supabase Storage into R2, run a dedicated import task or release command with idempotency and a migration ledger. Do not make bucket mirroring part of every application boot.
+Do not copy database backups onto a Fly Machine root filesystem for permanent storage. Download them only for a controlled restore operation and discard temporary local copies afterward.
