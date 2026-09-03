@@ -1,0 +1,111 @@
+# Supabase → Mithril migration
+
+## Goal
+
+Move Instaclean backend behavior from the private `instaclean-schema` Supabase project into Phoenix without interrupting web, mobile, WhatsApp, bookings, payments, notifications, or cleaner operations.
+
+Baseline source commit: `d13b81e5ce5d5ede6a8884394791a5e274609095`.
+
+## Non-goals for the first cut
+
+- Do not copy the private Supabase repository wholesale into public Mithril.
+- Do not change the production database schema merely to make it look more Ecto-native.
+- Do not replace authentication, storage, realtime, RPCs, Edge Functions, and cron in one release.
+- Do not repoint the web/mobile `supabase` git submodules until Mithril actually owns the required behavior.
+
+## Coexistence architecture
+
+```text
+Web / Mobile / WhatsApp
+        |
+        +----------------------+
+        |                      |
+   Supabase APIs            Mithril API
+   (legacy paths)           (migrated paths)
+        |                      |
+        +----------+-----------+
+                   |
+              PostgreSQL
+          existing source of truth
+```
+
+During coexistence, both stacks use the same data model. New Mithril code should prefer Ecto contexts and explicit transactions while preserving existing database constraints and RLS assumptions.
+
+## Capability map
+
+| Supabase capability | Mithril destination | Migration rule |
+| --- | --- | --- |
+| PostgreSQL tables | Ecto schemas / query modules | Map existing tables first; avoid unnecessary DDL |
+| SQL RPC business logic | Phoenix contexts + `Ecto.Multi` | Move one RPC at a time with parity tests |
+| Edge Functions | Controllers / context services | Preserve request/response contracts during cutover |
+| Scheduled Edge Functions / pg_cron | Supervised/background jobs | Inventory first; move only after sync flows are stable |
+| Realtime | Phoenix.PubSub / Channels | Migrate only consumers that need server push |
+| Supabase Auth | Existing JWT validation first | Avoid forced account migration during backend cutover |
+| Supabase Storage | Keep initially behind an adapter | Storage migration is independent of API migration |
+| RLS | Existing DB policies during coexistence | Use a least-privilege Mithril DB role; do not silently bypass policy intent |
+
+## Migration order
+
+### Phase 0 — Foundation
+
+- Phoenix application boots.
+- Ecto can connect to a non-production copy of the existing database.
+- `/health` works.
+- CI runs formatting, compilation, and tests.
+- Production credentials exist only in deployment secrets.
+
+### Phase 1 — Read-only parity
+
+Create Ecto schemas/query modules for the core existing tables used by:
+
+1. users/profiles
+2. cleaners and availability
+3. services/pricing
+4. properties/addresses
+5. bookings and schedule groups
+
+No writes move yet. Compare results against existing RPC/API responses.
+
+### Phase 2 — Booking vertical slice
+
+Move the smallest complete booking path behind a feature flag:
+
+- availability lookup
+- quote/pricing calculation
+- booking creation transaction
+- cleaner assignment/acceptance state transitions
+- customer/admin readback
+
+Keep Paystack and existing notification side effects behind adapters so they can be invoked from either legacy or Mithril code during transition.
+
+### Phase 3 — Payments and payouts
+
+Move payment initialization, webhook handling, refunds, wallet credits, and payout state transitions only after booking idempotency and state-machine tests exist in Mithril.
+
+### Phase 4 — Messaging and operations
+
+Move WhatsApp, SMS, email, push notifications, reminders, broadcasts, and operational alerts. Background work should be idempotent and retry-safe.
+
+### Phase 5 — Auth, realtime, storage
+
+These are infrastructure migrations, not prerequisites for moving business logic. Handle them independently after the core API is stable.
+
+### Phase 6 — Cutover
+
+Before retiring `instaclean-schema`:
+
+- all production callers for migrated capabilities use Mithril;
+- no required Edge Function/RPC/cron traffic remains;
+- rollback is documented and tested;
+- monitoring covers latency, errors, queue failures, and DB saturation;
+- web and mobile no longer depend on the Supabase submodule for runtime behavior.
+
+## Database safety
+
+Mithril must not use a superuser/service connection as its normal runtime role. Create a dedicated PostgreSQL role with only the privileges required by the application. Preserve constraints, triggers, and RLS semantics until equivalent authorization is enforced and reviewed in Phoenix.
+
+Never run destructive Ecto migrations against production as part of application startup.
+
+## First implementation target
+
+After foundation, start with **read-only booking retrieval and availability**. It exercises the real data model without creating duplicate bookings, charging customers, or sending notifications. Once parity is proven, move writes behind a feature flag.
