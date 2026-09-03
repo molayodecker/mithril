@@ -92,9 +92,11 @@ uuid-ossp
 
 Do not replay this list blindly into Fly Managed Postgres.
 
-Fly MPG supports trusted extensions from the default PostgreSQL distribution plus selected third-party extensions including PostGIS. Supabase-specific or other third-party extensions such as `pg_net`, `pg_cron`, and `supabase_vault` must be removed, replaced, or otherwise accounted for before cutover.
+Current Fly MPG documentation says the service supports trusted extensions included in the default PostgreSQL distribution plus selected third-party extensions such as PostGIS and pgvector. Supabase-specific/third-party extensions such as `pg_net`, `pg_cron`, and `supabase_vault` therefore need replacement or removal work before cutover.
 
-PostGIS should be provisioned through Fly MPG rather than recreated by replaying extension-owned function definitions.
+PostGIS should be installed through Fly MPG rather than recreated by replaying extension-owned function definitions.
+
+Validate every remaining extension against the target cluster with Fly MPG's extension listing/enabling tooling before restore.
 
 ## Supabase Auth coupling
 
