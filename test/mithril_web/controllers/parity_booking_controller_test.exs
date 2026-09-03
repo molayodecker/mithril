@@ -1,6 +1,8 @@
 defmodule MithrilWeb.ParityBookingControllerTest do
   use ExUnit.Case, async: false
-  use Phoenix.ConnTest
+
+  import Plug.Conn
+  import Phoenix.ConnTest
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Mithril.Repo
@@ -71,7 +73,7 @@ defmodule MithrilWeb.ParityBookingControllerTest do
         ($1, $2, $3, DATE '2026-09-10', TIME '09:30:00', 2,
          'Accra, Ghana', 'pending', 30000, 4500, 0, 'pending', NOW(), NOW())
       """,
-      [booking_id, customer_id, service_id]
+      Enum.map([booking_id, customer_id, service_id], &Ecto.UUID.dump!/1)
     )
 
     conn =

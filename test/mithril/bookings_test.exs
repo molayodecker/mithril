@@ -27,7 +27,7 @@ defmodule Mithril.BookingsTest do
         ($1, $2, $3, DATE '2026-09-10', TIME '09:30:00', 3,
          'East Legon, Accra', 'pending', 45000, 6750, 0, 'pending', NOW(), NOW())
       """,
-      [booking_id, customer_id, service_id]
+      Enum.map([booking_id, customer_id, service_id], &Ecto.UUID.dump!/1)
     )
 
     assert {:ok, booking} = Bookings.get_booking(booking_id)
