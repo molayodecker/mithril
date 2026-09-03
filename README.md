@@ -62,6 +62,7 @@ Direct inspection confirms these files contain schema/functions/triggers but no 
 See:
 
 - [`docs/infrastructure/cloudflare-r2.md`](docs/infrastructure/cloudflare-r2.md)
+- [`docs/infrastructure/fly-managed-postgres.md`](docs/infrastructure/fly-managed-postgres.md)
 - [`docs/migration/r2-backup-inspection-2026-05-20.md`](docs/migration/r2-backup-inspection-2026-05-20.md)
 
 ## Migration strategy
