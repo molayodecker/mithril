@@ -63,7 +63,6 @@ See:
 
 - [`docs/infrastructure/cloudflare-r2.md`](docs/infrastructure/cloudflare-r2.md)
 - [`docs/migration/r2-backup-inspection-2026-05-20.md`](docs/migration/r2-backup-inspection-2026-05-20.md)
-- [`docs/migration/fly-managed-postgres.md`](docs/migration/fly-managed-postgres.md)
 
 ## Migration strategy
 
