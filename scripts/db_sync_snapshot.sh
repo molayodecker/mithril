@@ -86,40 +86,47 @@ fi
 DB_SYNC_OUTPUT_DIR="$OUT_DIR" bash "$SCRIPT_DIR/db_sync_inventory.sh" >/dev/null
 
 echo "Capturing exact public row counts from the exported snapshot..."
-psql "$SOURCE_DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -v snapshot_id="$PG_SNAPSHOT_ID" --csv > "$OUT_DIR/public_row_counts.csv" <<'SQL'
+printf 'schema_name,table_name,row_count\n' > "$OUT_DIR/public_row_counts.csv"
+
+mapfile -t PUBLIC_TABLES < <(
+  psql "$SOURCE_DATABASE_URL" -X -qAt -F $'\t' -v ON_ERROR_STOP=1 -v snapshot_id="$PG_SNAPSHOT_ID" <<'SQL'
 BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET TRANSACTION SNAPSHOT :'snapshot_id';
-
-CREATE TEMP TABLE mithril_row_counts (
-  schema_name text NOT NULL,
-  table_name text NOT NULL,
-  row_count bigint NOT NULL
-);
-
-DO $$
-DECLARE
-  r record;
-  v_count bigint;
-BEGIN
-  FOR r IN
-    SELECT schemaname, tablename
-    FROM pg_tables
-    WHERE schemaname = 'public'
-    ORDER BY tablename
-  LOOP
-    EXECUTE format('SELECT count(*) FROM %I.%I', r.schemaname, r.tablename)
-      INTO v_count;
-    INSERT INTO mithril_row_counts(schema_name, table_name, row_count)
-    VALUES (r.schemaname, r.tablename, v_count);
-  END LOOP;
-END
-$$;
-
-SELECT schema_name, table_name, row_count
-FROM mithril_row_counts
-ORDER BY schema_name, table_name;
+SELECT schemaname, tablename
+FROM pg_tables
+WHERE schemaname = 'public'
+ORDER BY tablename;
 COMMIT;
 SQL
+)
+
+csv_escape() {
+  local value="$1"
+  value="${value//\"/\"\"}"
+  printf '"%s"' "$value"
+}
+
+for table_entry in "${PUBLIC_TABLES[@]}"; do
+  IFS=$'\t' read -r schema_name table_name <<<"$table_entry"
+  [[ -z "$schema_name" || -z "$table_name" ]] && continue
+
+  row_count="$(
+    psql "$SOURCE_DATABASE_URL" -X -qAt -v ON_ERROR_STOP=1 \
+      -v snapshot_id="$PG_SNAPSHOT_ID" \
+      -v schema_name="$schema_name" \
+      -v table_name="$table_name" <<'SQL'
+BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+SET TRANSACTION SNAPSHOT :'snapshot_id';
+SELECT count(*)::bigint FROM :"schema_name".:"table_name";
+COMMIT;
+SQL
+  )"
+
+  csv_escape "$schema_name" >> "$OUT_DIR/public_row_counts.csv"
+  printf ',' >> "$OUT_DIR/public_row_counts.csv"
+  csv_escape "$table_name" >> "$OUT_DIR/public_row_counts.csv"
+  printf ',%s\n' "$row_count" >> "$OUT_DIR/public_row_counts.csv"
+done
 
 echo "Creating full public-schema logical snapshot..."
 pg_dump "$SOURCE_DATABASE_URL" \
