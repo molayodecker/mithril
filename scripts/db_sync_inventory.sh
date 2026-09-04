@@ -165,6 +165,100 @@ WHERE p.schemaname = 'public'
 ORDER BY role_name;
 " > "$OUT_DIR/public_policy_roles.txt"
 
+# Shadow roles are deliberately limited to application-facing roles. We do not
+# recreate Supabase's internal role topology on Fly Postgres.
+"${PSQL[@]}" -At -c "
+WITH role_names AS (
+  SELECT DISTINCT role_name::text
+  FROM pg_policies p
+  CROSS JOIN LATERAL unnest(p.roles) AS role_name
+  WHERE p.schemaname = 'public'
+    AND role_name <> 'public'
+  UNION
+  SELECT rolname
+  FROM pg_roles
+  WHERE rolname IN ('anon', 'authenticated', 'service_role')
+)
+SELECT role_name
+FROM role_names
+ORDER BY role_name;
+" > "$OUT_DIR/public_shadow_roles.txt"
+
+# Capture the effective runtime privileges those shadow roles have on public
+# objects. The main dump intentionally omits ACLs so Supabase-internal roles are
+# not recreated. These grants are reviewed and applied after restore instead.
+"${PSQL[@]}" -At -c "
+WITH role_names AS (
+  SELECT DISTINCT role_name::text
+  FROM pg_policies p
+  CROSS JOIN LATERAL unnest(p.roles) AS role_name
+  WHERE p.schemaname = 'public'
+    AND role_name <> 'public'
+  UNION
+  SELECT rolname
+  FROM pg_roles
+  WHERE rolname IN ('anon', 'authenticated', 'service_role')
+), grants AS (
+  SELECT
+    10 AS sort_order,
+    format('GRANT USAGE ON SCHEMA public TO %I;', r.role_name) AS ddl
+  FROM role_names r
+  WHERE has_schema_privilege(r.role_name, 'public', 'USAGE')
+
+  UNION ALL
+
+  SELECT
+    20,
+    format('GRANT %s ON TABLE %I.%I TO %I;', privilege_name, n.nspname, c.relname, r.role_name)
+  FROM role_names r
+  JOIN pg_class c ON c.relkind IN ('r', 'p', 'v', 'm', 'f')
+  JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+  CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) AS privilege_name
+  WHERE has_table_privilege(r.role_name, c.oid, privilege_name)
+
+  UNION ALL
+
+  SELECT
+    30,
+    format('GRANT %s ON SEQUENCE %I.%I TO %I;', privilege_name, n.nspname, c.relname, r.role_name)
+  FROM role_names r
+  JOIN pg_class c ON c.relkind = 'S'
+  JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+  CROSS JOIN unnest(ARRAY['SELECT','USAGE','UPDATE']) AS privilege_name
+  WHERE has_sequence_privilege(r.role_name, c.oid, privilege_name)
+
+  UNION ALL
+
+  SELECT
+    40,
+    format(
+      'GRANT EXECUTE ON %s %I.%I(%s) TO %I;',
+      CASE p.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END,
+      n.nspname,
+      p.proname,
+      pg_get_function_identity_arguments(p.oid),
+      r.role_name
+    )
+  FROM role_names r
+  JOIN pg_proc p ON p.prokind IN ('f', 'p')
+  JOIN pg_namespace n ON n.oid = p.pronamespace AND n.nspname = 'public'
+  WHERE has_function_privilege(r.role_name, p.oid, 'EXECUTE')
+
+  UNION ALL
+
+  SELECT
+    50,
+    format('GRANT USAGE ON TYPE %I.%I TO %I;', n.nspname, t.typname, r.role_name)
+  FROM role_names r
+  JOIN pg_type t ON t.typtype IN ('e', 'd', 'r')
+  JOIN pg_namespace n ON n.oid = t.typnamespace AND n.nspname = 'public'
+  WHERE has_type_privilege(r.role_name, t.oid, 'USAGE')
+)
+SELECT DISTINCT ddl
+FROM grants
+ORDER BY ddl;
+" > "$OUT_DIR/public_shadow_grants.sql"
+
 # Preserve the complete auth.users column *shape* without copying Supabase Auth
 # credentials. All shadow columns are nullable; only id receives a primary key.
 "${PSQL[@]}" -At -c "
