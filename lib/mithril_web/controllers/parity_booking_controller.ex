@@ -43,14 +43,5 @@ defmodule MithrilWeb.ParityBookingController do
   end
 
   defp dump_decimal(nil), do: nil
-
-  defp dump_decimal(%Decimal{} = value) do
-    normalized = Decimal.normalize(value)
-
-    if Decimal.integer?(normalized) do
-      Decimal.to_integer(normalized)
-    else
-      Decimal.to_string(normalized, :normal)
-    end
-  end
+  defp dump_decimal(%Decimal{} = value), do: Decimal.to_float(value)
 end
