@@ -131,21 +131,72 @@ SELECT
 FROM pg_proc p
 JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE n.nspname = 'public'
-  AND pg_get_functiondef(p.oid) ~* '\\mauth\\.'
+  AND position('auth.' in lower(pg_get_functiondef(p.oid))) > 0
 ORDER BY p.proname, pg_get_function_identity_arguments(p.oid);
 " > "$OUT_DIR/functions_referencing_auth.csv"
 
-"${PSQL[@]}" -At -c "
-SELECT format('CREATE SCHEMA IF NOT EXISTS %I;', n.nspname)
-FROM pg_extension e
-JOIN pg_namespace n ON n.oid = e.extnamespace
-WHERE e.extname <> 'plpgsql'
+"${PSQL[@]}" --csv -c "
+SELECT 'view'::text AS object_type, schemaname, viewname AS object_name
+FROM pg_views
+WHERE schemaname = 'public'
+  AND position('auth.' in lower(definition)) > 0
 UNION ALL
-SELECT format('CREATE EXTENSION IF NOT EXISTS %I WITH SCHEMA %I;', e.extname, n.nspname)
-FROM pg_extension e
-JOIN pg_namespace n ON n.oid = e.extnamespace
-WHERE e.extname <> 'plpgsql'
-ORDER BY 1;
+SELECT 'materialized_view', schemaname, matviewname
+FROM pg_matviews
+WHERE schemaname = 'public'
+  AND position('auth.' in lower(definition)) > 0
+ORDER BY object_type, object_name;
+" > "$OUT_DIR/views_referencing_auth.csv"
+
+"${PSQL[@]}" -At -c "
+SELECT DISTINCT role_name
+FROM pg_policies p
+CROSS JOIN LATERAL unnest(p.roles) AS role_name
+WHERE p.schemaname = 'public'
+  AND role_name <> 'public'
+ORDER BY role_name;
+" > "$OUT_DIR/public_policy_roles.txt"
+
+# Preserve the complete auth.users column *shape* without copying Supabase Auth
+# credentials. All shadow columns are nullable; only id receives a primary key.
+"${PSQL[@]}" -At -c "
+WITH cols AS (
+  SELECT
+    a.attnum,
+    format('  %I %s', a.attname, pg_catalog.format_type(a.atttypid, a.atttypmod)) AS definition
+  FROM pg_attribute a
+  JOIN pg_class c ON c.oid = a.attrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'auth'
+    AND c.relname = 'users'
+    AND a.attnum > 0
+    AND NOT a.attisdropped
+)
+SELECT
+  'CREATE TABLE auth.users (' || E'\\n' ||
+  string_agg(definition, E',\\n' ORDER BY attnum) ||
+  E'\\n);\\nALTER TABLE auth.users ADD PRIMARY KEY (id);'
+FROM cols;
+" > "$OUT_DIR/auth_users_shadow_schema.sql"
+
+"${PSQL[@]}" -At -c "
+SELECT ddl
+FROM (
+  SELECT
+    1 AS sort_order,
+    format('CREATE SCHEMA IF NOT EXISTS %I;', n.nspname) AS ddl
+  FROM pg_extension e
+  JOIN pg_namespace n ON n.oid = e.extnamespace
+  WHERE e.extname <> 'plpgsql'
+  UNION ALL
+  SELECT
+    2 AS sort_order,
+    format('CREATE EXTENSION IF NOT EXISTS %I WITH SCHEMA %I;', e.extname, n.nspname) AS ddl
+  FROM pg_extension e
+  JOIN pg_namespace n ON n.oid = e.extnamespace
+  WHERE e.extname <> 'plpgsql'
+) statements
+ORDER BY sort_order, ddl;
 " > "$OUT_DIR/required_extensions.sql"
 
 printf '%s\n' "$OUT_DIR"
