@@ -78,6 +78,8 @@ curl \
 
 Expected fields include `id`, `service_id` (integer), `status`, `total_price`, `platform_fee`, and `tax_amount`. Numeric database values are emitted as JSON numbers for this temporary parity API.
 
+Fly Machine and request telemetry: [instaclean-mithril monitoring](https://fly.io/apps/instaclean-mithril/monitoring).
+
 Continue read-only mappings for:
 
 1. users/profiles

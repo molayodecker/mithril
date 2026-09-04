@@ -105,6 +105,8 @@ Expected responses:
 
 Fly's service-level HTTP check calls `/ready` every 15 seconds. Because service checks control routing, a Machine that cannot reach the database is removed from request routing until readiness recovers. A failed readiness check does not itself restart or stop the Machine.
 
+Live Machine and request telemetry: [instaclean-mithril monitoring](https://fly.io/apps/instaclean-mithril/monitoring).
+
 ## 5. Create Fly Managed Postgres
 
 Create PostgreSQL 17 with PostGIS enabled from the start:
