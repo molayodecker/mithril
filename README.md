@@ -15,8 +15,26 @@ It will incrementally replace application behavior currently implemented in `ins
 - Runtime target: Fly.io
 - Target production database: Fly Managed Postgres
 - Off-platform database backup archive: Cloudflare R2 bucket `insta-production`
+- Operating baseline: [12-Factor](docs/architecture/12-factor.md)
 
 The old repository remains the production source of truth until each capability is migrated and verified. Do not repoint the web/mobile `supabase` submodules to this repository yet.
+
+## Operating model
+
+Mithril is designed as a stateless, disposable Phoenix service. Deploy-specific configuration is supplied at runtime, backing services are replaceable resources, and durable business state never depends on one Fly Machine or one BEAM process.
+
+Key rules:
+
+- runtime configuration comes from environment variables and Fly secrets
+- the production Docker image contains code and dependencies, never secrets
+- PostgreSQL is the durable source of truth for transactional state
+- Fly Machine disk and BEAM memory hold only temporary/reconstructable state
+- external side effects must be idempotent
+- durable background work must use a durable queue when introduced
+- logs go to stdout/stderr
+- database migration/cutover is separate from ordinary app boot
+
+See [`docs/architecture/12-factor.md`](docs/architecture/12-factor.md) for the full review checklist and Instaclean-specific guardrails.
 
 ## Local development
 
@@ -43,6 +61,8 @@ To connect Mithril to an existing PostgreSQL database, set `DATABASE_URL`.
 ```bash
 DATABASE_URL=ecto://user:password@host:5432/database mix phx.server
 ```
+
+`.env.example` documents the runtime configuration contract. Mithril does not require that file at runtime and does not automatically load it; it is an example only.
 
 ## Database and backups
 
