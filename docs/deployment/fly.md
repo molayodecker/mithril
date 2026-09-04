@@ -1,0 +1,170 @@
+# Fly.io deployment bootstrap
+
+Mithril runs on Fly.io. The physical database migration to Fly Managed Postgres (MPG) is a separate cutover from deploying Phoenix.
+
+## Initial topology
+
+```text
+Clients
+   |
+   v
+Mithril / Phoenix on Fly.io (lhr)
+   |
+   v
+Existing Supabase PostgreSQL
+```
+
+In parallel, create a Fly MPG cluster for restore rehearsal:
+
+```text
+Cloudflare R2 backup
+   |
+   v
+Fly Managed Postgres rehearsal/target cluster
+```
+
+Do **not** attach the MPG cluster to the Mithril app until a restored database has passed parity and migration verification.
+
+## Why London
+
+Instaclean's primary market is Ghana. Fly currently runs application Machines in Johannesburg, but Managed Postgres is not available there. London (`lhr`) supports MPG and keeps Phoenix and PostgreSQL in the same Fly region. Measure real user and database latency before adding additional application regions.
+
+## 1. Authenticate with Fly
+
+Install `flyctl` and authenticate:
+
+```bash
+fly auth login
+```
+
+## 2. Create the Mithril Fly app
+
+The committed `fly.toml` uses:
+
+```text
+instaclean-mithril
+```
+
+Create the app:
+
+```bash
+fly apps create instaclean-mithril
+```
+
+If that globally unique app name is unavailable, choose another name and update both `app` and `PHX_HOST` in `fly.toml`.
+
+## 3. Set production secrets
+
+Mithril currently requires both `SECRET_KEY_BASE` and `DATABASE_URL` in production.
+
+Generate a Phoenix secret locally:
+
+```bash
+mix phx.gen.secret
+```
+
+Set it on Fly:
+
+```bash
+fly secrets set SECRET_KEY_BASE='<generated-secret>' -a instaclean-mithril
+```
+
+For the first deployment, point Mithril at the existing Supabase PostgreSQL database rather than Fly MPG:
+
+```bash
+fly secrets set DATABASE_URL='<current-supabase-postgres-url>' -a instaclean-mithril
+```
+
+Never commit either value to git.
+
+## 4. Deploy Mithril
+
+```bash
+fly deploy -a instaclean-mithril
+```
+
+Verify:
+
+```bash
+fly status -a instaclean-mithril
+curl https://instaclean-mithril.fly.dev/health
+```
+
+Expected response:
+
+```json
+{"service":"mithril","status":"ok"}
+```
+
+The Fly health check also calls `/health` every 15 seconds.
+
+## 5. Create Fly Managed Postgres
+
+Create PostgreSQL 17 with PostGIS enabled from the start:
+
+```bash
+fly mpg create \
+  --name instaclean-mithril-pg \
+  --region lhr \
+  --plan Basic \
+  --volume-size 10 \
+  --pg-major-version 17 \
+  --enable-postgis-support
+```
+
+`Basic` and 10 GB are appropriate for the initial restore rehearsal. Re-evaluate CPU, memory, storage, HA, and production sizing before the final database cutover.
+
+Record the cluster ID returned by Fly.
+
+## 6. Do not attach MPG to Mithril yet
+
+Fly can attach MPG with:
+
+```bash
+fly mpg attach <cluster-id> -a instaclean-mithril
+```
+
+That command sets the app's `DATABASE_URL` to the MPG pooled/PgBouncer connection. **Do not run it yet.** The current production application database remains Supabase while we prepare and verify the Fly restore.
+
+For restore/import work, use Fly's direct database connection/proxy instead of the pooled application URL when required by PostgreSQL tooling.
+
+## 7. Rehearse the database migration
+
+Use the latest verified R2 backup produced by `instaclean-production`:
+
+```text
+latest.json
+YYYY-MM-DD/<run-id>/full.dump
+YYYY-MM-DD/<run-id>/manifest.json
+YYYY-MM-DD/<run-id>/checksums.sha256
+```
+
+The archive contains production row data, including the Supabase auth schema, but it must not be restored blindly because the current database contains Supabase-specific extensions, roles, policies, functions, and triggers.
+
+The rehearsal sequence is:
+
+1. pull the latest verified backup from R2
+2. inspect `full.dump` with `pg_restore --list`
+3. prepare a Fly-compatible restore list/schema transformation
+4. restore into the MPG rehearsal database
+5. validate PostGIS, row counts, identities, bookings, pricing, wallets, payments, availability, functions, triggers, and security behavior
+6. run Mithril parity tests against the Fly database
+7. only after parity passes, plan the live database cutover
+
+## Release migrations
+
+There is intentionally no Fly `release_command` for Ecto migrations yet.
+
+During coexistence, Supabase remains the canonical schema owner. Automatically running `mix ecto.migrate` during every Mithril deploy could mutate the live Supabase database before Mithril owns that schema. Add a controlled release migration command only after the relevant DDL has been moved under Mithril/Ecto ownership.
+
+## Runtime sizing
+
+The initial Fly Machine is intentionally modest:
+
+```text
+1 shared CPU
+512 MB RAM
+minimum 1 running Machine in lhr
+```
+
+Scale based on observed memory, request latency, queue depth, database connections, and traffic rather than guessing up front.
