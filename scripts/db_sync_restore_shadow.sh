@@ -35,9 +35,10 @@ done
 PUBLIC_DUMP="$SNAPSHOT_DIR/public.dump"
 AUTH_SCHEMA="$SNAPSHOT_DIR/auth_users_shadow_schema.sql"
 AUTH_PROJECTION="$SNAPSHOT_DIR/auth_identity_projection.csv"
-POLICY_ROLES="$SNAPSHOT_DIR/public_policy_roles.txt"
+SHADOW_ROLES="$SNAPSHOT_DIR/public_shadow_roles.txt"
+SHADOW_GRANTS="$SNAPSHOT_DIR/public_shadow_grants.sql"
 
-for required_file in "$PUBLIC_DUMP" "$AUTH_SCHEMA" "$AUTH_PROJECTION" "$POLICY_ROLES"; do
+for required_file in "$PUBLIC_DUMP" "$AUTH_SCHEMA" "$AUTH_PROJECTION" "$SHADOW_ROLES" "$SHADOW_GRANTS"; do
   if [[ ! -f "$required_file" ]]; then
     echo "Missing snapshot file: $required_file" >&2
     exit 1
@@ -73,17 +74,17 @@ if [[ -f "$SNAPSHOT_DIR/required_extensions.sql" ]]; then
   fi
 fi
 
-echo "Preparing compatibility roles used by restored RLS policies..."
+echo "Preparing limited application-facing shadow roles..."
 while IFS= read -r role_name; do
   [[ -z "$role_name" ]] && continue
-  "${TARGET_PSQL[@]}" -v policy_role="$role_name" <<'SQL'
-SELECT format('CREATE ROLE %I NOLOGIN', :'policy_role')
+  "${TARGET_PSQL[@]}" -v shadow_role="$role_name" <<'SQL'
+SELECT format('CREATE ROLE %I NOLOGIN', :'shadow_role')
 WHERE NOT EXISTS (
-  SELECT 1 FROM pg_roles WHERE rolname = :'policy_role'
+  SELECT 1 FROM pg_roles WHERE rolname = :'shadow_role'
 )
 \gexec
 SQL
-done < "$POLICY_ROLES"
+done < "$SHADOW_ROLES"
 
 echo "Preparing sanitized auth compatibility surface..."
 "${TARGET_PSQL[@]}" -c 'DROP SCHEMA IF EXISTS auth CASCADE; CREATE SCHEMA auth;'
@@ -95,7 +96,10 @@ RETURNS uuid
 LANGUAGE sql
 STABLE
 AS $$
-  SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
+  SELECT coalesce(
+    nullif(current_setting('request.jwt.claim.sub', true), ''),
+    nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'
+  )::uuid
 $$;
 
 CREATE OR REPLACE FUNCTION auth.role()
@@ -105,7 +109,7 @@ STABLE
 AS $$
   SELECT coalesce(
     nullif(current_setting('request.jwt.claim.role', true), ''),
-    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role')
+    nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role'
   )
 $$;
 
@@ -116,7 +120,7 @@ STABLE
 AS $$
   SELECT coalesce(
     nullif(current_setting('request.jwt.claim.email', true), ''),
-    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'email')
+    nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'email'
   )
 $$;
 
@@ -135,6 +139,16 @@ SQL
 # psql's \copy is intentionally used so the CSV stays on the operator's machine.
 "${TARGET_PSQL[@]}" -c "\copy auth.users(id,email,phone,created_at,updated_at,email_confirmed_at,phone_confirmed_at,last_sign_in_at,banned_until,deleted_at,is_anonymous) FROM '$AUTH_PROJECTION' WITH (FORMAT csv, HEADER true)"
 
+# Shadow roles need only the compatibility helpers, not direct access to
+# auth.users or a clone of Supabase's internal auth privileges.
+while IFS= read -r role_name; do
+  [[ -z "$role_name" ]] && continue
+  "${TARGET_PSQL[@]}" -v shadow_role="$role_name" <<'SQL'
+SELECT format('GRANT USAGE ON SCHEMA auth TO %I;', :'shadow_role') \gexec
+SELECT format('GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO %I;', :'shadow_role') \gexec
+SQL
+done < "$SHADOW_ROLES"
+
 echo "Restoring full public schema and data..."
 # Disable function-body validation only for restore because public SQL still
 # contains Supabase-era auth references. Runtime parity tests must exercise the
@@ -148,5 +162,8 @@ pg_restore \
   --no-privileges \
   --exit-on-error \
   "$PUBLIC_DUMP"
+
+echo "Applying reviewed effective runtime grants for shadow roles..."
+"${TARGET_PSQL[@]}" -f "$SHADOW_GRANTS"
 
 echo "Restore complete. Run scripts/db_sync_verify.sh before pointing Mithril at this database."
