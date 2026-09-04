@@ -77,6 +77,8 @@ Fly Managed Postgres supports PostGIS when enabled for the cluster. Do not resto
 
 For the final production migration, prefer a fresh direct logical dump from the current production PostgreSQL database because it captures current rows and schema in one controlled migration window.
 
+Use `scripts/db_sync_from_live.sh` for that live dump into the Mithril shadow cluster. See [`../migration/production-shadow-sync.md`](../migration/production-shadow-sync.md).
+
 The Cloudflare R2 backup archive is useful for:
 
 - validating disaster recovery

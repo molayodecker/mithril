@@ -10,6 +10,7 @@ kill_timeout = 30
   PHX_HOST = "api.tryinstaclean.com"
   PORT = "4000"
   POOL_SIZE = "5"
+  DATABASE_BACKEND = "fly"
 
 [http_service]
   internal_port = 4000

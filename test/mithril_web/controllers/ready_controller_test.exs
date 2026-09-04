@@ -19,7 +19,8 @@ defmodule MithrilWeb.ReadyControllerTest do
     assert %{
              "service" => "mithril",
              "status" => "ready",
-             "database" => "ok"
+             "database" => "ok",
+             "database_backend" => "supabase"
            } = json_response(conn, 200)
   end
 end

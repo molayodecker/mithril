@@ -17,16 +17,44 @@ truthy_env? = fn name ->
 end
 
 pool_size = parse_positive_integer.("POOL_SIZE", "10")
-socket_options = if truthy_env?.("ECTO_IPV6"), do: [:inet6], else: []
+
+repo_opts = fn database_url ->
+  socket_options =
+    cond do
+      String.contains?(database_url, "flympg.net") -> [:inet6]
+      truthy_env?.("ECTO_IPV6") -> [:inet6]
+      true -> []
+    end
+
+  opts = [
+    url: database_url,
+    pool_size: pool_size,
+    socket_options: socket_options
+  ]
+
+  opts =
+    if String.contains?(database_url, "pgbouncer") or String.contains?(database_url, ":6432") do
+      Keyword.put(opts, :prepare, :unnamed)
+    else
+      opts
+    end
+
+  if String.contains?(database_url, "flympg.net") do
+    Keyword.put(opts, :ssl, true)
+  else
+    opts
+  end
+end
 
 # Tests must use config/test.exs (local mithril_test). A shell/direnv
 # DATABASE_URL often points at production and would make mix test mutate it.
 if config_env() != :test do
-  if database_url = System.get_env("DATABASE_URL") do
-    config :mithril, Mithril.Repo,
-      url: database_url,
-      pool_size: pool_size,
-      socket_options: socket_options
+  {database_backend, database_url} = Mithril.DatabaseBackend.resolve()
+
+  config :mithril, :database_backend, database_backend
+
+  if database_url do
+    config :mithril, Mithril.Repo, repo_opts.(database_url)
   end
 end
 
@@ -38,16 +66,27 @@ if direct_gateway_token = System.get_env("MITHRIL_DIRECT_TOKEN") do
   config :mithril, :direct_gateway_token, direct_gateway_token
 end
 
+if jwt_secret = System.get_env("AUTH_JWT_SECRET") do
+  config :mithril, :auth_jwt_secret, jwt_secret
+end
+
+if System.get_env("AUTH_ACCESS_TTL") do
+  config :mithril, :auth_access_ttl, parse_positive_integer.("AUTH_ACCESS_TTL", "3600")
+end
+
+if System.get_env("AUTH_REFRESH_TTL") do
+  config :mithril, :auth_refresh_ttl, parse_positive_integer.("AUTH_REFRESH_TTL", "2592000")
+end
+
 if config_env() == :prod do
-  database_url = System.fetch_env!("DATABASE_URL")
+  {database_backend, database_url} = Mithril.DatabaseBackend.resolve!()
   secret_key_base = System.fetch_env!("SECRET_KEY_BASE")
   host = System.fetch_env!("PHX_HOST")
   port = parse_positive_integer.("PORT", "4000")
 
-  config :mithril, Mithril.Repo,
-    url: database_url,
-    pool_size: pool_size,
-    socket_options: socket_options
+  config :mithril, :database_backend, database_backend
+
+  config :mithril, Mithril.Repo, repo_opts.(database_url)
 
   config :mithril, MithrilWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],

@@ -20,7 +20,40 @@ if [[ ! -f "$SOURCE_COUNTS" ]]; then
   exit 1
 fi
 
+# FORCE ROW LEVEL SECURITY hides rows from the table owner. Fly MPG restore
+# users are not superusers, so verification temporarily lifts FORCE inside a
+# transaction and rolls it back afterward.
 psql "$TARGET_DATABASE_URL" -X -q -v ON_ERROR_STOP=1 --csv > "$TARGET_COUNTS" <<'SQL'
+BEGIN;
+
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT n.nspname, c.relname
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public'
+      AND c.relkind = 'r'
+      AND c.relforcerowsecurity
+      AND NOT EXISTS (
+        SELECT 1
+        FROM pg_depend d
+        WHERE d.objid = c.oid
+          AND d.deptype = 'e'
+      )
+  LOOP
+    BEGIN
+      EXECUTE format('ALTER TABLE %I.%I NO FORCE ROW LEVEL SECURITY', r.nspname, r.relname);
+    EXCEPTION
+      WHEN insufficient_privilege THEN
+        RAISE NOTICE 'Could not lift FORCE RLS on %.%', r.nspname, r.relname;
+    END;
+  END LOOP;
+END
+$$;
+
 CREATE TEMP TABLE mithril_target_row_counts (
   schema_name text NOT NULL,
   table_name text NOT NULL,
@@ -49,6 +82,8 @@ $$;
 SELECT schema_name, table_name, row_count
 FROM mithril_target_row_counts
 ORDER BY schema_name, table_name;
+
+ROLLBACK;
 SQL
 
 python3 - "$SOURCE_COUNTS" "$TARGET_COUNTS" "$REPORT" <<'PY'

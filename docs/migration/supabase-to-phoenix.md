@@ -23,33 +23,58 @@ Web / Mobile / WhatsApp
    Supabase APIs            Mithril API
    (legacy paths)           (migrated paths)
         |                      |
-        +----------+-----------+
-                   |
-              PostgreSQL
-          existing source of truth
+        |                      +-- DATABASE_BACKEND=fly ----> Fly Managed Postgres
+        |                      |
+        +----------------------+-- DATABASE_BACKEND=supabase -> Supabase PostgreSQL
 ```
+
+Mithril currently serves Fly (`DATABASE_BACKEND=fly`). Web/mobile and Supabase Auth are unchanged. Live Supabase remains the sync source for refreshing Fly.
+
+Switch Mithril without a code change:
+
+```bash
+# use Supabase
+fly secrets set DATABASE_BACKEND=supabase -a instaclean-mithril
+
+# use Fly (clears the override; fly.toml default is fly)
+fly secrets unset DATABASE_BACKEND -a instaclean-mithril
+```
+
+Confirm which database the API is using:
+
+```bash
+curl https://api.tryinstaclean.com/ready
+```
+
+Expected when Fly is selected:
+
+```json
+{"service":"mithril","status":"ready","database":"ok","database_backend":"fly"}
+```
+
+Both connection strings stay as Fly secrets (`FLY_DATABASE_URL`, `SUPABASE_DATABASE_URL`). `DATABASE_URL` remains the Supabase URL for rollback. Refresh Fly from live Supabase with `bash scripts/db_sync_from_live.sh`; that does not flip `DATABASE_BACKEND`. Direct Phase 1 tables are applied to Fly with `bash scripts/apply_direct_schema.sh` (from `molayodecker/instaclean-schema#98`). See [`../deployment/fly.md`](../deployment/fly.md).
 
 During coexistence, both stacks use the same data model. New Mithril code should prefer Ecto contexts and explicit transactions while preserving existing database constraints and RLS assumptions.
 
 ## Capability map
 
-| Supabase capability | Mithril destination | Migration rule |
-| --- | --- | --- |
-| PostgreSQL tables | Ecto schemas / query modules | Map existing tables first; avoid unnecessary DDL |
-| SQL RPC business logic | Phoenix contexts + `Ecto.Multi` | Move one RPC at a time with parity tests |
-| Edge Functions | Controllers / context services | Preserve request/response contracts during cutover |
-| Scheduled Edge Functions / pg_cron | Supervised/background jobs | Inventory first; move only after sync flows are stable |
-| Realtime | Phoenix.PubSub / Channels | Migrate only consumers that need server push |
-| Supabase Auth | Existing JWT validation first | Avoid forced account migration during backend cutover |
-| Supabase Storage | Keep initially behind an adapter | Storage migration is independent of API migration |
-| RLS | Existing DB policies during coexistence | Use a least-privilege Mithril DB role; do not silently bypass policy intent |
+| Supabase capability                | Mithril destination                     | Migration rule                                                              |
+| ---------------------------------- | --------------------------------------- | --------------------------------------------------------------------------- |
+| PostgreSQL tables                  | Ecto schemas / query modules            | Map existing tables first; avoid unnecessary DDL                            |
+| SQL RPC business logic             | Phoenix contexts + `Ecto.Multi`         | Move one RPC at a time with parity tests                                    |
+| Edge Functions                     | Controllers / context services          | Preserve request/response contracts during cutover                          |
+| Scheduled Edge Functions / pg_cron | Supervised/background jobs              | Inventory first; move only after sync flows are stable                      |
+| Realtime                           | Phoenix.PubSub / Channels               | Migrate only consumers that need server push                                |
+| Supabase Auth                      | Mithril `/auth` JWT login               | Email/password + access/refresh tokens; import bcrypt hashes from live Auth |
+| Supabase Storage                   | Keep initially behind an adapter        | Storage migration is independent of API migration                           |
+| RLS                                | Existing DB policies during coexistence | Use a least-privilege Mithril DB role; do not silently bypass policy intent |
 
 ## Migration order
 
 ### Phase 0 — Foundation ✅
 
 - Phoenix application boots.
-- Ecto connects through `DATABASE_URL`.
+- Ecto connects through `DATABASE_BACKEND` (`fly` or `supabase`).
 - `/health` works.
 - `/ready` verifies database connectivity and is used by Fly for service routing checks.
 - CI runs formatting, warnings-as-errors compilation, and tests.
@@ -112,7 +137,19 @@ Move WhatsApp, SMS, email, push notifications, reminders, broadcasts, and operat
 
 ### Phase 5 — Auth, realtime, storage
 
-These are infrastructure migrations, not prerequisites for moving business logic. Handle them independently after the core API is stable.
+Mithril login is live for API clients (Direct first):
+
+```bash
+curl -X POST https://api.tryinstaclean.com/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"email":"user@example.com","password":"..."}'
+
+`email` also accepts a phone number for accounts that signed up with SMS.
+```
+
+That returns a JWT `access_token` and `refresh_token`. Send `Authorization: Bearer <access_token>` to `/auth/me` and `/direct/*`. Existing users with a Supabase password were imported as bcrypt hashes; users without a password use `POST /auth/password` after an operator-issued session, or `POST /auth/register` for a new account.
+
+Realtime and storage remain independent infrastructure migrations.
 
 ### Phase 6 — Cutover
 

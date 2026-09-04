@@ -8,7 +8,12 @@ defmodule MithrilWeb.ReadyController do
   def show(conn, _params) do
     case Ecto.Adapters.SQL.query(Repo, "SELECT 1", [], timeout: @query_timeout) do
       {:ok, _result} ->
-        json(conn, %{service: "mithril", status: "ready", database: "ok"})
+        json(conn, %{
+          service: "mithril",
+          status: "ready",
+          database: "ok",
+          database_backend: Application.fetch_env!(:mithril, :database_backend)
+        })
 
       {:error, _reason} ->
         unavailable(conn)
