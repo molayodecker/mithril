@@ -22,4 +22,8 @@ config :bcrypt_elixir, log_rounds: 4
 config :mithril,
   auth_jwt_secret: "test-only-mithril-jwt-secret-000000000000000000000000",
   auth_access_ttl: 3600,
-  auth_refresh_ttl: 86_400
+  auth_refresh_ttl: 86_400,
+  sms_adapter: Mithril.Auth.SMS.Test,
+  google_client_ids: ["test-google-client"],
+  facebook_app_id: "test-facebook-app",
+  facebook_app_secret: "test-facebook-secret"

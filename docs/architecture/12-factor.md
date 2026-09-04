@@ -108,7 +108,7 @@ Do not hide operational mutations in application startup callbacks.
 5. Never persist important data only to Fly Machine disk.
 6. Never bake secrets into Docker images or `fly.toml`.
 7. Provider integrations must be configurable and replaceable at their boundaries.
-8. Database cutover and application deployment remain separate operations until the Supabase migration is complete. `DATABASE_BACKEND` is the Mithril connection switch. API clients such as Direct authenticate with Mithril JWTs (`POST /auth/login`); web/mobile can keep Supabase Auth until those clients are cut over.
+8. Database cutover and application deployment remain separate operations until the Supabase migration is complete. `DATABASE_BACKEND` is the Mithril connection switch. API clients authenticate with Mithril JWTs via email/password, phone OTP, Google, or Facebook; web/mobile can keep Supabase Auth until those clients are cut over.
 
 ## Review checklist
 

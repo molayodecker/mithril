@@ -27,7 +27,11 @@ defmodule MithrilWeb.Router do
   scope "/auth", MithrilWeb do
     pipe_through :api
 
+    get "/methods", AuthController, :methods
     post "/login", AuthController, :login
+    post "/otp", AuthController, :request_otp
+    post "/otp/verify", AuthController, :verify_otp
+    post "/oauth/:provider", AuthController, :oauth
     post "/refresh", AuthController, :refresh
     post "/logout", AuthController, :logout
     post "/register", AuthController, :register

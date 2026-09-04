@@ -49,7 +49,12 @@ curl https://api.tryinstaclean.com/ready
 Expected when Fly is selected:
 
 ```json
-{"service":"mithril","status":"ready","database":"ok","database_backend":"fly"}
+{
+  "service": "mithril",
+  "status": "ready",
+  "database": "ok",
+  "database_backend": "fly"
+}
 ```
 
 Both connection strings stay as Fly secrets (`FLY_DATABASE_URL`, `SUPABASE_DATABASE_URL`). `DATABASE_URL` remains the Supabase URL for rollback. Refresh Fly from live Supabase with `bash scripts/db_sync_from_live.sh`; that does not flip `DATABASE_BACKEND`. Direct Phase 1 tables are applied to Fly with `bash scripts/apply_direct_schema.sh` (from `molayodecker/instaclean-schema#98`). See [`../deployment/fly.md`](../deployment/fly.md).
@@ -137,17 +142,32 @@ Move WhatsApp, SMS, email, push notifications, reminders, broadcasts, and operat
 
 ### Phase 5 — Auth, realtime, storage
 
-Mithril login is live for API clients (Direct first):
+Mithril login is live for API clients (Direct first). Instaclean’s four sign-in methods map to:
 
 ```bash
+# Email or phone + password
 curl -X POST https://api.tryinstaclean.com/auth/login \
   -H 'content-type: application/json' \
   -d '{"email":"user@example.com","password":"..."}'
 
-`email` also accepts a phone number for accounts that signed up with SMS.
+# Phone OTP (Ghana local numbers accepted)
+curl -X POST https://api.tryinstaclean.com/auth/otp \
+  -H 'content-type: application/json' \
+  -d '{"phone":"0244123456","should_create_user":true}'
+curl -X POST https://api.tryinstaclean.com/auth/otp/verify \
+  -H 'content-type: application/json' \
+  -d '{"phone":"0244123456","token":"123456"}'
+
+# Google (id_token from Google Sign-In / GIS) and Facebook (access_token)
+curl -X POST https://api.tryinstaclean.com/auth/oauth/google \
+  -H 'content-type: application/json' \
+  -d '{"id_token":"..."}'
+curl -X POST https://api.tryinstaclean.com/auth/oauth/facebook \
+  -H 'content-type: application/json' \
+  -d '{"access_token":"..."}'
 ```
 
-That returns a JWT `access_token` and `refresh_token`. Send `Authorization: Bearer <access_token>` to `/auth/me` and `/direct/*`. Existing users with a Supabase password were imported as bcrypt hashes; users without a password use `POST /auth/password` after an operator-issued session, or `POST /auth/register` for a new account.
+Each success returns a JWT `access_token` and `refresh_token`. Send `Authorization: Bearer <access_token>` to `/auth/me` and `/direct/*`. `GET /auth/methods` reports which providers are configured. Existing users with a Supabase password were imported as bcrypt hashes; users without a password use `POST /auth/password` or `POST /auth/register`. Phone OTP requires Twilio secrets; Google/Facebook require `GOOGLE_CLIENT_IDS` / `FACEBOOK_APP_ID`.
 
 Realtime and storage remain independent infrastructure migrations.
 

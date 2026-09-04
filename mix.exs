@@ -31,7 +31,8 @@ defmodule Mithril.MixProject do
       {:bandit, "~> 1.12"},
       {:jason, "~> 1.4"},
       {:joken, "~> 2.6"},
-      {:bcrypt_elixir, "~> 3.3"}
+      {:bcrypt_elixir, "~> 3.3"},
+      {:req, "~> 0.5"}
     ]
   end
 end
