@@ -51,6 +51,7 @@ During coexistence, both stacks use the same data model. New Mithril code should
 - Phoenix application boots.
 - Ecto connects through `DATABASE_URL`.
 - `/health` works.
+- `/ready` verifies database connectivity and is used by Fly for service routing checks.
 - CI runs formatting, warnings-as-errors compilation, and tests.
 - Production credentials exist only in deployment secrets.
 
@@ -67,7 +68,7 @@ x-mithril-parity-token: <server-side token>
 
 This route is for Supabase-vs-Mithril comparison only. It must not be wired directly to customer clients.
 
-`MITHRIL_PARITY_TOKEN` must be in the shell. Direnv loads it from `.env` when that local file exists. Known production smoke-test booking:
+`MITHRIL_PARITY_TOKEN` must be in the shell (direnv loads it from `.env` when present). Known production smoke-test booking:
 
 ```bash
 curl \
@@ -75,7 +76,7 @@ curl \
   https://instaclean-mithril.fly.dev/internal/parity/bookings/1aba469c-8dcb-4611-806e-6be74900ba86
 ```
 
-Expected fields include `id`, `service_id` (integer), `status`, `total_price`, `platform_fee`, and `tax_amount`. Decimal-backed values are always encoded as JSON numbers, including fractional values, so the parity response does not switch between number and string types.
+Expected fields include `id`, `service_id` (integer), `status`, `total_price`, `platform_fee`, and `tax_amount`. Numeric database values are emitted as JSON numbers for this temporary parity API.
 
 Continue read-only mappings for:
 
