@@ -23,10 +23,48 @@ if ! fly auth whoami >/dev/null 2>&1; then
   exit 1
 fi
 
-ORG_ARGS=()
-if [[ -n "${FLY_ORG:-}" ]]; then
-  ORG_ARGS=(--org "$FLY_ORG")
-fi
+resolve_fly_org() {
+  if [[ -n "${FLY_ORG:-}" ]]; then
+    printf '%s\n' "$FLY_ORG"
+    return
+  fi
+
+  # `fly mpg list` requires --org when stdout is not a TTY.
+  fly orgs list --json | python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+slugs = []
+
+if isinstance(data, dict):
+    slugs = [str(slug) for slug in data.keys()]
+elif isinstance(data, list):
+    for item in data:
+        if isinstance(item, dict):
+            slug = item.get("slug") or item.get("Slug")
+            if slug:
+                slugs.append(str(slug))
+
+if not slugs:
+    print("Could not determine Fly organization. Set FLY_ORG.", file=sys.stderr)
+    sys.exit(1)
+
+if "personal" in slugs:
+    print("personal")
+    sys.exit(0)
+
+if len(slugs) == 1:
+    print(slugs[0])
+    sys.exit(0)
+
+print("Multiple Fly organizations found. Set FLY_ORG to one of: " + ", ".join(slugs), file=sys.stderr)
+sys.exit(1)
+'
+}
+
+FLY_ORG="$(resolve_fly_org)"
+ORG_ARGS=(--org "$FLY_ORG")
 
 echo "Fly bootstrap configuration:"
 echo "  app:              $APP_NAME"
@@ -35,9 +73,7 @@ echo "  region:           $REGION"
 echo "  plan:             $MPG_PLAN"
 echo "  storage:          ${MPG_VOLUME_SIZE} GB"
 echo "  postgres:         $PG_MAJOR_VERSION + PostGIS"
-if [[ -n "${FLY_ORG:-}" ]]; then
-  echo "  organization:     $FLY_ORG"
-fi
+echo "  organization:     $FLY_ORG"
 
 echo
 
@@ -49,13 +85,18 @@ else
   echo "✓ Created Fly app $APP_NAME"
 fi
 
-mpg_exists() {
-  fly mpg list "${ORG_ARGS[@]}" --json | python3 -c '
+mpg_list_json="$(fly mpg list "${ORG_ARGS[@]}" --json)"
+mpg_exists_status=0
+python3 -c '
 import json
 import sys
 
 target = sys.argv[1]
-data = json.load(sys.stdin)
+try:
+    data = json.load(sys.stdin)
+except json.JSONDecodeError as exc:
+    print(f"Failed to parse fly mpg list JSON: {exc}", file=sys.stderr)
+    sys.exit(2)
 
 def contains_name(value):
     if isinstance(value, dict):
@@ -69,12 +110,11 @@ def contains_name(value):
     return False
 
 sys.exit(0 if contains_name(data) else 1)
-' "$MPG_NAME"
-}
+' "$MPG_NAME" <<<"$mpg_list_json" || mpg_exists_status=$?
 
-if mpg_exists; then
+if [[ "$mpg_exists_status" -eq 0 ]]; then
   echo "✓ Managed Postgres cluster $MPG_NAME already exists"
-else
+elif [[ "$mpg_exists_status" -eq 1 ]]; then
   echo "Creating Managed Postgres cluster $MPG_NAME..."
   fly mpg create \
     --name "$MPG_NAME" \
@@ -85,6 +125,9 @@ else
     --enable-postgis-support \
     "${ORG_ARGS[@]}"
   echo "✓ Created Managed Postgres cluster $MPG_NAME"
+else
+  echo "Failed to list Managed Postgres clusters for org $FLY_ORG" >&2
+  exit "$mpg_exists_status"
 fi
 
 echo

@@ -67,6 +67,16 @@ x-mithril-parity-token: <server-side token>
 
 This route is for Supabase-vs-Mithril comparison only. It must not be wired directly to customer clients.
 
+`MITHRIL_PARITY_TOKEN` must be in the shell (direnv loads it from `.env`). Known production smoke-test booking:
+
+```bash
+curl \
+  -H "x-mithril-parity-token: $MITHRIL_PARITY_TOKEN" \
+  https://instaclean-mithril.fly.dev/internal/parity/bookings/1aba469c-8dcb-4611-806e-6be74900ba86
+```
+
+Expected fields include `id`, `service_id` (integer), `status`, `total_price`, `platform_fee`, and `tax_amount` (numeric values encoded as JSON numbers when whole).
+
 Continue read-only mappings for:
 
 1. users/profiles

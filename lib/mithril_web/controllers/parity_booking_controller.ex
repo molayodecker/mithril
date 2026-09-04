@@ -28,17 +28,29 @@ defmodule MithrilWeb.ParityBookingController do
       service_id: booking.service_id,
       scheduled_date: booking.scheduled_date,
       scheduled_time: booking.scheduled_time,
-      duration_hours: booking.duration_hours,
+      duration_hours: dump_decimal(booking.duration_hours),
       address: booking.address,
       special_instructions: booking.special_instructions,
       status: booking.status,
-      total_price: booking.total_price,
-      platform_fee: booking.platform_fee,
-      tax_amount: booking.tax_amount,
+      total_price: dump_decimal(booking.total_price),
+      platform_fee: dump_decimal(booking.platform_fee),
+      tax_amount: dump_decimal(booking.tax_amount),
       payment_status: booking.payment_status,
       payment_method: booking.payment_method,
       created_at: booking.created_at,
       updated_at: booking.updated_at
     }
+  end
+
+  defp dump_decimal(nil), do: nil
+
+  defp dump_decimal(%Decimal{} = value) do
+    normalized = Decimal.normalize(value)
+
+    if Decimal.integer?(normalized) do
+      Decimal.to_integer(normalized)
+    else
+      Decimal.to_string(normalized, :normal)
+    end
   end
 end

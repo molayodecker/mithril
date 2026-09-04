@@ -15,21 +15,29 @@ defmodule MithrilWeb.ParityBookingControllerTest do
     previous = Application.get_env(:mithril, :parity_token)
     Application.put_env(:mithril, :parity_token, @parity_token)
 
+    [[database]] = Repo.query!("SELECT current_database()").rows
+
+    unless database == "mithril_test" do
+      raise "Refusing to recreate bookings; expected mithril_test, got #{inspect(database)}"
+    end
+
+    Repo.query!("DROP TABLE IF EXISTS public.bookings")
+
     Repo.query!("""
-    CREATE TABLE IF NOT EXISTS public.bookings (
+    CREATE TABLE public.bookings (
       id uuid PRIMARY KEY,
       customer_id uuid NOT NULL,
       cleaner_id uuid,
-      service_id uuid NOT NULL,
+      service_id integer NOT NULL,
       scheduled_date date NOT NULL,
       scheduled_time time NOT NULL,
-      duration_hours integer,
+      duration_hours numeric,
       address text NOT NULL,
       special_instructions text,
       status text,
-      total_price integer NOT NULL,
-      platform_fee integer,
-      tax_amount integer,
+      total_price numeric NOT NULL,
+      platform_fee numeric,
+      tax_amount numeric,
       payment_status text,
       payment_method text,
       created_at timestamptz,
@@ -61,7 +69,7 @@ defmodule MithrilWeb.ParityBookingControllerTest do
   test "parity route returns a legacy booking when authorized" do
     booking_id = Ecto.UUID.generate()
     customer_id = Ecto.UUID.generate()
-    service_id = Ecto.UUID.generate()
+    service_id = 8
 
     Repo.query!(
       """
@@ -73,7 +81,7 @@ defmodule MithrilWeb.ParityBookingControllerTest do
         ($1, $2, $3, DATE '2026-09-10', TIME '09:30:00', 2,
          'Accra, Ghana', 'pending', 30000, 4500, 0, 'pending', NOW(), NOW())
       """,
-      Enum.map([booking_id, customer_id, service_id], &Ecto.UUID.dump!/1)
+      [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(customer_id), service_id]
     )
 
     conn =
@@ -84,6 +92,7 @@ defmodule MithrilWeb.ParityBookingControllerTest do
     response = json_response(conn, 200)
     assert response["booking"]["id"] == booking_id
     assert response["booking"]["customer_id"] == customer_id
+    assert response["booking"]["service_id"] == service_id
     assert response["booking"]["status"] == "pending"
     assert response["booking"]["total_price"] == 30_000
   end

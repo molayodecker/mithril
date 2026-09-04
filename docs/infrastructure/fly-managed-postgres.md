@@ -21,6 +21,8 @@ By default it creates, if missing:
 
 If the resources already exist, the script leaves them in place. It intentionally does **not** attach Managed Postgres to the app, because attaching would replace the application's `DATABASE_URL` before the R2 restore and parity checks are complete.
 
+If `FLY_ORG` is unset, the script uses the personal organization when available, or the only organization on the account. Set `FLY_ORG` explicitly when the account belongs to more than one non-personal organization.
+
 Optional overrides:
 
 ```bash
