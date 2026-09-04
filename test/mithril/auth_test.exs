@@ -108,7 +108,10 @@ defmodule Mithril.AuthTest do
 
   test "login rejects inactive accounts" do
     {user_id, email} = insert_account("inactive@example.com", "correct-horse")
-    Repo.query!("UPDATE public.users SET status = 'suspended' WHERE id = $1::uuid", [user_id])
+
+    Repo.query!("UPDATE public.users SET status = 'suspended' WHERE id = $1::uuid", [
+      dump_uuid(user_id)
+    ])
 
     assert {:error, :invalid_credentials} = Auth.login(email, "correct-horse")
   end
@@ -130,7 +133,10 @@ defmodule Mithril.AuthTest do
   test "refresh rejects a token after the account is suspended" do
     {user_id, email} = insert_account("suspended-refresh@example.com", "correct-horse")
     {:ok, session} = Auth.login(email, "correct-horse")
-    Repo.query!("UPDATE public.users SET status = 'suspended' WHERE id = $1::uuid", [user_id])
+
+    Repo.query!("UPDATE public.users SET status = 'suspended' WHERE id = $1::uuid", [
+      dump_uuid(user_id)
+    ])
 
     assert {:error, :invalid_refresh_token} = Auth.refresh(session.refresh_token)
   end
@@ -153,7 +159,7 @@ defmodule Mithril.AuthTest do
         JOIN auth.users au ON au.id = a.user_id
         WHERE a.user_id = $1::uuid
         """,
-        [user_id]
+        [dump_uuid(user_id)]
       ).rows
 
     assert Bcrypt.verify_pass("new-password", mithril_hash)
@@ -172,7 +178,7 @@ defmodule Mithril.AuthTest do
         JOIN auth.users au ON au.id = u.id
         WHERE u.id = $1::uuid
         """,
-        [session.user.id]
+        [dump_uuid(session.user.id)]
       ).rows
 
     assert Bcrypt.verify_pass("register-password", public_hash)
@@ -202,5 +208,10 @@ defmodule Mithril.AuthTest do
     )
 
     {user_id, email}
+  end
+
+  defp dump_uuid(user_id) do
+    {:ok, dumped} = Ecto.UUID.dump(user_id)
+    dumped
   end
 end
