@@ -33,6 +33,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - name: Validate Fly bootstrap shell syntax
+        run: bash -n scripts/bootstrap_fly.sh
 
       - uses: erlef/setup-beam@v1
         with:
