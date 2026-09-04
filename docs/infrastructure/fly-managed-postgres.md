@@ -1,5 +1,41 @@
 # Fly Managed Postgres
 
+## Bootstrap the Fly resources
+
+Mithril includes an idempotent bootstrap script for the initial Fly resources:
+
+```bash
+fly auth login
+bash scripts/bootstrap_fly.sh
+```
+
+By default it creates, if missing:
+
+- Fly app: `instaclean-mithril`
+- Managed Postgres: `instaclean-mithril-pg`
+- region: `lhr` (London)
+- plan: `Basic`
+- storage: 10 GB
+- PostgreSQL 17
+- PostGIS enabled at provisioning
+
+If the resources already exist, the script leaves them in place. It intentionally does **not** attach Managed Postgres to the app, because attaching would replace the application's `DATABASE_URL` before the R2 restore and parity checks are complete.
+
+Optional overrides:
+
+```bash
+FLY_ORG=my-org \
+FLY_APP_NAME=instaclean-mithril \
+FLY_MPG_NAME=instaclean-mithril-pg \
+FLY_REGION=lhr \
+FLY_MPG_PLAN=Basic \
+FLY_MPG_VOLUME_SIZE=10 \
+FLY_PG_MAJOR_VERSION=17 \
+bash scripts/bootstrap_fly.sh
+```
+
+Creating a Managed Postgres cluster is a billable Fly.io resource. The `Basic` plan is the initial rehearsal/small-production baseline; resize or replace it after measuring the restored workload.
+
 ## Target architecture
 
 Fly Managed Postgres is the target production database for Mithril.
