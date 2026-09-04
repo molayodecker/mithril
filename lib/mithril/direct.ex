@@ -8,6 +8,8 @@ defmodule Mithril.Direct do
   source of truth.
   """
 
+  require Logger
+
   alias Mithril.Repo
 
   @roles ~w(househelp nanny cleaner elder_caregiver cook driver gardener)
@@ -222,21 +224,19 @@ defmodule Mithril.Direct do
     with {:ok, uid} <- dump_uuid(user_id),
          :ok <- require_admin(uid),
          {:ok, result} <-
-           Repo.query(
-             """
-             SELECT jsonb_build_object(
-               'id', id,
-               'customerUserId', customer_id,
-               'status', status,
-               'role', role,
-               'householdAddress', household_address_snapshot,
-               'createdAt', created_at
-             )
-             FROM public.placement_requests
-             ORDER BY created_at DESC
-             LIMIT 100
-             """
-           ) do
+           Repo.query("""
+           SELECT jsonb_build_object(
+             'id', id,
+             'customerUserId', customer_id,
+             'status', status,
+             'role', role,
+             'householdAddress', household_address_snapshot,
+             'createdAt', created_at
+           )
+           FROM public.placement_requests
+           ORDER BY created_at DESC
+           LIMIT 100
+           """) do
       {:ok, Enum.map(result.rows, &hd/1)}
     else
       :error -> {:error, :invalid_user}
@@ -249,33 +249,31 @@ defmodule Mithril.Direct do
     with {:ok, uid} <- dump_uuid(user_id),
          :ok <- require_admin(uid),
          {:ok, result} <-
-           Repo.query(
-             """
-             SELECT jsonb_build_object(
-               'userId', cd.user_id,
-               'name', COALESCE(
-                 NULLIF(btrim(p.fullname), ''),
-                 NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
-                 u.email,
-                 'Provider'
-               ),
-               'email', u.email,
-               'rating', cd.rating,
-               'completedJobs', cd.completed_jobs,
-               'placementOptIn', COALESCE(pcp.placement_opt_in, false),
-               'placementStatus', COALESCE(pcp.placement_status, 'inactive'),
-               'desiredRoles', COALESCE(to_jsonb(pcp.desired_roles), '[]'::jsonb)
-             )
-             FROM public.cleaner_data cd
-             JOIN public.users u ON u.id = cd.user_id
-             LEFT JOIN public.profiles p ON p.id = cd.user_id
-             LEFT JOIN public.placement_candidate_profiles pcp ON pcp.user_id = cd.user_id
-             WHERE cd.verified = true
-               AND cd.status = 'active'
-             ORDER BY COALESCE(cd.rating, 0) DESC, COALESCE(cd.completed_jobs, 0) DESC
-             LIMIT 200
-             """
-           ) do
+           Repo.query("""
+           SELECT jsonb_build_object(
+             'userId', cd.user_id,
+             'name', COALESCE(
+               NULLIF(btrim(p.fullname), ''),
+               NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
+               u.email,
+               'Provider'
+             ),
+             'email', u.email,
+             'rating', cd.rating,
+             'completedJobs', cd.completed_jobs,
+             'placementOptIn', COALESCE(pcp.placement_opt_in, false),
+             'placementStatus', COALESCE(pcp.placement_status, 'inactive'),
+             'desiredRoles', COALESCE(to_jsonb(pcp.desired_roles), '[]'::jsonb)
+           )
+           FROM public.cleaner_data cd
+           JOIN public.users u ON u.id = cd.user_id
+           LEFT JOIN public.profiles p ON p.id = cd.user_id
+           LEFT JOIN public.placement_candidate_profiles pcp ON pcp.user_id = cd.user_id
+           WHERE cd.verified = true
+             AND cd.status = 'active'
+           ORDER BY COALESCE(cd.rating, 0) DESC, COALESCE(cd.completed_jobs, 0) DESC
+           LIMIT 200
+           """) do
       {:ok, Enum.map(result.rows, &hd/1)}
     else
       :error -> {:error, :invalid_user}
@@ -451,7 +449,9 @@ defmodule Mithril.Direct do
       end
 
     [opt_in, placement_status, desired_roles] = profile
-    needs_consent = opt_in != true or placement_status != "available" or role not in (desired_roles || [])
+
+    needs_consent =
+      opt_in != true or placement_status != "available" or role not in (desired_roles || [])
 
     if needs_consent and params["consentConfirmed"] != true do
       Repo.rollback(:consent_required)
@@ -501,7 +501,9 @@ defmodule Mithril.Direct do
         {:error, error} -> Repo.rollback({:database, error})
       end
 
-    case Repo.query("UPDATE public.placement_requests SET status = 'shortlisted' WHERE id = $1", [pid]) do
+    case Repo.query("UPDATE public.placement_requests SET status = 'shortlisted' WHERE id = $1", [
+           pid
+         ]) do
       {:ok, _} -> %{matchId: match_id}
       {:error, error} -> Repo.rollback({:database, error})
     end
@@ -660,7 +662,9 @@ defmodule Mithril.Direct do
           Repo.rollback({:database, error})
       end
 
-    with_query_or_rollback("UPDATE public.placement_matches SET status = 'hired' WHERE id = $1", [mid])
+    with_query_or_rollback("UPDATE public.placement_matches SET status = 'hired' WHERE id = $1", [
+      mid
+    ])
 
     with_query_or_rollback(
       """
@@ -673,7 +677,10 @@ defmodule Mithril.Direct do
       [request_id, mid]
     )
 
-    with_query_or_rollback("UPDATE public.placement_requests SET status = 'placed' WHERE id = $1", [request_id])
+    with_query_or_rollback(
+      "UPDATE public.placement_requests SET status = 'placed' WHERE id = $1",
+      [request_id]
+    )
 
     %{householdWorkerId: household_worker_id}
   end
@@ -708,16 +715,35 @@ defmodule Mithril.Direct do
     requirements = params["requirements"] || %{}
 
     cond do
-      role not in @roles -> {:error, :invalid_role}
-      living not in @living_arrangements -> {:error, :invalid_living_arrangement}
-      employment not in @employment_types -> {:error, :invalid_employment_type}
-      not is_nil(frequency) and frequency not in @salary_frequencies -> {:error, :invalid_salary_frequency}
-      not valid_nonnegative_integer?(min_salary) -> {:error, :invalid_salary}
-      not valid_nonnegative_integer?(max_salary) -> {:error, :invalid_salary}
-      is_integer(min_salary) and is_integer(max_salary) and min_salary > max_salary -> {:error, :invalid_salary_range}
-      not is_binary(address) or byte_size(String.trim(address)) < 3 -> {:error, :invalid_address}
-      not is_map(requirements) -> {:error, :invalid_requirements}
-      true -> :ok
+      role not in @roles ->
+        {:error, :invalid_role}
+
+      living not in @living_arrangements ->
+        {:error, :invalid_living_arrangement}
+
+      employment not in @employment_types ->
+        {:error, :invalid_employment_type}
+
+      not is_nil(frequency) and frequency not in @salary_frequencies ->
+        {:error, :invalid_salary_frequency}
+
+      not valid_nonnegative_integer?(min_salary) ->
+        {:error, :invalid_salary}
+
+      not valid_nonnegative_integer?(max_salary) ->
+        {:error, :invalid_salary}
+
+      is_integer(min_salary) and is_integer(max_salary) and min_salary > max_salary ->
+        {:error, :invalid_salary_range}
+
+      not is_binary(address) or byte_size(String.trim(address)) < 3 ->
+        {:error, :invalid_address}
+
+      not is_map(requirements) ->
+        {:error, :invalid_requirements}
+
+      true ->
+        :ok
     end
   end
 
@@ -745,7 +771,6 @@ defmodule Mithril.Direct do
   defp dump_uuid(_value), do: :error
 
   defp database_error(error) do
-    require Logger
     Logger.error("Direct database operation failed: #{Exception.message(error)}")
     {:error, :database_unavailable}
   end
