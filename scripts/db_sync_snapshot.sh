@@ -21,7 +21,7 @@ mkdir -p "$OUT_DIR"
 chmod 700 "$OUT_DIR" 2>/dev/null || true
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DB_SYNC_OUTPUT_DIR="$OUT_DIR" "$SCRIPT_DIR/db_sync_inventory.sh" >/dev/null
+DB_SYNC_OUTPUT_DIR="$OUT_DIR" bash "$SCRIPT_DIR/db_sync_inventory.sh" >/dev/null
 
 echo "Creating full public-schema logical snapshot..."
 pg_dump "$SOURCE_DATABASE_URL" \
