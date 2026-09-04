@@ -90,9 +90,9 @@ WITH objects AS (
   UNION ALL
   SELECT 'sequence', count(*) FROM pg_sequences WHERE schemaname = 'public'
   UNION ALL
-  SELECT 'function', count(*)
+  SELECT 'function_or_procedure', count(*)
   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-  WHERE n.nspname = 'public'
+  WHERE n.nspname = 'public' AND p.prokind IN ('f', 'p')
   UNION ALL
   SELECT 'trigger', count(*)
   FROM pg_trigger t
@@ -131,6 +131,7 @@ SELECT
 FROM pg_proc p
 JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE n.nspname = 'public'
+  AND p.prokind IN ('f', 'p')
   AND position('auth.' in lower(pg_get_functiondef(p.oid))) > 0
 ORDER BY p.proname, pg_get_function_identity_arguments(p.oid);
 " > "$OUT_DIR/functions_referencing_auth.csv"
