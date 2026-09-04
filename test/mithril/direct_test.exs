@@ -234,7 +234,12 @@ defmodule Mithril.DirectTest do
     placement_id = insert_placement(Ecto.UUID.generate(), "nanny", "East Legon")
 
     insert_admin(admin_id)
-    insert_candidate(candidate_id, desired_roles: nil, opt_in: false, placement_status: "inactive")
+
+    insert_candidate(candidate_id,
+      desired_roles: nil,
+      opt_in: false,
+      placement_status: "inactive"
+    )
 
     assert {:ok, %{matchId: match_id}} =
              Direct.match_admin_candidate(admin_id, placement_id, %{
