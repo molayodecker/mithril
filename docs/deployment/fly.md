@@ -8,11 +8,16 @@ Mithril runs on Fly.io. The physical database migration to Fly Managed Postgres 
 Clients
    |
    v
+api.tryinstaclean.com
+   |
+   v
 Mithril / Phoenix on Fly.io (lhr)
    |
    v
 Existing Supabase PostgreSQL
 ```
+
+The underlying Fly hostname remains available as `instaclean-mithril.fly.dev`, but production clients should use `api.tryinstaclean.com` once DNS and TLS are configured.
 
 In parallel, create a Fly MPG cluster for restore rehearsal:
 
@@ -51,7 +56,7 @@ Create the app:
 fly apps create instaclean-mithril
 ```
 
-If that globally unique app name is unavailable, choose another name and update both `app` and `PHX_HOST` in `fly.toml`.
+If that globally unique app name is unavailable, choose another name and update `app` in `fly.toml`.
 
 ## 3. Set production secrets
 
@@ -77,18 +82,37 @@ fly secrets set DATABASE_URL='<current-supabase-postgres-url>' -a instaclean-mit
 
 Never commit either value to git.
 
-## 4. Deploy Mithril
+## 4. Configure the production API domain
+
+Attach the hostname to the Fly app:
+
+```bash
+fly certs add api.tryinstaclean.com -a instaclean-mithril
+fly certs setup api.tryinstaclean.com -a instaclean-mithril
+```
+
+Use the DNS records printed by Fly. For a subdomain, a CNAME is usually the simplest choice. If DNS is hosted on Cloudflare, use DNS-only while Fly issues the certificate, or, if keeping the Cloudflare proxy enabled, also configure the `_fly-ownership` TXT record shown by `fly certs setup` and use Cloudflare SSL/TLS mode `Full (strict)`.
+
+Check validation status with:
+
+```bash
+fly certs check api.tryinstaclean.com -a instaclean-mithril
+```
+
+Do not remove the default `instaclean-mithril.fly.dev` hostname; it remains a useful direct Fly fallback.
+
+## 5. Deploy Mithril
 
 ```bash
 fly deploy -a instaclean-mithril
 ```
 
-Verify liveness and readiness separately:
+Verify liveness and readiness through the production hostname:
 
 ```bash
 fly status -a instaclean-mithril
-curl https://instaclean-mithril.fly.dev/health
-curl https://instaclean-mithril.fly.dev/ready
+curl https://api.tryinstaclean.com/health
+curl https://api.tryinstaclean.com/ready
 ```
 
 Expected responses:
@@ -107,7 +131,7 @@ Fly's service-level HTTP check calls `/ready` every 15 seconds. Because service 
 
 Live Machine and request telemetry: [instaclean-mithril monitoring](https://fly.io/apps/instaclean-mithril/monitoring).
 
-## 5. Create Fly Managed Postgres
+## 6. Create Fly Managed Postgres
 
 Create PostgreSQL 17 with PostGIS enabled from the start:
 
@@ -125,7 +149,7 @@ fly mpg create \
 
 Record the cluster ID returned by Fly.
 
-## 6. Do not attach MPG to Mithril yet
+## 7. Do not attach MPG to Mithril yet
 
 Fly can attach MPG with:
 
@@ -137,7 +161,7 @@ That command sets the app's `DATABASE_URL` to the MPG pooled/PgBouncer connectio
 
 For restore/import work, use Fly's direct database connection/proxy instead of the pooled application URL when required by PostgreSQL tooling.
 
-## 7. Rehearse the database migration
+## 8. Rehearse the database migration
 
 Use the latest verified R2 backup produced by `instaclean-production`:
 
