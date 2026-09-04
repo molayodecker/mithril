@@ -17,9 +17,15 @@ truthy_env? = fn name ->
 end
 
 pool_size = parse_positive_integer.("POOL_SIZE", "10")
-socket_options = if truthy_env?.("ECTO_IPV6"), do: [:inet6], else: []
 
 repo_opts = fn database_url ->
+  socket_options =
+    cond do
+      String.contains?(database_url, "flympg.net") -> [:inet6]
+      truthy_env?.("ECTO_IPV6") -> [:inet6]
+      true -> []
+    end
+
   opts = [
     url: database_url,
     pool_size: pool_size,
@@ -64,12 +70,12 @@ if jwt_secret = System.get_env("AUTH_JWT_SECRET") do
   config :mithril, :auth_jwt_secret, jwt_secret
 end
 
-if access_ttl = System.get_env("AUTH_ACCESS_TTL") do
-  config :mithril, :auth_access_ttl, String.to_integer(access_ttl)
+if System.get_env("AUTH_ACCESS_TTL") do
+  config :mithril, :auth_access_ttl, parse_positive_integer.("AUTH_ACCESS_TTL", "3600")
 end
 
-if refresh_ttl = System.get_env("AUTH_REFRESH_TTL") do
-  config :mithril, :auth_refresh_ttl, String.to_integer(refresh_ttl)
+if System.get_env("AUTH_REFRESH_TTL") do
+  config :mithril, :auth_refresh_ttl, parse_positive_integer.("AUTH_REFRESH_TTL", "2592000")
 end
 
 if config_env() == :prod do
