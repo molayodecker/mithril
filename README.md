@@ -11,6 +11,10 @@ It will incrementally replace application behavior currently implemented in `ins
 - Phoenix: `~> 1.8.13`
 - Elixir: `~> 1.20`
 - Ecto SQL: `~> 3.14`
+- Repository visibility: private
+- Runtime target: Fly.io
+- Target production database: Fly Managed Postgres
+- Off-platform database backup archive: Cloudflare R2 bucket `insta-production`
 
 The old repository remains the production source of truth until each capability is migrated and verified. Do not repoint the web/mobile `supabase` submodules to this repository yet.
 
@@ -40,20 +44,44 @@ To connect Mithril to an existing PostgreSQL database, set `DATABASE_URL`.
 DATABASE_URL=ecto://user:password@host:5432/database mix phx.server
 ```
 
+## Database and backups
+
+Mithril's target live database is Fly Managed Postgres. PostgreSQL remains the transactional source of truth for bookings, users, pricing, payments, wallets, availability, and other relational state.
+
+Cloudflare R2 bucket `insta-production` is an independent database backup archive. It is not the live database and is not the application's primary object store.
+
+The known May 20, 2026 backup contains:
+
+```text
+2026-05-20/26137003002/schema.sql.gz
+2026-05-20/26137003002/functions_triggers.sql.gz
+```
+
+Direct inspection confirms these files contain schema/functions/triggers but no table row data, so they are useful for migration rehearsal and compatibility analysis but cannot restore production records by themselves.
+
+See:
+
+- [`docs/infrastructure/cloudflare-r2.md`](docs/infrastructure/cloudflare-r2.md)
+- [`docs/infrastructure/fly-managed-postgres.md`](docs/infrastructure/fly-managed-postgres.md)
+- [`docs/migration/r2-backup-inspection-2026-05-20.md`](docs/migration/r2-backup-inspection-2026-05-20.md)
+
 ## Migration strategy
 
-Mithril uses a strangler migration rather than copying the private Supabase repository into this public repository.
+Mithril uses a strangler migration rather than a big-bang replacement.
 
-1. Connect Phoenix/Ecto to the existing PostgreSQL database.
+1. Run Phoenix against the existing Supabase PostgreSQL database while application behavior moves into Mithril.
 2. Add read models for existing tables without changing production behavior.
 3. Move one vertical slice at a time from Edge Functions/RPCs into Phoenix contexts.
 4. Route selected traffic to Mithril behind feature flags.
 5. Move scheduled/background work after synchronous flows are stable.
-6. Replace Supabase realtime with Phoenix PubSub/Channels where appropriate.
-7. Retire Supabase-specific code only after parity, observability, rollback, and traffic verification.
+6. Decouple public-schema authorization and foreign keys from Supabase Auth-specific database constructs.
+7. Rehearse restoring a transformed schema into Fly Managed Postgres.
+8. At database cutover, take a fresh complete dump/synchronization from live Supabase Postgres and restore it into Fly MPG.
+9. Replace Supabase realtime with Phoenix PubSub/Channels where appropriate.
+10. Retire Supabase-specific code only after parity, observability, rollback, and traffic verification.
 
-See [`docs/migration/supabase-to-phoenix.md`](docs/migration/supabase-to-phoenix.md) for the cutover plan.
+See [`docs/migration/supabase-to-phoenix.md`](docs/migration/supabase-to-phoenix.md) for the broader cutover plan.
 
 ## Safety
 
-`instaclean-schema` is private while Mithril is public. Never commit credentials, service-role keys, database passwords, webhook secrets, private operational data, or production-only configuration here.
+Mithril is private, but secrets still never belong in git. Never commit credentials, service-role keys, database passwords, webhook secrets, private operational data, or production-only secret values.
