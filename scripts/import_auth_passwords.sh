@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # Copies bcrypt hashes from live Supabase auth.users into Mithril accounts.
-# Does not print emails or hashes.
+# Does not print emails or hashes. Accounts disabled in Supabase/public.users
+# are removed from Mithril auth and have their refresh sessions revoked.
 
 : "${SOURCE_DATABASE_URL:?Set SOURCE_DATABASE_URL to live Supabase (session/direct)}"
 : "${TARGET_DATABASE_URL:?Set TARGET_DATABASE_URL to the Mithril Fly database}"
@@ -29,8 +30,9 @@ if [[ "$TARGET_DATABASE_URL" == *"supabase.co"* || "$TARGET_DATABASE_URL" == *"s
 fi
 
 TMP="$(mktemp)"
-chmod 600 "$TMP"
-trap 'rm -f "$TMP"' EXIT
+TMP_DISABLED="$(mktemp)"
+chmod 600 "$TMP" "$TMP_DISABLED"
+trap 'rm -f "$TMP" "$TMP_DISABLED"' EXIT
 
 psql "$SOURCE_DATABASE_URL" -X -v ON_ERROR_STOP=1 --csv -c "
 SELECT
@@ -45,6 +47,9 @@ SELECT
 FROM auth.users u
 JOIN public.users p ON p.id = u.id
 WHERE u.encrypted_password LIKE '\$2%'
+  AND u.deleted_at IS NULL
+  AND (u.banned_until IS NULL OR u.banned_until <= now())
+  AND p.status::text = 'active'
   AND coalesce(
     nullif(btrim(u.email), ''),
     nullif(btrim(p.email), ''),
@@ -54,13 +59,39 @@ WHERE u.encrypted_password LIKE '\$2%'
 ORDER BY u.id;
 " > "$TMP"
 
+psql "$SOURCE_DATABASE_URL" -X -v ON_ERROR_STOP=1 --csv -c "
+SELECT u.id::text
+FROM auth.users u
+JOIN public.users p ON p.id = u.id
+WHERE u.encrypted_password LIKE '\$2%'
+  AND (
+    u.deleted_at IS NOT NULL
+    OR u.banned_until > now()
+    OR p.status::text <> 'active'
+  )
+ORDER BY u.id;
+" > "$TMP_DISABLED"
+
 psql "$TARGET_DATABASE_URL" -X -v ON_ERROR_STOP=1 <<SQL
 CREATE TEMP TABLE mithril_auth_import (
   user_id uuid PRIMARY KEY,
   email text NOT NULL,
   password_hash text NOT NULL
 );
+CREATE TEMP TABLE mithril_auth_disabled (
+  user_id uuid PRIMARY KEY
+);
 \\copy mithril_auth_import FROM '$TMP' WITH (FORMAT csv, HEADER true)
+\\copy mithril_auth_disabled FROM '$TMP_DISABLED' WITH (FORMAT csv, HEADER true)
+
+UPDATE public.mithril_refresh_tokens
+SET revoked_at = now()
+WHERE revoked_at IS NULL
+  AND user_id IN (SELECT user_id FROM mithril_auth_disabled);
+
+DELETE FROM public.mithril_auth_accounts
+WHERE user_id IN (SELECT user_id FROM mithril_auth_disabled);
+
 INSERT INTO public.mithril_auth_accounts (user_id, email, password_hash)
 SELECT user_id, email, password_hash
 FROM mithril_auth_import
