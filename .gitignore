@@ -20,3 +20,4 @@ mithril-*.tar
 
 # Test / tooling
 /test-results/
+/.artifacts/
