@@ -35,6 +35,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate shell scripts
         run: bash -n scripts/*.sh
+      - name: Exercise production shadow sync workflow
+        run: bash scripts/test_db_sync.sh
 
       - uses: erlef/setup-beam@v1
         with:
