@@ -34,6 +34,10 @@ if parity_token = System.get_env("MITHRIL_PARITY_TOKEN") do
   config :mithril, :parity_token, parity_token
 end
 
+if direct_gateway_token = System.get_env("MITHRIL_DIRECT_TOKEN") do
+  config :mithril, :direct_gateway_token, direct_gateway_token
+end
+
 if config_env() == :prod do
   database_url = System.fetch_env!("DATABASE_URL")
   secret_key_base = System.fetch_env!("SECRET_KEY_BASE")
