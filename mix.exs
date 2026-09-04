@@ -29,7 +29,9 @@ defmodule Mithril.MixProject do
       {:ecto_sql, "~> 3.14"},
       {:postgrex, "~> 0.22.4"},
       {:bandit, "~> 1.12"},
-      {:jason, "~> 1.4"}
+      {:jason, "~> 1.4"},
+      {:joken, "~> 2.6"},
+      {:bcrypt_elixir, "~> 3.3"}
     ]
   end
 end

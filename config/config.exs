@@ -2,7 +2,10 @@ import Config
 
 config :mithril,
   ecto_repos: [Mithril.Repo],
-  generators: [timestamp_type: :utc_datetime_usec]
+  generators: [timestamp_type: :utc_datetime_usec],
+  database_backend: "supabase",
+  auth_access_ttl: 3600,
+  auth_refresh_ttl: 60 * 60 * 24 * 30
 
 config :mithril, MithrilWeb.Endpoint,
   url: [host: "localhost"],

@@ -11,8 +11,9 @@ done
 ADMIN_URL="${DB_SYNC_TEST_ADMIN_URL:-postgresql://postgres:postgres@localhost:5432/postgres}"
 SOURCE_DB="mithril_sync_source"
 TARGET_DB="mithril_sync_target"
-SOURCE_URL="postgresql://postgres:postgres@localhost:5432/$SOURCE_DB"
-TARGET_URL="postgresql://postgres:postgres@localhost:5432/$TARGET_DB"
+ADMIN_PREFIX="${ADMIN_URL%/*}"
+SOURCE_URL="$ADMIN_PREFIX/$SOURCE_DB"
+TARGET_URL="$ADMIN_PREFIX/$TARGET_DB"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 SNAPSHOT_DIR="$TMP_DIR/snapshot"
@@ -183,6 +184,18 @@ TARGET_DATABASE_URL="$TARGET_URL" \
 SNAPSHOT_DIR="$SNAPSHOT_DIR" \
 bash "$ROOT_DIR/scripts/db_sync_verify.sh" >/dev/null
 
+# A live sync is a replace, not a one-shot import. Restoring the same snapshot
+# a second time must still verify.
+SOURCE_DATABASE_URL="$SOURCE_URL" \
+TARGET_DATABASE_URL="$TARGET_URL" \
+SNAPSHOT_DIR="$SNAPSHOT_DIR" \
+CONFIRM_SHADOW_RESTORE=YES \
+bash "$ROOT_DIR/scripts/db_sync_restore_shadow.sh" >/dev/null
+
+TARGET_DATABASE_URL="$TARGET_URL" \
+SNAPSHOT_DIR="$SNAPSHOT_DIR" \
+bash "$ROOT_DIR/scripts/db_sync_verify.sh" >/dev/null
+
 SECRET_VALUES="$(psql "$TARGET_URL" -X -Atqc "SELECT coalesce(encrypted_password, '<null>') || '|' || coalesce(recovery_token, '<null>') FROM auth.users WHERE id = '11111111-1111-1111-1111-111111111111'")"
 if [[ "$SECRET_VALUES" != "<null>|<null>" ]]; then
   echo "Auth secret-shaped columns were unexpectedly populated: $SECRET_VALUES" >&2
@@ -223,6 +236,14 @@ SQL
 )"
 if [[ "$RLS_EMAIL" != "shadow@example.com" ]]; then
   echo "RLS/auth.uid() aggregate JWT fallback failed: $RLS_EMAIL" >&2
+  exit 1
+fi
+
+if SOURCE_DATABASE_URL="$SOURCE_URL" \
+  TARGET_DATABASE_URL="$TARGET_URL" \
+  CONFIRM_SHADOW_RESTORE=NO \
+  bash "$ROOT_DIR/scripts/db_sync_from_live.sh" >/dev/null 2>&1; then
+  echo "db_sync_from_live.sh should refuse without CONFIRM_SHADOW_RESTORE=YES." >&2
   exit 1
 fi
 

@@ -20,7 +20,9 @@ Secrets must use Fly secrets or an equivalent secret manager. Non-sensitive runt
 
 Production currently requires:
 
-- `DATABASE_URL`
+- `DATABASE_BACKEND` (`fly` or `supabase`)
+- `FLY_DATABASE_URL` when `DATABASE_BACKEND=fly`
+- `SUPABASE_DATABASE_URL` or `DATABASE_URL` when `DATABASE_BACKEND=supabase`
 - `SECRET_KEY_BASE`
 - `PHX_HOST`
 
@@ -37,7 +39,7 @@ Do not read configuration files from the Machine filesystem and do not hardcode 
 
 PostgreSQL, Cloudflare R2, Paystack, messaging providers, telemetry services, and future infrastructure integrations are resources attached through configuration. Business contexts should not depend on provider-specific URLs when a stable internal identifier can be stored instead.
 
-During migration, `DATABASE_URL` may point to Supabase Postgres. The target is Fly Managed Postgres. Switching providers should be a configuration/cutover operation after compatibility work, not a rewrite of application code.
+During migration, Mithril can serve either Fly Managed Postgres or Supabase. `DATABASE_BACKEND` selects the active URL. Live Instaclean data can still be copied from Supabase onto Fly with `scripts/db_sync_from_live.sh`. Switching providers is configuration, not a rewrite of application code.
 
 ### Build, release, run are separate
 
@@ -106,7 +108,7 @@ Do not hide operational mutations in application startup callbacks.
 5. Never persist important data only to Fly Machine disk.
 6. Never bake secrets into Docker images or `fly.toml`.
 7. Provider integrations must be configurable and replaceable at their boundaries.
-8. Database cutover and application deployment remain separate operations until the Supabase migration is complete.
+8. Database cutover and application deployment remain separate operations until the Supabase migration is complete. `DATABASE_BACKEND` is the Mithril connection switch. API clients such as Direct authenticate with Mithril JWTs (`POST /auth/login`); web/mobile can keep Supabase Auth until those clients are cut over.
 
 ## Review checklist
 

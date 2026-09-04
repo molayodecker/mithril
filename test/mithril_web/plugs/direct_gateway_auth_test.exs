@@ -55,4 +55,17 @@ defmodule MithrilWeb.Plugs.DirectGatewayAuthTest do
     refute conn.halted
     assert conn.assigns.instaclean_user_id == user_id
   end
+
+  test "accepts a Mithril user JWT without the Direct gateway token" do
+    user_id = Ecto.UUID.generate()
+    {:ok, access_token, _claims} = Mithril.Auth.Token.issue(user_id, "jwt@example.com")
+
+    conn =
+      build_conn()
+      |> put_req_header("authorization", "Bearer #{access_token}")
+      |> DirectGatewayAuth.call([])
+
+    refute conn.halted
+    assert conn.assigns.instaclean_user_id == user_id
+  end
 end

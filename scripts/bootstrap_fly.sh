@@ -140,5 +140,5 @@ fly mpg list "${ORG_ARGS[@]}"
 
 echo
 echo "Bootstrap complete."
-echo "IMPORTANT: The MPG cluster has NOT been attached to $APP_NAME."
-echo "Keep Mithril pointed at Supabase until the R2 restore and parity checks pass."
+echo "Attach MPG after a verified live restore:"
+echo "  fly mpg attach <cluster-id> -a $APP_NAME -d fly-db -u fly-user"

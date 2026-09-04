@@ -1,8 +1,39 @@
-# Production → Mithril shadow database sync
+# Production → Mithril Fly database sync
 
-This runbook creates a **read-only migration rehearsal copy** of the current Instaclean production database in Mithril's dedicated Fly Managed Postgres target.
+Refresh Fly Managed Postgres from **live Instaclean production (Supabase)**. This is a repeatable point-in-time dump and restore. It does not flip `DATABASE_BACKEND`.
 
-The source remains authoritative throughout this process. Do not point customer traffic or production writes at the shadow database merely because the restore succeeds.
+Supabase remains the sync source. Mithril serves whichever backend `DATABASE_BACKEND` selects (`fly` or `supabase`).
+
+## Sync from live production
+
+Use a session-mode or direct PostgreSQL URL for production (port **5432**). Do not use the transaction pooler (port **6543**).
+
+```bash
+export SOURCE_DATABASE_URL='postgresql://...'
+```
+
+If `SOURCE_DATABASE_URL` is unset, the script will use a local `DATABASE_URL` that starts with `postgresql://`. Confirm that value is production, not the Fly shadow cluster.
+
+Connect to `instaclean-mithril-pg` through Fly's proxy, then:
+
+```bash
+fly mpg proxy <cluster-id> -p 16380
+export TARGET_DATABASE_URL='postgresql://...@localhost:16380/fly-db'
+export CONFIRM_SHADOW_RESTORE=YES
+bash scripts/db_sync_from_live.sh
+```
+
+That command:
+
+1. snapshots live production (`public` schema, exact row counts, sanitized `auth.users` identities);
+2. restores the snapshot into the shadow database;
+3. verifies every public table's row count against that snapshot.
+
+Each run writes a new directory under `.artifacts/db-sync/<timestamp>/`. `.artifacts/db-sync/LATEST` points at the most recent live sync. Treat those directories as production-sensitive data.
+
+A previous timestamped directory (for example `20260904T040510Z`) is only a historical rehearsal artifact. Re-run `db_sync_from_live.sh` whenever the shadow copy must match current production.
+
+Cloudflare R2 backups are disaster-recovery archives. They are not this workflow.
 
 ## Safety model
 
@@ -32,19 +63,13 @@ bash scripts/bootstrap_fly.sh
 
 The intended target is `instaclean-mithril-pg`. The bootstrap intentionally does not attach it to the app.
 
-## 1. Set source credentials locally
+On Fly Managed Postgres, enable supported extensions through `fly mpg` before the first restore (`postgis`, `btree_gist`, `citext`, `pgcrypto`, `uuid-ossp`). Do not apply captured Supabase-only extensions such as `pg_cron`, `pg_net`, or `supabase_vault`. Create application-facing users (`anon`, `authenticated`, `service_role`) with `fly mpg users` if they do not already exist; MPG does not allow `CREATE ROLE` or `GRANT` against those users from `psql`.
 
-Use a direct PostgreSQL connection, or a session-mode connection that supports exported snapshots, for the current Instaclean production database.
+## Manual steps
 
-```bash
-export SOURCE_DATABASE_URL='postgresql://...'
-```
+The live sync command calls these scripts in order. Use them directly only when you need to inspect an existing snapshot or re-restore one.
 
-Do **not** use a transaction-pooler URL for snapshot creation. Exported PostgreSQL snapshots must remain tied to one open source transaction while the dump and parity manifests import that snapshot in separate sessions.
-
-Never commit this value.
-
-## 2. Inventory the live source
+### 1. Inventory the live source
 
 ```bash
 bash scripts/db_sync_inventory.sh
@@ -67,7 +92,7 @@ This is the authoritative migration inventory. Repository migrations are useful 
 
 Do not run schema migrations concurrently with the production snapshot. Normal application writes are fine because the data-bearing artifacts use one exported repeatable-read snapshot.
 
-## 3. Create the shadow snapshot
+### 2. Create the shadow snapshot
 
 ```bash
 bash scripts/db_sync_snapshot.sh
@@ -90,31 +115,29 @@ The auth projection intentionally excludes password hashes, refresh/session toke
 
 Treat the entire snapshot directory as production-sensitive data even though auth secrets are excluded.
 
-## 4. Connect to the Fly shadow database
-
-Use Fly's Managed Postgres tooling to obtain a private/proxied PostgreSQL connection for `instaclean-mithril-pg`, then export it locally:
+### 3. Restore the shadow copy
 
 ```bash
-export TARGET_DATABASE_URL='postgresql://...'
 export SNAPSHOT_DIR='.artifacts/db-sync/<timestamp>'
+export CONFIRM_SHADOW_RESTORE=YES
+bash scripts/db_sync_restore_shadow.sh
 ```
 
-Confirm the target is the shadow database, not the current production Supabase database.
+The restore script:
 
-## 5. Review extension and privilege compatibility
+1. rejects an identical source/target URL when both are supplied;
+2. rejects Supabase-looking targets by default;
+3. creates extension-schema wrappers when uuid/pgcrypto were installed in `public`;
+4. creates only the limited application-facing shadow roles, or uses pre-created Fly MPG users;
+5. drops previous public shadow objects without dropping the `public` schema or PostGIS catalogs;
+6. creates a sanitized `auth` compatibility surface;
+7. loads the sanitized auth identity projection;
+8. restores the complete `public` schema and data with `pg_restore`;
+9. applies the reviewed effective runtime grants when the target allows it.
 
-Inspect:
+The shadow `auth.uid()` accepts either the legacy `request.jwt.claim.sub` setting or the aggregate `request.jwt.claims` JSON `sub` field. `auth.role()`, `auth.email()`, and `auth.jwt()` similarly support aggregate claims for parity clients.
 
-```bash
-cat "$SNAPSHOT_DIR/extensions.csv"
-cat "$SNAPSHOT_DIR/required_extensions.sql"
-cat "$SNAPSHOT_DIR/public_shadow_roles.txt"
-cat "$SNAPSHOT_DIR/public_shadow_grants.sql"
-```
-
-PostGIS and any extension used by restored public objects must exist on the target. Supabase-specific extensions should not be enabled blindly.
-
-The public dump deliberately excludes ACLs. Instead, `public_shadow_grants.sql` contains the effective public runtime privileges for only the application-facing shadow roles discovered in production. This prevents Fly Postgres from becoming a clone of Supabase's internal database-role topology while still allowing realistic RLS and RPC parity tests.
+Current public SQL still contains Supabase-era `auth.uid()`/`auth.jwt()` assumptions. The shadow compatibility functions exist for parity/rehearsal only. They are not a replacement authentication architecture.
 
 If the captured extension manifest has been reviewed and is appropriate for the Fly cluster:
 
@@ -124,30 +147,7 @@ export APPLY_CAPTURED_EXTENSIONS=YES
 
 Otherwise enable only the required supported extensions on the target before restore.
 
-## 6. Restore the shadow copy
-
-The following operation is destructive **only to the target database**:
-
-```bash
-export CONFIRM_SHADOW_RESTORE=YES
-bash scripts/db_sync_restore_shadow.sh
-```
-
-The restore script:
-
-1. rejects an identical source/target URL when both are supplied;
-2. rejects Supabase-looking targets by default;
-3. creates only the limited application-facing shadow roles;
-4. creates a sanitized `auth` compatibility surface;
-5. loads the sanitized auth identity projection;
-6. restores the complete `public` schema and data with `pg_restore`;
-7. applies the reviewed effective runtime grants captured for the shadow roles.
-
-The shadow `auth.uid()` accepts either the legacy `request.jwt.claim.sub` setting or the aggregate `request.jwt.claims` JSON `sub` field. `auth.role()`, `auth.email()`, and `auth.jwt()` similarly support aggregate claims for parity clients.
-
-Current public SQL still contains Supabase-era `auth.uid()`/`auth.jwt()` assumptions. The shadow compatibility functions exist for parity/rehearsal only. They are not a replacement authentication architecture.
-
-## 7. Verify table parity
+### 4. Verify table parity
 
 ```bash
 bash scripts/db_sync_verify.sh
@@ -168,7 +168,7 @@ The detailed result is written to:
 $SNAPSHOT_DIR/parity_report.csv
 ```
 
-## 8. Application parity tests
+## Application parity tests
 
 Only after row-count parity passes:
 
@@ -181,26 +181,13 @@ Only after row-count parity passes:
 
 Do not switch writes yet.
 
-## 9. Keeping the shadow current
+## Keeping the shadow current
 
-This first implementation is a point-in-time snapshot. If the migration requires a long coexistence period, choose an incremental strategy only after the full restore is repeatable and verified.
+Re-run `scripts/db_sync_from_live.sh` for a fresh live copy. Each restore replaces the previous shadow data.
 
-Possible next stage:
+If the migration later needs a long coexistence period with continuous lag, choose CDC / logical replication only after this full restore is repeatable and verified. Do not introduce two-way replication. During migration there must be one authoritative writer until an explicit cutover.
 
-```text
-Supabase production PostgreSQL
-          |
-          | CDC / logical replication
-          v
-Mithril shadow PostgreSQL
-          |
-          v
-Phoenix parity reads
-```
-
-Do not introduce two-way replication. During migration there must be one authoritative writer until an explicit cutover.
-
-## 10. Cutover remains separate
+## Cutover remains separate
 
 A successful shadow sync does not change production routing.
 

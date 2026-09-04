@@ -13,8 +13,24 @@ api.tryinstaclean.com
    v
 Mithril / Phoenix on Fly.io (lhr)
    |
-   v
-Existing Supabase PostgreSQL
+   +-- DATABASE_BACKEND=fly ----> Fly Managed Postgres (instaclean-mithril-pg)
+   |
+   +-- DATABASE_BACKEND=supabase -> Existing Supabase PostgreSQL
+```
+
+`DATABASE_BACKEND` is the switch. Default production value is `fly` in `fly.toml`. Keep both connection strings as secrets. Roll back without a code change:
+
+```bash
+fly secrets set DATABASE_BACKEND=supabase -a instaclean-mithril
+fly secrets unset DATABASE_BACKEND -a instaclean-mithril
+```
+
+The second command returns to the `fly.toml` default (`fly`).
+
+Refresh Fly from live Supabase without changing the flag:
+
+```bash
+bash scripts/db_sync_from_live.sh
 ```
 
 The underlying Fly hostname remains available as `instaclean-mithril.fly.dev`, but production clients should use `api.tryinstaclean.com` once DNS and TLS are configured.
@@ -60,7 +76,7 @@ If that globally unique app name is unavailable, choose another name and update 
 
 ## 3. Set production secrets
 
-Mithril currently requires both `SECRET_KEY_BASE` and `DATABASE_URL` in production.
+Mithril currently requires `SECRET_KEY_BASE` plus the database URLs selected by `DATABASE_BACKEND`. JWT login uses `AUTH_JWT_SECRET` when set, otherwise `SECRET_KEY_BASE`.
 
 Generate a Phoenix secret locally:
 
@@ -74,13 +90,16 @@ Set it on Fly:
 fly secrets set SECRET_KEY_BASE='<generated-secret>' -a instaclean-mithril
 ```
 
-For the first deployment, point Mithril at the existing Supabase PostgreSQL database rather than Fly MPG:
+Keep the current Supabase URL as a rollback secret, and attach Fly MPG to a separate variable so the original `DATABASE_URL` stays intact:
 
 ```bash
-fly secrets set DATABASE_URL='<current-supabase-postgres-url>' -a instaclean-mithril
+fly secrets set SUPABASE_DATABASE_URL='<current-supabase-postgres-url>' -a instaclean-mithril
+fly mpg attach <cluster-id> -a instaclean-mithril -d fly-db -u fly-user --variable-name FLY_DATABASE_URL
 ```
 
-Never commit either value to git.
+`DATABASE_BACKEND=fly` in `fly.toml` makes Mithril use `FLY_DATABASE_URL`. `DATABASE_URL` may remain the Supabase URL for older images and as a supabase-backend fallback.
+
+Never commit these values to git.
 
 ## 4. Configure the production API domain
 
@@ -122,7 +141,7 @@ Expected responses:
 ```
 
 ```json
-{"service":"mithril","status":"ready","database":"ok"}
+{"service":"mithril","status":"ready","database":"ok","database_backend":"fly"}
 ```
 
 `/health` is a lightweight liveness endpoint and does not touch PostgreSQL. `/ready` performs a bounded `SELECT 1` against the configured database and returns HTTP 503 when PostgreSQL is unavailable.
@@ -149,21 +168,30 @@ fly mpg create \
 
 Record the cluster ID returned by Fly.
 
-## 7. Do not attach MPG to Mithril yet
+## 7. Attach MPG as `FLY_DATABASE_URL`, not `DATABASE_URL`
 
-Fly can attach MPG with:
+Attach with an explicit variable name so the Supabase `DATABASE_URL` is not overwritten:
 
 ```bash
-fly mpg attach <cluster-id> -a instaclean-mithril
+fly mpg attach <cluster-id> -a instaclean-mithril -d fly-db -u fly-user --variable-name FLY_DATABASE_URL
 ```
 
-That command sets the app's `DATABASE_URL` to the MPG pooled/PgBouncer connection. **Do not run it yet.** The current production application database remains Supabase while we prepare and verify the Fly restore.
+Do not run `fly mpg attach` without `--variable-name`; the default would replace `DATABASE_URL` and remove the Supabase rollback secret.
 
-For restore/import work, use Fly's direct database connection/proxy instead of the pooled application URL when required by PostgreSQL tooling.
+For dump/restore work, use Fly's direct connection/proxy rather than the application URL when PostgreSQL tooling requires it.
 
-## 8. Rehearse the database migration
+## 8. Refresh Fly from live Supabase
 
-Use the latest verified R2 backup produced by `instaclean-production`:
+Keep copying live production onto Fly while both backends exist. See [`docs/migration/production-shadow-sync.md`](../migration/production-shadow-sync.md):
+
+```bash
+export SOURCE_DATABASE_URL='postgresql://...'   # session/direct, port 5432
+export TARGET_DATABASE_URL='postgresql://...'   # Fly MPG via fly mpg proxy
+export CONFIRM_SHADOW_RESTORE=YES
+bash scripts/db_sync_from_live.sh
+```
+
+Cloudflare R2 remains a disaster-recovery archive, not the normal shadow-sync source. A verified R2 backup from `instaclean-production` looks like:
 
 ```text
 latest.json
@@ -172,23 +200,37 @@ YYYY-MM-DD/<run-id>/manifest.json
 YYYY-MM-DD/<run-id>/checksums.sha256
 ```
 
-The archive contains production row data, including the Supabase auth schema, but it must not be restored blindly because the current database contains Supabase-specific extensions, roles, policies, functions, and triggers.
-
-The rehearsal sequence is:
-
-1. pull the latest verified backup from R2
-2. inspect `full.dump` with `pg_restore --list`
-3. prepare a Fly-compatible restore list/schema transformation
-4. restore into the MPG rehearsal database
-5. validate PostGIS, row counts, identities, bookings, pricing, wallets, payments, availability, functions, triggers, and security behavior
-6. run Mithril parity tests against the Fly database
-7. only after parity passes, plan the live database cutover
+The archive contains production row data, including the Supabase auth schema, but it must not be restored blindly because the current database contains Supabase-specific extensions, roles, policies, functions, and triggers. Prefer `db_sync_from_live.sh` unless you are rehearsing disaster recovery from R2.
 
 ## Release migrations
 
 There is intentionally no Fly `release_command` for Ecto migrations yet.
 
-During coexistence, Supabase remains the canonical schema owner. Automatically running `mix ecto.migrate` during every Mithril deploy could mutate the live Supabase database before Mithril owns that schema. Add a controlled release migration command only after the relevant DDL has been moved under Mithril/Ecto ownership.
+Direct Phase 1 tables are owned by Mithril and applied explicitly:
+
+```bash
+export TARGET_DATABASE_URL='postgresql://...@localhost:16380/fly-db'
+export CONFIRM_DIRECT_SCHEMA=YES
+bash scripts/apply_direct_schema.sh
+```
+
+The SQL lives at `priv/repo/sql/direct/20260903170000_direct_phase1.sql`, copied from `molayodecker/instaclean-schema#98` without Supabase RLS/RPCs.
+
+Mithril login tables are also applied explicitly, then existing bcrypt hashes can be copied from live Supabase:
+
+```bash
+export TARGET_DATABASE_URL='postgresql://...@localhost:16380/fly-db'
+export CONFIRM_AUTH_SCHEMA=YES
+bash scripts/apply_auth_schema.sh
+
+export SOURCE_DATABASE_URL='postgresql://...'   # live Supabase session/direct
+export CONFIRM_AUTH_IMPORT=YES
+bash scripts/import_auth_passwords.sh
+```
+
+A later `db_sync_from_live.sh` overwrite drops public tables, including Mithril auth. Re-apply the auth schema and re-import hashes after any full shadow restore.
+
+During coexistence, do not run `mix ecto.migrate` automatically on every Mithril deploy. That could mutate the live Supabase database before Mithril owns the rest of the schema.
 
 ## Runtime sizing
 

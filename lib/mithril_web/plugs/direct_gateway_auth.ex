@@ -3,12 +3,35 @@ defmodule MithrilWeb.Plugs.DirectGatewayAuth do
 
   import Plug.Conn
 
+  alias Mithril.Auth.Token
+  alias MithrilWeb.Plugs.UserAuth
+
   @token_header "x-mithril-direct-token"
   @user_header "x-instaclean-user-id"
 
   def init(opts), do: opts
 
   def call(conn, _opts) do
+    case UserAuth.bearer_token(conn) do
+      nil ->
+        gateway_call(conn)
+
+      token ->
+        case Token.verify_access(token) do
+          {:ok, %{"sub" => user_id}} when is_binary(user_id) ->
+            if valid_uuid?(user_id) do
+              assign(conn, :instaclean_user_id, user_id)
+            else
+              reject(conn, 401, "invalid_user")
+            end
+
+          _other ->
+            reject(conn, 401, "unauthorized")
+        end
+    end
+  end
+
+  defp gateway_call(conn) do
     configured_token = Application.get_env(:mithril, :direct_gateway_token)
     request_token = conn |> get_req_header(@token_header) |> List.first()
     user_id = conn |> get_req_header(@user_header) |> List.first()

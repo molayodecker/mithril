@@ -13,11 +13,31 @@ defmodule MithrilWeb.Router do
     plug MithrilWeb.Plugs.DirectGatewayAuth
   end
 
+  pipeline :user_auth do
+    plug MithrilWeb.Plugs.UserAuth
+  end
+
   scope "/", MithrilWeb do
     pipe_through :api
 
     get "/health", HealthController, :show
     get "/ready", ReadyController, :show
+  end
+
+  scope "/auth", MithrilWeb do
+    pipe_through :api
+
+    post "/login", AuthController, :login
+    post "/refresh", AuthController, :refresh
+    post "/logout", AuthController, :logout
+    post "/register", AuthController, :register
+  end
+
+  scope "/auth", MithrilWeb do
+    pipe_through [:api, :user_auth]
+
+    get "/me", AuthController, :me
+    post "/password", AuthController, :set_password
   end
 
   scope "/internal/parity", MithrilWeb do
