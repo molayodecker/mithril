@@ -124,16 +124,23 @@ ORDER BY tc.table_name, tc.constraint_name;
 " > "$OUT_DIR/external_foreign_keys.csv"
 
 "${PSQL[@]}" --csv -c "
+WITH candidates AS MATERIALIZED (
+  SELECT
+    p.oid,
+    n.nspname AS function_schema,
+    p.proname AS function_name
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND p.prokind IN ('f', 'p')
+)
 SELECT
-  n.nspname AS function_schema,
-  p.proname AS function_name,
-  pg_get_function_identity_arguments(p.oid) AS arguments
-FROM pg_proc p
-JOIN pg_namespace n ON n.oid = p.pronamespace
-WHERE n.nspname = 'public'
-  AND p.prokind IN ('f', 'p')
-  AND position('auth.' in lower(pg_get_functiondef(p.oid))) > 0
-ORDER BY p.proname, pg_get_function_identity_arguments(p.oid);
+  function_schema,
+  function_name,
+  pg_get_function_identity_arguments(oid) AS arguments
+FROM candidates
+WHERE position('auth.' in lower(pg_get_functiondef(oid))) > 0
+ORDER BY function_name, pg_get_function_identity_arguments(oid);
 " > "$OUT_DIR/functions_referencing_auth.csv"
 
 "${PSQL[@]}" --csv -c "
