@@ -16,8 +16,15 @@ TARGET_URL="postgresql://postgres:postgres@localhost:5432/$TARGET_DB"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 SNAPSHOT_DIR="$TMP_DIR/snapshot"
+READY_FILE="$TMP_DIR/snapshot-ready"
+RELEASE_FILE="$TMP_DIR/snapshot-release"
+SNAPSHOT_PID=""
 
 cleanup() {
+  if [[ -n "${SNAPSHOT_PID:-}" ]]; then
+    kill "$SNAPSHOT_PID" >/dev/null 2>&1 || true
+    wait "$SNAPSHOT_PID" >/dev/null 2>&1 || true
+  fi
   psql "$ADMIN_URL" -X -q -v ON_ERROR_STOP=1 -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname IN ('$SOURCE_DB', '$TARGET_DB') AND pid <> pg_backend_pid();" >/dev/null 2>&1 || true
   psql "$ADMIN_URL" -X -q -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS $SOURCE_DB;" >/dev/null 2>&1 || true
   psql "$ADMIN_URL" -X -q -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS $TARGET_DB;" >/dev/null 2>&1 || true
@@ -88,6 +95,11 @@ AS $$
   SELECT email FROM auth.users WHERE id = target_user_id
 $$;
 
+GRANT USAGE ON SCHEMA public TO authenticated;
+GRANT SELECT ON public.users TO authenticated;
+REVOKE ALL ON FUNCTION public.lookup_shadow_email(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.lookup_shadow_email(uuid) TO authenticated;
+
 INSERT INTO auth.users (
   id, email, phone, encrypted_password, recovery_token,
   created_at, updated_at, email_confirmed_at, phone_confirmed_at,
@@ -114,10 +126,50 @@ SQL
 
 SOURCE_DATABASE_URL="$SOURCE_URL" \
 DB_SYNC_OUTPUT_DIR="$SNAPSHOT_DIR" \
-bash "$ROOT_DIR/scripts/db_sync_snapshot.sh" >/dev/null
+DB_SYNC_SNAPSHOT_READY_FILE="$READY_FILE" \
+DB_SYNC_SNAPSHOT_RELEASE_FILE="$RELEASE_FILE" \
+bash "$ROOT_DIR/scripts/db_sync_snapshot.sh" >/dev/null &
+SNAPSHOT_PID=$!
 
-if grep -q 'SECRET_HASH_MUST_NOT_COPY\|SECRET_RECOVERY_MUST_NOT_COPY' "$SNAPSHOT_DIR/auth_identity_projection.csv"; then
+for _ in $(seq 1 200); do
+  [[ -s "$READY_FILE" ]] && break
+  sleep 0.05
+done
+if [[ ! -s "$READY_FILE" ]]; then
+  echo "Snapshot script did not expose its exported snapshot in time." >&2
+  exit 1
+fi
+
+# These rows are committed after the exported snapshot exists. A correct
+# point-in-time capture must exclude them from row counts, public.dump and the
+# sanitized auth projection even though the source keeps accepting writes.
+psql "$SOURCE_URL" -X -q -v ON_ERROR_STOP=1 <<'SQL'
+INSERT INTO auth.users (
+  id, email, phone, encrypted_password, recovery_token,
+  created_at, updated_at, is_anonymous
+) VALUES (
+  '33333333-3333-3333-3333-333333333333',
+  'late@example.com',
+  '+15555550999',
+  'LATE_SECRET_HASH',
+  'LATE_SECRET_RECOVERY',
+  now(), now(), false
+);
+INSERT INTO public.users(id, email)
+VALUES ('33333333-3333-3333-3333-333333333333', 'late@example.com');
+SQL
+
+touch "$RELEASE_FILE"
+wait "$SNAPSHOT_PID"
+SNAPSHOT_PID=""
+
+if grep -q 'SECRET_HASH_MUST_NOT_COPY\|SECRET_RECOVERY_MUST_NOT_COPY\|LATE_SECRET_HASH\|LATE_SECRET_RECOVERY' "$SNAPSHOT_DIR/auth_identity_projection.csv"; then
   echo "Auth secret leaked into sanitized identity projection." >&2
+  exit 1
+fi
+
+if grep -q 'late@example.com' "$SNAPSHOT_DIR/auth_identity_projection.csv"; then
+  echo "Sanitized auth projection escaped the exported point-in-time snapshot." >&2
   exit 1
 fi
 
@@ -137,6 +189,12 @@ if [[ "$SECRET_VALUES" != "<null>|<null>" ]]; then
   exit 1
 fi
 
+TARGET_USER_COUNT="$(psql "$TARGET_URL" -X -Atqc 'SELECT count(*) FROM public.users')"
+if [[ "$TARGET_USER_COUNT" != "1" ]]; then
+  echo "Point-in-time public dump included rows committed after export: $TARGET_USER_COUNT" >&2
+  exit 1
+fi
+
 LOOKUP_EMAIL="$(psql "$TARGET_URL" -X -Atqc "SELECT public.lookup_shadow_email('11111111-1111-1111-1111-111111111111')")"
 if [[ "$LOOKUP_EMAIL" != "shadow@example.com" ]]; then
   echo "Restored public function cannot read sanitized auth identity: $LOOKUP_EMAIL" >&2
@@ -146,6 +204,25 @@ fi
 POLICY_COUNT="$(psql "$TARGET_URL" -X -Atqc "SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = 'users' AND policyname = 'users_self'")"
 if [[ "$POLICY_COUNT" != "1" ]]; then
   echo "Expected RLS policy was not restored." >&2
+  exit 1
+fi
+
+HAS_SELECT="$(psql "$TARGET_URL" -X -Atqc "SELECT has_table_privilege('authenticated', 'public.users', 'SELECT')")"
+if [[ "$HAS_SELECT" != "t" ]]; then
+  echo "Authenticated shadow role lost its source SELECT privilege." >&2
+  exit 1
+fi
+
+RLS_EMAIL="$(psql "$TARGET_URL" -X -Atq -v ON_ERROR_STOP=1 <<'SQL'
+BEGIN;
+SET LOCAL request.jwt.claims = '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}';
+SET LOCAL ROLE authenticated;
+SELECT email FROM public.users;
+ROLLBACK;
+SQL
+)"
+if [[ "$RLS_EMAIL" != "shadow@example.com" ]]; then
+  echo "RLS/auth.uid() aggregate JWT fallback failed: $RLS_EMAIL" >&2
   exit 1
 fi
 
