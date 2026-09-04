@@ -28,7 +28,8 @@ defmodule MithrilWeb.Plugs.DirectGatewayAuth do
     end
   end
 
-  defp secure_equal?(expected, actual) when is_binary(actual) and byte_size(expected) == byte_size(actual) do
+  defp secure_equal?(expected, actual)
+       when is_binary(actual) and byte_size(expected) == byte_size(actual) do
     Plug.Crypto.secure_compare(expected, actual)
   end
 
