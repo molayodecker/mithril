@@ -468,7 +468,10 @@ defmodule Mithril.Direct do
                placement_status = 'available',
                desired_roles = ARRAY(
                  SELECT DISTINCT unnest(
-                   public.placement_candidate_profiles.desired_roles || EXCLUDED.desired_roles
+                   COALESCE(
+                     public.placement_candidate_profiles.desired_roles,
+                     ARRAY[]::text[]
+                   ) || EXCLUDED.desired_roles
                  )
                ),
                updated_at = now()
@@ -548,31 +551,26 @@ defmodule Mithril.Direct do
       Repo.rollback(:candidate_unavailable)
     end
 
-    candidate_profile =
+    [opt_in, placement_status, desired_roles, verified, provider_status] =
       one_row_or_rollback(
         """
-        SELECT placement_opt_in, placement_status, desired_roles
-        FROM public.placement_candidate_profiles
-        WHERE user_id = $1
+        SELECT
+          pcp.placement_opt_in,
+          pcp.placement_status,
+          pcp.desired_roles,
+          cd.verified,
+          cd.status
+        FROM public.placement_candidate_profiles pcp
+        JOIN public.cleaner_data cd ON cd.user_id = pcp.user_id
+        WHERE pcp.user_id = $1
+        FOR UPDATE OF pcp, cd
         """,
         [candidate_id],
         :candidate_unavailable
       )
 
-    [opt_in, placement_status, desired_roles] = candidate_profile
-
-    unless opt_in == true and placement_status == "available" and role in (desired_roles || []) do
-      Repo.rollback(:candidate_unavailable)
-    end
-
-    provider =
-      one_row_or_rollback(
-        "SELECT verified, status FROM public.cleaner_data WHERE user_id = $1",
-        [candidate_id],
-        :candidate_unavailable
-      )
-
-    unless provider == [true, "active"] do
+    unless opt_in == true and placement_status == "available" and
+             role in (desired_roles || []) and verified == true and provider_status == "active" do
       Repo.rollback(:candidate_unavailable)
     end
 
@@ -603,14 +601,49 @@ defmodule Mithril.Direct do
     household_worker_id =
       case Repo.query(
              """
-             SELECT id::text
+             SELECT id, id::text
              FROM public.household_workers
              WHERE household_owner_id = $1 AND worker_user_id = $2
              LIMIT 1
+             FOR UPDATE
              """,
              [uid, candidate_id]
            ) do
-        {:ok, %{rows: [[id]]}} ->
+        {:ok, %{rows: [[worker_id, id]]}} ->
+          with_query_or_rollback(
+            """
+            UPDATE public.household_workers
+            SET first_name = $2,
+                last_name = $3,
+                phone = $4,
+                email = $5,
+                source = 'instaclean_placement',
+                placement_request_id = $6,
+                placement_match_id = $7,
+                role = $8,
+                start_date = $9,
+                salary_frequency = $10,
+                live_in = $11,
+                status = 'active',
+                invitation_status = 'accepted',
+                updated_at = now()
+            WHERE id = $1
+            """,
+            [
+              worker_id,
+              first_name,
+              last_name,
+              phone,
+              email,
+              request_id,
+              mid,
+              role,
+              desired_start_date,
+              salary_frequency,
+              living_arrangement == "live_in"
+            ]
+          )
+
           id
 
         {:ok, %{rows: []}} ->
@@ -708,6 +741,7 @@ defmodule Mithril.Direct do
     role = params["role"]
     living = params["livingArrangement"]
     employment = params["employmentType"]
+    desired_start_date = params["desiredStartDate"]
     frequency = params["salaryFrequency"]
     min_salary = params["salaryMinPesewas"]
     max_salary = params["salaryMaxPesewas"]
@@ -723,6 +757,9 @@ defmodule Mithril.Direct do
 
       employment not in @employment_types ->
         {:error, :invalid_employment_type}
+
+      not valid_optional_iso_date?(desired_start_date) ->
+        {:error, :invalid_desired_start_date}
 
       not is_nil(frequency) and frequency not in @salary_frequencies ->
         {:error, :invalid_salary_frequency}
@@ -751,17 +788,28 @@ defmodule Mithril.Direct do
     first_name = params["firstName"]
     phone = params["phone"]
     role = params["role"]
+    start_date = params["startDate"]
 
     cond do
       not is_binary(first_name) or String.trim(first_name) == "" -> {:error, :invalid_name}
       not is_binary(phone) or byte_size(String.trim(phone)) < 6 -> {:error, :invalid_phone}
       not is_nil(role) and role not in @roles -> {:error, :invalid_role}
+      not valid_optional_iso_date?(start_date) -> {:error, :invalid_start_date}
       true -> :ok
     end
   end
 
   defp valid_nonnegative_integer?(nil), do: true
   defp valid_nonnegative_integer?(value), do: is_integer(value) and value >= 0
+
+  defp valid_optional_iso_date?(nil), do: true
+
+  defp valid_optional_iso_date?(value) when is_binary(value) do
+    value = String.trim(value)
+    value == "" or match?({:ok, _date}, Date.from_iso8601(value))
+  end
+
+  defp valid_optional_iso_date?(_value), do: false
 
   defp text_or_empty(nil), do: ""
   defp text_or_empty(value) when is_binary(value), do: String.trim(value)
