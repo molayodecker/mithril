@@ -19,11 +19,15 @@ end
 pool_size = parse_positive_integer.("POOL_SIZE", "10")
 socket_options = if truthy_env?.("ECTO_IPV6"), do: [:inet6], else: []
 
-if database_url = System.get_env("DATABASE_URL") do
-  config :mithril, Mithril.Repo,
-    url: database_url,
-    pool_size: pool_size,
-    socket_options: socket_options
+# Tests must use config/test.exs (local mithril_test). A shell/direnv
+# DATABASE_URL often points at production and would make mix test mutate it.
+if config_env() != :test do
+  if database_url = System.get_env("DATABASE_URL") do
+    config :mithril, Mithril.Repo,
+      url: database_url,
+      pool_size: pool_size,
+      socket_options: socket_options
+  end
 end
 
 if parity_token = System.get_env("MITHRIL_PARITY_TOKEN") do

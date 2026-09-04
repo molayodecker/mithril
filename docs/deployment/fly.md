@@ -83,20 +83,27 @@ Never commit either value to git.
 fly deploy -a instaclean-mithril
 ```
 
-Verify:
+Verify liveness and readiness separately:
 
 ```bash
 fly status -a instaclean-mithril
 curl https://instaclean-mithril.fly.dev/health
+curl https://instaclean-mithril.fly.dev/ready
 ```
 
-Expected response:
+Expected responses:
 
 ```json
 {"service":"mithril","status":"ok"}
 ```
 
-The Fly health check also calls `/health` every 15 seconds.
+```json
+{"service":"mithril","status":"ready","database":"ok"}
+```
+
+`/health` is a lightweight liveness endpoint and does not touch PostgreSQL. `/ready` performs a bounded `SELECT 1` against the configured database and returns HTTP 503 when PostgreSQL is unavailable.
+
+Fly's service-level HTTP check calls `/ready` every 15 seconds. Because service checks control routing, a Machine that cannot reach the database is removed from request routing until readiness recovers. A failed readiness check does not itself restart or stop the Machine.
 
 ## 5. Create Fly Managed Postgres
 

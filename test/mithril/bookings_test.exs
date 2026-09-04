@@ -15,7 +15,7 @@ defmodule Mithril.BookingsTest do
   test "reads a booking from the legacy public.bookings table without owning its DDL" do
     booking_id = Ecto.UUID.generate()
     customer_id = Ecto.UUID.generate()
-    service_id = Ecto.UUID.generate()
+    service_id = 8
 
     Repo.query!(
       """
@@ -27,17 +27,17 @@ defmodule Mithril.BookingsTest do
         ($1, $2, $3, DATE '2026-09-10', TIME '09:30:00', 3,
          'East Legon, Accra', 'pending', 45000, 6750, 0, 'pending', NOW(), NOW())
       """,
-      Enum.map([booking_id, customer_id, service_id], &Ecto.UUID.dump!/1)
+      [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(customer_id), service_id]
     )
 
     assert {:ok, booking} = Bookings.get_booking(booking_id)
     assert booking.id == booking_id
     assert booking.customer_id == customer_id
     assert booking.service_id == service_id
-    assert booking.duration_hours == 3
+    assert Decimal.eq?(booking.duration_hours, Decimal.new(3))
     assert booking.address == "East Legon, Accra"
     assert booking.status == "pending"
-    assert booking.total_price == 45_000
+    assert Decimal.eq?(booking.total_price, Decimal.new(45_000))
   end
 
   test "rejects malformed booking ids before querying" do
@@ -45,21 +45,29 @@ defmodule Mithril.BookingsTest do
   end
 
   defp create_legacy_booking_table! do
+    [[database]] = Repo.query!("SELECT current_database()").rows
+
+    unless database == "mithril_test" do
+      raise "Refusing to recreate bookings; expected mithril_test, got #{inspect(database)}"
+    end
+
+    Repo.query!("DROP TABLE IF EXISTS public.bookings")
+
     Repo.query!("""
-    CREATE TABLE IF NOT EXISTS public.bookings (
+    CREATE TABLE public.bookings (
       id uuid PRIMARY KEY,
       customer_id uuid NOT NULL,
       cleaner_id uuid,
-      service_id uuid NOT NULL,
+      service_id integer NOT NULL,
       scheduled_date date NOT NULL,
       scheduled_time time NOT NULL,
-      duration_hours integer,
+      duration_hours numeric,
       address text NOT NULL,
       special_instructions text,
       status text,
-      total_price integer NOT NULL,
-      platform_fee integer,
-      tax_amount integer,
+      total_price numeric NOT NULL,
+      platform_fee numeric,
+      tax_amount numeric,
       payment_status text,
       payment_method text,
       created_at timestamptz,
