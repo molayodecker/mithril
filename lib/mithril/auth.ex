@@ -1,6 +1,6 @@
 defmodule Mithril.Auth do
   @moduledoc """
-  Email/password login for Mithril. Issues JWTs for API clients such as Direct.
+  Email/phone + password login for Mithril. Issues JWTs for API clients such as Direct.
   """
 
   require Logger
@@ -8,10 +8,10 @@ defmodule Mithril.Auth do
   alias Mithril.Auth.Token
   alias Mithril.Repo
 
-  def login(email, password) when is_binary(email) and is_binary(password) do
-    email = normalize_email(email)
+  def login(login, password) when is_binary(login) and is_binary(password) do
+    login = normalize_login(login)
 
-    with {:ok, account} <- fetch_account(email),
+    with {:ok, account} <- fetch_account(login),
          :ok <- verify_password(password, account.password_hash),
          {:ok, tokens} <- issue_session(account) do
       {:ok, tokens}
@@ -28,29 +28,19 @@ defmodule Mithril.Auth do
   def refresh(refresh_token) when is_binary(refresh_token) do
     hash = hash_refresh(refresh_token)
 
-    case Repo.query(
-           """
-           SELECT user_id::text
-           FROM public.mithril_refresh_tokens
-           WHERE token_hash = $1
-             AND revoked_at IS NULL
-             AND expires_at > now()
-           """,
-           [hash]
-         ) do
-      {:ok, %{num_rows: 1, rows: [[user_id]]}} ->
-        _ = revoke_refresh(hash)
-
-        with {:ok, account} <- fetch_account_by_id(user_id),
-             {:ok, tokens} <- issue_session(account) do
-          {:ok, tokens}
-        end
-
-      {:ok, _} ->
-        {:error, :invalid_refresh_token}
-
-      {:error, error} ->
-        database_error(error)
+    Repo.transaction(fn ->
+      with {:ok, user_id} <- claim_refresh(hash),
+           {:ok, account} <- fetch_account_by_id(user_id),
+           {:ok, tokens} <- issue_session(account) do
+        tokens
+      else
+        {:error, :not_found} -> Repo.rollback(:invalid_refresh_token)
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, tokens} -> {:ok, tokens}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -96,19 +86,8 @@ defmodule Mithril.Auth do
     with :ok <- validate_password(password),
          {:ok, account} <- fetch_account_by_id(user_id),
          :ok <- authorize_password_change(account, current_password) do
-      hash = Bcrypt.hash_pwd_salt(password)
-
-      case Repo.query(
-             """
-             UPDATE public.mithril_auth_accounts
-             SET password_hash = $2, updated_at = now()
-             WHERE user_id = $1::uuid
-             """,
-             [dump_uuid(user_id), hash]
-           ) do
-        {:ok, _} -> :ok
-        {:error, error} -> database_error(error)
-      end
+      password_hash = Bcrypt.hash_pwd_salt(password)
+      update_password_and_revoke_sessions(user_id, password_hash)
     end
   end
 
@@ -116,12 +95,14 @@ defmodule Mithril.Auth do
     email = normalize_email(email)
 
     with :ok <- validate_email(email),
-         :ok <- validate_password(password),
-         {:ok, user_id} <- insert_user(email),
-         :ok <- insert_account(user_id, email, Bcrypt.hash_pwd_salt(password)),
-         {:ok, account} <- fetch_account_by_id(user_id),
-         {:ok, tokens} <- issue_session(account) do
-      {:ok, tokens}
+         :ok <- validate_password(password) do
+      password_hash = Bcrypt.hash_pwd_salt(password)
+
+      with {:ok, user_id} <- insert_user_and_account(email, password_hash),
+           {:ok, account} <- fetch_account_by_id(user_id),
+           {:ok, tokens} <- issue_session(account) do
+        {:ok, tokens}
+      end
     end
   end
 
@@ -158,6 +139,24 @@ defmodule Mithril.Auth do
     end
   end
 
+  defp claim_refresh(hash) do
+    case Repo.query(
+           """
+           UPDATE public.mithril_refresh_tokens
+           SET revoked_at = now()
+           WHERE token_hash = $1
+             AND revoked_at IS NULL
+             AND expires_at > now()
+           RETURNING user_id::text
+           """,
+           [hash]
+         ) do
+      {:ok, %{num_rows: 1, rows: [[user_id]]}} -> {:ok, user_id}
+      {:ok, _} -> {:error, :invalid_refresh_token}
+      {:error, error} -> database_error(error)
+    end
+  end
+
   defp revoke_refresh(hash) do
     Repo.query(
       "UPDATE public.mithril_refresh_tokens SET revoked_at = now() WHERE token_hash = $1 AND revoked_at IS NULL",
@@ -165,14 +164,19 @@ defmodule Mithril.Auth do
     )
   end
 
-  defp fetch_account(email) do
+  defp fetch_account(login) do
     case Repo.query(
            """
-           SELECT user_id::text, email, password_hash
-           FROM public.mithril_auth_accounts
-           WHERE lower(email) = $1
+           SELECT a.user_id::text, a.email, a.password_hash
+           FROM public.mithril_auth_accounts a
+           JOIN public.users u ON u.id = a.user_id
+           WHERE u.status::text = 'active'
+             AND (
+               lower(a.email) = $1
+               OR lower(btrim(COALESCE(u.phone, ''))) = $1
+             )
            """,
-           [email]
+           [login]
          ) do
       {:ok, %{num_rows: 1, rows: [[user_id, stored_email, password_hash]]}} ->
         {:ok, %{user_id: user_id, email: stored_email, password_hash: password_hash}}
@@ -189,9 +193,11 @@ defmodule Mithril.Auth do
   defp fetch_account_by_id(user_id) do
     case Repo.query(
            """
-           SELECT user_id::text, email, password_hash
-           FROM public.mithril_auth_accounts
-           WHERE user_id = $1::uuid
+           SELECT a.user_id::text, a.email, a.password_hash
+           FROM public.mithril_auth_accounts a
+           JOIN public.users u ON u.id = a.user_id
+           WHERE a.user_id = $1::uuid
+             AND u.status::text = 'active'
            """,
            [dump_uuid(user_id)]
          ) do
@@ -230,25 +236,38 @@ defmodule Mithril.Auth do
     {:error, :current_password_required}
   end
 
-  defp insert_user(email) do
+  defp insert_user_and_account(email, password_hash) do
     user_id = Ecto.UUID.generate()
 
     Repo.transaction(fn ->
       with {:ok, _} <-
              Repo.query(
                """
-               INSERT INTO auth.users (id, email, created_at, updated_at)
-               VALUES ($1::uuid, $2, now(), now())
+               INSERT INTO auth.users (id, email, encrypted_password, created_at, updated_at)
+               VALUES ($1::uuid, $2, $3, now(), now())
                """,
-               [dump_uuid(user_id), email]
+               [dump_uuid(user_id), email, password_hash]
              ),
            {:ok, _} <-
              Repo.query(
                """
-               INSERT INTO public.users (id, email, status, created_at, updated_at)
-               VALUES ($1::uuid, $2, 'active', now(), now())
+               INSERT INTO public.users (id, email, password_hash, status, created_at, updated_at)
+               VALUES ($1::uuid, $2, $3, 'active', now(), now())
+               ON CONFLICT (id) DO UPDATE
+               SET email = EXCLUDED.email,
+                   password_hash = EXCLUDED.password_hash,
+                   status = 'active',
+                   updated_at = now()
                """,
-               [dump_uuid(user_id), email]
+               [dump_uuid(user_id), email, password_hash]
+             ),
+           {:ok, _} <-
+             Repo.query(
+               """
+               INSERT INTO public.mithril_auth_accounts (user_id, email, password_hash)
+               VALUES ($1::uuid, $2, $3)
+               """,
+               [dump_uuid(user_id), email, password_hash]
              ) do
         user_id
       else
@@ -260,22 +279,58 @@ defmodule Mithril.Auth do
       end
     end)
     |> case do
-      {:ok, user_id} -> {:ok, user_id}
+      {:ok, registered_user_id} -> {:ok, registered_user_id}
       {:error, :email_taken} -> {:error, :email_taken}
       {:error, error} -> database_error(error)
     end
   end
 
-  defp insert_account(user_id, email, password_hash) do
-    case Repo.query(
-           """
-           INSERT INTO public.mithril_auth_accounts (user_id, email, password_hash)
-           VALUES ($1::uuid, $2, $3)
-           """,
-           [dump_uuid(user_id), email, password_hash]
-         ) do
-      {:ok, _} -> :ok
-      {:error, %{postgres: %{code: :unique_violation}}} -> {:error, :email_taken}
+  defp update_password_and_revoke_sessions(user_id, password_hash) do
+    Repo.transaction(fn ->
+      with {:ok, _} <-
+             Repo.query(
+               """
+               UPDATE public.mithril_auth_accounts
+               SET password_hash = $2, updated_at = now()
+               WHERE user_id = $1::uuid
+               """,
+               [dump_uuid(user_id), password_hash]
+             ),
+           {:ok, _} <-
+             Repo.query(
+               """
+               UPDATE public.users
+               SET password_hash = $2, updated_at = now()
+               WHERE id = $1::uuid
+               """,
+               [dump_uuid(user_id), password_hash]
+             ),
+           {:ok, _} <-
+             Repo.query(
+               """
+               UPDATE auth.users
+               SET encrypted_password = $2, updated_at = now()
+               WHERE id = $1::uuid
+               """,
+               [dump_uuid(user_id), password_hash]
+             ),
+           {:ok, _} <-
+             Repo.query(
+               """
+               UPDATE public.mithril_refresh_tokens
+               SET revoked_at = now()
+               WHERE user_id = $1::uuid
+                 AND revoked_at IS NULL
+               """,
+               [dump_uuid(user_id)]
+             ) do
+        :ok
+      else
+        {:error, error} -> Repo.rollback(error)
+      end
+    end)
+    |> case do
+      {:ok, :ok} -> :ok
       {:error, error} -> database_error(error)
     end
   end
@@ -297,6 +352,7 @@ defmodule Mithril.Auth do
   end
 
   defp normalize_email(email), do: email |> String.trim() |> String.downcase()
+  defp normalize_login(login), do: login |> String.trim() |> String.downcase()
 
   defp dump_uuid(user_id) do
     case Ecto.UUID.dump(user_id) do
