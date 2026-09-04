@@ -66,7 +66,7 @@ defmodule MithrilWeb.ParityBookingControllerTest do
     assert %{"error" => "unauthorized"} = json_response(conn, 401)
   end
 
-  test "parity route returns a legacy booking when authorized" do
+  test "parity route returns legacy numeric fields as JSON numbers" do
     booking_id = Ecto.UUID.generate()
     customer_id = Ecto.UUID.generate()
     service_id = 8
@@ -78,8 +78,8 @@ defmodule MithrilWeb.ParityBookingControllerTest do
          address, status, total_price, platform_fee, tax_amount, payment_status,
          created_at, updated_at)
       VALUES
-        ($1, $2, $3, DATE '2026-09-10', TIME '09:30:00', 2,
-         'Accra, Ghana', 'pending', 30000, 4500, 0, 'pending', NOW(), NOW())
+        ($1, $2, $3, DATE '2026-09-10', TIME '09:30:00', 2.5,
+         'Accra, Ghana', 'pending', 30000.75, 4500.25, 0.5, 'pending', NOW(), NOW())
       """,
       [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(customer_id), service_id]
     )
@@ -90,10 +90,15 @@ defmodule MithrilWeb.ParityBookingControllerTest do
       |> get("/internal/parity/bookings/#{booking_id}")
 
     response = json_response(conn, 200)
-    assert response["booking"]["id"] == booking_id
-    assert response["booking"]["customer_id"] == customer_id
-    assert response["booking"]["service_id"] == service_id
-    assert response["booking"]["status"] == "pending"
-    assert response["booking"]["total_price"] == 30_000
+    booking = response["booking"]
+
+    assert booking["id"] == booking_id
+    assert booking["customer_id"] == customer_id
+    assert booking["service_id"] == service_id
+    assert booking["status"] == "pending"
+    assert booking["duration_hours"] == 2.5
+    assert booking["total_price"] == 30_000.75
+    assert booking["platform_fee"] == 4_500.25
+    assert booking["tax_amount"] == 0.5
   end
 end
