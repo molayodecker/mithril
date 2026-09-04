@@ -13,6 +13,7 @@ defmodule MithrilWeb.Router do
     pipe_through :api
 
     get "/health", HealthController, :show
+    get "/ready", ReadyController, :show
   end
 
   scope "/internal/parity", MithrilWeb do
