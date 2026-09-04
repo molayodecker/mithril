@@ -2,6 +2,7 @@ defmodule MithrilWeb.Plugs.DirectGatewayAuthTest do
   use ExUnit.Case, async: false
 
   import Plug.Conn
+  import Phoenix.ConnTest
 
   alias MithrilWeb.Plugs.DirectGatewayAuth
 
@@ -23,7 +24,7 @@ defmodule MithrilWeb.Plugs.DirectGatewayAuthTest do
   end
 
   test "rejects requests without the server token" do
-    conn = DirectGatewayAuth.call(%Plug.Conn{req_headers: []}, [])
+    conn = DirectGatewayAuth.call(build_conn(), [])
 
     assert conn.halted
     assert conn.status == 401
@@ -32,12 +33,9 @@ defmodule MithrilWeb.Plugs.DirectGatewayAuthTest do
 
   test "rejects an invalid canonical user id" do
     conn =
-      %Plug.Conn{
-        req_headers: [
-          {"x-mithril-direct-token", @token},
-          {"x-instaclean-user-id", "not-a-uuid"}
-        ]
-      }
+      build_conn()
+      |> put_req_header("x-mithril-direct-token", @token)
+      |> put_req_header("x-instaclean-user-id", "not-a-uuid")
       |> DirectGatewayAuth.call([])
 
     assert conn.halted
@@ -49,12 +47,9 @@ defmodule MithrilWeb.Plugs.DirectGatewayAuthTest do
     user_id = Ecto.UUID.generate()
 
     conn =
-      %Plug.Conn{
-        req_headers: [
-          {"x-mithril-direct-token", @token},
-          {"x-instaclean-user-id", user_id}
-        ]
-      }
+      build_conn()
+      |> put_req_header("x-mithril-direct-token", @token)
+      |> put_req_header("x-instaclean-user-id", user_id)
       |> DirectGatewayAuth.call([])
 
     refute conn.halted
