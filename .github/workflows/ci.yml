@@ -52,11 +52,8 @@ jobs:
       - run: mix local.hex --force
       - run: mix local.rebar --force
       - run: mix deps.get
-      - name: Emit generated lockfile for bootstrap
-        run: |
-          echo 'BEGIN_MIX_LOCK'
-          cat mix.lock
-          echo 'END_MIX_LOCK'
+      - name: Verify dependency lock is reproducible
+        run: git diff --exit-code -- mix.lock
       - run: mix format --check-formatted
       - run: mix compile --warnings-as-errors
       - run: mix test
