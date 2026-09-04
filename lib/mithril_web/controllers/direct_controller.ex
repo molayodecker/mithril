@@ -4,7 +4,9 @@ defmodule MithrilWeb.DirectController do
   alias Mithril.Direct
 
   def list_placements(conn, _params) do
-    respond(conn, Direct.list_placements(user_id(conn)), fn placements -> %{placements: placements} end)
+    respond(conn, Direct.list_placements(user_id(conn)), fn placements ->
+      %{placements: placements}
+    end)
   end
 
   def create_placement(conn, params) do
@@ -28,11 +30,15 @@ defmodule MithrilWeb.DirectController do
   end
 
   def list_admin_placements(conn, _params) do
-    respond(conn, Direct.list_admin_placements(user_id(conn)), fn placements -> %{placements: placements} end)
+    respond(conn, Direct.list_admin_placements(user_id(conn)), fn placements ->
+      %{placements: placements}
+    end)
   end
 
   def list_admin_candidates(conn, _params) do
-    respond(conn, Direct.list_admin_candidates(user_id(conn)), fn candidates -> %{candidates: candidates} end)
+    respond(conn, Direct.list_admin_candidates(user_id(conn)), fn candidates ->
+      %{candidates: candidates}
+    end)
   end
 
   def match_admin_candidate(conn, %{"id" => id} = params) do
