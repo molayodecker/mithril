@@ -3,8 +3,8 @@ defmodule MithrilWeb.Plugs.ParityAuth do
   Protects temporary migration-parity endpoints.
 
   These routes are not customer-facing APIs. They are available only when a
-  server-side parity token is configured and the caller supplies the same
-  value in `x-mithril-parity-token`.
+  server-side parity token is configured at boot and the caller supplies the
+  same value in `x-mithril-parity-token`.
   """
 
   import Plug.Conn
@@ -14,10 +14,7 @@ defmodule MithrilWeb.Plugs.ParityAuth do
   def init(opts), do: opts
 
   def call(conn, _opts) do
-    configured =
-      Application.get_env(:mithril, :parity_token) ||
-        System.get_env("MITHRIL_PARITY_TOKEN")
-
+    configured = Application.get_env(:mithril, :parity_token)
     supplied = conn |> get_req_header(@header) |> List.first()
 
     if valid_token?(configured, supplied) do
