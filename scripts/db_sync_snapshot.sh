@@ -57,10 +57,24 @@ chmod 600 "$OUT_DIR/auth_identity_projection.csv" 2>/dev/null || true
 pg_dump --version > "$OUT_DIR/pg_dump_version.txt"
 psql --version > "$OUT_DIR/psql_version.txt"
 
+CHECKSUM_FILES=(
+  public.dump
+  auth_identity_projection.csv
+  auth_users_shadow_schema.sql
+  public_row_counts.csv
+  public_object_counts.csv
+  external_foreign_keys.csv
+  functions_referencing_auth.csv
+  views_referencing_auth.csv
+  public_policy_roles.txt
+  extensions.csv
+  required_extensions.sql
+)
+
 if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$OUT_DIR" && sha256sum public.dump auth_identity_projection.csv public_row_counts.csv > SHA256SUMS)
+  (cd "$OUT_DIR" && sha256sum "${CHECKSUM_FILES[@]}" > SHA256SUMS)
 else
-  (cd "$OUT_DIR" && shasum -a 256 public.dump auth_identity_projection.csv public_row_counts.csv > SHA256SUMS)
+  (cd "$OUT_DIR" && shasum -a 256 "${CHECKSUM_FILES[@]}" > SHA256SUMS)
 fi
 
 cat > "$OUT_DIR/README.txt" <<TXT
@@ -70,9 +84,16 @@ Captured: $STAMP
 public.dump
   Custom-format pg_dump of the entire public schema and its data.
 
+auth_users_shadow_schema.sql
+  Column/type shape of production auth.users, with nullable columns and only an
+  id primary key. It contains no Auth rows or credentials.
+
 auth_identity_projection.csv
   Sanitized identity bridge only. No passwords, auth tokens, sessions, MFA,
   provider identities, or recovery/confirmation secrets are included.
+
+public_row_counts.csv
+  Exact public table counts at snapshot time, used as the restore parity source.
 
 This directory may contain production customer data. Keep it private and do not
 commit or upload it to GitHub.
