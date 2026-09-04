@@ -23,7 +23,7 @@ kill_timeout = 30
     grace_period = "15s"
     interval = "15s"
     method = "GET"
-    path = "/health"
+    path = "/ready"
     protocol = "http"
     timeout = "3s"
 
