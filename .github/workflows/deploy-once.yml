@@ -1,0 +1,28 @@
+name: Deploy Mithril once
+
+on:
+  push:
+    branches:
+      - deploy/mithril-20260905
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Verify Fly token
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "FLY_API_TOKEN GitHub Actions secret is not configured"
+            exit 2
+          fi
+      - name: Deploy instaclean-mithril
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only --config fly.toml --app instaclean-mithril
