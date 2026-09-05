@@ -4,6 +4,7 @@ defmodule MithrilWeb.Plugs.DirectGatewayAuth do
   import Plug.Conn
 
   alias Mithril.Auth.Token
+  alias Mithril.Repo
   alias MithrilWeb.Plugs.UserAuth
 
   @token_header "x-mithril-direct-token"
@@ -20,7 +21,7 @@ defmodule MithrilWeb.Plugs.DirectGatewayAuth do
         case Token.verify_access(token) do
           {:ok, %{"sub" => user_id}} when is_binary(user_id) ->
             if valid_uuid?(user_id) do
-              assign(conn, :instaclean_user_id, user_id)
+              assign_active_user(conn, user_id)
             else
               reject(conn, 401, "invalid_user")
             end
@@ -47,7 +48,25 @@ defmodule MithrilWeb.Plugs.DirectGatewayAuth do
         reject(conn, 401, "invalid_user")
 
       true ->
+        assign_active_user(conn, user_id)
+    end
+  end
+
+  defp assign_active_user(conn, user_id) do
+    {:ok, dumped_user_id} = Ecto.UUID.dump(user_id)
+
+    case Repo.query(
+           "SELECT 1 FROM public.users WHERE id = $1::uuid AND status::text = 'active' LIMIT 1",
+           [dumped_user_id]
+         ) do
+      {:ok, %{num_rows: 1}} ->
         assign(conn, :instaclean_user_id, user_id)
+
+      {:ok, _} ->
+        reject(conn, 401, "invalid_user")
+
+      {:error, _error} ->
+        reject(conn, 503, "database_unavailable")
     end
   end
 
