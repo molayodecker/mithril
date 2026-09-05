@@ -3,6 +3,7 @@ defmodule MithrilWeb.Router do
 
   pipeline :api do
     plug :accepts, ["json"]
+    plug OpenApiSpex.Plug.PutApiSpec, module: MithrilWeb.ApiSpec
   end
 
   pipeline :parity do
@@ -22,6 +23,12 @@ defmodule MithrilWeb.Router do
 
     get "/health", HealthController, :show
     get "/ready", ReadyController, :show
+  end
+
+  scope "/" do
+    pipe_through :api
+
+    get "/openapi.json", OpenApiSpex.Plug.RenderSpec, []
   end
 
   scope "/auth", MithrilWeb do
