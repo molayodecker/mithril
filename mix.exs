@@ -32,7 +32,8 @@ defmodule Mithril.MixProject do
       {:jason, "~> 1.4"},
       {:joken, "~> 2.6"},
       {:bcrypt_elixir, "~> 3.3"},
-      {:req, "~> 0.5"}
+      {:req, "~> 0.5"},
+      {:open_api_spex, "~> 3.22.3"}
     ]
   end
 end
