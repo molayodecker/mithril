@@ -16,6 +16,7 @@ defmodule Mithril.Auth.OAuthTest do
                "sub" => "google-sub-1",
                "aud" => "test-google-client",
                "email" => "Google@Example.com",
+               "email_verified" => true,
                "name" => "Google User"
              }
            }}
@@ -47,11 +48,48 @@ defmodule Mithril.Auth.OAuthTest do
     :ok
   end
 
-  test "verifies a Google id_token audience" do
+  test "verifies a Google id_token audience and verified email" do
     assert {:ok, identity} = OAuth.verify_google("id-token")
     assert identity.provider == "google"
     assert identity.subject == "google-sub-1"
     assert identity.email == "google@example.com"
+  end
+
+  test "accepts tokeninfo string true for Google email verification" do
+    put_google_response(%{
+      "sub" => "google-sub-string",
+      "aud" => "test-google-client",
+      "email" => "string@example.com",
+      "email_verified" => "true"
+    })
+
+    assert {:ok, identity} = OAuth.verify_google("id-token")
+    assert identity.email == "string@example.com"
+  end
+
+  test "does not expose an unverified Google email for account linking" do
+    put_google_response(%{
+      "sub" => "google-sub-unverified",
+      "aud" => "test-google-client",
+      "email" => "victim@example.com",
+      "email_verified" => false
+    })
+
+    assert {:ok, identity} = OAuth.verify_google("id-token")
+    assert identity.subject == "google-sub-unverified"
+    assert identity.email == nil
+  end
+
+  test "does not expose a Google email when email_verified is missing" do
+    put_google_response(%{
+      "sub" => "google-sub-missing",
+      "aud" => "test-google-client",
+      "email" => "victim@example.com"
+    })
+
+    assert {:ok, identity} = OAuth.verify_google("id-token")
+    assert identity.subject == "google-sub-missing"
+    assert identity.email == nil
   end
 
   test "verifies a Facebook access token" do
@@ -78,5 +116,11 @@ defmodule Mithril.Auth.OAuthTest do
 
   test "rejects an empty Google token" do
     assert {:error, :invalid_oauth_token} = OAuth.verify_google("")
+  end
+
+  defp put_google_response(body) do
+    Application.put_env(:mithril, :auth_http, fn _url ->
+      {:ok, %{status: 200, body: body}}
+    end)
   end
 end

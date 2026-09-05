@@ -412,6 +412,7 @@ defmodule Mithril.AuthTest do
              "sub" => "google-sub-1",
              "aud" => "test-google-client",
              "email" => "google@example.com",
+             "email_verified" => true,
              "name" => "Google User"
            }
          }}
