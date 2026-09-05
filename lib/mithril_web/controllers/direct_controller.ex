@@ -3,6 +3,7 @@ defmodule MithrilWeb.DirectController do
   use OpenApiSpex.ControllerSpecs
 
   alias Mithril.Direct
+
   alias MithrilWeb.Schemas.Direct.{
     AdminCandidatesResponse,
     AdminMatchRequest,
@@ -36,7 +37,8 @@ defmodule MithrilWeb.DirectController do
   operation(:create_placement,
     operation_id: "direct.createPlacement",
     summary: "Create a household placement request",
-    request_body: {"Placement request", "application/json", CreatePlacementRequest, required: true},
+    request_body:
+      {"Placement request", "application/json", CreatePlacementRequest, required: true},
     responses: [ok: {"Created placement", "application/json", CreatePlacementResponse}]
   )
 
