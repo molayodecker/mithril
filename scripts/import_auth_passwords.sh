@@ -92,13 +92,18 @@ WHERE revoked_at IS NULL
 DELETE FROM public.mithril_auth_accounts
 WHERE user_id IN (SELECT user_id FROM mithril_auth_disabled);
 
-INSERT INTO public.mithril_auth_accounts (user_id, email, password_hash)
-SELECT user_id, email, password_hash
+INSERT INTO public.mithril_auth_accounts (user_id, email, phone, password_hash)
+SELECT
+  user_id,
+  CASE WHEN email LIKE '%@%' THEN email ELSE NULL END,
+  CASE WHEN email LIKE '%@%' THEN NULL ELSE email END,
+  password_hash
 FROM mithril_auth_import
 WHERE EXISTS (SELECT 1 FROM public.users p WHERE p.id = mithril_auth_import.user_id)
 ON CONFLICT (user_id) DO UPDATE
 SET
-  email = EXCLUDED.email,
+  email = COALESCE(EXCLUDED.email, public.mithril_auth_accounts.email),
+  phone = COALESCE(EXCLUDED.phone, public.mithril_auth_accounts.phone),
   password_hash = COALESCE(public.mithril_auth_accounts.password_hash, EXCLUDED.password_hash),
   updated_at = now();
 SQL

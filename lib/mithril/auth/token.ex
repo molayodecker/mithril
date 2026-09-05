@@ -9,9 +9,20 @@ defmodule Mithril.Auth.Token do
   end
 
   def issue(user_id, email) when is_binary(user_id) and is_binary(email) do
-    extra = %{"sub" => user_id, "email" => email}
+    issue(user_id, %{email: email})
+  end
+
+  def issue(user_id, attrs) when is_binary(user_id) and is_map(attrs) do
+    extra =
+      %{"sub" => user_id}
+      |> maybe_put("email", attrs[:email] || attrs["email"])
+      |> maybe_put("phone", attrs[:phone] || attrs["phone"])
+
     generate_and_sign(extra, signer())
   end
+
+  defp maybe_put(map, _key, value) when value in [nil, ""], do: map
+  defp maybe_put(map, key, value) when is_binary(value), do: Map.put(map, key, value)
 
   def verify_access(token) when is_binary(token) do
     verify_and_validate(token, signer())

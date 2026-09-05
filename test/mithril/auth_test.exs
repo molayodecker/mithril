@@ -15,9 +15,16 @@ defmodule Mithril.AuthTest do
       raise "Refusing to recreate auth fixtures; expected mithril_test, got #{inspect(database)}"
     end
 
-    Repo.query!("DROP TABLE IF EXISTS public.mithril_refresh_tokens CASCADE")
-    Repo.query!("DROP TABLE IF EXISTS public.mithril_auth_accounts CASCADE")
-    Repo.query!("DROP TABLE IF EXISTS public.users CASCADE")
+    for table <- [
+          "mithril_refresh_tokens",
+          "mithril_auth_otps",
+          "mithril_auth_identities",
+          "mithril_auth_accounts",
+          "users"
+        ] do
+      Repo.query!("DROP TABLE IF EXISTS public.#{table} CASCADE")
+    end
+
     Repo.query!("DROP SCHEMA IF EXISTS auth CASCADE")
     Repo.query!("CREATE SCHEMA auth")
 
@@ -25,6 +32,7 @@ defmodule Mithril.AuthTest do
     CREATE TABLE auth.users (
       id uuid PRIMARY KEY,
       email text UNIQUE,
+      phone text,
       encrypted_password text,
       created_at timestamptz,
       updated_at timestamptz
@@ -66,7 +74,8 @@ defmodule Mithril.AuthTest do
     Repo.query!("""
     CREATE TABLE public.mithril_auth_accounts (
       user_id uuid PRIMARY KEY REFERENCES public.users(id),
-      email text NOT NULL UNIQUE,
+      email text UNIQUE,
+      phone text UNIQUE,
       password_hash text,
       inserted_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
@@ -84,6 +93,44 @@ defmodule Mithril.AuthTest do
     )
     """)
 
+    Repo.query!("""
+    CREATE TABLE public.mithril_auth_identities (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id uuid NOT NULL REFERENCES public.users(id),
+      provider text NOT NULL,
+      provider_subject text NOT NULL,
+      email text,
+      inserted_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (provider, provider_subject)
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.mithril_auth_otps (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      phone text NOT NULL,
+      code_hash text NOT NULL,
+      expires_at timestamptz NOT NULL,
+      attempt_count integer NOT NULL DEFAULT 0,
+      consumed_at timestamptz,
+      request_ip text,
+      inserted_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    previous_http = Application.get_env(:mithril, :auth_http)
+
+    Application.put_env(:mithril, :auth_http, &oauth_http/1)
+
+    on_exit(fn ->
+      if previous_http do
+        Application.put_env(:mithril, :auth_http, previous_http)
+      else
+        Application.delete_env(:mithril, :auth_http)
+      end
+    end)
+
     :ok
   end
 
@@ -92,6 +139,7 @@ defmodule Mithril.AuthTest do
 
     assert {:ok, session} = Auth.login(email, "correct-horse")
     assert session.user.id == user_id
+    assert session.user.email == email
     assert session.token_type == "bearer"
 
     assert {:ok, %{"sub" => ^user_id, "email" => ^email}} =
@@ -104,6 +152,16 @@ defmodule Mithril.AuthTest do
 
     assert {:ok, session} = Auth.login("+233555000111", "correct-horse")
     assert session.user.email == "phone-login@example.com"
+    assert session.user.phone == "+233555000111"
+  end
+
+  test "login accepts a Ghana local phone number" do
+    {user_id, _email} =
+      insert_account("ghana@example.com", "correct-horse", phone: "+233244123456")
+
+    assert {:ok, session} = Auth.login("0244123456", "correct-horse")
+    assert session.user.id == user_id
+    assert session.user.phone == "+233244123456"
   end
 
   test "login rejects inactive accounts" do
@@ -186,6 +244,135 @@ defmodule Mithril.AuthTest do
     assert {:ok, _session} = Auth.login("new-user@example.com", "register-password")
   end
 
+  test "phone OTP creates a session" do
+    assert {:ok, %{ok: true}} = Auth.request_otp("0244123456")
+    {_phone, code} = Application.get_env(:mithril, :test_last_otp)
+
+    assert {:ok, session} = Auth.verify_otp("+233244123456", code)
+    assert session.user.phone == "+233244123456"
+
+    assert {:ok, %{"sub" => _, "phone" => "+233244123456"}} =
+             Token.verify_access(session.access_token)
+  end
+
+  test "phone OTP is single-use" do
+    assert {:ok, %{ok: true}} = Auth.request_otp("0244123456")
+    {_phone, code} = Application.get_env(:mithril, :test_last_otp)
+
+    assert {:ok, _session} = Auth.verify_otp("0244123456", code)
+    assert {:error, :invalid_otp} = Auth.verify_otp("0244123456", code)
+  end
+
+  test "phone OTP rejects a wrong code" do
+    assert {:ok, _} = Auth.request_otp("0244123456")
+    {_phone, code} = Application.get_env(:mithril, :test_last_otp)
+    wrong_code = if code == "000000", do: "999999", else: "000000"
+
+    assert {:error, :invalid_otp} = Auth.verify_otp("0244123456", wrong_code)
+  end
+
+  test "phone OTP stops accepting attempts after five failures" do
+    assert {:ok, _} = Auth.request_otp("0244123456")
+    {_phone, code} = Application.get_env(:mithril, :test_last_otp)
+    wrong_code = if code == "000000", do: "999999", else: "000000"
+
+    for _ <- 1..5 do
+      assert {:error, :invalid_otp} = Auth.verify_otp("0244123456", wrong_code)
+    end
+
+    assert {:error, :invalid_otp} = Auth.verify_otp("0244123456", code)
+  end
+
+  test "phone OTP can require an existing account" do
+    assert {:error, :user_not_found} =
+             Auth.request_otp("0244123456", %{"should_create_user" => false})
+  end
+
+  test "phone OTP caps sends per phone each hour" do
+    for _ <- 1..5 do
+      Repo.query!("""
+      INSERT INTO public.mithril_auth_otps
+        (phone, code_hash, expires_at, inserted_at)
+      VALUES ('+233244123456', 'old', now() + interval '5 minutes', now() - interval '1 minute')
+      """)
+    end
+
+    assert {:error, :otp_rate_limited} = Auth.request_otp("0244123456")
+  end
+
+  test "phone OTP caps sends per client IP each hour" do
+    for i <- 1..25 do
+      Repo.query!(
+        """
+        INSERT INTO public.mithril_auth_otps
+          (phone, code_hash, expires_at, request_ip, inserted_at)
+        VALUES ($1, 'old', now() + interval '5 minutes', '203.0.113.10', now() - interval '1 minute')
+        """,
+        ["+1555000#{String.pad_leading(Integer.to_string(i), 4, "0")}"]
+      )
+    end
+
+    assert {:error, :otp_rate_limited} =
+             Auth.request_otp("0244123456", %{"request_ip" => "203.0.113.10"})
+  end
+
+  test "configured test phone numbers skip SMS and accept a fixed OTP" do
+    previous_adapter = Application.get_env(:mithril, :sms_adapter)
+    previous_phones = Application.get_env(:mithril, :sms_test_phones)
+
+    Application.put_env(:mithril, :sms_adapter, Mithril.Auth.SMS.Disabled)
+    Application.put_env(:mithril, :sms_test_phones, %{"+233555000000" => "424242"})
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :sms_adapter, previous_adapter)
+
+      if previous_phones do
+        Application.put_env(:mithril, :sms_test_phones, previous_phones)
+      else
+        Application.delete_env(:mithril, :sms_test_phones)
+      end
+    end)
+
+    assert Auth.methods().phone
+    assert {:ok, %{ok: true}} = Auth.request_otp("0555000000")
+    assert {:error, :invalid_otp} = Auth.verify_otp("0555000000", "000000")
+    assert {:ok, session} = Auth.verify_otp("0555000000", "424242")
+    assert session.user.phone == "+233555000000"
+    assert {:error, :sms_not_configured} = Auth.request_otp("0244123456")
+  end
+
+  test "google oauth issues a session and links later logins" do
+    assert {:ok, first} = Auth.oauth("google", "google-id-token")
+    assert first.user.email == "google@example.com"
+
+    assert {:ok, second} = Auth.oauth("google", "google-id-token")
+    assert second.user.id == first.user.id
+  end
+
+  test "google oauth links to an existing account without creating a duplicate user" do
+    {user_id, _email} = insert_account("google@example.com", "correct-horse")
+
+    assert {:ok, session} = Auth.oauth("google", "google-id-token")
+    assert session.user.id == user_id
+
+    [[count]] = Repo.query!("SELECT count(*) FROM public.users").rows
+    assert count == 1
+  end
+
+  test "facebook oauth issues a session" do
+    assert {:ok, session} = Auth.oauth("facebook", "facebook-access-token")
+    assert session.user.email == "facebook@example.com"
+  end
+
+  test "methods lists the Instaclean sign-in options" do
+    assert Auth.methods() == %{
+             email_password: true,
+             phone: true,
+             google: true,
+             facebook: true
+           }
+  end
+
   defp insert_account(email, password, opts \\ []) do
     user_id = Ecto.UUID.generate()
     {:ok, user_uuid} = Ecto.UUID.dump(user_id)
@@ -193,8 +380,8 @@ defmodule Mithril.AuthTest do
     phone = Keyword.get(opts, :phone)
 
     Repo.query!(
-      "INSERT INTO auth.users (id, email, encrypted_password) VALUES ($1, $2, $3)",
-      [user_uuid, email, hash]
+      "INSERT INTO auth.users (id, email, phone, encrypted_password) VALUES ($1, $2, $3, $4)",
+      [user_uuid, email, phone, hash]
     )
 
     Repo.query!(
@@ -203,8 +390,8 @@ defmodule Mithril.AuthTest do
     )
 
     Repo.query!(
-      "INSERT INTO public.mithril_auth_accounts (user_id, email, password_hash) VALUES ($1, $2, $3)",
-      [user_uuid, email, hash]
+      "INSERT INTO public.mithril_auth_accounts (user_id, email, phone, password_hash) VALUES ($1, $2, $3, $4)",
+      [user_uuid, email, phone, hash]
     )
 
     {user_id, email}
@@ -213,5 +400,42 @@ defmodule Mithril.AuthTest do
   defp dump_uuid(user_id) do
     {:ok, dumped} = Ecto.UUID.dump(user_id)
     dumped
+  end
+
+  defp oauth_http(url) do
+    cond do
+      String.contains?(url, "oauth2.googleapis.com") ->
+        {:ok,
+         %{
+           status: 200,
+           body: %{
+             "sub" => "google-sub-1",
+             "aud" => "test-google-client",
+             "email" => "google@example.com",
+             "name" => "Google User"
+           }
+         }}
+
+      String.contains?(url, "debug_token") ->
+        {:ok,
+         %{
+           status: 200,
+           body: %{"data" => %{"is_valid" => true, "app_id" => "test-facebook-app"}}
+         }}
+
+      String.contains?(url, "graph.facebook.com/me") ->
+        {:ok,
+         %{
+           status: 200,
+           body: %{
+             "id" => "facebook-1",
+             "email" => "facebook@example.com",
+             "name" => "Facebook User"
+           }
+         }}
+
+      true ->
+        {:error, :unexpected_url}
+    end
   end
 end

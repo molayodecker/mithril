@@ -19,7 +19,16 @@ if [[ "$TARGET_DATABASE_URL" == *"supabase.co"* || "$TARGET_DATABASE_URL" == *"s
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SQL_FILE="$SCRIPT_DIR/../priv/repo/sql/auth/20260904180000_mithril_auth.sql"
+SQL_DIR="$SCRIPT_DIR/../priv/repo/sql/auth"
 
-psql "$TARGET_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$SQL_FILE"
-echo "Applied Mithril auth schema from $SQL_FILE"
+shopt -s nullglob
+files=("$SQL_DIR"/*.sql)
+if [[ ${#files[@]} -eq 0 ]]; then
+  echo "No auth SQL files in $SQL_DIR" >&2
+  exit 1
+fi
+
+for sql_file in "${files[@]}"; do
+  psql "$TARGET_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$sql_file"
+  echo "Applied Mithril auth schema from $sql_file"
+done

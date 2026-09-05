@@ -78,6 +78,44 @@ if System.get_env("AUTH_REFRESH_TTL") do
   config :mithril, :auth_refresh_ttl, parse_positive_integer.("AUTH_REFRESH_TTL", "2592000")
 end
 
+if google_client_ids = System.get_env("GOOGLE_CLIENT_IDS") do
+  config :mithril, :google_client_ids, google_client_ids
+end
+
+if facebook_app_id = System.get_env("FACEBOOK_APP_ID") do
+  config :mithril, :facebook_app_id, facebook_app_id
+end
+
+if facebook_app_secret = System.get_env("FACEBOOK_APP_SECRET") do
+  config :mithril, :facebook_app_secret, facebook_app_secret
+end
+
+if twilio_sid = System.get_env("TWILIO_ACCOUNT_SID") do
+  config :mithril, :twilio_account_sid, twilio_sid
+end
+
+if twilio_token = System.get_env("TWILIO_AUTH_TOKEN") do
+  config :mithril, :twilio_auth_token, twilio_token
+end
+
+if twilio_from = System.get_env("TWILIO_PHONE_NUMBER") || System.get_env("TWILIO_FROM_NUMBER") do
+  config :mithril, :twilio_from_number, twilio_from
+end
+
+if messaging_service = System.get_env("TWILIO_MESSAGING_SERVICE_SID") do
+  config :mithril, :twilio_messaging_service_sid, messaging_service
+end
+
+if System.get_env("TWILIO_ACCOUNT_SID") && System.get_env("TWILIO_AUTH_TOKEN") &&
+     (System.get_env("TWILIO_MESSAGING_SERVICE_SID") || System.get_env("TWILIO_PHONE_NUMBER") ||
+        System.get_env("TWILIO_FROM_NUMBER")) do
+  config :mithril, :sms_adapter, Mithril.Auth.SMS.Twilio
+end
+
+if test_phones = System.get_env("AUTH_TEST_PHONES") do
+  config :mithril, :sms_test_phones, Mithril.Auth.TestPhones.parse(test_phones)
+end
+
 if config_env() == :prod do
   {database_backend, database_url} = Mithril.DatabaseBackend.resolve!()
   secret_key_base = System.fetch_env!("SECRET_KEY_BASE")
