@@ -60,6 +60,22 @@ defmodule Mithril.Auth.OAuthTest do
     assert identity.subject == "facebook-1"
   end
 
+  test "Facebook is disabled unless both app id and app secret are configured" do
+    previous_secret = Application.get_env(:mithril, :facebook_app_secret)
+    Application.delete_env(:mithril, :facebook_app_secret)
+
+    on_exit(fn ->
+      if previous_secret do
+        Application.put_env(:mithril, :facebook_app_secret, previous_secret)
+      else
+        Application.delete_env(:mithril, :facebook_app_secret)
+      end
+    end)
+
+    refute OAuth.facebook_configured?()
+    assert {:error, :oauth_not_configured} = OAuth.verify_facebook("access-token")
+  end
+
   test "rejects an empty Google token" do
     assert {:error, :invalid_oauth_token} = OAuth.verify_google("")
   end

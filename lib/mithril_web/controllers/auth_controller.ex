@@ -15,7 +15,8 @@ defmodule MithrilWeb.AuthController do
   end
 
   def request_otp(conn, params) do
-    respond(conn, Auth.request_otp(Map.get(params, "phone"), params))
+    opts = Map.put(params, "request_ip", request_ip(conn))
+    respond(conn, Auth.request_otp(Map.get(params, "phone"), opts))
   end
 
   def verify_otp(conn, params) do
@@ -65,6 +66,22 @@ defmodule MithrilWeb.AuthController do
     respond(conn, Auth.register(Map.get(params, "email"), Map.get(params, "password")))
   end
 
+  defp request_ip(conn) do
+    case get_req_header(conn, "fly-client-ip") do
+      [ip | _] when ip != "" -> String.trim(ip)
+      _ -> remote_ip(conn.remote_ip)
+    end
+  end
+
+  defp remote_ip(ip) when is_tuple(ip) do
+    case :inet.ntoa(ip) do
+      {:error, _} -> nil
+      chars -> to_string(chars)
+    end
+  end
+
+  defp remote_ip(_), do: nil
+
   defp respond(conn, result, mapper \\ & &1)
 
   defp respond(conn, :ok, mapper) do
@@ -101,6 +118,7 @@ defmodule MithrilWeb.AuthController do
   defp error_response(:sms_delivery_failed), do: {503, "sms_delivery_failed"}
   defp error_response(:oauth_not_configured), do: {503, "oauth_not_configured"}
   defp error_response(:invalid_oauth_token), do: {401, "invalid_oauth_token"}
+  defp error_response(:oauth_identity_conflict), do: {409, "oauth_identity_conflict"}
   defp error_response(:invalid_provider), do: {422, "invalid_provider"}
   defp error_response(:database_unavailable), do: {503, "database_unavailable"}
   defp error_response(reason) when is_atom(reason), do: {422, Atom.to_string(reason)}

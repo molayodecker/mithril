@@ -16,6 +16,8 @@ defmodule Mithril.Auth do
   @otp_ttl_seconds 300
   @otp_resend_seconds 30
   @otp_max_attempts 5
+  @otp_phone_hourly_limit 5
+  @otp_ip_hourly_limit 25
 
   def methods do
     %{
@@ -47,11 +49,13 @@ defmodule Mithril.Auth do
     should_create_user? =
       truthy?(Map.get(opts, "should_create_user", Map.get(opts, :should_create_user, true)))
 
+    request_ip =
+      normalize_request_ip(Map.get(opts, "request_ip", Map.get(opts, :request_ip)))
+
     with {:ok, phone} <- normalize_phone(phone),
          :ok <- ensure_sms_configured(phone),
          :ok <- ensure_otp_account(phone, should_create_user?),
-         :ok <- ensure_otp_not_rate_limited(phone),
-         {:ok, code} <- persist_otp(phone),
+         {:ok, code} <- create_otp(phone, request_ip),
          :ok <- SMS.send_otp(phone, code) do
       {:ok, %{ok: true}}
     end
@@ -70,7 +74,6 @@ defmodule Mithril.Auth do
   def oauth(provider, token) when provider in ["google", "facebook"] and is_binary(token) do
     with {:ok, identity} <- verify_oauth(provider, token),
          {:ok, account} <- find_or_create_oauth_account(identity),
-         :ok <- upsert_identity(account.user_id, identity),
          {:ok, tokens} <- issue_session(account) do
       {:ok, tokens}
     end
@@ -375,45 +378,96 @@ defmodule Mithril.Auth do
     end
   end
 
-  defp ensure_otp_not_rate_limited(phone) do
+  defp create_otp(phone, request_ip) do
+    lock_keys = ["otp-phone:#{phone}"] ++ maybe_lock_key("otp-ip", request_ip)
+
+    Repo.transaction(fn ->
+      with :ok <- lock_transaction_keys(lock_keys),
+           :ok <- maybe_enforce_otp_rate_limit(phone, request_ip),
+           {:ok, code} <- persist_otp(phone, request_ip) do
+        code
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, code} -> {:ok, code}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp maybe_enforce_otp_rate_limit(phone, request_ip) do
+    if TestPhones.configured?(phone) do
+      :ok
+    else
+      ensure_otp_not_rate_limited(phone, request_ip)
+    end
+  end
+
+  defp ensure_otp_not_rate_limited(phone, request_ip) do
     case Repo.query(
            """
-           SELECT 1
-           FROM public.mithril_auth_otps
-           WHERE phone = $1
-             AND inserted_at > now() - ($2 * interval '1 second')
-           LIMIT 1
+           SELECT
+             EXISTS (
+               SELECT 1
+               FROM public.mithril_auth_otps
+               WHERE phone = $1
+                 AND inserted_at > now() - ($2 * interval '1 second')
+             ) AS resend_limited,
+             (
+               SELECT count(*)
+               FROM public.mithril_auth_otps
+               WHERE phone = $1
+                 AND inserted_at > now() - interval '1 hour'
+             ) >= $3 AS phone_limited,
+             CASE
+               WHEN $4::text IS NULL OR $4::text = '' THEN false
+               ELSE (
+                 SELECT count(*)
+                 FROM public.mithril_auth_otps
+                 WHERE request_ip = $4::text
+                   AND inserted_at > now() - interval '1 hour'
+               ) >= $5
+             END AS ip_limited
            """,
-           [phone, @otp_resend_seconds]
+           [
+             phone,
+             @otp_resend_seconds,
+             @otp_phone_hourly_limit,
+             request_ip,
+             @otp_ip_hourly_limit
+           ]
          ) do
-      {:ok, %{num_rows: 0}} -> :ok
-      {:ok, _} -> {:error, :otp_rate_limited}
+      {:ok, %{rows: [[false, false, false]]}} -> :ok
+      {:ok, %{rows: [[_, _, _]]}} -> {:error, :otp_rate_limited}
       {:error, error} -> database_error(error)
     end
   end
 
-  defp persist_otp(phone) do
+  defp persist_otp(phone, request_ip) do
     code = TestPhones.lookup(phone) || otp_code()
     hash = hash_refresh(code)
     expires_at = DateTime.add(DateTime.utc_now(), @otp_ttl_seconds, :second)
 
-    Repo.query(
-      """
-      UPDATE public.mithril_auth_otps
-      SET consumed_at = now()
-      WHERE phone = $1 AND consumed_at IS NULL
-      """,
-      [phone]
-    )
-
-    case Repo.query(
-           """
-           INSERT INTO public.mithril_auth_otps (phone, code_hash, expires_at)
-           VALUES ($1, $2, $3)
-           """,
-           [phone, hash, expires_at]
-         ) do
-      {:ok, _} -> {:ok, code}
+    with {:ok, _} <-
+           Repo.query(
+             """
+             UPDATE public.mithril_auth_otps
+             SET consumed_at = now()
+             WHERE phone = $1 AND consumed_at IS NULL
+             """,
+             [phone]
+           ),
+         {:ok, _} <-
+           Repo.query(
+             """
+             INSERT INTO public.mithril_auth_otps (phone, code_hash, expires_at, request_ip)
+             VALUES ($1, $2, $3, $4)
+             """,
+             [phone, hash, expires_at, request_ip]
+           ) do
+      {:ok, code}
+    else
       {:error, error} -> database_error(error)
     end
   end
@@ -421,49 +475,70 @@ defmodule Mithril.Auth do
   defp consume_otp(phone, token) do
     token = String.trim(token)
 
-    case Repo.query(
-           """
-           SELECT id::text, code_hash, attempt_count, expires_at
-           FROM public.mithril_auth_otps
-           WHERE phone = $1
-             AND consumed_at IS NULL
-           ORDER BY inserted_at DESC
-           LIMIT 1
-           """,
-           [phone]
-         ) do
-      {:ok, %{num_rows: 1, rows: [[id, code_hash, attempts, expires_at]]}} ->
-        cond do
-          expired?(expires_at) ->
-            {:error, :otp_expired}
+    Repo.transaction(fn ->
+      case Repo.query(
+             """
+             SELECT id::text, code_hash, attempt_count, expires_at
+             FROM public.mithril_auth_otps
+             WHERE phone = $1
+               AND consumed_at IS NULL
+             ORDER BY inserted_at DESC
+             LIMIT 1
+             FOR UPDATE
+             """,
+             [phone]
+           ) do
+        {:ok, %{num_rows: 1, rows: [[id, code_hash, attempts, expires_at]]}} ->
+          consume_locked_otp(id, code_hash, attempts, expires_at, phone, token)
 
-          attempts >= @otp_max_attempts ->
-            {:error, :invalid_otp}
+        {:ok, _} ->
+          {:error, :invalid_otp}
 
-          not otp_matches?(token, code_hash) ->
-            _ =
-              Repo.query(
-                "UPDATE public.mithril_auth_otps SET attempt_count = attempt_count + 1 WHERE id = $1::uuid",
-                [dump_uuid(id)]
-              )
+        {:error, error} ->
+          Repo.rollback({:database_error, error})
+      end
+    end)
+    |> case do
+      {:ok, result} -> result
+      {:error, {:database_error, error}} -> database_error(error)
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
-            {:error, :invalid_otp}
+  defp consume_locked_otp(id, code_hash, attempts, expires_at, phone, token) do
+    cond do
+      expired?(expires_at) ->
+        {:error, :otp_expired}
 
-          true ->
-            _ =
-              Repo.query(
-                "UPDATE public.mithril_auth_otps SET consumed_at = now() WHERE id = $1::uuid",
-                [dump_uuid(id)]
-              )
-
-            find_or_create_phone_account(phone)
-        end
-
-      {:ok, _} ->
+      attempts >= @otp_max_attempts ->
         {:error, :invalid_otp}
 
-      {:error, error} ->
-        database_error(error)
+      not otp_matches?(token, code_hash) ->
+        case Repo.query(
+               "UPDATE public.mithril_auth_otps SET attempt_count = attempt_count + 1 WHERE id = $1::uuid",
+               [dump_uuid(id)]
+             ) do
+          {:ok, _} -> {:error, :invalid_otp}
+          {:error, error} -> Repo.rollback({:database_error, error})
+        end
+
+      true ->
+        case Repo.query(
+               "UPDATE public.mithril_auth_otps SET consumed_at = now() WHERE id = $1::uuid AND consumed_at IS NULL",
+               [dump_uuid(id)]
+             ) do
+          {:ok, %{num_rows: 1}} ->
+            case find_or_create_phone_account(phone) do
+              {:ok, account} -> {:ok, account}
+              {:error, reason} -> Repo.rollback(reason)
+            end
+
+          {:ok, _} ->
+            {:error, :invalid_otp}
+
+          {:error, error} ->
+            Repo.rollback({:database_error, error})
+        end
     end
   end
 
@@ -505,6 +580,31 @@ defmodule Mithril.Auth do
   defp verify_oauth(_, _), do: {:error, :invalid_provider}
 
   defp find_or_create_oauth_account(identity) do
+    lock_keys =
+      ["oauth:#{identity.provider}:#{identity.subject}"] ++ maybe_lock_key("auth-email", identity.email)
+
+    Repo.transaction(fn ->
+      with :ok <- lock_transaction_keys(lock_keys),
+           {:ok, account} <- resolve_oauth_account(identity),
+           :ok <- upsert_identity(account.user_id, identity) do
+        account
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, account} ->
+        {:ok, account}
+
+      {:error, :oauth_identity_conflict} ->
+        fetch_account_by_identity(identity.provider, identity.subject)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp resolve_oauth_account(identity) do
     case fetch_account_by_identity(identity.provider, identity.subject) do
       {:ok, account} ->
         {:ok, account}
@@ -532,12 +632,14 @@ defmodule Mithril.Auth do
   defp upsert_identity(user_id, identity) do
     case Repo.query(
            """
-           INSERT INTO public.mithril_auth_identities (user_id, provider, provider_subject, email)
+           INSERT INTO public.mithril_auth_identities AS identities
+             (user_id, provider, provider_subject, email)
            VALUES ($1::uuid, $2, $3, $4)
            ON CONFLICT (provider, provider_subject) DO UPDATE
-           SET user_id = EXCLUDED.user_id,
-               email = COALESCE(EXCLUDED.email, public.mithril_auth_identities.email),
+           SET email = COALESCE(EXCLUDED.email, identities.email),
                updated_at = now()
+           WHERE identities.user_id = EXCLUDED.user_id
+           RETURNING identities.user_id::text
            """,
            [
              dump_uuid(user_id),
@@ -546,7 +648,9 @@ defmodule Mithril.Auth do
              identity[:email] || identity.email
            ]
          ) do
-      {:ok, _} -> :ok
+      {:ok, %{num_rows: 1, rows: [[^user_id]]}} -> :ok
+      {:ok, %{num_rows: 1}} -> :ok
+      {:ok, %{num_rows: 0}} -> {:error, :oauth_identity_conflict}
       {:error, error} -> database_error(error)
     end
   end
@@ -673,6 +777,22 @@ defmodule Mithril.Auth do
     end
   end
 
+  defp lock_transaction_keys(keys) do
+    keys
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> Enum.reduce_while(:ok, fn key, :ok ->
+      case Repo.query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", [key]) do
+        {:ok, _} -> {:cont, :ok}
+        {:error, error} -> {:halt, database_error(error)}
+      end
+    end)
+  end
+
+  defp maybe_lock_key(_prefix, value) when value in [nil, ""], do: []
+  defp maybe_lock_key(prefix, value), do: ["#{prefix}:#{value}"]
+
   defp taken_error(email) when is_binary(email), do: :email_taken
   defp taken_error(_), do: :phone_taken
 
@@ -700,6 +820,15 @@ defmodule Mithril.Auth do
       :error -> {:error, :invalid_phone}
     end
   end
+
+  defp normalize_request_ip(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      ip -> ip
+    end
+  end
+
+  defp normalize_request_ip(_), do: nil
 
   defp session_user(account) do
     phone = account.phone || e164_if_phone(account.email)

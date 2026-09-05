@@ -33,11 +33,11 @@ defmodule Mithril.Auth.OAuth do
     app_secret = Application.get_env(:mithril, :facebook_app_secret)
 
     cond do
-      not is_binary(app_id) or app_id == "" ->
+      not present?(app_id) or not present?(app_secret) ->
         {:error, :oauth_not_configured}
 
       true ->
-        with :ok <- maybe_debug_facebook(access_token, app_id, app_secret),
+        with :ok <- debug_facebook(access_token, app_id, app_secret),
              {:ok, body} <-
                get_json(
                  "https://graph.facebook.com/me?fields=id,email,name&access_token=#{URI.encode_www_form(access_token)}"
@@ -62,13 +62,11 @@ defmodule Mithril.Auth.OAuth do
   def google_configured?, do: allowed_google_client_ids() != []
 
   def facebook_configured? do
-    app_id = Application.get_env(:mithril, :facebook_app_id)
-    is_binary(app_id) and app_id != ""
+    present?(Application.get_env(:mithril, :facebook_app_id)) and
+      present?(Application.get_env(:mithril, :facebook_app_secret))
   end
 
-  defp maybe_debug_facebook(_token, _app_id, secret) when secret in [nil, ""], do: :ok
-
-  defp maybe_debug_facebook(access_token, app_id, app_secret) do
+  defp debug_facebook(access_token, app_id, app_secret) do
     app_token = "#{app_id}|#{app_secret}"
 
     url =
@@ -135,4 +133,7 @@ defmodule Mithril.Auth.OAuth do
   end
 
   defp optional_string(_), do: nil
+
+  defp present?(value) when is_binary(value), do: String.trim(value) != ""
+  defp present?(_), do: false
 end

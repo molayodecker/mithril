@@ -114,6 +114,7 @@ defmodule Mithril.AuthTest do
       expires_at timestamptz NOT NULL,
       attempt_count integer NOT NULL DEFAULT 0,
       consumed_at timestamptz,
+      request_ip text,
       inserted_at timestamptz NOT NULL DEFAULT now()
     )
     """)
@@ -254,14 +255,64 @@ defmodule Mithril.AuthTest do
              Token.verify_access(session.access_token)
   end
 
+  test "phone OTP is single-use" do
+    assert {:ok, %{ok: true}} = Auth.request_otp("0244123456")
+    {_phone, code} = Application.get_env(:mithril, :test_last_otp)
+
+    assert {:ok, _session} = Auth.verify_otp("0244123456", code)
+    assert {:error, :invalid_otp} = Auth.verify_otp("0244123456", code)
+  end
+
   test "phone OTP rejects a wrong code" do
     assert {:ok, _} = Auth.request_otp("0244123456")
     assert {:error, :invalid_otp} = Auth.verify_otp("0244123456", "000000")
   end
 
+  test "phone OTP stops accepting attempts after five failures" do
+    assert {:ok, _} = Auth.request_otp("0244123456")
+    {_phone, code} = Application.get_env(:mithril, :test_last_otp)
+    wrong_code = if code == "000000", do: "999999", else: "000000"
+
+    for _ <- 1..5 do
+      assert {:error, :invalid_otp} = Auth.verify_otp("0244123456", wrong_code)
+    end
+
+    assert {:error, :invalid_otp} = Auth.verify_otp("0244123456", code)
+  end
+
   test "phone OTP can require an existing account" do
     assert {:error, :user_not_found} =
              Auth.request_otp("0244123456", %{"should_create_user" => false})
+  end
+
+  test "phone OTP caps sends per phone each hour" do
+    for _ <- 1..5 do
+      Repo.query!(
+        """
+        INSERT INTO public.mithril_auth_otps
+          (phone, code_hash, expires_at, inserted_at)
+        VALUES ('+233244123456', 'old', now() + interval '5 minutes', now() - interval '1 minute')
+        """
+      )
+    end
+
+    assert {:error, :otp_rate_limited} = Auth.request_otp("0244123456")
+  end
+
+  test "phone OTP caps sends per client IP each hour" do
+    for i <- 1..25 do
+      Repo.query!(
+        """
+        INSERT INTO public.mithril_auth_otps
+          (phone, code_hash, expires_at, request_ip, inserted_at)
+        VALUES ($1, 'old', now() + interval '5 minutes', '203.0.113.10', now() - interval '1 minute')
+        """,
+        ["+1555000#{String.pad_leading(Integer.to_string(i), 4, "0")}"]
+      )
+    end
+
+    assert {:error, :otp_rate_limited} =
+             Auth.request_otp("0244123456", %{"request_ip" => "203.0.113.10"})
   end
 
   test "configured test phone numbers skip SMS and accept a fixed OTP" do
@@ -295,6 +346,16 @@ defmodule Mithril.AuthTest do
 
     assert {:ok, second} = Auth.oauth("google", "google-id-token")
     assert second.user.id == first.user.id
+  end
+
+  test "google oauth links to an existing account without creating a duplicate user" do
+    {user_id, _email} = insert_account("google@example.com", "correct-horse")
+
+    assert {:ok, session} = Auth.oauth("google", "google-id-token")
+    assert session.user.id == user_id
+
+    [[count]] = Repo.query!("SELECT count(*) FROM public.users").rows
+    assert count == 1
   end
 
   test "facebook oauth issues a session" do

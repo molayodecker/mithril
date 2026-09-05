@@ -31,8 +31,16 @@ CREATE TABLE IF NOT EXISTS public.mithril_auth_otps (
   expires_at timestamptz NOT NULL,
   attempt_count integer NOT NULL DEFAULT 0,
   consumed_at timestamptz,
+  request_ip text,
   inserted_at timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE public.mithril_auth_otps
+  ADD COLUMN IF NOT EXISTS request_ip text;
+
 CREATE INDEX IF NOT EXISTS mithril_auth_otps_phone_idx
   ON public.mithril_auth_otps (phone, inserted_at DESC);
+
+CREATE INDEX IF NOT EXISTS mithril_auth_otps_request_ip_idx
+  ON public.mithril_auth_otps (request_ip, inserted_at DESC)
+  WHERE request_ip IS NOT NULL;
