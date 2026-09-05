@@ -265,7 +265,10 @@ defmodule Mithril.AuthTest do
 
   test "phone OTP rejects a wrong code" do
     assert {:ok, _} = Auth.request_otp("0244123456")
-    assert {:error, :invalid_otp} = Auth.verify_otp("0244123456", "000000")
+    {_phone, code} = Application.get_env(:mithril, :test_last_otp)
+    wrong_code = if code == "000000", do: "999999", else: "000000"
+
+    assert {:error, :invalid_otp} = Auth.verify_otp("0244123456", wrong_code)
   end
 
   test "phone OTP stops accepting attempts after five failures" do
@@ -287,13 +290,11 @@ defmodule Mithril.AuthTest do
 
   test "phone OTP caps sends per phone each hour" do
     for _ <- 1..5 do
-      Repo.query!(
-        """
-        INSERT INTO public.mithril_auth_otps
-          (phone, code_hash, expires_at, inserted_at)
-        VALUES ('+233244123456', 'old', now() + interval '5 minutes', now() - interval '1 minute')
-        """
-      )
+      Repo.query!("""
+      INSERT INTO public.mithril_auth_otps
+        (phone, code_hash, expires_at, inserted_at)
+      VALUES ('+233244123456', 'old', now() + interval '5 minutes', now() - interval '1 minute')
+      """)
     end
 
     assert {:error, :otp_rate_limited} = Auth.request_otp("0244123456")

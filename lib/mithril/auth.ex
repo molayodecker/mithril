@@ -581,7 +581,8 @@ defmodule Mithril.Auth do
 
   defp find_or_create_oauth_account(identity) do
     lock_keys =
-      ["oauth:#{identity.provider}:#{identity.subject}"] ++ maybe_lock_key("auth-email", identity.email)
+      ["oauth:#{identity.provider}:#{identity.subject}"] ++
+        maybe_lock_key("auth-email", identity.email)
 
     Repo.transaction(fn ->
       with :ok <- lock_transaction_keys(lock_keys),
