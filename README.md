@@ -64,6 +64,26 @@ DATABASE_URL=ecto://user:password@host:5432/database mix phx.server
 
 `.env.example` documents the runtime configuration contract. Mithril does not require that file at runtime and does not automatically load it; it is an example only.
 
+### Phone OTP test numbers
+
+Phone login normally sends a Twilio SMS. For local development, App Store review, or other cases where a real SMS is not wanted, set `AUTH_TEST_PHONES` to comma-separated `phone:otp` pairs. Listed numbers skip Twilio and accept the paired code, the same as Supabase Auth test phone numbers.
+
+```bash
+AUTH_TEST_PHONES=+15555550100:123456,+233555000000:000000
+```
+
+```bash
+curl -X POST http://localhost:4000/auth/otp \
+  -H 'content-type: application/json' \
+  -d '{"phone":"+233555000000","should_create_user":true}'
+
+curl -X POST http://localhost:4000/auth/otp/verify \
+  -H 'content-type: application/json' \
+  -d '{"phone":"+233555000000","token":"000000"}'
+```
+
+Ghana local numbers are accepted (`0555000000` matches `+233555000000`). Unlisted numbers still require Twilio. Treat the OTPs like passwords.
+
 ## Database and backups
 
 Mithril's target live database is Fly Managed Postgres. PostgreSQL remains the transactional source of truth for bookings, users, pricing, payments, wallets, availability, and other relational state.

@@ -264,6 +264,31 @@ defmodule Mithril.AuthTest do
              Auth.request_otp("0244123456", %{"should_create_user" => false})
   end
 
+  test "configured test phone numbers skip SMS and accept a fixed OTP" do
+    previous_adapter = Application.get_env(:mithril, :sms_adapter)
+    previous_phones = Application.get_env(:mithril, :sms_test_phones)
+
+    Application.put_env(:mithril, :sms_adapter, Mithril.Auth.SMS.Disabled)
+    Application.put_env(:mithril, :sms_test_phones, %{"+233555000000" => "424242"})
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :sms_adapter, previous_adapter)
+
+      if previous_phones do
+        Application.put_env(:mithril, :sms_test_phones, previous_phones)
+      else
+        Application.delete_env(:mithril, :sms_test_phones)
+      end
+    end)
+
+    assert Auth.methods().phone
+    assert {:ok, %{ok: true}} = Auth.request_otp("0555000000")
+    assert {:error, :invalid_otp} = Auth.verify_otp("0555000000", "000000")
+    assert {:ok, session} = Auth.verify_otp("0555000000", "424242")
+    assert session.user.phone == "+233555000000"
+    assert {:error, :sms_not_configured} = Auth.request_otp("0244123456")
+  end
+
   test "google oauth issues a session and links later logins" do
     assert {:ok, first} = Auth.oauth("google", "google-id-token")
     assert first.user.email == "google@example.com"

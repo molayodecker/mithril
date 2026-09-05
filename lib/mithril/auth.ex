@@ -9,6 +9,7 @@ defmodule Mithril.Auth do
   alias Mithril.Auth.OAuth
   alias Mithril.Auth.Phone
   alias Mithril.Auth.SMS
+  alias Mithril.Auth.TestPhones
   alias Mithril.Auth.Token
   alias Mithril.Repo
 
@@ -47,7 +48,7 @@ defmodule Mithril.Auth do
       truthy?(Map.get(opts, "should_create_user", Map.get(opts, :should_create_user, true)))
 
     with {:ok, phone} <- normalize_phone(phone),
-         :ok <- ensure_sms_configured(),
+         :ok <- ensure_sms_configured(phone),
          :ok <- ensure_otp_account(phone, should_create_user?),
          :ok <- ensure_otp_not_rate_limited(phone),
          {:ok, code} <- persist_otp(phone),
@@ -360,8 +361,8 @@ defmodule Mithril.Auth do
     {:error, :current_password_required}
   end
 
-  defp ensure_sms_configured do
-    if SMS.configured?(), do: :ok, else: {:error, :sms_not_configured}
+  defp ensure_sms_configured(phone) do
+    if SMS.deliverable?(phone), do: :ok, else: {:error, :sms_not_configured}
   end
 
   defp ensure_otp_account(_phone, true), do: :ok
@@ -392,7 +393,7 @@ defmodule Mithril.Auth do
   end
 
   defp persist_otp(phone) do
-    code = otp_code()
+    code = TestPhones.lookup(phone) || otp_code()
     hash = hash_refresh(code)
     expires_at = DateTime.add(DateTime.utc_now(), @otp_ttl_seconds, :second)
 

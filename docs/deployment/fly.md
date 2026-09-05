@@ -76,7 +76,7 @@ If that globally unique app name is unavailable, choose another name and update 
 
 ## 3. Set production secrets
 
-Mithril currently requires `SECRET_KEY_BASE` plus the database URLs selected by `DATABASE_BACKEND`. JWT login uses `AUTH_JWT_SECRET` when set, otherwise `SECRET_KEY_BASE`. Phone OTP needs `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_PHONE_NUMBER`. Google/Facebook need `GOOGLE_CLIENT_IDS` and `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET`.
+Mithril currently requires `SECRET_KEY_BASE` plus the database URLs selected by `DATABASE_BACKEND`. JWT login uses `AUTH_JWT_SECRET` when set, otherwise `SECRET_KEY_BASE`. Phone OTP needs `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_MESSAGING_SERVICE_SID` or `TWILIO_PHONE_NUMBER`. Optional `AUTH_TEST_PHONES` (comma-separated `phone:otp` pairs) skips Twilio for those numbers, the same as Supabase Auth test phone numbers. Google/Facebook need `GOOGLE_CLIENT_IDS` and `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET`.
 
 Generate a Phoenix secret locally:
 

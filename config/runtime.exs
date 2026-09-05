@@ -102,9 +102,18 @@ if twilio_from = System.get_env("TWILIO_PHONE_NUMBER") || System.get_env("TWILIO
   config :mithril, :twilio_from_number, twilio_from
 end
 
+if messaging_service = System.get_env("TWILIO_MESSAGING_SERVICE_SID") do
+  config :mithril, :twilio_messaging_service_sid, messaging_service
+end
+
 if System.get_env("TWILIO_ACCOUNT_SID") && System.get_env("TWILIO_AUTH_TOKEN") &&
-     (System.get_env("TWILIO_PHONE_NUMBER") || System.get_env("TWILIO_FROM_NUMBER")) do
+     (System.get_env("TWILIO_MESSAGING_SERVICE_SID") || System.get_env("TWILIO_PHONE_NUMBER") ||
+        System.get_env("TWILIO_FROM_NUMBER")) do
   config :mithril, :sms_adapter, Mithril.Auth.SMS.Twilio
+end
+
+if test_phones = System.get_env("AUTH_TEST_PHONES") do
+  config :mithril, :sms_test_phones, Mithril.Auth.TestPhones.parse(test_phones)
 end
 
 if config_env() == :prod do
