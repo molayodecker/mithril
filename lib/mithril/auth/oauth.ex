@@ -16,7 +16,7 @@ defmodule Mithril.Auth.OAuth do
          %{
            provider: "google",
            subject: sub,
-           email: optional_email(body["email"]),
+           email: verified_google_email(body),
            name: optional_string(body["name"])
          }}
       else
@@ -119,6 +119,16 @@ defmodule Mithril.Auth.OAuth do
       value -> {:ok, value}
     end
   end
+
+  defp verified_google_email(body) do
+    if verified_claim?(body["email_verified"]) do
+      optional_email(body["email"])
+    end
+  end
+
+  defp verified_claim?(true), do: true
+  defp verified_claim?("true"), do: true
+  defp verified_claim?(_), do: false
 
   defp optional_email(value) do
     case optional_string(value) do
