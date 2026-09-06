@@ -30,12 +30,22 @@ defmodule MithrilWeb.DirectBookingController do
 
   operation(:list_cleaners,
     operation_id: "direct.listBookingCleaners",
-    summary: "List active verified professionals available for direct selection",
+    summary: "List active verified professionals eligible for a Direct service",
+    parameters: [
+      serviceId: [
+        in: :query,
+        schema: %Schema{type: :integer, minimum: 1},
+        required: true,
+        description: "Active service type ID"
+      ]
+    ],
     responses: [ok: {"Booking professionals", "application/json", CleanerListResponse}]
   )
 
-  def list_cleaners(conn, _params) do
-    respond(conn, DirectBookings.list_cleaners(), fn cleaners -> %{cleaners: cleaners} end)
+  def list_cleaners(conn, params) do
+    respond(conn, DirectBookings.list_cleaners(params["serviceId"]), fn cleaners ->
+      %{cleaners: cleaners}
+    end)
   end
 
   operation(:preview_price,
@@ -99,6 +109,8 @@ defmodule MithrilWeb.DirectBookingController do
   defp error_response(:not_found), do: {404, "not_found"}
   defp error_response(:invalid_service), do: {422, "invalid_service"}
   defp error_response(:invalid_request), do: {422, "invalid_request"}
+  defp error_response(:cleaner_unavailable), do: {422, "cleaner_unavailable"}
+  defp error_response(:invalid_timeslot), do: {422, "invalid_timeslot"}
   defp error_response(:pricing_unavailable), do: {422, "pricing_unavailable"}
   defp error_response(:database_unavailable), do: {503, "database_unavailable"}
   defp error_response(reason) when is_atom(reason), do: {422, Atom.to_string(reason)}
