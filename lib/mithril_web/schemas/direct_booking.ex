@@ -85,7 +85,7 @@ defmodule MithrilWeb.Schemas.DirectBooking do
         serviceId: %Schema{type: :integer, minimum: 1},
         cleanerId: %Schema{type: :string, format: :uuid},
         scheduledDate: %Schema{type: :string, format: :date},
-        durationHours: %Schema{type: :number, exclusiveMinimum: 0},
+        durationHours: %Schema{type: :number, minimum: 0},
         timezone: %Schema{type: :string, default: "Africa/Accra"}
       },
       required: [:serviceId, :cleanerId, :scheduledDate, :durationHours]
@@ -152,7 +152,7 @@ defmodule MithrilWeb.Schemas.DirectBooking do
         cleanerId: %Schema{type: :string, format: :uuid},
         scheduledDate: %Schema{type: :string, format: :date},
         scheduledTime: %Schema{type: :string, example: "09:00"},
-        durationHours: %Schema{type: :number, exclusiveMinimum: 0},
+        durationHours: %Schema{type: :number, minimum: 0},
         address: %Schema{type: :string, minLength: 3, maxLength: 500},
         specialInstructions: %Schema{type: :string, nullable: true, maxLength: 4000},
         timezone: %Schema{type: :string, default: "Africa/Accra"}
