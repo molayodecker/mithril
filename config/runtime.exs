@@ -116,6 +116,11 @@ if test_phones = System.get_env("AUTH_TEST_PHONES") do
   config :mithril, :sms_test_phones, Mithril.Auth.TestPhones.parse(test_phones)
 end
 
+if paystack_secret = System.get_env("PAYSTACK_SECRET_KEY") do
+  config :mithril, :paystack_secret_key, paystack_secret
+  config :mithril, :paystack_adapter, Mithril.Paystack.HTTP
+end
+
 if config_env() == :prod do
   {database_backend, database_url} = Mithril.DatabaseBackend.resolve!()
   secret_key_base = System.fetch_env!("SECRET_KEY_BASE")

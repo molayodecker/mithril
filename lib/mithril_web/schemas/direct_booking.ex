@@ -225,4 +225,80 @@ defmodule MithrilWeb.Schemas.DirectBooking do
       ]
     })
   end
+
+  defmodule InitializePaymentRequest do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectInitializePaymentRequest",
+      type: :object,
+      properties: %{
+        callbackUrl: %Schema{
+          type: :string,
+          format: :uri,
+          description: "Direct booking confirmation URL Paystack should return to"
+        }
+      },
+      required: [:callbackUrl]
+    })
+  end
+
+  defmodule PaymentCheckoutResponse do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectPaymentCheckoutResponse",
+      type: :object,
+      properties: %{
+        authorizationUrl: %Schema{type: :string, format: :uri},
+        accessCode: %Schema{type: :string, nullable: true},
+        reference: %Schema{type: :string},
+        paymentStatus: %Schema{type: :string},
+        amountMinor: %Schema{type: :integer},
+        currency: %Schema{type: :string}
+      },
+      required: [
+        :authorizationUrl,
+        :accessCode,
+        :reference,
+        :paymentStatus,
+        :amountMinor,
+        :currency
+      ]
+    })
+  end
+
+  defmodule VerifyPaymentRequest do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectVerifyPaymentRequest",
+      type: :object,
+      properties: %{
+        reference: %Schema{type: :string, nullable: true}
+      }
+    })
+  end
+
+  defmodule PaymentVerifyResponse do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectPaymentVerifyResponse",
+      type: :object,
+      properties: %{
+        id: %Schema{type: :string, format: :uuid},
+        status: %Schema{type: :string},
+        paymentStatus: %Schema{type: :string},
+        amountMinor: %Schema{type: :integer},
+        currency: %Schema{type: :string},
+        reference: %Schema{type: :string, nullable: true}
+      },
+      required: [:id, :status, :paymentStatus, :amountMinor, :currency]
+    })
+  end
 end
