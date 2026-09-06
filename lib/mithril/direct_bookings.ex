@@ -179,8 +179,12 @@ defmodule Mithril.DirectBookings do
              input.cleaner_id
            ]
          ) do
-      {:ok, %{rows: [[pricing]]}} -> {:ok, pricing}
-      {:ok, %{rows: []}} -> {:error, :pricing_unavailable}
+      {:ok, %{rows: [[pricing]]}} ->
+        {:ok, pricing}
+
+      {:ok, %{rows: []}} ->
+        {:error, :pricing_unavailable}
+
       {:error, error} ->
         Logger.warning("Direct booking pricing failed: #{inspect(error)}")
         {:error, :pricing_unavailable}
@@ -335,7 +339,10 @@ defmodule Mithril.DirectBookings do
   defp required_text(_, _, _), do: :error
 
   defp optional_text(nil, _max), do: nil
-  defp optional_text(value, max) when is_binary(value), do: value |> String.trim() |> String.slice(0, max)
+
+  defp optional_text(value, max) when is_binary(value),
+    do: value |> String.trim() |> String.slice(0, max)
+
   defp optional_text(_, _max), do: nil
 
   defp normalize_timezone(value) when is_binary(value) do
