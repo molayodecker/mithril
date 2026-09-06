@@ -271,7 +271,7 @@ defmodule Mithril.DirectBookings do
            )
            """,
            [
-             Time.to_iso8601(input.scheduled_time),
+             format_hhmm(input.scheduled_time),
              decimal_hours(duration_hours),
              input.scheduled_date,
              input.timezone
@@ -459,6 +459,8 @@ defmodule Mithril.DirectBookings do
   defp decimal_hours(%Decimal{} = value), do: value
   defp decimal_hours(value) when is_integer(value), do: Decimal.new(value)
   defp decimal_hours(value) when is_float(value), do: Decimal.from_float(value)
+
+  defp format_hhmm(%Time{} = time), do: Calendar.strftime(time, "%H:%M")
 
   defp dump_uuid(value) when is_binary(value), do: Ecto.UUID.dump(value)
   defp dump_uuid(_), do: :error
