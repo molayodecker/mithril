@@ -155,6 +155,8 @@ defmodule Mithril.DirectBookings do
   end
 
   defp compute_pricing(input) do
+    # Live Postgres has two compute_booking_pricing overloads with overlapping
+    # defaults. Pass the extra-task arguments so PostgreSQL can pick one.
     case Repo.query(
            """
            SELECT jsonb_build_object(
@@ -181,10 +183,15 @@ defmodule Mithril.DirectBookings do
              p_duration_hours_raw => $2::numeric,
              p_scheduled_date => $3::date,
              p_service_timezone => $4::text,
-             p_cleaner_id => $5::uuid,
+             p_recurrence_interval => NULL,
              p_is_recurring => false,
              p_include_booking_cover => true,
-             p_supplies_option => 'customer_provided'
+             p_supplies_option => 'customer_provided'::text,
+             p_cleaner_id => $5::uuid,
+             p_extra_task_ids => NULL,
+             p_service_duration_option_id => NULL,
+             p_visit_duration_hours => NULL,
+             p_cleaning_scan_id => NULL
            ) p
            """,
            [
