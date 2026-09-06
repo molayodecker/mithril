@@ -14,12 +14,14 @@ defmodule Mithril.DirectBookings do
   @default_timezone "Africa/Accra"
 
   def list_services do
+    # `service_types.duration` is a display string like "2 hours", so it cannot
+    # be coalesced with numeric hour columns.
     case Repo.query("""
          SELECT jsonb_build_object(
            'id', id,
            'name', name,
            'priceGhs', price,
-           'minimumDurationHours', COALESCE(minimum_duration_hours, duration, 2),
+           'minimumDurationHours', COALESCE(minimum_duration_hours, 2),
            'maximumDurationHours', COALESCE(maximum_duration_hours, 12),
            'durationIncrementHours', COALESCE(duration_increment_hours, 0.5),
            'specialtySlug', specialty_slug
