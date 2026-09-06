@@ -196,8 +196,8 @@ defmodule Mithril.DirectBookings do
            """,
            [
              input.service_id,
-             input.duration_hours,
-             Date.to_iso8601(input.scheduled_date),
+             decimal_hours(input.duration_hours),
+             input.scheduled_date,
              input.timezone,
              input.cleaner_id
            ]
@@ -272,8 +272,8 @@ defmodule Mithril.DirectBookings do
            """,
            [
              Time.to_iso8601(input.scheduled_time),
-             duration_hours,
-             Date.to_iso8601(input.scheduled_date),
+             decimal_hours(duration_hours),
+             input.scheduled_date,
              input.timezone
            ]
          ) do
@@ -337,9 +337,9 @@ defmodule Mithril.DirectBookings do
              input.cleaner_id,
              input.service_id,
              service_name,
-             Date.to_iso8601(input.scheduled_date),
-             Time.to_iso8601(input.scheduled_time),
-             pricing["durationHours"],
+             input.scheduled_date,
+             input.scheduled_time,
+             decimal_hours(pricing["durationHours"] || input.duration_hours),
              input.address,
              input.special_instructions || "",
              pricing["finalAmountMinor"],
@@ -455,6 +455,10 @@ defmodule Mithril.DirectBookings do
       :error -> :error
     end
   end
+
+  defp decimal_hours(%Decimal{} = value), do: value
+  defp decimal_hours(value) when is_integer(value), do: Decimal.new(value)
+  defp decimal_hours(value) when is_float(value), do: Decimal.from_float(value)
 
   defp dump_uuid(value) when is_binary(value), do: Ecto.UUID.dump(value)
   defp dump_uuid(_), do: :error
