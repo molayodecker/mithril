@@ -3,6 +3,7 @@ defmodule MithrilWeb.DirectBookingController do
   use OpenApiSpex.ControllerSpecs
 
   alias Mithril.DirectBookings
+  alias Mithril.DirectPayments
 
   alias MithrilWeb.Schemas.DirectBooking.{
     BookingDetailResponse,
@@ -11,7 +12,11 @@ defmodule MithrilWeb.DirectBookingController do
     BookingServicesResponse,
     CreateBookingRequest,
     CreateBookingResponse,
-    CleanerListResponse
+    CleanerListResponse,
+    InitializePaymentRequest,
+    PaymentCheckoutResponse,
+    PaymentVerifyResponse,
+    VerifyPaymentRequest
   }
 
   alias OpenApiSpex.Schema
@@ -89,6 +94,47 @@ defmodule MithrilWeb.DirectBookingController do
     respond(conn, DirectBookings.get_booking(user_id(conn), id))
   end
 
+  operation(:initialize_payment,
+    operation_id: "direct.initializeBookingPayment",
+    summary: "Start Paystack checkout for a pending Direct booking",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Booking ID"
+      ]
+    ],
+    request_body:
+      {"Payment checkout", "application/json", InitializePaymentRequest, required: true},
+    responses: [
+      ok: {"Paystack checkout", "application/json", PaymentCheckoutResponse}
+    ]
+  )
+
+  def initialize_payment(conn, %{"id" => id} = params) do
+    respond(conn, DirectPayments.initialize(user_id(conn), id, params))
+  end
+
+  operation(:verify_payment,
+    operation_id: "direct.verifyBookingPayment",
+    summary: "Verify Paystack payment and mark the booking paid",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Booking ID"
+      ]
+    ],
+    request_body: {"Payment verification", "application/json", VerifyPaymentRequest},
+    responses: [ok: {"Paid booking", "application/json", PaymentVerifyResponse}]
+  )
+
+  def verify_payment(conn, %{"id" => id} = params) do
+    respond(conn, DirectPayments.verify(user_id(conn), id, params))
+  end
+
   defp user_id(conn), do: conn.assigns.instaclean_user_id
 
   defp respond(conn, result, mapper \\ & &1)
@@ -112,6 +158,14 @@ defmodule MithrilWeb.DirectBookingController do
   defp error_response(:cleaner_unavailable), do: {422, "cleaner_unavailable"}
   defp error_response(:invalid_timeslot), do: {422, "invalid_timeslot"}
   defp error_response(:pricing_unavailable), do: {422, "pricing_unavailable"}
+  defp error_response(:invalid_callback_url), do: {422, "invalid_callback_url"}
+  defp error_response(:payment_not_started), do: {422, "payment_not_started"}
+  defp error_response(:payment_incomplete), do: {422, "payment_incomplete"}
+  defp error_response(:payment_failed), do: {422, "payment_failed"}
+  defp error_response(:already_paid), do: {409, "already_paid"}
+  defp error_response(:payment_conflict), do: {409, "payment_conflict"}
+  defp error_response(:amount_mismatch), do: {409, "amount_mismatch"}
+  defp error_response(:payment_not_configured), do: {503, "payment_not_configured"}
   defp error_response(:database_unavailable), do: {503, "database_unavailable"}
   defp error_response(reason) when is_atom(reason), do: {422, Atom.to_string(reason)}
   defp error_response(_reason), do: {500, "internal_error"}

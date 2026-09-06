@@ -24,6 +24,7 @@ config :mithril,
   auth_access_ttl: 3600,
   auth_refresh_ttl: 86_400,
   sms_adapter: Mithril.Auth.SMS.Test,
+  paystack_adapter: Mithril.Paystack.Test,
   google_client_ids: ["test-google-client"],
   facebook_app_id: "test-facebook-app",
   facebook_app_secret: "test-facebook-secret"

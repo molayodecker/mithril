@@ -65,6 +65,8 @@ defmodule MithrilWeb.Router do
     post "/booking-price", DirectBookingController, :preview_price
     post "/bookings", DirectBookingController, :create
     get "/bookings/:id", DirectBookingController, :show
+    post "/bookings/:id/payment", DirectBookingController, :initialize_payment
+    post "/bookings/:id/payment/verify", DirectBookingController, :verify_payment
 
     get "/placements", DirectController, :list_placements
     post "/placements", DirectController, :create_placement

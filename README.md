@@ -84,6 +84,17 @@ curl -X POST http://localhost:4000/auth/otp/verify \
 
 Ghana local numbers are accepted (`0555000000` matches `+233555000000`). Unlisted numbers still require Twilio. Treat the OTPs like passwords.
 
+### Direct Paystack checkout
+
+Pending Direct bookings are reserved without taking money. `PAYSTACK_SECRET_KEY` enables:
+
+```text
+POST /direct/bookings/:id/payment
+POST /direct/bookings/:id/payment/verify
+```
+
+The charged amount is the stored booking snapshot, never a client-supplied total. Paystack's callback must return to that booking's Direct confirmation URL.
+
 ## Database and backups
 
 Mithril's target live database is Fly Managed Postgres. PostgreSQL remains the transactional source of truth for bookings, users, pricing, payments, wallets, availability, and other relational state.
