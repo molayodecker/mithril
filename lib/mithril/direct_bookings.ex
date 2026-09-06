@@ -326,9 +326,10 @@ defmodule Mithril.DirectBookings do
              timezone
            ) VALUES (
              $1, $2, $3, $4, $5::date, $6::time, $7, $7, $8,
-             NULLIF($9::text, ''), $10, $10, $11, $12, $13, $14,
-             $15, $16, $17, $18, $19, 0, true, $20, $21, $22,
-             $23, $24, 'pending', 'pending', $25
+             NULLIF($9::text, ''), $10::numeric, $11::integer, $12::integer,
+             $13::integer, $14::integer, $15::integer,
+             $16, $17, $18, $19, $20, 0, true, $21, $22, $23,
+             $24::integer, $25::integer, 'pending', 'pending', $26
            )
            RETURNING id::text
            """,
@@ -342,6 +343,7 @@ defmodule Mithril.DirectBookings do
              decimal_hours(pricing["durationHours"] || input.duration_hours),
              input.address,
              input.special_instructions || "",
+             pricing["finalAmountMinor"],
              pricing["finalAmountMinor"],
              pricing["coreAmountMinor"],
              pricing["sameDaySurchargeMinor"],
