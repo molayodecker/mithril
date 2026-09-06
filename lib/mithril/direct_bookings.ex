@@ -33,37 +33,49 @@ defmodule Mithril.DirectBookings do
     end
   end
 
-  def list_cleaners do
-    case Repo.query("""
-         SELECT jsonb_build_object(
-           'userId', cd.user_id,
-           'name', COALESCE(
-             NULLIF(btrim(p.fullname), ''),
-             NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
-             'Instaclean professional'
-           ),
-           'avatarUrl', p.avatar_url,
-           'rating', cd.rating,
-           'completedJobs', cd.completed_jobs,
-           'hourlyRateGhs', cd.hourly_rate
-         )
-         FROM public.cleaner_data cd
-         LEFT JOIN public.profiles p ON p.id = cd.user_id
-         WHERE cd.verified = true
-           AND cd.status = 'active'
-           AND cd.hourly_rate IS NOT NULL
-           AND cd.hourly_rate > 0
-         ORDER BY COALESCE(cd.rating, 0) DESC,
-                  COALESCE(cd.completed_jobs, 0) DESC
-         LIMIT 100
-         """) do
-      {:ok, result} -> {:ok, Enum.map(result.rows, &hd/1)}
-      {:error, error} -> database_error(error)
+  def list_cleaners(service_id) do
+    with {:ok, service_id} <- positive_integer(service_id),
+         {:ok, service} <- service_details(service_id) do
+      case Repo.query(
+             """
+             SELECT jsonb_build_object(
+               'userId', cd.user_id,
+               'name', COALESCE(
+                 NULLIF(btrim(p.fullname), ''),
+                 NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
+                 'Instaclean professional'
+               ),
+               'avatarUrl', p.avatar_url,
+               'rating', cd.rating,
+               'completedJobs', cd.completed_jobs,
+               'hourlyRateGhs', cd.hourly_rate
+             )
+             FROM public.cleaner_data cd
+             LEFT JOIN public.profiles p ON p.id = cd.user_id
+             WHERE cd.verified = true
+               AND cd.status = 'active'
+               AND cd.hourly_rate IS NOT NULL
+               AND cd.hourly_rate > 0
+               AND $1::text = ANY(COALESCE(cd.specialties, ARRAY[]::text[]))
+             ORDER BY COALESCE(cd.rating, 0) DESC,
+                      COALESCE(cd.completed_jobs, 0) DESC
+             LIMIT 100
+             """,
+             [service.specialty_slug]
+           ) do
+        {:ok, result} -> {:ok, Enum.map(result.rows, &hd/1)}
+        {:error, error} -> database_error(error)
+      end
+    else
+      :error -> {:error, :invalid_service}
+      {:error, reason} -> {:error, reason}
     end
   end
 
   def preview_price(params) when is_map(params) do
     with {:ok, input} <- validate_pricing_input(params),
+         {:ok, service} <- service_details(input.service_id),
+         :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
          {:ok, pricing} <- compute_pricing(input) do
       {:ok, pricing}
     end
@@ -73,9 +85,11 @@ defmodule Mithril.DirectBookings do
     with {:ok, customer_id} <- dump_uuid(user_id),
          {:ok, input} <- validate_create_input(params) do
       Repo.transaction(fn ->
-        with {:ok, pricing} <- compute_pricing(input),
-             {:ok, service_name} <- service_name(input.service_id),
-             {:ok, booking_id} <- insert_booking(customer_id, input, pricing, service_name) do
+        with {:ok, service} <- service_details(input.service_id),
+             :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
+             {:ok, pricing} <- compute_pricing(input),
+             :ok <- validate_timeslot(input, pricing),
+             {:ok, booking_id} <- insert_booking(customer_id, input, pricing, service.name) do
           %{
             id: booking_id,
             status: "pending",
@@ -191,14 +205,78 @@ defmodule Mithril.DirectBookings do
     end
   end
 
-  defp service_name(service_id) do
+  defp service_details(service_id) do
     case Repo.query(
-           "SELECT name FROM public.service_types WHERE id = $1 AND active = true LIMIT 1",
+           """
+           SELECT name, specialty_slug
+           FROM public.service_types
+           WHERE id = $1 AND active = true
+           LIMIT 1
+           """,
            [service_id]
          ) do
-      {:ok, %{rows: [[name]]}} -> {:ok, name}
-      {:ok, %{rows: []}} -> {:error, :invalid_service}
+      {:ok, %{rows: [[name, specialty_slug]]}}
+      when is_binary(specialty_slug) and specialty_slug != "" ->
+        {:ok, %{name: name, specialty_slug: specialty_slug}}
+
+      {:ok, %{rows: _}} ->
+        {:error, :invalid_service}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp cleaner_eligible(cleaner_id, specialty_slug) do
+    case Repo.query(
+           """
+           SELECT EXISTS(
+             SELECT 1
+             FROM public.cleaner_data cd
+             WHERE cd.user_id = $1::uuid
+               AND cd.verified = true
+               AND cd.status = 'active'
+               AND cd.hourly_rate IS NOT NULL
+               AND cd.hourly_rate > 0
+               AND $2::text = ANY(COALESCE(cd.specialties, ARRAY[]::text[]))
+           )
+           """,
+           [cleaner_id, specialty_slug]
+         ) do
+      {:ok, %{rows: [[true]]}} -> :ok
+      {:ok, %{rows: [[false]]}} -> {:error, :cleaner_unavailable}
       {:error, error} -> database_error(error)
+    end
+  end
+
+  defp validate_timeslot(input, pricing) do
+    duration_hours = pricing["durationHours"] || input.duration_hours
+
+    case Repo.query(
+           """
+           SELECT public.validate_booking_timeslot_24h(
+             $1::text,
+             $2::numeric,
+             $3::date,
+             $4::text
+           )
+           """,
+           [
+             Time.to_iso8601(input.scheduled_time),
+             duration_hours,
+             Date.to_iso8601(input.scheduled_date),
+             input.timezone
+           ]
+         ) do
+      {:ok, %{rows: [[true]]}} ->
+        :ok
+
+      {:ok, %{rows: [[false]]}} ->
+        {:error, :invalid_timeslot}
+
+      {:error, error} ->
+        Logger.warning("Direct booking timeslot validation failed: #{inspect(error)}")
+        {:error, :database_unavailable}
     end
   end
 
@@ -312,6 +390,14 @@ defmodule Mithril.DirectBookings do
   end
 
   defp positive_integer(value) when is_integer(value) and value > 0, do: {:ok, value}
+
+  defp positive_integer(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {integer, ""} when integer > 0 -> {:ok, integer}
+      _ -> :error
+    end
+  end
+
   defp positive_integer(_), do: :error
 
   defp positive_number(value) when is_number(value) and value > 0, do: {:ok, value}
