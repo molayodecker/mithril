@@ -91,6 +91,7 @@ defmodule Mithril.DirectBookings do
              :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
              {:ok, pricing} <- compute_pricing(input),
              :ok <- validate_timeslot(input, pricing),
+             :ok <- ensure_customer_profile(customer_id),
              {:ok, booking_id} <- insert_booking(customer_id, input, pricing, service.name) do
           %{
             id: booking_id,
@@ -286,6 +287,20 @@ defmodule Mithril.DirectBookings do
       {:error, error} ->
         Logger.warning("Direct booking timeslot validation failed: #{inspect(error)}")
         {:error, :database_unavailable}
+    end
+  end
+
+  defp ensure_customer_profile(customer_id) do
+    case Repo.query(
+           """
+           INSERT INTO public.profiles (id, user_id)
+           VALUES ($1, $1)
+           ON CONFLICT (id) DO NOTHING
+           """,
+           [customer_id]
+         ) do
+      {:ok, _} -> :ok
+      {:error, error} -> database_error(error)
     end
   end
 
