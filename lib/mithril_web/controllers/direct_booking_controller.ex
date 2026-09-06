@@ -41,7 +41,8 @@ defmodule MithrilWeb.DirectBookingController do
   operation(:preview_price,
     operation_id: "direct.previewBookingPrice",
     summary: "Compute authoritative booking pricing",
-    request_body: {"Booking pricing input", "application/json", BookingPricingRequest, required: true},
+    request_body:
+      {"Booking pricing input", "application/json", BookingPricingRequest, required: true},
     responses: [ok: {"Authoritative booking price", "application/json", BookingPriceResponse}]
   )
 
