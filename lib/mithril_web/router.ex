@@ -60,6 +60,12 @@ defmodule MithrilWeb.Router do
   scope "/direct", MithrilWeb do
     pipe_through [:api, :direct_gateway]
 
+    get "/booking-services", DirectBookingController, :list_services
+    get "/booking-cleaners", DirectBookingController, :list_cleaners
+    post "/booking-price", DirectBookingController, :preview_price
+    post "/bookings", DirectBookingController, :create
+    get "/bookings/:id", DirectBookingController, :show
+
     get "/placements", DirectController, :list_placements
     post "/placements", DirectController, :create_placement
     get "/placements/:id", DirectController, :show_placement
