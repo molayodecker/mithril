@@ -48,8 +48,8 @@ defmodule Mithril.DirectPaymentsTest do
       """
       UPDATE public.bookings
       SET paystack_split_code = NULL,
-          tax_share_minor = 1_000,
-          vendor_share_minor = 2_000
+          tax_share_minor = 1000,
+          vendor_share_minor = 2000
       WHERE id = $1
       """,
       [Ecto.UUID.dump!(booking_id)]
