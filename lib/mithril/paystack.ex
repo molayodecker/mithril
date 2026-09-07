@@ -43,7 +43,9 @@ defmodule Mithril.Paystack.Test do
       reference: reference,
       amount: attrs.amount,
       currency: attrs.currency,
-      status: "success"
+      status: "success",
+      split_code: Map.get(attrs, :split_code),
+      split: Map.get(attrs, :split)
     }
 
     put_attempt(reference, record)
@@ -79,14 +81,16 @@ defmodule Mithril.Paystack.HTTP do
   @impl true
   def initialize(attrs) do
     with {:ok, secret} <- secret_key() do
-      body = %{
-        email: attrs.email,
-        amount: attrs.amount,
-        currency: attrs.currency,
-        reference: attrs.reference,
-        callback_url: attrs.callback_url,
-        metadata: attrs.metadata
-      }
+      body =
+        %{
+          email: attrs.email,
+          amount: attrs.amount,
+          currency: attrs.currency,
+          reference: attrs.reference,
+          callback_url: attrs.callback_url,
+          metadata: attrs.metadata
+        }
+        |> Map.merge(Map.take(attrs, [:split_code, :split]))
 
       case Req.post(@initialize_url, json: body, auth: {:bearer, secret}) do
         {:ok, %{status: status, body: %{"status" => true, "data" => data}}}
@@ -122,6 +126,9 @@ defmodule Mithril.Paystack.HTTP do
              currency: data["currency"],
              reference: data["reference"]
            }}
+
+        {:ok, %{status: 404}} ->
+          {:error, :not_found}
 
         {:ok, %{status: status, body: body}} ->
           {:error, {:provider, status, provider_message(body)}}
