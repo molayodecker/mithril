@@ -111,7 +111,6 @@ defmodule Mithril.DirectOperations do
       |> normalize_transaction()
     else
       :error -> {:error, :invalid_request}
-      {:error, reason} -> {:error, reason}
     end
   end
 
