@@ -60,7 +60,9 @@ defmodule Mithril.DirectDispatchSafetyTest do
     )
     """)
 
-    Repo.query!("INSERT INTO public.service_types (id, specialty_slug) VALUES (1, 'regular_cleaning')")
+    Repo.query!(
+      "INSERT INTO public.service_types (id, specialty_slug) VALUES (1, 'regular_cleaning')"
+    )
 
     Repo.query!("""
     CREATE TABLE public.cleaner_data (
@@ -177,6 +179,13 @@ defmodule Mithril.DirectDispatchSafetyTest do
 
     assert request.kind == "replacement"
     assert request.relatedBookingId == booking_id
+
+    [[requirements]] =
+      Repo.query!("SELECT requirements FROM public.direct_service_requests WHERE id = $1", [
+        Ecto.UUID.dump!(request.id)
+      ]).rows
+
+    assert requirements["relatedServiceId"] == 1
   end
 
   test "rejects dispatch assignment on a worker availability exception" do
