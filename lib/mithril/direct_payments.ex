@@ -366,24 +366,26 @@ defmodule Mithril.DirectPayments do
              Repo.query("SELECT set_config('request.jwt.claim.sub', $1::text, true)", [user_id]),
            {:ok, result} <- Repo.query(query, [booking_id]) do
         case result.rows do
-          [[
-            id,
-            customer_id,
-            amount_minor,
-            currency,
-            payment_status,
-            booking_status,
-            reference,
-            payment_split_type,
-            paystack_split_code,
-            tax_share_minor,
-            vendor_share_minor,
-            platform_share_minor,
-            tax_percentage_bps,
-            vendor_percentage_bps,
-            tax_paystack_share,
-            vendor_paystack_share
-          ]] ->
+          [
+            [
+              id,
+              customer_id,
+              amount_minor,
+              currency,
+              payment_status,
+              booking_status,
+              reference,
+              payment_split_type,
+              paystack_split_code,
+              tax_share_minor,
+              vendor_share_minor,
+              platform_share_minor,
+              tax_percentage_bps,
+              vendor_percentage_bps,
+              tax_paystack_share,
+              vendor_paystack_share
+            ]
+          ] ->
             %{
               id: Ecto.UUID.load!(id),
               uuid: id,
@@ -429,9 +431,14 @@ defmodule Mithril.DirectPayments do
 
     with tax when is_binary(tax) and tax != "" <- tax_subaccount,
          vendor when is_binary(vendor) and vendor != "" <- vendor_subaccount,
-         {:ok, tax_share} <- split_share(booking.tax_share_minor, booking.tax_percentage_bps, booking.amount_minor),
+         {:ok, tax_share} <-
+           split_share(booking.tax_share_minor, booking.tax_percentage_bps, booking.amount_minor),
          {:ok, vendor_share} <-
-           split_share(booking.vendor_share_minor, booking.vendor_percentage_bps, booking.amount_minor),
+           split_share(
+             booking.vendor_share_minor,
+             booking.vendor_percentage_bps,
+             booking.amount_minor
+           ),
          true <- tax_share + vendor_share <= booking.amount_minor do
       {:ok,
        %{
@@ -654,10 +661,17 @@ defmodule Mithril.DirectPayments do
 
   defp assert_booking_reference(payment_status, booking_reference, reference) do
     cond do
-      paid?(payment_status) and normalized_reference(booking_reference) == reference -> :ok
-      paid?(payment_status) -> {:error, :already_paid}
-      normalized_reference(booking_reference) != reference -> {:error, :payment_reference_mismatch}
-      true -> :ok
+      paid?(payment_status) and normalized_reference(booking_reference) == reference ->
+        :ok
+
+      paid?(payment_status) ->
+        {:error, :already_paid}
+
+      normalized_reference(booking_reference) != reference ->
+        {:error, :payment_reference_mismatch}
+
+      true ->
+        :ok
     end
   end
 
