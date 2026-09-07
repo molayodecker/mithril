@@ -3,8 +3,8 @@ defmodule Mithril.DirectDispatchSafety do
   Server-side safety checks for Direct concierge dispatch.
 
   These checks sit in front of the existing dispatch mutations so customer UI
-  rules are never the only protection for paid replacements or worker schedule
-  availability.
+  rules are never the only protection for paid replacements, worker schedule
+  availability, replacement handoff, or request-state transitions.
   """
 
   require Logger
@@ -13,17 +13,14 @@ defmodule Mithril.DirectDispatchSafety do
   alias Mithril.Repo
 
   @default_timezone "Africa/Accra"
-  @dispatch_buffer_minutes 45
+  @assignable_statuses ~w(submitted triaging matching)
+  @mutable_statuses ~w(triaging matching resolved cancelled)
 
   def request_replacement(user_id, booking_id, params) when is_map(params) do
     with {:ok, uid} <- dump_uuid(user_id),
          {:ok, bid} <- dump_uuid(booking_id),
-         {:ok, booking} <- fetch_paid_owned_booking(uid, bid) do
-      DirectDispatch.request_replacement(
-        user_id,
-        booking_id,
-        put_related_service_requirement(params, booking.service_id)
-      )
+         :ok <- ensure_paid_owned_booking(uid, bid) do
+      DirectDispatch.request_replacement(user_id, booking_id, params)
     else
       :error -> {:error, :not_found}
       {:error, reason} when is_atom(reason) -> {:error, reason}
@@ -39,7 +36,9 @@ defmodule Mithril.DirectDispatchSafety do
       Repo.transaction(fn ->
         with :ok <- lock_worker_schedule(worker_uid),
              {:ok, request} <- fetch_request_window_for_update(rid),
-             :ok <- ensure_worker_available(worker_uid, rid, request),
+             :ok <- ensure_assignable_request(request.status),
+             :ok <- ensure_worker_available(worker_uid, request),
+             :ok <- reassign_related_booking(request, worker_uid),
              {:ok, assigned} <-
                DirectDispatch.assign_admin_service_request(user_id, request_id, params) do
           assigned
@@ -56,19 +55,43 @@ defmodule Mithril.DirectDispatchSafety do
     end
   end
 
-  defp fetch_paid_owned_booking(uid, bid) do
+  def update_admin_service_request(user_id, request_id, params) when is_map(params) do
+    with {:ok, admin_uid} <- dump_uuid(user_id),
+         :ok <- require_admin(admin_uid),
+         {:ok, rid} <- dump_uuid(request_id),
+         {:ok, target_status} <- mutable_status(params["status"]) do
+      Repo.transaction(fn ->
+        with {:ok, request} <- fetch_request_state_for_update(rid),
+             :ok <- ensure_status_transition(request, target_status),
+             {:ok, updated} <-
+               DirectDispatch.update_admin_service_request(user_id, request_id, params) do
+          updated
+        else
+          {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
+          {:error, error} -> Repo.rollback({:database, error})
+        end
+      end)
+      |> normalize_transaction()
+    else
+      :error -> {:error, :invalid_request}
+      {:error, reason} when is_atom(reason) -> {:error, reason}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp ensure_paid_owned_booking(uid, bid) do
     case Repo.query(
            """
-           SELECT payment_status, service_id
+           SELECT payment_status
            FROM public.bookings
            WHERE id = $1 AND customer_id = $2
            LIMIT 1
            """,
            [bid, uid]
          ) do
-      {:ok, %{rows: [[status, service_id]]}} ->
+      {:ok, %{rows: [[status]]}} ->
         if String.downcase(to_string(status)) == "paid",
-          do: {:ok, %{service_id: service_id}},
+          do: :ok,
           else: {:error, :booking_unpaid}
 
       {:ok, %{rows: []}} ->
@@ -76,19 +99,6 @@ defmodule Mithril.DirectDispatchSafety do
 
       {:error, error} ->
         {:error, error}
-    end
-  end
-
-  defp put_related_service_requirement(params, service_id) do
-    case params["requirements"] do
-      nil ->
-        Map.put(params, "requirements", %{"relatedServiceId" => service_id})
-
-      requirements when is_map(requirements) ->
-        Map.put(params, "requirements", Map.put(requirements, "relatedServiceId", service_id))
-
-      _ ->
-        params
     end
   end
 
@@ -105,7 +115,11 @@ defmodule Mithril.DirectDispatchSafety do
   defp fetch_request_window_for_update(rid) do
     case Repo.query(
            """
-           SELECT r.requested_start_at,
+           SELECT r.status,
+                  r.kind,
+                  r.related_booking_id,
+                  r.related_service_id,
+                  r.requested_start_at,
                   r.duration_hours,
                   COALESCE(
                     b.scheduled_date,
@@ -120,16 +134,32 @@ defmodule Mithril.DirectDispatchSafety do
            [rid, @default_timezone]
          ) do
       {:ok,
-       %{rows: [[%DateTime{} = requested_start_at, duration_hours, %Date{} = exception_date]]}}
+       %{
+         rows: [
+           [
+             status,
+             kind,
+             related_booking_id,
+             related_service_id,
+             %DateTime{} = requested_start_at,
+             duration_hours,
+             %Date{} = exception_date
+           ]
+         ]
+       }}
       when not is_nil(duration_hours) ->
         {:ok,
          %{
+           status: status,
+           kind: kind,
+           related_booking_id: related_booking_id,
+           related_service_id: related_service_id,
            requested_start_at: requested_start_at,
            duration_hours: duration_hours,
            exception_date: exception_date
          }}
 
-      {:ok, %{rows: [[_, _, _]]}} ->
+      {:ok, %{rows: [_]}} ->
         {:error, :invalid_request}
 
       {:ok, %{rows: []}} ->
@@ -140,7 +170,27 @@ defmodule Mithril.DirectDispatchSafety do
     end
   end
 
-  defp ensure_worker_available(worker_uid, rid, request) do
+  defp fetch_request_state_for_update(rid) do
+    case Repo.query(
+           """
+           SELECT status, kind
+           FROM public.direct_service_requests
+           WHERE id = $1
+           LIMIT 1
+           FOR UPDATE
+           """,
+           [rid]
+         ) do
+      {:ok, %{rows: [[status, kind]]}} -> {:ok, %{status: status, kind: kind}}
+      {:ok, %{rows: []}} -> {:error, :not_found}
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp ensure_assignable_request(status) when status in @assignable_statuses, do: :ok
+  defp ensure_assignable_request(_), do: {:error, :request_closed}
+
+  defp ensure_worker_available(worker_uid, request) do
     case Repo.query(
            """
            SELECT
@@ -156,47 +206,130 @@ defmodule Mithril.DirectDispatchSafety do
                $2::timestamptz
                  + make_interval(secs => ($3::numeric * 3600)::double precision),
                NULL
-             ),
-             EXISTS(
-               SELECT 1
-               FROM public.direct_service_requests other
-               WHERE other.id <> $5
-                 AND other.assigned_worker_user_id = $1
-                 AND other.status = 'assigned'
-                 AND other.requested_start_at IS NOT NULL
-                 AND other.duration_hours IS NOT NULL
-                 AND tstzrange(
-                       other.requested_start_at
-                         - make_interval(mins => $6::integer),
-                       other.requested_start_at
-                         + make_interval(secs => (other.duration_hours * 3600)::double precision)
-                         + make_interval(mins => $6::integer),
-                       '[)'
-                     ) &&
-                     tstzrange(
-                       $2::timestamptz,
-                       $2::timestamptz
-                         + make_interval(secs => ($3::numeric * 3600)::double precision),
-                       '[)'
-                     )
              )
            """,
            [
              worker_uid,
              request.requested_start_at,
              request.duration_hours,
-             request.exception_date,
-             rid,
-             @dispatch_buffer_minutes
+             request.exception_date
            ]
          ) do
-      {:ok, %{rows: [[false, false, false]]}} -> :ok
-      {:ok, %{rows: [[true, _, _]]}} -> {:error, :candidate_unavailable}
-      {:ok, %{rows: [[_, true, _]]}} -> {:error, :candidate_unavailable}
-      {:ok, %{rows: [[_, _, true]]}} -> {:error, :candidate_unavailable}
+      {:ok, %{rows: [[false, false]]}} -> :ok
+      {:ok, %{rows: [[true, _]]}} -> {:error, :candidate_unavailable}
+      {:ok, %{rows: [[_, true]]}} -> {:error, :candidate_unavailable}
       {:error, error} -> {:error, error}
     end
   end
+
+  defp reassign_related_booking(%{kind: "urgent_help"}, _worker_uid), do: :ok
+
+  defp reassign_related_booking(
+         %{kind: "replacement", related_booking_id: booking_id, related_service_id: service_id},
+         worker_uid
+       )
+       when not is_nil(booking_id) and not is_nil(service_id) do
+    case Repo.query(
+           """
+           SELECT cleaner_id, status, payment_status, service_id
+           FROM public.bookings
+           WHERE id = $1
+           LIMIT 1
+           FOR UPDATE
+           """,
+           [booking_id]
+         ) do
+      {:ok, %{rows: [[current_worker, status, payment_status, ^service_id]]}} ->
+        cond do
+          String.downcase(to_string(payment_status)) != "paid" ->
+            {:error, :booking_unpaid}
+
+          String.downcase(to_string(status)) in ~w(cancelled completed) ->
+            {:error, :booking_closed}
+
+          current_worker == worker_uid ->
+            {:error, :candidate_unavailable}
+
+          true ->
+            persist_replacement_handoff(booking_id, current_worker, worker_uid)
+        end
+
+      {:ok, %{rows: [[_, _, _, _]]}} ->
+        {:error, :invalid_request}
+
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp reassign_related_booking(_request, _worker_uid), do: {:error, :invalid_request}
+
+  defp persist_replacement_handoff(booking_id, previous_worker, worker_uid) do
+    with {:ok, _} <-
+           Repo.query(
+             """
+             UPDATE public.direct_service_requests
+             SET previous_worker_user_id = COALESCE(previous_worker_user_id, $2),
+                 updated_at = now()
+             WHERE related_booking_id = $1
+               AND kind = 'replacement'
+               AND status IN ('submitted', 'triaging', 'matching')
+             """,
+             [booking_id, previous_worker]
+           ),
+         {:ok, %{rows: [[_]]}} <-
+           Repo.query(
+             """
+             UPDATE public.bookings
+             SET cleaner_id = $2,
+                 direct_assigned_cleaner_id = $2,
+                 cleaner_accepted_at = now(),
+                 assignment_phase = 'accepted',
+                 assignment_hold_until = NULL,
+                 assignment_reminder_sent_at = NULL,
+                 updated_at = now(),
+                 last_updated = now()
+             WHERE id = $1
+             RETURNING id
+             """,
+             [booking_id, worker_uid]
+           ) do
+      :ok
+    else
+      {:error, %Postgrex.Error{postgres: %{code: :exclusion_violation}}} ->
+        {:error, :candidate_unavailable}
+
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp ensure_status_transition(%{status: current}, current), do: :ok
+
+  defp ensure_status_transition(%{status: "submitted"}, target)
+       when target in ~w(triaging matching cancelled),
+       do: :ok
+
+  defp ensure_status_transition(%{status: "triaging"}, target)
+       when target in ~w(matching cancelled),
+       do: :ok
+
+  defp ensure_status_transition(%{status: "matching"}, "cancelled"), do: :ok
+  defp ensure_status_transition(%{status: "assigned"}, "resolved"), do: :ok
+
+  defp ensure_status_transition(%{status: "assigned", kind: "urgent_help"}, "cancelled"),
+    do: :ok
+
+  defp ensure_status_transition(_request, _target), do: {:error, :invalid_status_transition}
+
+  defp mutable_status(status) when status in @mutable_statuses, do: {:ok, status}
+  defp mutable_status(_), do: :error
 
   defp require_admin(uid) do
     case Repo.query(
