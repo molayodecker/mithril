@@ -286,7 +286,17 @@ AS $$
           AND p_exclude_booking_id IS NOT NULL
           AND r.source_id = p_exclude_booking_id
         )
-        AND r.reservation_period && tstzrange(p_booking_start, p_booking_end, '[)')
+        AND r.reservation_period && tstzrange(
+          p_booking_start,
+          p_booking_end
+            + make_interval(
+              mins => GREATEST(
+                COALESCE(p_buffer_minutes, public.direct_worker_reservation_buffer_minutes()),
+                0
+              )
+            ),
+          '[)'
+        )
     );
 $$;
 
