@@ -75,7 +75,11 @@ defmodule MithrilWeb.DirectOperationsController do
       q: [in: :query, schema: %Schema{type: :string, maxLength: 120}, required: false],
       status: [in: :query, schema: %Schema{type: :string}, required: false],
       verified: [in: :query, schema: %Schema{type: :boolean}, required: false],
-      limit: [in: :query, schema: %Schema{type: :integer, minimum: 1, maximum: 200}, required: false]
+      limit: [
+        in: :query,
+        schema: %Schema{type: :integer, minimum: 1, maximum: 200},
+        required: false
+      ]
     ],
     responses: [ok: {"Cleaner roster", "application/json", CleanerListResponse}]
   )
@@ -92,15 +96,23 @@ defmodule MithrilWeb.DirectOperationsController do
     parameters: [
       q: [in: :query, schema: %Schema{type: :string, maxLength: 120}, required: false],
       status: [in: :query, schema: %Schema{type: :string}, required: false],
-      limit: [in: :query, schema: %Schema{type: :integer, minimum: 1, maximum: 200}, required: false]
+      limit: [
+        in: :query,
+        schema: %Schema{type: :integer, minimum: 1, maximum: 200},
+        required: false
+      ]
     ],
     responses: [ok: {"Cleaner applications", "application/json", CleanerApplicationListResponse}]
   )
 
   def list_admin_cleaner_applications(conn, params) do
-    respond(conn, DirectOperations.list_cleaner_applications(user_id(conn), params), fn applications ->
-      %{applications: applications}
-    end)
+    respond(
+      conn,
+      DirectOperations.list_cleaner_applications(user_id(conn), params),
+      fn applications ->
+        %{applications: applications}
+      end
+    )
   end
 
   operation(:approve_cleaner_application,
@@ -170,6 +182,7 @@ defmodule MithrilWeb.DirectOperationsController do
   defp error_response(:recurring_booking_requires_manual_review),
     do: {409, "recurring_booking_requires_manual_review"}
 
+  defp error_response(:refund_request_conflict), do: {409, "refund_request_conflict"}
   defp error_response(:cleaner_unavailable), do: {409, "cleaner_unavailable"}
   defp error_response(:invalid_timeslot), do: {422, "invalid_timeslot"}
   defp error_response(:invalid_request), do: {422, "invalid_request"}
