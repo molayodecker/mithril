@@ -88,7 +88,13 @@ defmodule MithrilWeb.Router do
     get "/admin/customers", DirectDispatchController, :list_admin_customers
     post "/admin/bookings", DirectDispatchController, :create_admin_booking
     get "/admin/service-requests", DirectDispatchController, :list_admin_service_requests
-    post "/admin/service-requests/:id/assign", DirectDispatchController, :assign_admin_service_request
-    post "/admin/service-requests/:id/status", DirectDispatchController, :update_admin_service_request
+
+    post "/admin/service-requests/:id/assign",
+         DirectDispatchController,
+         :assign_admin_service_request
+
+    post "/admin/service-requests/:id/status",
+         DirectDispatchController,
+         :update_admin_service_request
   end
 end
