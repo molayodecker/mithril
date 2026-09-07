@@ -81,11 +81,14 @@ defmodule Mithril.DirectDispatchSafety do
 
   defp put_related_service_requirement(params, service_id) do
     case params["requirements"] do
-      nil -> Map.put(params, "requirements", %{"relatedServiceId" => service_id})
+      nil ->
+        Map.put(params, "requirements", %{"relatedServiceId" => service_id})
+
       requirements when is_map(requirements) ->
         Map.put(params, "requirements", Map.put(requirements, "relatedServiceId", service_id))
 
-      _ -> params
+      _ ->
+        params
     end
   end
 
@@ -116,7 +119,8 @@ defmodule Mithril.DirectDispatchSafety do
            """,
            [rid, @default_timezone]
          ) do
-      {:ok, %{rows: [[%DateTime{} = requested_start_at, duration_hours, %Date{} = exception_date]]}}
+      {:ok,
+       %{rows: [[%DateTime{} = requested_start_at, duration_hours, %Date{} = exception_date]]}}
       when not is_nil(duration_hours) ->
         {:ok,
          %{
