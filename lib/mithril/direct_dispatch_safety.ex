@@ -13,6 +13,7 @@ defmodule Mithril.DirectDispatchSafety do
   alias Mithril.Repo
 
   @default_timezone "Africa/Accra"
+  @dispatch_buffer_minutes 45
 
   def request_replacement(user_id, booking_id, params) when is_map(params) do
     with {:ok, uid} <- dump_uuid(user_id),
@@ -30,10 +31,20 @@ defmodule Mithril.DirectDispatchSafety do
     with {:ok, admin_uid} <- dump_uuid(user_id),
          :ok <- require_admin(admin_uid),
          {:ok, rid} <- dump_uuid(request_id),
-         {:ok, worker_uid} <- dump_uuid(params["workerUserId"]),
-         {:ok, request} <- fetch_request_window(rid),
-         :ok <- ensure_worker_available(worker_uid, request) do
-      DirectDispatch.assign_admin_service_request(user_id, request_id, params)
+         {:ok, worker_uid} <- dump_uuid(params["workerUserId"]) do
+      Repo.transaction(fn ->
+        with :ok <- lock_worker_schedule(worker_uid),
+             {:ok, request} <- fetch_request_window_for_update(rid),
+             :ok <- ensure_worker_available(worker_uid, rid, request),
+             {:ok, assigned} <-
+               DirectDispatch.assign_admin_service_request(user_id, request_id, params) do
+          assigned
+        else
+          {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
+          {:error, error} -> Repo.rollback({:database, error})
+        end
+      end)
+      |> normalize_transaction()
     else
       :error -> {:error, :invalid_request}
       {:error, reason} when is_atom(reason) -> {:error, reason}
@@ -64,21 +75,43 @@ defmodule Mithril.DirectDispatchSafety do
     end
   end
 
-  defp fetch_request_window(rid) do
+  defp lock_worker_schedule(worker_uid) do
+    case Repo.query(
+           "SELECT pg_advisory_xact_lock(hashtextextended($1::uuid::text, 0))",
+           [worker_uid]
+         ) do
+      {:ok, _} -> :ok
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp fetch_request_window_for_update(rid) do
     case Repo.query(
            """
-           SELECT requested_start_at, duration_hours
-           FROM public.direct_service_requests
-           WHERE id = $1
+           SELECT r.requested_start_at,
+                  r.duration_hours,
+                  COALESCE(
+                    b.scheduled_date,
+                    (r.requested_start_at AT TIME ZONE $2::text)::date
+                  ) AS exception_date
+           FROM public.direct_service_requests r
+           LEFT JOIN public.bookings b ON b.id = r.related_booking_id
+           WHERE r.id = $1
            LIMIT 1
+           FOR UPDATE OF r
            """,
-           [rid]
+           [rid, @default_timezone]
          ) do
-      {:ok, %{rows: [[%DateTime{} = requested_start_at, duration_hours]]}}
+      {:ok, %{rows: [[%DateTime{} = requested_start_at, duration_hours, %Date{} = exception_date]]}}
       when not is_nil(duration_hours) ->
-        {:ok, %{requested_start_at: requested_start_at, duration_hours: duration_hours}}
+        {:ok,
+         %{
+           requested_start_at: requested_start_at,
+           duration_hours: duration_hours,
+           exception_date: exception_date
+         }}
 
-      {:ok, %{rows: [[_, _]]}} ->
+      {:ok, %{rows: [[_, _, _]]}} ->
         {:error, :invalid_request}
 
       {:ok, %{rows: []}} ->
@@ -89,7 +122,7 @@ defmodule Mithril.DirectDispatchSafety do
     end
   end
 
-  defp ensure_worker_available(worker_uid, request) do
+  defp ensure_worker_available(worker_uid, rid, request) do
     case Repo.query(
            """
            SELECT
@@ -97,7 +130,7 @@ defmodule Mithril.DirectDispatchSafety do
                SELECT 1
                FROM public.cleaner_availability_exceptions cae
                WHERE cae.cleaner_id = $1
-                 AND cae.exception_date = (($2::timestamptz AT TIME ZONE $4::text)::date)
+                 AND cae.exception_date = $4::date
              ),
              public.cleaner_has_booking_conflict(
                $1,
@@ -105,13 +138,44 @@ defmodule Mithril.DirectDispatchSafety do
                $2::timestamptz
                  + make_interval(secs => ($3::numeric * 3600)::double precision),
                NULL
+             ),
+             EXISTS(
+               SELECT 1
+               FROM public.direct_service_requests other
+               WHERE other.id <> $5
+                 AND other.assigned_worker_user_id = $1
+                 AND other.status = 'assigned'
+                 AND other.requested_start_at IS NOT NULL
+                 AND other.duration_hours IS NOT NULL
+                 AND tstzrange(
+                       other.requested_start_at
+                         - make_interval(mins => $6::integer),
+                       other.requested_start_at
+                         + make_interval(secs => (other.duration_hours * 3600)::double precision)
+                         + make_interval(mins => $6::integer),
+                       '[)'
+                     ) &&
+                     tstzrange(
+                       $2::timestamptz,
+                       $2::timestamptz
+                         + make_interval(secs => ($3::numeric * 3600)::double precision),
+                       '[)'
+                     )
              )
            """,
-           [worker_uid, request.requested_start_at, request.duration_hours, @default_timezone]
+           [
+             worker_uid,
+             request.requested_start_at,
+             request.duration_hours,
+             request.exception_date,
+             rid,
+             @dispatch_buffer_minutes
+           ]
          ) do
-      {:ok, %{rows: [[false, false]]}} -> :ok
-      {:ok, %{rows: [[true, _]]}} -> {:error, :candidate_unavailable}
-      {:ok, %{rows: [[_, true]]}} -> {:error, :candidate_unavailable}
+      {:ok, %{rows: [[false, false, false]]}} -> :ok
+      {:ok, %{rows: [[true, _, _]]}} -> {:error, :candidate_unavailable}
+      {:ok, %{rows: [[_, true, _]]}} -> {:error, :candidate_unavailable}
+      {:ok, %{rows: [[_, _, true]]}} -> {:error, :candidate_unavailable}
       {:error, error} -> {:error, error}
     end
   end
@@ -129,6 +193,11 @@ defmodule Mithril.DirectDispatchSafety do
 
   defp dump_uuid(value) when is_binary(value), do: Ecto.UUID.dump(value)
   defp dump_uuid(_), do: :error
+
+  defp normalize_transaction({:ok, value}), do: {:ok, value}
+  defp normalize_transaction({:error, {:database, error}}), do: database_error(error)
+  defp normalize_transaction({:error, reason}) when is_atom(reason), do: {:error, reason}
+  defp normalize_transaction({:error, error}), do: database_error(error)
 
   defp database_error(error) do
     Logger.error("Direct dispatch safety database error: #{inspect(error)}")
