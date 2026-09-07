@@ -13,6 +13,7 @@ defmodule Mithril.DirectPayments do
   alias Mithril.Repo
 
   @default_poll_delays_ms [50, 100, 200]
+  @terminal_provider_statuses ~w(abandoned failed reversed)
 
   def initialize(user_id, booking_id, params) when is_map(params) do
     with {:ok, customer_id} <- dump_uuid(user_id),
@@ -147,27 +148,41 @@ defmodule Mithril.DirectPayments do
   defp recover_stale_attempt(attempt, booking, email, callback_url, routing) do
     case Paystack.verify(attempt.reference) do
       {:ok, receipt} ->
-        case assert_successful_payment(attempt, receipt) do
-          :ok ->
-            with :ok <- mark_paid(booking.uuid, attempt) do
-              {:error, :already_paid}
+        case provider_status(receipt) do
+          "success" ->
+            case assert_successful_payment(attempt, receipt) do
+              :ok ->
+                with :ok <- mark_paid(booking.uuid, attempt) do
+                  {:error, :already_paid}
+                end
+
+              {:error, reason} ->
+                {:error, reason}
             end
 
-          {:error, :payment_incomplete} ->
-            {:error, :payment_in_progress}
+          status when status in @terminal_provider_statuses ->
+            retire_stale_attempt(
+              attempt,
+              booking,
+              email,
+              callback_url,
+              routing,
+              "Paystack transaction #{status} during stale recovery"
+            )
 
-          {:error, reason} ->
-            {:error, reason}
+          _ ->
+            {:error, :payment_in_progress}
         end
 
       {:error, :not_found} ->
-        if fail_attempt(attempt.attempt_id, "Paystack reference not found during stale recovery") do
-          with {:ok, retry} <- reserve_attempt(booking) do
-            ensure_checkout(retry, booking, email, callback_url, routing)
-          end
-        else
-          {:error, :database_unavailable}
-        end
+        retire_stale_attempt(
+          attempt,
+          booking,
+          email,
+          callback_url,
+          routing,
+          "Paystack reference not found during stale recovery"
+        )
 
       {:error, :payment_not_configured} ->
         {:error, :payment_not_configured}
@@ -176,6 +191,16 @@ defmodule Mithril.DirectPayments do
         # A stale local lease does not prove the provider transaction failed.
         # Keep the reference reserved until Paystack can be checked conclusively.
         {:error, :payment_in_progress}
+    end
+  end
+
+  defp retire_stale_attempt(attempt, booking, email, callback_url, routing, reason) do
+    if fail_attempt(attempt.attempt_id, reason) do
+      with {:ok, retry} <- reserve_attempt(booking) do
+        ensure_checkout(retry, booking, email, callback_url, routing)
+      end
+    else
+      {:error, :database_unavailable}
     end
   end
 
@@ -446,8 +471,8 @@ defmodule Mithril.DirectPayments do
            type: "flat",
            bearer_type: "account",
            subaccounts: [
-             %{subaccount: String.trim(tax), share: Integer.to_string(tax_share)},
-             %{subaccount: String.trim(vendor), share: Integer.to_string(vendor_share)}
+             %{subaccount: String.trim(tax), share: tax_share},
+             %{subaccount: String.trim(vendor), share: vendor_share}
            ]
          }
        }}
@@ -586,10 +611,17 @@ defmodule Mithril.DirectPayments do
 
   defp normalized_reference(_), do: nil
 
+  defp provider_status(receipt) do
+    case receipt[:status] || receipt["status"] do
+      status when is_binary(status) -> String.downcase(status)
+      _ -> nil
+    end
+  end
+
   defp assert_successful_payment(source, receipt) do
     amount = amount_to_integer(receipt[:amount] || receipt["amount"])
     currency = receipt[:currency] || receipt["currency"]
-    status = receipt[:status] || receipt["status"]
+    status = provider_status(receipt)
     receipt_reference = normalized_reference(receipt[:reference] || receipt["reference"])
 
     cond do
