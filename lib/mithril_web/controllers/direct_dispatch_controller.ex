@@ -104,7 +104,7 @@ defmodule MithrilWeb.DirectDispatchController do
   )
 
   def list_admin_service_requests(conn, _params) do
-    respond(conn, DirectDispatch.list_admin_service_requests(user_id(conn)), fn requests ->
+    respond(conn, DirectDispatchSafety.list_admin_service_requests(user_id(conn)), fn requests ->
       %{requests: requests}
     end)
   end
