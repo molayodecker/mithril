@@ -18,8 +18,12 @@ defmodule Mithril.DirectDispatchSafety do
   def request_replacement(user_id, booking_id, params) when is_map(params) do
     with {:ok, uid} <- dump_uuid(user_id),
          {:ok, bid} <- dump_uuid(booking_id),
-         :ok <- ensure_paid_owned_booking(uid, bid) do
-      DirectDispatch.request_replacement(user_id, booking_id, params)
+         {:ok, booking} <- fetch_paid_owned_booking(uid, bid) do
+      DirectDispatch.request_replacement(
+        user_id,
+        booking_id,
+        put_related_service_requirement(params, booking.service_id)
+      )
     else
       :error -> {:error, :not_found}
       {:error, reason} when is_atom(reason) -> {:error, reason}
@@ -52,19 +56,19 @@ defmodule Mithril.DirectDispatchSafety do
     end
   end
 
-  defp ensure_paid_owned_booking(uid, bid) do
+  defp fetch_paid_owned_booking(uid, bid) do
     case Repo.query(
            """
-           SELECT payment_status
+           SELECT payment_status, service_id
            FROM public.bookings
            WHERE id = $1 AND customer_id = $2
            LIMIT 1
            """,
            [bid, uid]
          ) do
-      {:ok, %{rows: [[status]]}} ->
+      {:ok, %{rows: [[status, service_id]]}} ->
         if String.downcase(to_string(status)) == "paid",
-          do: :ok,
+          do: {:ok, %{service_id: service_id}},
           else: {:error, :booking_unpaid}
 
       {:ok, %{rows: []}} ->
@@ -72,6 +76,16 @@ defmodule Mithril.DirectDispatchSafety do
 
       {:error, error} ->
         {:error, error}
+    end
+  end
+
+  defp put_related_service_requirement(params, service_id) do
+    case params["requirements"] do
+      nil -> Map.put(params, "requirements", %{"relatedServiceId" => service_id})
+      requirements when is_map(requirements) ->
+        Map.put(params, "requirements", Map.put(requirements, "relatedServiceId", service_id))
+
+      _ -> params
     end
   end
 
