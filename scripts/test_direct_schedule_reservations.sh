@@ -3,7 +3,8 @@ set -euo pipefail
 
 : "${DATABASE_URL:?DATABASE_URL is required}"
 
-ADMIN_URL="${DIRECT_RESERVATION_TEST_ADMIN_URL:-${DATABASE_URL%/*}/postgres}"
+PSQL_DATABASE_URL="${DATABASE_URL/ecto:\/\//postgresql://}"
+ADMIN_URL="${DIRECT_RESERVATION_TEST_ADMIN_URL:-${PSQL_DATABASE_URL%/*}/postgres}"
 TEST_DB="mithril_direct_reservation_test"
 TEST_URL="${ADMIN_URL%/*}/$TEST_DB"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
