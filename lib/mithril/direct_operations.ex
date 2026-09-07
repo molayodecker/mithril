@@ -317,7 +317,7 @@ defmodule Mithril.DirectOperations do
   end
 
   defp maybe_queue_cancellation_refund(booking, actor_uid, reason, policy) do
-    if policy.refundPercent > 0 do
+    if policy.refundAmountMinor > 0 do
       ensure_refund_request!(
         booking,
         actor_uid,
@@ -414,6 +414,12 @@ defmodule Mithril.DirectOperations do
                   COALESCE(b.final_amount_minor, b.total_price)::bigint,
                   COALESCE(b.currency, 'GHS'),
                   b.cancellation_tier,
+                  COALESCE((
+                    SELECT SUM(br.refund_amount_minor)::bigint
+                    FROM public.booking_refunds br
+                    WHERE br.booking_id = b.id
+                      AND br.status = 'processed'
+                  ), 0)::bigint AS refunded_amount_minor,
                   EXISTS (
                     SELECT 1
                     FROM public.user_roles ur
@@ -453,6 +459,7 @@ defmodule Mithril.DirectOperations do
              amount_minor,
              currency,
              cancellation_tier,
+             refunded_amount_minor,
              actor_is_admin
            ]
          ]
@@ -475,6 +482,7 @@ defmodule Mithril.DirectOperations do
            amount_minor: integer_amount(amount_minor),
            currency: currency,
            cancellation_tier: cancellation_tier,
+           refunded_amount_minor: integer_amount(refunded_amount_minor),
            actor_is_admin: actor_is_admin
          }}
 
@@ -489,20 +497,20 @@ defmodule Mithril.DirectOperations do
   defp cancellation_payload(booking) do
     tier = cancellation_tier(booking)
     can_cancel = booking.status in @cancellable_statuses and booking.subscription_id == nil
-    paid = booking.payment_status == "paid"
+    refundable_payment = booking.payment_status in ~w(paid partially_refunded)
 
     refund_percent =
       cond do
-        not paid -> 0
+        not refundable_payment -> 0
         tier == "full_refund" -> 100
         tier == "partial_refund" -> 50
         true -> 0
       end
 
+    target_refund_amount_minor = round(booking.amount_minor * refund_percent / 100)
+
     refund_amount_minor =
-      if refund_percent > 0,
-        do: round(booking.amount_minor * refund_percent / 100),
-        else: 0
+      max(target_refund_amount_minor - booking.refunded_amount_minor, 0)
 
     %{
       id: booking.id,
@@ -512,6 +520,7 @@ defmodule Mithril.DirectOperations do
       refundTier: tier,
       refundPercent: refund_percent,
       refundAmountMinor: refund_amount_minor,
+      alreadyRefundedAmountMinor: booking.refunded_amount_minor,
       currency: booking.currency,
       scheduledDate: booking.scheduled_date,
       scheduledTime: booking.scheduled_time,
