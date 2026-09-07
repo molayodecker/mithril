@@ -37,7 +37,7 @@ defmodule Mithril.DirectPayments do
          {:ok, booking} <- fetch_owned_booking(customer_id, bid),
          {:ok, attempt} <- verifiable_attempt(booking, params),
          {:ok, receipt} <- Paystack.verify(attempt.reference),
-         :ok <- assert_successful_payment(attempt, receipt),
+         :ok <- verify_receipt(attempt, receipt),
          :ok <- mark_paid(bid, attempt) do
       {:ok,
        %{
@@ -615,6 +615,29 @@ defmodule Mithril.DirectPayments do
     case receipt[:status] || receipt["status"] do
       status when is_binary(status) -> String.downcase(status)
       _ -> nil
+    end
+  end
+
+  defp verify_receipt(attempt, receipt) do
+    status = provider_status(receipt)
+    receipt_reference = normalized_reference(receipt[:reference] || receipt["reference"])
+
+    cond do
+      receipt_reference != attempt.reference ->
+        {:error, :payment_reference_mismatch}
+
+      status in @terminal_provider_statuses ->
+        if fail_attempt(
+             attempt.attempt_id,
+             "Paystack transaction #{status} during verification"
+           ) do
+          {:error, :payment_failed}
+        else
+          {:error, :database_unavailable}
+        end
+
+      true ->
+        assert_successful_payment(attempt, receipt)
     end
   end
 
