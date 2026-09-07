@@ -2,9 +2,8 @@ defmodule Mithril.DirectOperations do
   @moduledoc """
   Auditable customer and admin operations used by Instaclean agents.
 
-  This module deliberately keeps financial execution out of agent-facing flows:
-  refund tools create reviewable requests, while booking cancellation uses the
-  established cancellation policy to calculate the proposed refund amount.
+  Financial execution stays outside agent-facing flows: refund tools create
+  reviewable requests, while cancellation computes the policy-derived amount.
   """
 
   require Logger
@@ -44,62 +43,7 @@ defmodule Mithril.DirectOperations do
             Repo.rollback(:booking_not_cancellable)
 
           true ->
-            policy = cancellation_payload(booking)
-            reason = optional_text(params["reason"], 500)
-            role = if booking.actor_is_admin, do: "admin", else: "customer"
-
-            case Repo.query(
-                   """
-                   UPDATE public.bookings
-                   SET status = 'cancelled',
-                       cancelled_at = now(),
-                       cancelled_by = $2,
-                       cancelled_by_role = $3,
-                       cancellation_tier = $4,
-                       cancellation_reason = NULLIF($5::text, ''),
-                       cancellation_reason_code = $6,
-                       updated_at = now()
-                   WHERE id = $1
-                     AND status::text IN ('pending', 'confirmed', 'scheduled')
-                   RETURNING id::text
-                   """,
-                   [
-                     bid,
-                     actor_uid,
-                     role,
-                     policy.refundTier,
-                     reason,
-                     if(role == "admin", do: "admin_cancelled", else: "customer_cancelled")
-                   ]
-                 ) do
-              {:ok, %{rows: [[id]]}} ->
-                refund_request =
-                  if policy.refundPercent > 0 do
-                    ensure_refund_request!(
-                      booking,
-                      actor_uid,
-                      reason_or_default(reason, "Cancellation refund review"),
-                      policy.refundTier,
-                      policy.refundPercent,
-                      policy.refundAmountMinor
-                    )
-                  else
-                    nil
-                  end
-
-                Map.merge(policy, %{
-                  id: id,
-                  status: "cancelled",
-                  alreadyCancelled: false,
-                  refundRequest: refund_request
-                })
-
-              {:ok, %{rows: []}} ->
-                Repo.rollback(:booking_not_cancellable)
-
-              {:error, error} ->
-                Repo.rollback({:database, error})
-            end
+            cancel_open_booking(booking, actor_uid, params)
         end
       end)
       |> normalize_transaction()
@@ -161,58 +105,7 @@ defmodule Mithril.DirectOperations do
             Repo.rollback(:booking_not_reschedulable)
 
           true ->
-            timezone =
-              normalize_timezone(
-                params["timezone"] || booking.timezone_name || booking.timezone || @default_timezone
-              )
-
-            :ok = validate_timeslot(scheduled_date, scheduled_time, booking.duration_hours, timezone)
-            :ok = validate_cleaner_availability(booking, scheduled_date, scheduled_time, timezone)
-
-            case Repo.query(
-                   """
-                   UPDATE public.bookings
-                   SET scheduled_date = $2::date,
-                       scheduled_time = $3::time,
-                       timezone = $4,
-                       timezone_name = $4,
-                       customer_reminder_sent_at = NULL,
-                       customer_reminder_48h_sent_at = NULL,
-                       customer_reminder_morning_sent_at = NULL,
-                       customer_reminder_claimed_at = NULL,
-                       customer_reminder_48h_claimed_at = NULL,
-                       customer_reminder_morning_claimed_at = NULL,
-                       cleaner_reminder_sent_at = NULL,
-                       cleaner_reminder_claimed_at = NULL,
-                       updated_at = now()
-                   WHERE id = $1
-                     AND payment_status = 'paid'
-                     AND status::text IN ('confirmed', 'scheduled')
-                     AND subscription_id IS NULL
-                   RETURNING id::text
-                   """,
-                   [bid, scheduled_date, scheduled_time, timezone]
-                 ) do
-              {:ok, %{rows: [[id]]}} ->
-                %{
-                  id: id,
-                  status: booking.status,
-                  oldScheduledDate: booking.scheduled_date,
-                  oldScheduledTime: booking.scheduled_time,
-                  scheduledDate: Date.to_iso8601(scheduled_date),
-                  scheduledTime: format_time(scheduled_time),
-                  timezone: timezone
-                }
-
-              {:ok, %{rows: []}} ->
-                Repo.rollback(:booking_not_reschedulable)
-
-              {:error, %Postgrex.Error{postgres: %{code: :exclusion_violation}}} ->
-                Repo.rollback(:cleaner_unavailable)
-
-              {:error, error} ->
-                Repo.rollback({:database, error})
-            end
+            reschedule_paid_booking(booking, scheduled_date, scheduled_time, params)
         end
       end)
       |> normalize_transaction()
@@ -333,11 +226,14 @@ defmodule Mithril.DirectOperations do
          {:ok, app_id} <- dump_uuid(application_id),
          :ok <- require_admin(actor_uid) do
       case Repo.query("SELECT public.approve_cleaner_application($1::uuid)", [app_id]) do
-        {:ok, %{rows: [[result]]}} -> {:ok, result}
-        {:ok, %{rows: []}} -> {:error, :application_not_found}
-        {:error, %Postgrex.Error{postgres: %{code: "P0001"}}} -> {:error, :application_not_found}
-        {:error, %Postgrex.Error{postgres: %{code: "P0002"}}} -> {:error, :application_user_not_found}
-        {:error, error} -> database_error(error)
+        {:ok, %{rows: [[result]]}} ->
+          {:ok, result}
+
+        {:ok, %{rows: []}} ->
+          {:error, :application_not_found}
+
+        {:error, %Postgrex.Error{postgres: postgres} = error} ->
+          approval_error(postgres, error)
       end
     else
       :error -> {:error, :invalid_request}
@@ -373,6 +269,125 @@ defmodule Mithril.DirectOperations do
     end
   end
 
+  defp cancel_open_booking(booking, actor_uid, params) do
+    policy = cancellation_payload(booking)
+    reason = optional_text(params["reason"], 500)
+    role = if booking.actor_is_admin, do: "admin", else: "customer"
+
+    case Repo.query(
+           """
+           UPDATE public.bookings
+           SET status = 'cancelled',
+               cancelled_at = now(),
+               cancelled_by = $2,
+               cancelled_by_role = $3,
+               cancellation_tier = $4,
+               cancellation_reason = NULLIF($5::text, ''),
+               cancellation_reason_code = $6,
+               updated_at = now()
+           WHERE id = $1
+             AND status::text IN ('pending', 'confirmed', 'scheduled')
+           RETURNING id::text
+           """,
+           [
+             booking.uuid,
+             actor_uid,
+             role,
+             policy.refundTier,
+             reason,
+             if(role == "admin", do: "admin_cancelled", else: "customer_cancelled")
+           ]
+         ) do
+      {:ok, %{rows: [[id]]}} ->
+        refund_request =
+          maybe_queue_cancellation_refund(booking, actor_uid, reason, policy)
+
+        Map.merge(policy, %{
+          id: id,
+          status: "cancelled",
+          alreadyCancelled: false,
+          refundRequest: refund_request
+        })
+
+      {:ok, %{rows: []}} ->
+        Repo.rollback(:booking_not_cancellable)
+
+      {:error, error} ->
+        Repo.rollback({:database, error})
+    end
+  end
+
+  defp maybe_queue_cancellation_refund(booking, actor_uid, reason, policy) do
+    if policy.refundPercent > 0 do
+      ensure_refund_request!(
+        booking,
+        actor_uid,
+        reason_or_default(reason, "Cancellation refund review"),
+        policy.refundTier,
+        policy.refundPercent,
+        policy.refundAmountMinor
+      )
+    end
+  end
+
+  defp reschedule_paid_booking(booking, scheduled_date, scheduled_time, params) do
+    timezone =
+      normalize_timezone(
+        params["timezone"] || booking.timezone_name || booking.timezone ||
+          @default_timezone
+      )
+
+    :ok =
+      validate_timeslot(scheduled_date, scheduled_time, booking.duration_hours, timezone)
+
+    :ok = validate_cleaner_availability(booking, scheduled_date, scheduled_time, timezone)
+
+    case Repo.query(
+           """
+           UPDATE public.bookings
+           SET scheduled_date = $2::date,
+               scheduled_time = $3::time,
+               timezone = $4,
+               timezone_name = $4,
+               customer_reminder_sent_at = NULL,
+               customer_reminder_48h_sent_at = NULL,
+               customer_reminder_morning_sent_at = NULL,
+               customer_reminder_claimed_at = NULL,
+               customer_reminder_48h_claimed_at = NULL,
+               customer_reminder_morning_claimed_at = NULL,
+               cleaner_reminder_sent_at = NULL,
+               cleaner_reminder_claimed_at = NULL,
+               updated_at = now()
+           WHERE id = $1
+             AND payment_status = 'paid'
+             AND status::text IN ('confirmed', 'scheduled')
+             AND subscription_id IS NULL
+           RETURNING id::text
+           """,
+           [booking.uuid, scheduled_date, scheduled_time, timezone]
+         ) do
+      {:ok, %{rows: [[id]]}} ->
+        %{
+          id: id,
+          status: booking.status,
+          oldScheduledDate: booking.scheduled_date,
+          oldScheduledTime: booking.scheduled_time,
+          scheduledDate: Date.to_iso8601(scheduled_date),
+          scheduledTime: format_time(scheduled_time),
+          timezone: timezone
+        }
+
+      {:ok, %{rows: []}} ->
+        Repo.rollback(:booking_not_reschedulable)
+
+      {:error, %Postgrex.Error{postgres: %{code: :exclusion_violation}}} ->
+        Repo.rollback(:cleaner_unavailable)
+
+      {:error, error} ->
+        Repo.rollback({:database, error})
+    end
+  end
+
   defp fetch_booking_for_actor!(actor_uid, bid) do
     case fetch_booking_for_actor(actor_uid, bid, true) do
       {:ok, booking} -> booking
@@ -397,16 +412,12 @@ defmodule Mithril.DirectOperations do
                   b.duration_hours,
                   b.timezone_name,
                   b.timezone,
-                  COALESCE(
-                    b.scheduled_at_utc,
-                    ((b.scheduled_date + b.scheduled_time)
-                      AT TIME ZONE COALESCE(NULLIF(b.timezone_name, ''), NULLIF(b.timezone, ''), 'Africa/Accra'))
-                  ),
                   COALESCE(b.final_amount_minor, b.total_price)::bigint,
                   COALESCE(b.currency, 'GHS'),
                   b.cancellation_tier,
                   EXISTS (
-                    SELECT 1 FROM public.user_roles ur
+                    SELECT 1
+                    FROM public.user_roles ur
                     WHERE ur.user_id = $1 AND ur.role_id = 'admin'
                   ) AS actor_is_admin
            FROM public.bookings b
@@ -414,7 +425,8 @@ defmodule Mithril.DirectOperations do
              AND (
                b.customer_id = $1
                OR EXISTS (
-                 SELECT 1 FROM public.user_roles ur
+                 SELECT 1
+                 FROM public.user_roles ur
                  WHERE ur.user_id = $1 AND ur.role_id = 'admin'
                )
              )
@@ -439,7 +451,6 @@ defmodule Mithril.DirectOperations do
              duration_hours,
              timezone_name,
              timezone,
-             scheduled_at,
              amount_minor,
              currency,
              cancellation_tier,
@@ -462,7 +473,6 @@ defmodule Mithril.DirectOperations do
            duration_hours: duration_hours,
            timezone_name: timezone_name,
            timezone: timezone,
-           scheduled_at: scheduled_at,
            amount_minor: integer_amount(amount_minor),
            currency: currency,
            cancellation_tier: cancellation_tier,
@@ -520,13 +530,15 @@ defmodule Mithril.DirectOperations do
     case Repo.query(
            """
            SELECT CASE
-             WHEN $1::date = (now() AT TIME ZONE $4::text)::date
-               OR $3::timestamptz <= now() THEN 'no_refund'
-             WHEN $3::timestamptz - now() >= interval '24 hours' THEN 'full_refund'
+             WHEN $1::date = (now() AT TIME ZONE $3::text)::date
+               OR (($1::date + $2::time) AT TIME ZONE $3::text) <= now()
+               THEN 'no_refund'
+             WHEN (($1::date + $2::time) AT TIME ZONE $3::text) - now() >= interval '24 hours'
+               THEN 'full_refund'
              ELSE 'partial_refund'
            END
            """,
-           [booking.scheduled_date, booking.scheduled_time, booking.scheduled_at, timezone]
+           [booking.scheduled_date, booking.scheduled_time, timezone]
          ) do
       {:ok, %{rows: [[tier]]}} -> tier
       _ -> "no_refund"
@@ -549,24 +561,52 @@ defmodule Mithril.DirectOperations do
         %{id: id, status: status, existing: true}
 
       {:ok, %{rows: []}} ->
-        case Repo.query(
-               """
-               INSERT INTO public.direct_refund_requests (
-                 booking_id, customer_id, requested_by_user_id, status, reason,
-                 policy_tier, proposed_refund_percent, proposed_refund_amount_minor, source
-               ) VALUES (
-                 $1, $2::uuid, $3, 'requested', $4, $5, $6, $7, 'mcp'
-               )
-               RETURNING id::text, status
-               """,
-               [booking.uuid, booking.customer_id, actor_uid, reason, tier, percent, amount_minor]
-             ) do
-          {:ok, %{rows: [[id, status]]}} -> %{id: id, status: status, existing: false}
-          {:error, error} -> Repo.rollback({:database, error})
-        end
+        insert_refund_request(booking, actor_uid, reason, tier, percent, amount_minor)
 
       {:error, error} ->
         Repo.rollback({:database, error})
+    end
+  end
+
+  defp insert_refund_request(booking, actor_uid, reason, tier, percent, amount_minor) do
+    case Repo.query(
+           """
+           INSERT INTO public.direct_refund_requests (
+             booking_id, customer_id, requested_by_user_id, status, reason,
+             policy_tier, proposed_refund_percent, proposed_refund_amount_minor, source
+           ) VALUES (
+             $1, $2::uuid, $3, 'requested', $4, $5, $6, $7, 'mcp'
+           )
+           RETURNING id::text, status
+           """,
+           [booking.uuid, booking.customer_id, actor_uid, reason, tier, percent, amount_minor]
+         ) do
+      {:ok, %{rows: [[id, status]]}} ->
+        %{id: id, status: status, existing: false}
+
+      {:error, %Postgrex.Error{postgres: %{code: :unique_violation}}} ->
+        existing_refund_request!(booking.uuid)
+
+      {:error, error} ->
+        Repo.rollback({:database, error})
+    end
+  end
+
+  defp existing_refund_request!(booking_id) do
+    case Repo.query(
+           """
+           SELECT id::text, status
+           FROM public.direct_refund_requests
+           WHERE booking_id = $1
+             AND status IN ('requested', 'reviewing', 'approved', 'processing')
+           ORDER BY created_at DESC
+           LIMIT 1
+           """,
+           [booking_id]
+         ) do
+      {:ok, %{rows: [[id, status]]}} -> %{id: id, status: status, existing: true}
+      {:error, error} -> Repo.rollback({:database, error})
+      _ -> Repo.rollback(:refund_request_conflict)
     end
   end
 
@@ -637,8 +677,11 @@ defmodule Mithril.DirectOperations do
            currency: currency
          }}
 
-      {:ok, %{rows: []}} -> {:error, :not_found}
-      {:error, error} -> database_error(error)
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        database_error(error)
     end
   end
 
@@ -682,11 +725,20 @@ defmodule Mithril.DirectOperations do
           reference: Map.get(receipt, :reference) || Map.get(receipt, "reference") || reference
         }
 
-      {:error, :not_found} -> %{status: "not_found", reference: reference}
-      {:error, :payment_not_configured} -> %{status: "not_configured", reference: reference}
-      {:error, :provider_unavailable} -> %{status: "unavailable", reference: reference}
-      {:error, {:provider, status, message}} -> %{status: "provider_error", httpStatus: status, reason: message}
-      {:error, reason} -> %{status: "error", reason: inspect(reason), reference: reference}
+      {:error, :not_found} ->
+        %{status: "not_found", reference: reference}
+
+      {:error, :payment_not_configured} ->
+        %{status: "not_configured", reference: reference}
+
+      {:error, :provider_unavailable} ->
+        %{status: "unavailable", reference: reference}
+
+      {:error, {:provider, status, message}} ->
+        %{status: "provider_error", httpStatus: status, reason: message}
+
+      {:error, reason} ->
+        %{status: "error", reason: inspect(reason), reference: reference}
     end
   end
 
@@ -703,14 +755,29 @@ defmodule Mithril.DirectOperations do
     attempt_status = attempt["status"]
 
     cond do
-      is_binary(failure_reason) and String.trim(failure_reason) != "" -> failure_reason
-      payment_status == "paid" -> nil
-      attempt_status == "ready" -> "Checkout was created, but a successful payment has not been verified."
-      attempt_status == "initializing" -> "Payment initialization is still in progress or awaiting stale-attempt recovery."
-      attempt_status in ~w(failed expired superseded) -> "The latest payment attempt is #{attempt_status}."
-      provider.status in ~w(abandoned failed reversed) -> "Paystack reports the transaction as #{provider.status}."
-      provider.status == "not_found" -> "Paystack has no transaction for the latest reference."
-      true -> nil
+      is_binary(failure_reason) and String.trim(failure_reason) != "" ->
+        failure_reason
+
+      payment_status == "paid" ->
+        nil
+
+      attempt_status == "ready" ->
+        "Checkout was created, but a successful payment has not been verified."
+
+      attempt_status == "initializing" ->
+        "Payment initialization is still in progress or awaiting stale-attempt recovery."
+
+      attempt_status in ~w(failed expired superseded) ->
+        "The latest payment attempt is #{attempt_status}."
+
+      provider.status in ~w(abandoned failed reversed) ->
+        "Paystack reports the transaction as #{provider.status}."
+
+      provider.status == "not_found" ->
+        "Paystack has no transaction for the latest reference."
+
+      true ->
+        nil
     end
   end
 
@@ -730,6 +797,14 @@ defmodule Mithril.DirectOperations do
 
   defp eligible_refund_amount(booking, policy) do
     if booking.status in @cancellable_statuses, do: policy.refundAmountMinor, else: nil
+  end
+
+  defp approval_error(postgres, error) do
+    case postgres[:message] do
+      "application_not_found" -> {:error, :application_not_found}
+      "user_not_found" -> {:error, :application_user_not_found}
+      _ -> database_error(error)
+    end
   end
 
   defp require_admin(uid) do
@@ -784,7 +859,10 @@ defmodule Mithril.DirectOperations do
   defp required_text(_, _, _), do: {:error, :invalid_request}
 
   defp optional_text(nil, _max), do: ""
-  defp optional_text(value, max) when is_binary(value), do: value |> String.trim() |> String.slice(0, max)
+
+  defp optional_text(value, max) when is_binary(value),
+    do: value |> String.trim() |> String.slice(0, max)
+
   defp optional_text(_, _max), do: ""
 
   defp reason_or_default("", default), do: default
@@ -802,7 +880,9 @@ defmodule Mithril.DirectOperations do
   defp optional_status(nil), do: {:ok, nil}
   defp optional_status(""), do: {:ok, nil}
 
-  defp optional_status(value) when value in ~w(active inactive suspended pending), do: {:ok, value}
+  defp optional_status(value) when value in ~w(active inactive suspended pending),
+    do: {:ok, value}
+
   defp optional_status(_), do: {:error, :invalid_request}
 
   defp optional_application_status(nil), do: {:ok, nil}
