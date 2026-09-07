@@ -91,6 +91,7 @@ defmodule Mithril.DirectBookings do
              :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
              {:ok, pricing} <- compute_pricing(input),
              :ok <- validate_timeslot(input, pricing),
+             :ok <- validate_cleaner_availability(input, pricing),
              :ok <- ensure_customer_profile(customer_id),
              {:ok, booking_id} <- insert_booking(customer_id, input, pricing, service.name) do
           %{
@@ -290,6 +291,49 @@ defmodule Mithril.DirectBookings do
     end
   end
 
+  defp validate_cleaner_availability(input, pricing) do
+    duration_hours = pricing["durationHours"] || input.duration_hours
+
+    case Repo.query(
+           """
+           SELECT
+             EXISTS(
+               SELECT 1
+               FROM public.cleaner_availability_exceptions cae
+               WHERE cae.cleaner_id = $1::uuid
+                 AND cae.exception_date = $2::date
+             ),
+             public.cleaner_has_booking_conflict(
+               $1::uuid,
+               (($2::date + $3::time) AT TIME ZONE $5::text),
+               (($2::date + $3::time) AT TIME ZONE $5::text)
+                 + make_interval(secs => ($4::numeric * 3600)::double precision),
+               NULL
+             )
+           """,
+           [
+             input.cleaner_id,
+             input.scheduled_date,
+             input.scheduled_time,
+             decimal_hours(duration_hours),
+             input.timezone
+           ]
+         ) do
+      {:ok, %{rows: [[false, false]]}} ->
+        :ok
+
+      {:ok, %{rows: [[true, _]]}} ->
+        {:error, :cleaner_unavailable}
+
+      {:ok, %{rows: [[_, true]]}} ->
+        {:error, :cleaner_unavailable}
+
+      {:error, error} ->
+        Logger.warning("Direct cleaner availability validation failed: #{inspect(error)}")
+        {:error, :database_unavailable}
+    end
+  end
+
   defp ensure_customer_profile(customer_id) do
     case Repo.query(
            """
@@ -377,8 +421,14 @@ defmodule Mithril.DirectBookings do
              input.timezone
            ]
          ) do
-      {:ok, %{rows: [[id]]}} -> {:ok, id}
-      {:error, error} -> database_error(error)
+      {:ok, %{rows: [[id]]}} ->
+        {:ok, id}
+
+      {:error, %Postgrex.Error{postgres: %{code: :exclusion_violation}}} ->
+        {:error, :cleaner_unavailable}
+
+      {:error, error} ->
+        database_error(error)
     end
   end
 
