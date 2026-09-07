@@ -23,7 +23,7 @@ jobs:
       - run: mix local.hex --force
       - run: mix local.rebar --force
       - run: mix deps.get
-      - run: mix run --no-start scripts/export_openapi.exs
+      - run: mix run scripts/export_openapi.exs
       - name: Commit exported contract
         run: |
           if git diff --quiet -- openapi-export.json; then
