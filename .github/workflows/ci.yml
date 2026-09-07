@@ -62,6 +62,32 @@ jobs:
         run: git diff --exit-code -- mix.lock
       - run: mix format --check-formatted
       - run: mix compile --warnings-as-errors
+      - name: Export OpenAPI contract
+        run: |
+          PHX_SERVER=true mix phx.server >/tmp/mithril-phx.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:4002/openapi.json -o mithril-openapi.json; then
+              break
+            fi
+            if ! kill -0 "$server_pid" >/dev/null 2>&1; then
+              cat /tmp/mithril-phx.log >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          test -s mithril-openapi.json || { cat /tmp/mithril-phx.log >&2; exit 1; }
+          kill "$server_pid" >/dev/null 2>&1 || true
+          wait "$server_pid" 2>/dev/null || true
+          trap - EXIT
+      - name: Upload OpenAPI contract
+        uses: actions/upload-artifact@v4
+        with:
+          name: mithril-openapi
+          path: mithril-openapi.json
+          if-no-files-found: error
+          retention-days: 7
       - run: mix test
 
   container:
