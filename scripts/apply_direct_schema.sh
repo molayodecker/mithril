@@ -27,16 +27,21 @@ if [[ ! -d "$SQL_DIR" ]]; then
   exit 1
 fi
 
-mapfile -t SQL_FILES < <(find "$SQL_DIR" -maxdepth 1 -type f -name '*.sql' -print | sort)
+SQL_FILES="$(find "$SQL_DIR" -maxdepth 1 -type f -name '*.sql' -print | sort)"
 
-if [[ ${#SQL_FILES[@]} -eq 0 ]]; then
+if [[ -z "$SQL_FILES" ]]; then
   echo "No Direct schema files found in $SQL_DIR" >&2
   exit 1
 fi
 
-for sql_file in "${SQL_FILES[@]}"; do
+count=0
+while IFS= read -r sql_file; do
+  [[ -n "$sql_file" ]] || continue
   echo "Applying $(basename "$sql_file")"
   psql "$TARGET_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$sql_file"
-done
+  count=$((count + 1))
+done <<EOF
+$SQL_FILES
+EOF
 
-echo "Applied ${#SQL_FILES[@]} Direct schema phase(s) from $SQL_DIR"
+echo "Applied $count Direct schema phase(s) from $SQL_DIR"
