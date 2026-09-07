@@ -67,6 +67,10 @@ defmodule MithrilWeb.Router do
     get "/bookings/:id", DirectBookingController, :show
     post "/bookings/:id/payment", DirectBookingController, :initialize_payment
     post "/bookings/:id/payment/verify", DirectBookingController, :verify_payment
+    post "/bookings/:id/replacement-request", DirectDispatchController, :request_replacement
+
+    get "/service-requests", DirectDispatchController, :list_service_requests
+    post "/urgent-help", DirectDispatchController, :create_urgent_request
 
     get "/placements", DirectController, :list_placements
     post "/placements", DirectController, :create_placement
@@ -80,5 +84,11 @@ defmodule MithrilWeb.Router do
     get "/admin/placements", DirectController, :list_admin_placements
     get "/admin/candidates", DirectController, :list_admin_candidates
     post "/admin/placements/:id/matches", DirectController, :match_admin_candidate
+
+    get "/admin/customers", DirectDispatchController, :list_admin_customers
+    post "/admin/bookings", DirectDispatchController, :create_admin_booking
+    get "/admin/service-requests", DirectDispatchController, :list_admin_service_requests
+    post "/admin/service-requests/:id/assign", DirectDispatchController, :assign_admin_service_request
+    post "/admin/service-requests/:id/status", DirectDispatchController, :update_admin_service_request
   end
 end
