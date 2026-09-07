@@ -35,6 +35,12 @@ defmodule Mithril.DirectDispatchSafetyTest do
     CREATE TABLE public.bookings (
       id uuid PRIMARY KEY,
       customer_id uuid NOT NULL,
+      cleaner_id uuid,
+      direct_assigned_cleaner_id uuid,
+      cleaner_accepted_at timestamptz,
+      assignment_phase text,
+      assignment_hold_until timestamptz,
+      assignment_reminder_sent_at timestamptz,
       service_id integer NOT NULL,
       address text NOT NULL,
       scheduled_date date NOT NULL,
@@ -42,7 +48,9 @@ defmodule Mithril.DirectDispatchSafetyTest do
       duration_hours numeric NOT NULL,
       timezone text,
       status text NOT NULL DEFAULT 'pending',
-      payment_status text NOT NULL DEFAULT 'pending'
+      payment_status text NOT NULL DEFAULT 'pending',
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      last_updated timestamptz NOT NULL DEFAULT now()
     )
     """)
 
@@ -102,6 +110,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
       created_by_user_id uuid NOT NULL,
       assigned_worker_user_id uuid,
       assigned_by_user_id uuid,
+      previous_worker_user_id uuid,
       assigned_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
@@ -139,12 +148,31 @@ defmodule Mithril.DirectDispatchSafetyTest do
     ) RETURNS boolean
     LANGUAGE sql
     AS $$
-      SELECT EXISTS (
-        SELECT 1
-        FROM public.test_cleaner_conflicts c
-        WHERE c.cleaner_id = p_cleaner_id
-          AND tstzrange(c.starts_at, c.ends_at, '[)') && tstzrange(p_start, p_end, '[)')
-      )
+      SELECT
+        EXISTS (
+          SELECT 1
+          FROM public.test_cleaner_conflicts c
+          WHERE c.cleaner_id = p_cleaner_id
+            AND tstzrange(c.starts_at, c.ends_at, '[)')
+                && tstzrange(p_start, p_end, '[)')
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM public.direct_service_requests r
+          WHERE r.kind = 'urgent_help'
+            AND r.assigned_worker_user_id = p_cleaner_id
+            AND r.status IN ('assigned', 'resolved')
+            AND r.requested_start_at IS NOT NULL
+            AND r.duration_hours IS NOT NULL
+            AND tstzrange(
+                  r.requested_start_at,
+                  r.requested_start_at
+                    + make_interval(secs => (r.duration_hours * 3600)::double precision)
+                    + interval '45 minutes',
+                  '[)'
+                )
+                && tstzrange(p_start, p_end + interval '45 minutes', '[)')
+        )
     $$
     """)
 
@@ -180,12 +208,14 @@ defmodule Mithril.DirectDispatchSafetyTest do
     assert request.kind == "replacement"
     assert request.relatedBookingId == booking_id
 
-    [[requirements]] =
-      Repo.query!("SELECT requirements FROM public.direct_service_requests WHERE id = $1", [
-        Ecto.UUID.dump!(request.id)
-      ]).rows
+    [[related_service_id, requirements]] =
+      Repo.query!(
+        "SELECT related_service_id, requirements FROM public.direct_service_requests WHERE id = $1",
+        [Ecto.UUID.dump!(request.id)]
+      ).rows
 
-    assert requirements["relatedServiceId"] == 1
+    assert related_service_id == 1
+    assert requirements == %{}
   end
 
   test "rejects dispatch assignment on a worker availability exception" do
@@ -296,16 +326,107 @@ defmodule Mithril.DirectDispatchSafetyTest do
     assert assigned.assignedWorkerUserId == worker_id
   end
 
-  defp insert_booking!(booking_id, customer_id, payment_status) do
+  test "replacement assignment updates the canonical booking and records the previous worker" do
+    %{admin_id: admin_id, customer_id: customer_id, worker_id: worker_id} = dispatch_fixture!()
+    booking_id = Ecto.UUID.generate()
+    previous_worker_id = Ecto.UUID.generate()
+
+    insert_booking!(booking_id, customer_id, "paid", previous_worker_id)
+
+    [[request_id]] =
+      Repo.query!(
+        """
+        INSERT INTO public.direct_service_requests (
+          customer_id, kind, status, priority, requested_start_at, duration_hours,
+          household_address_snapshot, related_booking_id, related_service_id,
+          requirements, created_by_user_id
+        ) VALUES ($1, 'replacement', 'matching', 'same_day',
+                  '2026-09-08T10:00:00Z', 3, 'Labone, Accra', $2, 1,
+                  '{}'::jsonb, $1)
+        RETURNING id::text
+        """,
+        [Ecto.UUID.dump!(customer_id), Ecto.UUID.dump!(booking_id)]
+      ).rows
+
+    assert {:ok, assigned} =
+             DirectDispatchSafety.assign_admin_service_request(admin_id, request_id, %{
+               "workerUserId" => worker_id
+             })
+
+    assert assigned.status == "assigned"
+
+    [[cleaner_id, direct_cleaner_id, accepted_at, phase]] =
+      Repo.query!(
+        """
+        SELECT cleaner_id, direct_assigned_cleaner_id, cleaner_accepted_at, assignment_phase
+        FROM public.bookings
+        WHERE id = $1
+        """,
+        [Ecto.UUID.dump!(booking_id)]
+      ).rows
+
+    assert cleaner_id == Ecto.UUID.dump!(worker_id)
+    assert direct_cleaner_id == Ecto.UUID.dump!(worker_id)
+    assert not is_nil(accepted_at)
+    assert phase == "accepted"
+
+    [[previous_worker, assigned_worker, status]] =
+      Repo.query!(
+        """
+        SELECT previous_worker_user_id, assigned_worker_user_id, status
+        FROM public.direct_service_requests
+        WHERE id = $1
+        """,
+        [Ecto.UUID.dump!(request_id)]
+      ).rows
+
+    assert previous_worker == Ecto.UUID.dump!(previous_worker_id)
+    assert assigned_worker == Ecto.UUID.dump!(worker_id)
+    assert status == "assigned"
+  end
+
+  test "rejects invalid status jumps before assignment" do
+    %{admin_id: admin_id, request_id: request_id} = dispatch_fixture!()
+
+    assert {:error, :invalid_status_transition} =
+             DirectDispatchSafety.update_admin_service_request(admin_id, request_id, %{
+               "status" => "resolved"
+             })
+
+    assert {:ok, %{status: "triaging"}} =
+             DirectDispatchSafety.update_admin_service_request(admin_id, request_id, %{
+               "status" => "triaging"
+             })
+  end
+
+  test "allows assigned urgent work to resolve" do
+    %{admin_id: admin_id, request_id: request_id} = dispatch_fixture!()
+
+    Repo.query!("UPDATE public.direct_service_requests SET status = 'assigned' WHERE id = $1", [
+      Ecto.UUID.dump!(request_id)
+    ])
+
+    assert {:ok, %{status: "resolved"}} =
+             DirectDispatchSafety.update_admin_service_request(admin_id, request_id, %{
+               "status" => "resolved"
+             })
+  end
+
+  defp insert_booking!(booking_id, customer_id, payment_status, cleaner_id \\ nil) do
     Repo.query!(
       """
       INSERT INTO public.bookings (
-        id, customer_id, service_id, address, scheduled_date, scheduled_time,
+        id, customer_id, cleaner_id, service_id, address, scheduled_date, scheduled_time,
         duration_hours, timezone, status, payment_status
-      ) VALUES ($1, $2, 1, 'Labone, Accra', '2026-09-08', '10:00', 3,
+      ) VALUES ($1, $2, $4, 1, 'Labone, Accra', '2026-09-08', '10:00', 3,
                 'Africa/Accra', 'pending', $3)
       """,
-      [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(customer_id), payment_status]
+      [
+        Ecto.UUID.dump!(booking_id),
+        Ecto.UUID.dump!(customer_id),
+        payment_status,
+        cleaner_id && Ecto.UUID.dump!(cleaner_id)
+      ]
     )
   end
 
