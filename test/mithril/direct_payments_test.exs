@@ -209,19 +209,21 @@ defmodule Mithril.DirectPaymentsTest do
   defp reserve_raw_attempt!(booking_id, amount_minor) do
     fingerprint = "direct:#{booking_id}:#{amount_minor}:GHS"
 
-    [[
-      attempt_id,
-      created,
-      state,
-      reference,
-      _authorization_url,
-      _access_code,
-      _payment_status,
-      _expires_at,
-      _reserved_amount,
-      _currency,
-      _request_fingerprint
-    ]] =
+    [
+      [
+        attempt_id,
+        created,
+        state,
+        reference,
+        _authorization_url,
+        _access_code,
+        _payment_status,
+        _expires_at,
+        _reserved_amount,
+        _currency,
+        _request_fingerprint
+      ]
+    ] =
       Repo.query!(
         """
         SELECT attempt_id, created, state, reference, authorization_url, access_code,
@@ -285,7 +287,9 @@ defmodule Mithril.DirectPaymentsTest do
     )
     """)
 
-    Repo.query!("INSERT INTO public.service_types (id, specialty_slug) VALUES (1, 'regular_cleaning')")
+    Repo.query!(
+      "INSERT INTO public.service_types (id, specialty_slug) VALUES (1, 'regular_cleaning')"
+    )
 
     Repo.query!("""
     CREATE TABLE public.bookings (
