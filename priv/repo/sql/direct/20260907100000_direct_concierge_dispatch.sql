@@ -23,9 +23,10 @@ CREATE TABLE IF NOT EXISTS public.direct_service_requests (
     ),
   requested_start_at timestamptz,
   duration_hours numeric
-    CHECK (duration_hours IS NULL OR (duration_hours > 0 AND duration_hours <= 24)),
+    CHECK (duration_hours IS NULL OR (duration_hours >= 0.5 AND duration_hours <= 24)),
   household_address_snapshot text NOT NULL CHECK (btrim(household_address_snapshot) <> ''),
-  related_booking_id uuid REFERENCES public.bookings(id) ON DELETE SET NULL,
+  related_booking_id uuid REFERENCES public.bookings(id) ON DELETE CASCADE,
+  related_service_id integer REFERENCES public.service_types(id) ON DELETE RESTRICT,
   requirements jsonb NOT NULL DEFAULT '{}'::jsonb
     CHECK (jsonb_typeof(requirements) = 'object'),
   notes text,
@@ -41,9 +42,11 @@ CREATE TABLE IF NOT EXISTS public.direct_service_requests (
       kind = 'urgent_help'
       AND role IS NOT NULL
       AND related_booking_id IS NULL
+      AND related_service_id IS NULL
     ) OR (
       kind = 'replacement'
       AND related_booking_id IS NOT NULL
+      AND related_service_id IS NOT NULL
     )
   )
 );
