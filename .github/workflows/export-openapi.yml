@@ -26,7 +26,7 @@ jobs:
       - run: mix run scripts/export_openapi.exs
       - name: Commit exported contract
         run: |
-          if git diff --quiet -- openapi-export.json; then
+          if [[ -z "$(git status --porcelain -- openapi-export.json)" ]]; then
             exit 0
           fi
           git config user.name "github-actions[bot]"
