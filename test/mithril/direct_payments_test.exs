@@ -8,11 +8,18 @@ defmodule Mithril.DirectPaymentsTest do
   setup do
     :ok = Sandbox.checkout(Repo)
     Application.put_env(:mithril, :paystack_test_attempts, %{})
+    Application.put_env(:mithril, :direct_payment_poll_delays_ms, [0, 0])
     create_payment_tables!()
+
+    on_exit(fn ->
+      Application.delete_env(:mithril, :direct_payment_poll_delays_ms)
+      Application.put_env(:mithril, :paystack_test_attempts, %{})
+    end)
+
     :ok
   end
 
-  test "initializes Paystack checkout from the stored booking amount" do
+  test "initializes Paystack checkout from the canonical payable snapshot" do
     customer_id = Ecto.UUID.generate()
     booking_id = insert_booking!(customer_id, 19_350)
 
@@ -26,6 +33,9 @@ defmodule Mithril.DirectPaymentsTest do
     assert checkout.paymentStatus == "pending"
     assert String.starts_with?(checkout.authorizationUrl, "https://checkout.paystack.com/")
     assert checkout.reference
+
+    assert {:ok, receipt} = Mithril.Paystack.verify(checkout.reference)
+    assert receipt.split_code == "SPL_test"
   end
 
   test "rejects a callback URL that is not the booking confirmation page" do
@@ -38,7 +48,7 @@ defmodule Mithril.DirectPaymentsTest do
              })
   end
 
-  test "verifies a successful Paystack payment against the snapshot" do
+  test "verifies a successful Paystack payment against its reserved attempt" do
     customer_id = Ecto.UUID.generate()
     booking_id = insert_booking!(customer_id, 19_350)
 
@@ -63,7 +73,7 @@ defmodule Mithril.DirectPaymentsTest do
     assert payment_method == "paystack"
   end
 
-  test "does not mark paid when Paystack amount does not match the booking" do
+  test "does not mark paid when Paystack amount does not match the reserved attempt" do
     customer_id = Ecto.UUID.generate()
     booking_id = insert_booking!(customer_id, 19_350)
 
@@ -83,6 +93,92 @@ defmodule Mithril.DirectPaymentsTest do
              DirectPayments.verify(customer_id, booking_id, %{"reference" => checkout.reference})
   end
 
+  test "cannot reuse a successful reference from another booking" do
+    customer_id = Ecto.UUID.generate()
+    first_booking = insert_booking!(customer_id, 19_350)
+    second_booking = insert_booking!(customer_id, 19_350)
+
+    {:ok, first_checkout} =
+      DirectPayments.initialize(customer_id, first_booking, %{
+        "callbackUrl" => "https://direct.tryinstaclean.com/bookings/#{first_booking}"
+      })
+
+    {:ok, _second_checkout} =
+      DirectPayments.initialize(customer_id, second_booking, %{
+        "callbackUrl" => "https://direct.tryinstaclean.com/bookings/#{second_booking}"
+      })
+
+    assert {:error, :payment_reference_mismatch} =
+             DirectPayments.verify(customer_id, second_booking, %{
+               "reference" => first_checkout.reference
+             })
+
+    assert [["pending"]] =
+             Repo.query!(
+               "SELECT payment_status FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(second_booking)]
+             ).rows
+  end
+
+  test "does not initialize Paystack when another request owns the attempt" do
+    customer_id = Ecto.UUID.generate()
+    booking_id = insert_booking!(customer_id, 19_350)
+    attempt = reserve_raw_attempt!(booking_id, 19_350)
+
+    assert attempt.created
+
+    assert {:error, :payment_in_progress} =
+             DirectPayments.initialize(customer_id, booking_id, %{
+               "callbackUrl" => "https://direct.tryinstaclean.com/bookings/#{booking_id}"
+             })
+
+    assert {:error, :not_found} = Mithril.Paystack.verify(attempt.reference)
+
+    assert [[1]] =
+             Repo.query!(
+               "SELECT count(*) FROM public.payment_attempts WHERE booking_id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+  end
+
+  test "verifies a stale reference before rotating it" do
+    customer_id = Ecto.UUID.generate()
+    booking_id = insert_booking!(customer_id, 19_350)
+    stale = reserve_raw_attempt!(booking_id, 19_350)
+
+    Repo.query!(
+      "UPDATE public.payment_attempts SET expires_at = now() - interval '1 minute' WHERE id = $1",
+      [stale.attempt_id]
+    )
+
+    assert {:ok, checkout} =
+             DirectPayments.initialize(customer_id, booking_id, %{
+               "callbackUrl" => "https://direct.tryinstaclean.com/bookings/#{booking_id}"
+             })
+
+    refute checkout.reference == stale.reference
+
+    assert [["failed"]] =
+             Repo.query!(
+               "SELECT status FROM public.payment_attempts WHERE id = $1",
+               [stale.attempt_id]
+             ).rows
+  end
+
+  test "canonical payable snapshot blocks non-payable bookings" do
+    customer_id = Ecto.UUID.generate()
+    booking_id = insert_booking!(customer_id, 19_350)
+
+    Repo.query!("UPDATE public.bookings SET status = 'cancelled' WHERE id = $1", [
+      Ecto.UUID.dump!(booking_id)
+    ])
+
+    assert {:error, :payment_not_payable} =
+             DirectPayments.initialize(customer_id, booking_id, %{
+               "callbackUrl" => "https://direct.tryinstaclean.com/bookings/#{booking_id}"
+             })
+  end
+
   defp insert_booking!(customer_id, amount_minor) do
     booking_id = Ecto.UUID.generate()
 
@@ -98,13 +194,46 @@ defmodule Mithril.DirectPaymentsTest do
     Repo.query!(
       """
       INSERT INTO public.bookings (
-        id, customer_id, payment_status, final_amount_minor, total_price, currency
-      ) VALUES ($1, $2, 'pending', $3::bigint, $4::numeric, 'GHS')
+        id, customer_id, service_id, status, payment_status,
+        final_amount_minor, total_price, currency,
+        payment_split_type, paystack_split_code
+      ) VALUES ($1, $2, 1, 'pending', 'pending', $3::bigint, $4::numeric, 'GHS',
+                'split_code', 'SPL_test')
       """,
       [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(customer_id), amount_minor, amount_minor]
     )
 
     booking_id
+  end
+
+  defp reserve_raw_attempt!(booking_id, amount_minor) do
+    fingerprint = "direct:#{booking_id}:#{amount_minor}:GHS"
+
+    [
+      [
+        attempt_id,
+        created,
+        state,
+        reference,
+        _authorization_url,
+        _access_code,
+        _payment_status,
+        _expires_at,
+        _reserved_amount,
+        _currency,
+        _request_fingerprint
+      ]
+    ] =
+      Repo.query!(
+        """
+        SELECT attempt_id, created, state, reference, authorization_url, access_code,
+               payment_status, expires_at, amount_minor, currency, request_fingerprint
+        FROM public.reserve_booking_payment_attempt($1::uuid, $2::text, $3::bigint, 'GHS')
+        """,
+        [Ecto.UUID.dump!(booking_id), fingerprint, amount_minor]
+      ).rows
+
+    %{attempt_id: attempt_id, created: created, state: state, reference: reference}
   end
 
   defp create_payment_tables! do
@@ -116,6 +245,7 @@ defmodule Mithril.DirectPaymentsTest do
 
     Repo.query!("DROP TABLE IF EXISTS public.payment_attempts CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.bookings CASCADE")
+    Repo.query!("DROP TABLE IF EXISTS public.service_types CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.users CASCADE")
 
     Repo.query!(
@@ -127,6 +257,19 @@ defmodule Mithril.DirectPaymentsTest do
     )
 
     Repo.query!("DROP FUNCTION IF EXISTS public.fail_booking_payment_attempt(uuid, text)")
+    Repo.query!("DROP FUNCTION IF EXISTS public.get_payable_booking_snapshot(uuid)")
+
+    Repo.query!("CREATE SCHEMA IF NOT EXISTS auth")
+
+    Repo.query!("""
+    CREATE OR REPLACE FUNCTION auth.uid()
+    RETURNS uuid
+    LANGUAGE sql
+    STABLE
+    AS $fn$
+      SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid
+    $fn$
+    """)
 
     Repo.query!("""
     CREATE TABLE public.users (
@@ -138,15 +281,37 @@ defmodule Mithril.DirectPaymentsTest do
     """)
 
     Repo.query!("""
+    CREATE TABLE public.service_types (
+      id integer PRIMARY KEY,
+      specialty_slug text NOT NULL
+    )
+    """)
+
+    Repo.query!(
+      "INSERT INTO public.service_types (id, specialty_slug) VALUES (1, 'regular_cleaning')"
+    )
+
+    Repo.query!("""
     CREATE TABLE public.bookings (
       id uuid PRIMARY KEY,
       customer_id uuid NOT NULL,
+      service_id integer NOT NULL,
+      status text NOT NULL DEFAULT 'pending',
       payment_status text NOT NULL DEFAULT 'pending',
       payment_method text,
       reference text,
       final_amount_minor bigint NOT NULL,
       total_price numeric,
       currency text NOT NULL DEFAULT 'GHS',
+      payment_split_type text,
+      paystack_split_code text,
+      tax_share_minor integer,
+      vendor_share_minor integer,
+      platform_share_minor integer,
+      tax_percentage_bps integer,
+      vendor_percentage_bps integer,
+      tax_paystack_share text,
+      vendor_paystack_share text,
       updated_at timestamptz NOT NULL DEFAULT now()
     )
     """)
@@ -171,6 +336,53 @@ defmodule Mithril.DirectPaymentsTest do
       paid_at timestamptz,
       failed_at timestamptz
     )
+    """)
+
+    Repo.query!("""
+    CREATE FUNCTION public.get_payable_booking_snapshot(p_booking_id uuid)
+    RETURNS TABLE(
+      booking_id uuid,
+      customer_id uuid,
+      final_amount_minor integer,
+      currency text,
+      payment_status text,
+      booking_status text,
+      payment_reference text,
+      payment_split_type text,
+      paystack_split_code text,
+      tax_share_minor integer,
+      vendor_share_minor integer,
+      platform_share_minor integer,
+      tax_percentage_bps integer,
+      vendor_percentage_bps integer,
+      tax_paystack_share text,
+      vendor_paystack_share text
+    )
+    LANGUAGE sql STABLE AS $fn$
+      SELECT b.id,
+             b.customer_id,
+             b.final_amount_minor::integer,
+             b.currency,
+             b.payment_status,
+             b.status,
+             b.reference,
+             b.payment_split_type,
+             b.paystack_split_code,
+             b.tax_share_minor,
+             b.vendor_share_minor,
+             b.platform_share_minor,
+             b.tax_percentage_bps,
+             b.vendor_percentage_bps,
+             b.tax_paystack_share,
+             b.vendor_paystack_share
+      FROM public.bookings b
+      WHERE b.id = p_booking_id
+        AND b.customer_id = auth.uid()
+        AND b.status = 'pending'
+        AND lower(coalesce(b.payment_status, '')) IN ('pending', 'failed')
+        AND b.final_amount_minor > 0
+      LIMIT 1
+    $fn$
     """)
 
     Repo.query!("""
@@ -207,6 +419,16 @@ defmodule Mithril.DirectPaymentsTest do
         RETURN;
       END IF;
 
+      IF lower(coalesce(v_payment_status, '')) IN ('paid', 'post_paid', 'refunded', 'partially_refunded') THEN
+        attempt_id := NULL;
+        created := false;
+        state := 'settled';
+        reference := (SELECT b.reference FROM public.bookings b WHERE b.id = p_booking_id);
+        payment_status := v_payment_status;
+        RETURN NEXT;
+        RETURN;
+      END IF;
+
       SELECT pa.* INTO v_attempt
       FROM public.payment_attempts pa
       WHERE pa.booking_id = p_booking_id
@@ -217,7 +439,10 @@ defmodule Mithril.DirectPaymentsTest do
       IF FOUND THEN
         attempt_id := v_attempt.id;
         created := false;
-        state := v_attempt.status;
+        state := CASE
+          WHEN v_attempt.status = 'initializing' AND v_attempt.expires_at <= now() THEN 'stale'
+          ELSE v_attempt.status
+        END;
         reference := v_attempt.reference;
         authorization_url := v_attempt.authorization_url;
         access_code := v_attempt.access_code;
@@ -236,7 +461,7 @@ defmodule Mithril.DirectPaymentsTest do
         id, booking_id, reference, request_fingerprint, status, amount_minor, currency, expires_at
       ) VALUES (
         v_new_id, p_booking_id, v_reference, p_request_fingerprint, 'initializing',
-        p_amount_minor, p_currency, now() + interval '5 minutes'
+        p_amount_minor, upper(p_currency), now() + interval '5 minutes'
       ) RETURNING * INTO v_attempt;
 
       UPDATE public.bookings SET reference = v_attempt.reference, updated_at = now()
@@ -307,7 +532,7 @@ defmodule Mithril.DirectPaymentsTest do
       UPDATE public.payment_attempts
       SET status = 'failed', failure_reason = p_failure_reason, failed_at = now(), updated_at = now()
       WHERE id = p_attempt_id;
-      RETURN true;
+      RETURN FOUND;
     END;
     $fn$;
     """)

@@ -121,6 +121,14 @@ if paystack_secret = System.get_env("PAYSTACK_SECRET_KEY") do
   config :mithril, :paystack_adapter, Mithril.Paystack.HTTP
 end
 
+if tax_subaccount = System.get_env("PAYSTACK_TAX_SUBACCOUNT") do
+  config :mithril, :paystack_tax_subaccount, tax_subaccount
+end
+
+if vendor_subaccount = System.get_env("PAYSTACK_VENDOR_SUBACCOUNT") do
+  config :mithril, :paystack_vendor_subaccount, vendor_subaccount
+end
+
 if config_env() == :prod do
   {database_backend, database_url} = Mithril.DatabaseBackend.resolve!()
   secret_key_base = System.fetch_env!("SECRET_KEY_BASE")
