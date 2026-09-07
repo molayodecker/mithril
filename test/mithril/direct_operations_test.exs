@@ -159,7 +159,9 @@ defmodule Mithril.DirectOperationsTest do
     assert policy.refundAmountMinor == 0
 
     assert {:ok, cancelled} =
-             DirectOperations.cancel_booking(customer_id, booking_id, %{"reason" => "Plans changed"})
+             DirectOperations.cancel_booking(customer_id, booking_id, %{
+               "reason" => "Plans changed"
+             })
 
     assert cancelled.status == "cancelled"
     assert cancelled.refundRequest == nil
