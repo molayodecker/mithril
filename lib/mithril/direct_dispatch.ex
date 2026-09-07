@@ -165,7 +165,8 @@ defmodule Mithril.DirectDispatch do
       [[id, status]] = result.rows
       {:ok, %{id: id, status: status, kind: "replacement", relatedBookingId: booking_id}}
     else
-      :error -> {:error, :not_found}
+      :error ->
+        {:error, :not_found}
 
       {:error,
        %Postgrex.Error{
