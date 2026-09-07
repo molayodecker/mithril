@@ -19,12 +19,19 @@ defmodule MithrilWeb.DirectOperationsController do
 
   alias OpenApiSpex.Schema
 
+  @booking_id_parameter [
+    in: :path,
+    schema: %Schema{type: :string, format: :uuid},
+    required: true,
+    description: "Booking ID"
+  ]
+
   tags(["direct-operations"])
 
   operation(:cancellation_policy,
     operation_id: "direct.getCancellationPolicy",
     summary: "Preview cancellation eligibility and policy-derived refund amount",
-    parameters: [id: booking_id_parameter()],
+    parameters: [id: @booking_id_parameter],
     responses: [ok: {"Cancellation policy", "application/json", CancellationPolicyResponse}]
   )
 
@@ -35,7 +42,7 @@ defmodule MithrilWeb.DirectOperationsController do
   operation(:cancel_booking,
     operation_id: "direct.cancelBooking",
     summary: "Cancel an owned booking or an admin-accessible booking",
-    parameters: [id: booking_id_parameter()],
+    parameters: [id: @booking_id_parameter],
     request_body: {"Cancellation", "application/json", CancelBookingRequest},
     responses: [ok: {"Cancellation result", "application/json", %Schema{type: :object}}]
   )
@@ -47,7 +54,7 @@ defmodule MithrilWeb.DirectOperationsController do
   operation(:request_refund,
     operation_id: "direct.requestRefund",
     summary: "Create an auditable refund request without directly issuing money",
-    parameters: [id: booking_id_parameter()],
+    parameters: [id: @booking_id_parameter],
     request_body: {"Refund request", "application/json", RefundRequest, required: true},
     responses: [ok: {"Refund request", "application/json", RefundRequestResponse}]
   )
@@ -59,7 +66,7 @@ defmodule MithrilWeb.DirectOperationsController do
   operation(:reschedule_booking,
     operation_id: "direct.rescheduleBooking",
     summary: "Reschedule a paid one-off booking after availability revalidation",
-    parameters: [id: booking_id_parameter()],
+    parameters: [id: @booking_id_parameter],
     request_body: {"New schedule", "application/json", RescheduleBookingRequest, required: true},
     responses: [ok: {"Updated booking schedule", "application/json", RescheduleBookingResponse}]
   )
@@ -136,21 +143,12 @@ defmodule MithrilWeb.DirectOperationsController do
   operation(:payment_diagnostics,
     operation_id: "direct.getPaymentDiagnostics",
     summary: "Explain payment state using local attempts and Paystack verification",
-    parameters: [id: booking_id_parameter()],
+    parameters: [id: @booking_id_parameter],
     responses: [ok: {"Payment diagnostics", "application/json", PaymentDiagnosticsResponse}]
   )
 
   def payment_diagnostics(conn, %{"id" => id}) do
     respond(conn, DirectOperations.payment_diagnostics(user_id(conn), id))
-  end
-
-  defp booking_id_parameter do
-    [
-      in: :path,
-      schema: %Schema{type: :string, format: :uuid},
-      required: true,
-      description: "Booking ID"
-    ]
   end
 
   defp user_id(conn), do: conn.assigns.instaclean_user_id
