@@ -24,6 +24,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
           "direct_service_requests",
           "placement_candidate_profiles",
           "cleaner_data",
+          "service_types",
           "user_roles",
           "bookings"
         ] do
@@ -53,10 +54,21 @@ defmodule Mithril.DirectDispatchSafetyTest do
     """)
 
     Repo.query!("""
+    CREATE TABLE public.service_types (
+      id integer PRIMARY KEY,
+      specialty_slug text NOT NULL
+    )
+    """)
+
+    Repo.query!("INSERT INTO public.service_types (id, specialty_slug) VALUES (1, 'regular_cleaning')")
+
+    Repo.query!("""
     CREATE TABLE public.cleaner_data (
       user_id uuid PRIMARY KEY,
       verified boolean NOT NULL DEFAULT false,
-      status text NOT NULL DEFAULT 'inactive'
+      status text NOT NULL DEFAULT 'inactive',
+      hourly_rate numeric,
+      specialties text[] NOT NULL DEFAULT '{}'::text[]
     )
     """)
 
@@ -181,6 +193,47 @@ defmodule Mithril.DirectDispatchSafetyTest do
              })
   end
 
+  test "uses the original booking date for replacement availability exceptions" do
+    %{admin_id: admin_id, customer_id: customer_id, worker_id: worker_id} = dispatch_fixture!()
+    booking_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.bookings (
+        id, customer_id, service_id, address, scheduled_date, scheduled_time,
+        duration_hours, timezone, status, payment_status
+      ) VALUES ($1, $2, 1, 'Labone, Accra', '2026-09-08', '23:30', 2,
+                'America/New_York', 'pending', 'paid')
+      """,
+      [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(customer_id)]
+    )
+
+    [[replacement_id]] =
+      Repo.query!(
+        """
+        INSERT INTO public.direct_service_requests (
+          customer_id, kind, status, priority, requested_start_at, duration_hours,
+          household_address_snapshot, related_booking_id, related_service_id,
+          requirements, created_by_user_id
+        ) VALUES ($1, 'replacement', 'submitted', 'same_day',
+                  '2026-09-09T03:30:00Z', 2, 'Labone, Accra', $2, 1,
+                  '{}'::jsonb, $1)
+        RETURNING id::text
+        """,
+        [Ecto.UUID.dump!(customer_id), Ecto.UUID.dump!(booking_id)]
+      ).rows
+
+    Repo.query!(
+      "INSERT INTO public.cleaner_availability_exceptions (cleaner_id, exception_date) VALUES ($1, '2026-09-08')",
+      [Ecto.UUID.dump!(worker_id)]
+    )
+
+    assert {:error, :candidate_unavailable} =
+             DirectDispatchSafety.assign_admin_service_request(admin_id, replacement_id, %{
+               "workerUserId" => worker_id
+             })
+  end
+
   test "rejects dispatch assignment when the worker has a buffered booking conflict" do
     %{admin_id: admin_id, worker_id: worker_id, request_id: request_id} = dispatch_fixture!()
 
@@ -190,6 +243,29 @@ defmodule Mithril.DirectDispatchSafetyTest do
       VALUES ($1, '2026-09-08T09:30:00Z', '2026-09-08T11:00:00Z')
       """,
       [Ecto.UUID.dump!(worker_id)]
+    )
+
+    assert {:error, :candidate_unavailable} =
+             DirectDispatchSafety.assign_admin_service_request(admin_id, request_id, %{
+               "workerUserId" => worker_id
+             })
+  end
+
+  test "rejects overlapping assigned Direct work including the dispatch buffer" do
+    %{admin_id: admin_id, customer_id: customer_id, worker_id: worker_id, request_id: request_id} =
+      dispatch_fixture!()
+
+    Repo.query!(
+      """
+      INSERT INTO public.direct_service_requests (
+        customer_id, kind, status, priority, role, requested_start_at,
+        duration_hours, household_address_snapshot, requirements, created_by_user_id,
+        assigned_worker_user_id, assigned_by_user_id, assigned_at
+      ) VALUES ($1, 'urgent_help', 'assigned', 'standard', 'elder_caregiver',
+                '2026-09-08T14:30:00Z', 1, 'Osu, Accra', '{}'::jsonb, $1,
+                $2, $3, now())
+      """,
+      [Ecto.UUID.dump!(customer_id), Ecto.UUID.dump!(worker_id), Ecto.UUID.dump!(admin_id)]
     )
 
     assert {:error, :candidate_unavailable} =
@@ -234,7 +310,11 @@ defmodule Mithril.DirectDispatchSafetyTest do
     ])
 
     Repo.query!(
-      "INSERT INTO public.cleaner_data (user_id, verified, status) VALUES ($1, true, 'active')",
+      """
+      INSERT INTO public.cleaner_data (
+        user_id, verified, status, hourly_rate, specialties
+      ) VALUES ($1, true, 'active', 100, ARRAY['regular_cleaning'])
+      """,
       [Ecto.UUID.dump!(worker_id)]
     )
 
