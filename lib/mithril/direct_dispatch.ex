@@ -2,9 +2,9 @@ defmodule Mithril.DirectDispatch do
   @moduledoc """
   Concierge and dispatch operations for Instaclean Direct.
 
-  This context owns customer urgent-help requests, replacement requests, and
-  admin-assisted booking provenance. Urgent help is a household-services
-  dispatch workflow, not an emergency medical service.
+  Urgent help is a household-services dispatch workflow, not an emergency
+  medical service. Replacement dispatch preserves the original booking service
+  so a worker must remain eligible for that same service.
   """
 
   require Logger
@@ -15,7 +15,9 @@ defmodule Mithril.DirectDispatch do
   @roles ~w(househelp nanny cleaner elder_caregiver cook driver gardener)
   @priorities ~w(urgent same_day standard)
   @admin_sources ~w(admin phone whatsapp)
-  @admin_statuses ~w(submitted triaging matching assigned resolved cancelled)
+  # `assigned` is intentionally excluded. Only the vetted assignment endpoint
+  # may move a request into the assigned state.
+  @admin_statuses ~w(submitted triaging matching resolved cancelled)
   @terminal_request_statuses ~w(resolved cancelled)
 
   def list_service_requests(user_id) do
@@ -68,29 +70,12 @@ defmodule Mithril.DirectDispatch do
            Repo.query(
              """
              INSERT INTO public.direct_service_requests (
-               customer_id,
-               kind,
-               status,
-               priority,
-               role,
-               requested_start_at,
-               duration_hours,
-               household_address_snapshot,
-               requirements,
-               notes,
+               customer_id, kind, status, priority, role, requested_start_at,
+               duration_hours, household_address_snapshot, requirements, notes,
                created_by_user_id
              ) VALUES (
-               $1,
-               'urgent_help',
-               'submitted',
-               $2,
-               $3,
-               $4,
-               $5,
-               $6,
-               $7::text::jsonb,
-               NULLIF($8::text, ''),
-               $1
+               $1, 'urgent_help', 'submitted', $2, $3, $4, $5, $6,
+               $7::text::jsonb, NULLIF($8::text, ''), $1
              )
              RETURNING id::text, status
              """,
@@ -123,31 +108,12 @@ defmodule Mithril.DirectDispatch do
            Repo.query(
              """
              INSERT INTO public.direct_service_requests (
-               customer_id,
-               kind,
-               status,
-               priority,
-               role,
-               requested_start_at,
-               duration_hours,
-               household_address_snapshot,
-               related_booking_id,
-               requirements,
-               notes,
-               created_by_user_id
+               customer_id, kind, status, priority, role, requested_start_at,
+               duration_hours, household_address_snapshot, related_booking_id,
+               related_service_id, requirements, notes, created_by_user_id
              ) VALUES (
-               $1,
-               'replacement',
-               'submitted',
-               $2,
-               NULL,
-               $3,
-               $4,
-               $5,
-               $6,
-               $7::text::jsonb,
-               NULLIF($8::text, ''),
-               $1
+               $1, 'replacement', 'submitted', $2, NULL, $3, $4, $5, $6,
+               $7, $8::text::jsonb, NULLIF($9::text, ''), $1
              )
              RETURNING id::text, status
              """,
@@ -158,6 +124,7 @@ defmodule Mithril.DirectDispatch do
                booking.duration_hours,
                booking.address,
                bid,
+               booking.service_id,
                Jason.encode!(input.requirements),
                input.notes
              ]
@@ -218,12 +185,8 @@ defmodule Mithril.DirectDispatch do
             case Repo.query(
                    """
                    INSERT INTO public.direct_booking_origins (
-                     booking_id,
-                     customer_id,
-                     created_by_user_id,
-                     source,
-                     consent_confirmed,
-                     admin_note
+                     booking_id, customer_id, created_by_user_id, source,
+                     consent_confirmed, admin_note
                    ) VALUES ($1::uuid, $2, $3, $4, true, NULLIF($5::text, ''))
                    """,
                    [
@@ -332,7 +295,7 @@ defmodule Mithril.DirectDispatch do
       Repo.transaction(fn ->
         request = fetch_request_for_update(rid)
         :ok = ensure_request_open(request.status)
-        :ok = ensure_dispatch_candidate(worker_uid, request.role)
+        :ok = ensure_dispatch_candidate(worker_uid, request.role, request.service_id)
 
         case Repo.query(
                """
@@ -402,14 +365,15 @@ defmodule Mithril.DirectDispatch do
                   ((b.scheduled_date + b.scheduled_time)
                     AT TIME ZONE COALESCE(NULLIF(b.timezone, ''), 'Africa/Accra')),
                   b.duration_hours,
-                  b.status
+                  b.status,
+                  b.service_id
            FROM public.bookings b
            WHERE b.id = $1 AND b.customer_id = $2
            LIMIT 1
            """,
            [bid, uid]
          ) do
-      {:ok, %{rows: [[address, requested_start_at, duration_hours, status]]}} ->
+      {:ok, %{rows: [[address, requested_start_at, duration_hours, status, service_id]]}} ->
         if String.downcase(to_string(status)) in ~w(completed cancelled) do
           {:error, :booking_closed}
         else
@@ -417,7 +381,8 @@ defmodule Mithril.DirectDispatch do
            %{
              address: address,
              requested_start_at: requested_start_at,
-             duration_hours: duration_hours
+             duration_hours: duration_hours,
+             service_id: service_id
            }}
         end
 
@@ -429,9 +394,7 @@ defmodule Mithril.DirectDispatch do
     end
   end
 
-  defp search_customers("") do
-    {:ok, %{rows: []}}
-  end
+  defp search_customers(""), do: {:ok, %{rows: []}}
 
   defp search_customers(search) do
     like = "%#{String.downcase(search)}%"
@@ -473,12 +436,22 @@ defmodule Mithril.DirectDispatch do
 
   defp fetch_request_for_update(rid) do
     case Repo.query(
-           "SELECT status, role FROM public.direct_service_requests WHERE id = $1 FOR UPDATE",
+           """
+           SELECT status, role, related_service_id
+           FROM public.direct_service_requests
+           WHERE id = $1
+           FOR UPDATE
+           """,
            [rid]
          ) do
-      {:ok, %{rows: [[status, role]]}} -> %{status: status, role: role}
-      {:ok, %{rows: []}} -> Repo.rollback(:not_found)
-      {:error, error} -> Repo.rollback({:database, error})
+      {:ok, %{rows: [[status, role, service_id]]}} ->
+        %{status: status, role: role, service_id: service_id}
+
+      {:ok, %{rows: []}} ->
+        Repo.rollback(:not_found)
+
+      {:error, error} ->
+        Repo.rollback({:database, error})
     end
   end
 
@@ -490,7 +463,30 @@ defmodule Mithril.DirectDispatch do
     end
   end
 
-  defp ensure_dispatch_candidate(worker_uid, role) do
+  defp ensure_dispatch_candidate(worker_uid, _role, service_id) when is_integer(service_id) do
+    case Repo.query(
+           """
+           SELECT EXISTS(
+             SELECT 1
+             FROM public.cleaner_data cd
+             JOIN public.service_types st ON st.id = $2
+             WHERE cd.user_id = $1
+               AND cd.verified = true
+               AND cd.status = 'active'
+               AND cd.hourly_rate IS NOT NULL
+               AND cd.hourly_rate > 0
+               AND st.specialty_slug = ANY(COALESCE(cd.specialties, ARRAY[]::text[]))
+           )
+           """,
+           [worker_uid, service_id]
+         ) do
+      {:ok, %{rows: [[true]]}} -> :ok
+      {:ok, %{rows: [[false]]}} -> Repo.rollback(:candidate_unavailable)
+      {:error, error} -> Repo.rollback({:database, error})
+    end
+  end
+
+  defp ensure_dispatch_candidate(worker_uid, role, nil) do
     case Repo.query(
            """
            SELECT cd.verified,
@@ -507,7 +503,7 @@ defmodule Mithril.DirectDispatch do
          ) do
       {:ok, %{rows: [[true, "active", opt_in, placement_status, desired_roles]]}} ->
         role_ok =
-          is_nil(role) or role == "cleaner" or
+          role == "cleaner" or
             (opt_in == true and placement_status == "available" and role in (desired_roles || []))
 
         if role_ok, do: :ok, else: Repo.rollback(:candidate_unavailable)
@@ -526,7 +522,7 @@ defmodule Mithril.DirectDispatch do
          {:ok, needed_by} <- iso_datetime(params["neededBy"]),
          {:ok, duration_hours} <- duration_hours(params["durationHours"]),
          {:ok, household_address} <- required_text(params["householdAddress"], 3, 500),
-         {:ok, requirements} <- requirements(params["requirements"]) do
+         {:ok, request_requirements} <- requirements(params["requirements"]) do
       {:ok,
        %{
          role: role,
@@ -534,7 +530,7 @@ defmodule Mithril.DirectDispatch do
          needed_by: needed_by,
          duration_hours: duration_hours,
          household_address: household_address,
-         requirements: requirements,
+         requirements: request_requirements,
          notes: optional_text(params["notes"], 4_000)
        }}
     else
@@ -544,11 +540,11 @@ defmodule Mithril.DirectDispatch do
 
   defp validate_replacement_request(params) do
     with {:ok, priority} <- priority(params["priority"] || "same_day"),
-         {:ok, requirements} <- requirements(params["requirements"]) do
+         {:ok, request_requirements} <- requirements(params["requirements"]) do
       {:ok,
        %{
          priority: priority,
-         requirements: requirements,
+         requirements: request_requirements,
          notes: optional_text(params["notes"], 4_000)
        }}
     else
@@ -602,10 +598,10 @@ defmodule Mithril.DirectDispatch do
 
   defp iso_datetime(_), do: :error
 
-  defp duration_hours(value) when is_integer(value) and value > 0 and value <= 24,
+  defp duration_hours(value) when is_integer(value) and value >= 1 and value <= 24,
     do: {:ok, Decimal.new(value)}
 
-  defp duration_hours(value) when is_float(value) and value > 0 and value <= 24,
+  defp duration_hours(value) when is_float(value) and value >= 0.5 and value <= 24,
     do: {:ok, Decimal.from_float(value)}
 
   defp duration_hours(_), do: :error
