@@ -28,6 +28,74 @@ defmodule Mithril.DirectDispatchSafety do
     end
   end
 
+  def list_admin_service_requests(user_id) do
+    with {:ok, uid} <- dump_uuid(user_id),
+         :ok <- require_admin(uid),
+         {:ok, result} <-
+           Repo.query("""
+           SELECT jsonb_build_object(
+             'id', r.id,
+             'customerUserId', r.customer_id,
+             'customerName', COALESCE(
+               NULLIF(btrim(cp.fullname), ''),
+               NULLIF(btrim(concat_ws(' ', cp.firstname, cp.lastname)), ''),
+               cu.email,
+               cu.phone,
+               'Customer'
+             ),
+             'customerPhone', cu.phone,
+             'kind', r.kind,
+             'status', r.status,
+             'priority', r.priority,
+             'role', r.role,
+             'requestedStartAt', r.requested_start_at,
+             'durationHours', r.duration_hours,
+             'householdAddress', r.household_address_snapshot,
+             'relatedBookingId', r.related_booking_id,
+             'relatedServiceId', r.related_service_id,
+             'requirements', r.requirements,
+             'notes', r.notes,
+             'adminNote', r.admin_note,
+             'assignedWorkerUserId', r.assigned_worker_user_id,
+             'assignedWorkerName', CASE
+               WHEN r.assigned_worker_user_id IS NULL THEN NULL
+               ELSE COALESCE(
+                 NULLIF(btrim(wp.fullname), ''),
+                 NULLIF(btrim(concat_ws(' ', wp.firstname, wp.lastname)), ''),
+                 'Instaclean professional'
+               )
+             END,
+             'createdAt', r.created_at,
+             'updatedAt', r.updated_at
+           )
+           FROM public.direct_service_requests r
+           JOIN public.users cu ON cu.id = r.customer_id
+           LEFT JOIN public.profiles cp ON cp.id = r.customer_id
+           LEFT JOIN public.profiles wp ON wp.id = r.assigned_worker_user_id
+           ORDER BY
+             CASE r.status
+               WHEN 'submitted' THEN 0
+               WHEN 'triaging' THEN 1
+               WHEN 'matching' THEN 2
+               WHEN 'assigned' THEN 3
+               ELSE 4
+             END,
+             CASE r.priority
+               WHEN 'urgent' THEN 0
+               WHEN 'same_day' THEN 1
+               ELSE 2
+             END,
+             r.created_at ASC
+           LIMIT 200
+           """) do
+      {:ok, Enum.map(result.rows, &hd/1)}
+    else
+      :error -> {:error, :invalid_user}
+      {:error, reason} when is_atom(reason) -> {:error, reason}
+      {:error, error} -> database_error(error)
+    end
+  end
+
   def assign_admin_service_request(user_id, request_id, params) when is_map(params) do
     with {:ok, admin_uid} <- dump_uuid(user_id),
          :ok <- require_admin(admin_uid),
@@ -309,8 +377,6 @@ defmodule Mithril.DirectDispatchSafety do
         {:error, error}
     end
   end
-
-  defp ensure_status_transition(%{status: current}, current), do: :ok
 
   defp ensure_status_transition(%{status: "submitted"}, target)
        when target in ~w(triaging matching cancelled),
