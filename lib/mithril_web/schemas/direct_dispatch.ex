@@ -323,7 +323,7 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
       properties: %{
         status: %Schema{
           type: :string,
-          enum: ~w(submitted triaging matching assigned resolved cancelled)
+          enum: ~w(submitted triaging matching resolved cancelled)
         },
         adminNote: %Schema{type: :string, maxLength: 2000, nullable: true}
       },
