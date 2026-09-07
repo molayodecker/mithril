@@ -13,6 +13,8 @@ defmodule Mithril.DirectPaymentsTest do
 
     on_exit(fn ->
       Application.delete_env(:mithril, :direct_payment_poll_delays_ms)
+      Application.delete_env(:mithril, :paystack_tax_subaccount)
+      Application.delete_env(:mithril, :paystack_vendor_subaccount)
       Application.put_env(:mithril, :paystack_test_attempts, %{})
     end)
 
@@ -36,6 +38,35 @@ defmodule Mithril.DirectPaymentsTest do
 
     assert {:ok, receipt} = Mithril.Paystack.verify(checkout.reference)
     assert receipt.split_code == "SPL_test"
+  end
+
+  test "uses numeric shares for dynamic Paystack split routing" do
+    customer_id = Ecto.UUID.generate()
+    booking_id = insert_booking!(customer_id, 19_350)
+
+    Repo.query!(
+      """
+      UPDATE public.bookings
+      SET paystack_split_code = NULL,
+          tax_share_minor = 1_000,
+          vendor_share_minor = 2_000
+      WHERE id = $1
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    Application.put_env(:mithril, :paystack_tax_subaccount, "ACCT_tax")
+    Application.put_env(:mithril, :paystack_vendor_subaccount, "ACCT_vendor")
+
+    assert {:ok, checkout} =
+             DirectPayments.initialize(customer_id, booking_id, %{
+               "callbackUrl" => "https://direct.tryinstaclean.com/bookings/#{booking_id}"
+             })
+
+    assert {:ok, receipt} = Mithril.Paystack.verify(checkout.reference)
+    assert %{subaccounts: [tax, vendor]} = receipt.split
+    assert tax == %{subaccount: "ACCT_tax", share: 1_000}
+    assert vendor == %{subaccount: "ACCT_vendor", share: 2_000}
   end
 
   test "rejects a callback URL that is not the booking confirmation page" do
@@ -141,15 +172,12 @@ defmodule Mithril.DirectPaymentsTest do
              ).rows
   end
 
-  test "verifies a stale reference before rotating it" do
+  test "verifies a stale missing reference before rotating it" do
     customer_id = Ecto.UUID.generate()
     booking_id = insert_booking!(customer_id, 19_350)
     stale = reserve_raw_attempt!(booking_id, 19_350)
 
-    Repo.query!(
-      "UPDATE public.payment_attempts SET expires_at = now() - interval '1 minute' WHERE id = $1",
-      [stale.attempt_id]
-    )
+    expire_attempt!(stale.attempt_id)
 
     assert {:ok, checkout} =
              DirectPayments.initialize(customer_id, booking_id, %{
@@ -157,11 +185,57 @@ defmodule Mithril.DirectPaymentsTest do
              })
 
     refute checkout.reference == stale.reference
+    assert attempt_status(stale.attempt_id) == "failed"
+  end
 
-    assert [["failed"]] =
+  test "rotates a stale attempt after Paystack reports a terminal failure" do
+    customer_id = Ecto.UUID.generate()
+    booking_id = insert_booking!(customer_id, 19_350)
+    stale = reserve_raw_attempt!(booking_id, 19_350)
+
+    expire_attempt!(stale.attempt_id)
+
+    Mithril.Paystack.Test.put_attempt(stale.reference, %{
+      status: "failed",
+      amount: 19_350,
+      currency: "GHS",
+      reference: stale.reference
+    })
+
+    assert {:ok, checkout} =
+             DirectPayments.initialize(customer_id, booking_id, %{
+               "callbackUrl" => "https://direct.tryinstaclean.com/bookings/#{booking_id}"
+             })
+
+    refute checkout.reference == stale.reference
+    assert attempt_status(stale.attempt_id) == "failed"
+  end
+
+  test "keeps a stale attempt reserved while Paystack reports a pending state" do
+    customer_id = Ecto.UUID.generate()
+    booking_id = insert_booking!(customer_id, 19_350)
+    stale = reserve_raw_attempt!(booking_id, 19_350)
+
+    expire_attempt!(stale.attempt_id)
+
+    Mithril.Paystack.Test.put_attempt(stale.reference, %{
+      status: "pending",
+      amount: 19_350,
+      currency: "GHS",
+      reference: stale.reference
+    })
+
+    assert {:error, :payment_in_progress} =
+             DirectPayments.initialize(customer_id, booking_id, %{
+               "callbackUrl" => "https://direct.tryinstaclean.com/bookings/#{booking_id}"
+             })
+
+    assert attempt_status(stale.attempt_id) == "initializing"
+
+    assert [[1]] =
              Repo.query!(
-               "SELECT status FROM public.payment_attempts WHERE id = $1",
-               [stale.attempt_id]
+               "SELECT count(*) FROM public.payment_attempts WHERE booking_id = $1",
+               [Ecto.UUID.dump!(booking_id)]
              ).rows
   end
 
@@ -234,6 +308,20 @@ defmodule Mithril.DirectPaymentsTest do
       ).rows
 
     %{attempt_id: attempt_id, created: created, state: state, reference: reference}
+  end
+
+  defp expire_attempt!(attempt_id) do
+    Repo.query!(
+      "UPDATE public.payment_attempts SET expires_at = now() - interval '1 minute' WHERE id = $1",
+      [attempt_id]
+    )
+  end
+
+  defp attempt_status(attempt_id) do
+    [[status]] =
+      Repo.query!("SELECT status FROM public.payment_attempts WHERE id = $1", [attempt_id]).rows
+
+    status
   end
 
   defp create_payment_tables! do
