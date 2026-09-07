@@ -1,0 +1,2520 @@
+{
+  "components": {
+    "responses": {},
+    "schemas": {
+      "DirectReplacementRequest": {
+        "properties": {
+          "notes": {
+            "maxLength": 4000,
+            "nullable": true,
+            "type": "string"
+          },
+          "priority": {
+            "default": "same_day",
+            "enum": [
+              "urgent",
+              "same_day",
+              "standard"
+            ],
+            "type": "string"
+          },
+          "requirements": {
+            "additionalProperties": true,
+            "default": {},
+            "type": "object"
+          }
+        },
+        "title": "DirectReplacementRequest",
+        "type": "object"
+      },
+      "DirectServiceRequestItem": {
+        "properties": {
+          "assignedWorkerName": {
+            "nullable": true,
+            "type": "string"
+          },
+          "assignedWorkerUserId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "durationHours": {
+            "nullable": true,
+            "type": "number"
+          },
+          "householdAddress": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "urgent_help",
+              "replacement"
+            ],
+            "type": "string"
+          },
+          "notes": {
+            "nullable": true,
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "urgent",
+              "same_day",
+              "standard"
+            ],
+            "type": "string"
+          },
+          "relatedBookingId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "requestedStartAt": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "requirements": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "role": {
+            "enum": [
+              "househelp",
+              "nanny",
+              "cleaner",
+              "elder_caregiver",
+              "cook",
+              "driver",
+              "gardener"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "submitted",
+              "triaging",
+              "matching",
+              "assigned",
+              "resolved",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "priority",
+          "role",
+          "requestedStartAt",
+          "durationHours",
+          "householdAddress",
+          "relatedBookingId",
+          "requirements",
+          "notes",
+          "assignedWorkerUserId",
+          "assignedWorkerName",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "DirectServiceRequestItem",
+        "type": "object"
+      },
+      "DirectInitializePaymentRequest": {
+        "properties": {
+          "callbackUrl": {
+            "description": "Direct booking confirmation URL Paystack should return to",
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "callbackUrl"
+        ],
+        "title": "DirectInitializePaymentRequest",
+        "type": "object"
+      },
+      "DirectCreateBookingRequest": {
+        "properties": {
+          "address": {
+            "maxLength": 500,
+            "minLength": 3,
+            "type": "string"
+          },
+          "cleanerId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "durationHours": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "scheduledDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "scheduledTime": {
+            "example": "09:00",
+            "type": "string"
+          },
+          "serviceId": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "specialInstructions": {
+            "maxLength": 4000,
+            "nullable": true,
+            "type": "string"
+          },
+          "timezone": {
+            "default": "Africa/Accra",
+            "type": "string"
+          }
+        },
+        "required": [
+          "serviceId",
+          "cleanerId",
+          "scheduledDate",
+          "scheduledTime",
+          "durationHours",
+          "address"
+        ],
+        "title": "DirectCreateBookingRequest",
+        "type": "object"
+      },
+      "DirectPaymentVerifyResponse": {
+        "properties": {
+          "amountMinor": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "paymentStatus": {
+            "type": "string"
+          },
+          "reference": {
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "paymentStatus",
+          "amountMinor",
+          "currency"
+        ],
+        "title": "DirectPaymentVerifyResponse",
+        "type": "object"
+      },
+      "DirectAdminMatchRequest": {
+        "properties": {
+          "candidateUserId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "consentConfirmed": {
+            "default": false,
+            "type": "boolean"
+          },
+          "customerVisibleNote": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidateUserId"
+        ],
+        "title": "DirectAdminMatchRequest",
+        "type": "object"
+      },
+      "DirectBookingDetailResponse": {
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "amountMinor": {
+            "type": "integer"
+          },
+          "cleanerId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "cleanerName": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "durationHours": {
+            "type": "number"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "paymentStatus": {
+            "type": "string"
+          },
+          "scheduledDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "scheduledTime": {
+            "type": "string"
+          },
+          "serviceId": {
+            "type": "integer"
+          },
+          "serviceName": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "paymentStatus",
+          "serviceId",
+          "serviceName",
+          "cleanerId",
+          "cleanerName",
+          "scheduledDate",
+          "scheduledTime",
+          "durationHours",
+          "address",
+          "amountMinor",
+          "currency"
+        ],
+        "title": "DirectBookingDetailResponse",
+        "type": "object"
+      },
+      "DirectBookingCleanerListResponse": {
+        "properties": {
+          "cleaners": {
+            "items": {
+              "$ref": "#/components/schemas/DirectBookingCleaner"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "cleaners"
+        ],
+        "title": "DirectBookingCleanerListResponse",
+        "type": "object"
+      },
+      "DirectAdminPlacement": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "customerUserId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "householdAddress": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "househelp",
+              "nanny",
+              "cleaner",
+              "elder_caregiver",
+              "cook",
+              "driver",
+              "gardener"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "submitted",
+              "matching",
+              "shortlisted",
+              "placed",
+              "cancelled",
+              "expired"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "customerUserId",
+          "status",
+          "role",
+          "householdAddress",
+          "createdAt"
+        ],
+        "title": "DirectAdminPlacement",
+        "type": "object"
+      },
+      "DirectPlacementSummary": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "householdAddress": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "househelp",
+              "nanny",
+              "cleaner",
+              "elder_caregiver",
+              "cook",
+              "driver",
+              "gardener"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "submitted",
+              "matching",
+              "shortlisted",
+              "placed",
+              "cancelled",
+              "expired"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "status",
+          "householdAddress",
+          "createdAt"
+        ],
+        "title": "DirectPlacementSummary",
+        "type": "object"
+      },
+      "DirectBookingPriceResponse": {
+        "properties": {
+          "bookingCoverMajor": {
+            "type": "number"
+          },
+          "cleanerEarningsMinor": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "coreAmountMinor": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "durationHours": {
+            "type": "number"
+          },
+          "finalAmountMinor": {
+            "type": "integer"
+          },
+          "isSameDay": {
+            "type": "boolean"
+          },
+          "isWeekend": {
+            "type": "boolean"
+          },
+          "platformFeeMajor": {
+            "type": "number"
+          },
+          "pricingVersion": {
+            "type": "string"
+          },
+          "recurringDiscountMinor": {
+            "type": "integer"
+          },
+          "sameDaySurchargeMinor": {
+            "type": "integer"
+          },
+          "subtotalLaborMajor": {
+            "type": "number"
+          },
+          "suppliesAllowanceMinor": {
+            "type": "integer"
+          },
+          "suppliesOption": {
+            "type": "string"
+          },
+          "weekendSurchargeMinor": {
+            "type": "integer"
+          },
+          "workRateGhsPerHour": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "currency",
+          "pricingVersion",
+          "durationHours",
+          "workRateGhsPerHour",
+          "subtotalLaborMajor",
+          "platformFeeMajor",
+          "bookingCoverMajor",
+          "coreAmountMinor",
+          "sameDaySurchargeMinor",
+          "weekendSurchargeMinor",
+          "recurringDiscountMinor",
+          "finalAmountMinor",
+          "isSameDay",
+          "isWeekend",
+          "suppliesOption",
+          "suppliesAllowanceMinor",
+          "cleanerEarningsMinor"
+        ],
+        "title": "DirectBookingPriceResponse",
+        "type": "object"
+      },
+      "DirectCreatePlacementResponse": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "DirectCreatePlacementResponse",
+        "type": "object"
+      },
+      "DirectAdminAssistedBookingResponse": {
+        "properties": {
+          "amountMinor": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "createdByAdmin": {
+            "type": "boolean"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "customerUserId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "paymentStatus": {
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "admin",
+              "phone",
+              "whatsapp"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "paymentStatus",
+          "amountMinor",
+          "currency",
+          "customerUserId",
+          "source",
+          "createdByAdmin"
+        ],
+        "title": "DirectAdminAssistedBookingResponse",
+        "type": "object"
+      },
+      "DirectAdminCandidate": {
+        "properties": {
+          "completedJobs": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "desiredRoles": {
+            "items": {
+              "enum": [
+                "househelp",
+                "nanny",
+                "cleaner",
+                "elder_caregiver",
+                "cook",
+                "driver",
+                "gardener"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "email": {
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "placementOptIn": {
+            "type": "boolean"
+          },
+          "placementStatus": {
+            "type": "string"
+          },
+          "rating": {
+            "nullable": true,
+            "type": "number"
+          },
+          "userId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "userId",
+          "name",
+          "email",
+          "rating",
+          "completedJobs",
+          "placementOptIn",
+          "placementStatus",
+          "desiredRoles"
+        ],
+        "title": "DirectAdminCandidate",
+        "type": "object"
+      },
+      "DirectAdminCustomer": {
+        "properties": {
+          "email": {
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "phone": {
+            "nullable": true,
+            "type": "string"
+          },
+          "userId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "userId",
+          "name",
+          "email",
+          "phone"
+        ],
+        "title": "DirectAdminCustomer",
+        "type": "object"
+      },
+      "DirectBookingService": {
+        "properties": {
+          "durationIncrementHours": {
+            "type": "number"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "maximumDurationHours": {
+            "type": "number"
+          },
+          "minimumDurationHours": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "priceGhs": {
+            "type": "number"
+          },
+          "specialtySlug": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "priceGhs",
+          "minimumDurationHours",
+          "maximumDurationHours",
+          "durationIncrementHours",
+          "specialtySlug"
+        ],
+        "title": "DirectBookingService",
+        "type": "object"
+      },
+      "DirectBookingCleaner": {
+        "properties": {
+          "avatarUrl": {
+            "nullable": true,
+            "type": "string"
+          },
+          "completedJobs": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "hourlyRateGhs": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "rating": {
+            "nullable": true,
+            "type": "number"
+          },
+          "userId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "userId",
+          "name",
+          "avatarUrl",
+          "rating",
+          "completedJobs",
+          "hourlyRateGhs"
+        ],
+        "title": "DirectBookingCleaner",
+        "type": "object"
+      },
+      "DirectBookingPricingRequest": {
+        "properties": {
+          "cleanerId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "durationHours": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "scheduledDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "serviceId": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timezone": {
+            "default": "Africa/Accra",
+            "type": "string"
+          }
+        },
+        "required": [
+          "serviceId",
+          "cleanerId",
+          "scheduledDate",
+          "durationHours"
+        ],
+        "title": "DirectBookingPricingRequest",
+        "type": "object"
+      },
+      "DirectHelperListItem": {
+        "properties": {
+          "firstName": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "lastName": {
+            "nullable": true,
+            "type": "string"
+          },
+          "liveIn": {
+            "type": "boolean"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "househelp",
+              "nanny",
+              "cleaner",
+              "elder_caregiver",
+              "cook",
+              "driver",
+              "gardener"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "instaclean_placement",
+              "customer_invited"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "firstName",
+          "lastName",
+          "phone",
+          "source",
+          "role",
+          "status",
+          "liveIn"
+        ],
+        "title": "DirectHelperListItem",
+        "type": "object"
+      },
+      "DirectCreateServiceRequestResponse": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "urgent_help",
+              "replacement"
+            ],
+            "type": "string"
+          },
+          "relatedBookingId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "submitted",
+              "triaging",
+              "matching",
+              "assigned",
+              "resolved",
+              "cancelled"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "kind"
+        ],
+        "title": "DirectCreateServiceRequestResponse",
+        "type": "object"
+      },
+      "DirectHouseholdWorkerResponse": {
+        "properties": {
+          "householdWorkerId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "householdWorkerId"
+        ],
+        "title": "DirectHouseholdWorkerResponse",
+        "type": "object"
+      },
+      "DirectAdminUpdateServiceRequestRequest": {
+        "properties": {
+          "adminNote": {
+            "maxLength": 2000,
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "submitted",
+              "triaging",
+              "matching",
+              "resolved",
+              "cancelled"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DirectAdminUpdateServiceRequestRequest",
+        "type": "object"
+      },
+      "DirectAdminCustomerListResponse": {
+        "properties": {
+          "customers": {
+            "items": {
+              "$ref": "#/components/schemas/DirectAdminCustomer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "customers"
+        ],
+        "title": "DirectAdminCustomerListResponse",
+        "type": "object"
+      },
+      "DirectAdminServiceRequestItem": {
+        "properties": {
+          "adminNote": {
+            "nullable": true,
+            "type": "string"
+          },
+          "assignedWorkerName": {
+            "nullable": true,
+            "type": "string"
+          },
+          "assignedWorkerUserId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "customerName": {
+            "type": "string"
+          },
+          "customerPhone": {
+            "nullable": true,
+            "type": "string"
+          },
+          "customerUserId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "durationHours": {
+            "nullable": true,
+            "type": "number"
+          },
+          "householdAddress": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "urgent_help",
+              "replacement"
+            ],
+            "type": "string"
+          },
+          "notes": {
+            "nullable": true,
+            "type": "string"
+          },
+          "priority": {
+            "enum": [
+              "urgent",
+              "same_day",
+              "standard"
+            ],
+            "type": "string"
+          },
+          "relatedBookingId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "requestedStartAt": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "requirements": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "role": {
+            "enum": [
+              "househelp",
+              "nanny",
+              "cleaner",
+              "elder_caregiver",
+              "cook",
+              "driver",
+              "gardener"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "submitted",
+              "triaging",
+              "matching",
+              "assigned",
+              "resolved",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "customerUserId",
+          "customerName",
+          "customerPhone",
+          "kind",
+          "status",
+          "priority",
+          "role",
+          "requestedStartAt",
+          "durationHours",
+          "householdAddress",
+          "relatedBookingId",
+          "requirements",
+          "notes",
+          "adminNote",
+          "assignedWorkerUserId",
+          "assignedWorkerName",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "DirectAdminServiceRequestItem",
+        "type": "object"
+      },
+      "DirectAdminServiceRequestListResponse": {
+        "properties": {
+          "requests": {
+            "items": {
+              "$ref": "#/components/schemas/DirectAdminServiceRequestItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "requests"
+        ],
+        "title": "DirectAdminServiceRequestListResponse",
+        "type": "object"
+      },
+      "DirectBookingServicesResponse": {
+        "properties": {
+          "services": {
+            "items": {
+              "$ref": "#/components/schemas/DirectBookingService"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "services"
+        ],
+        "title": "DirectBookingServicesResponse",
+        "type": "object"
+      },
+      "DirectAdminPlacementsResponse": {
+        "properties": {
+          "placements": {
+            "items": {
+              "$ref": "#/components/schemas/DirectAdminPlacement"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "placements"
+        ],
+        "title": "DirectAdminPlacementsResponse",
+        "type": "object"
+      },
+      "DirectUrgentHelpRequest": {
+        "properties": {
+          "durationHours": {
+            "maximum": 24,
+            "minimum": 0.5,
+            "type": "number"
+          },
+          "householdAddress": {
+            "maxLength": 500,
+            "minLength": 3,
+            "type": "string"
+          },
+          "neededBy": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "notes": {
+            "maxLength": 4000,
+            "nullable": true,
+            "type": "string"
+          },
+          "priority": {
+            "default": "urgent",
+            "enum": [
+              "urgent",
+              "same_day",
+              "standard"
+            ],
+            "type": "string"
+          },
+          "requirements": {
+            "additionalProperties": true,
+            "default": {},
+            "type": "object"
+          },
+          "role": {
+            "enum": [
+              "househelp",
+              "nanny",
+              "cleaner",
+              "elder_caregiver",
+              "cook",
+              "driver",
+              "gardener"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "neededBy",
+          "durationHours",
+          "householdAddress"
+        ],
+        "title": "DirectUrgentHelpRequest",
+        "type": "object"
+      },
+      "DirectServiceRequestListResponse": {
+        "properties": {
+          "requests": {
+            "items": {
+              "$ref": "#/components/schemas/DirectServiceRequestItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "requests"
+        ],
+        "title": "DirectServiceRequestListResponse",
+        "type": "object"
+      },
+      "DirectPaymentCheckoutResponse": {
+        "properties": {
+          "accessCode": {
+            "nullable": true,
+            "type": "string"
+          },
+          "amountMinor": {
+            "type": "integer"
+          },
+          "authorizationUrl": {
+            "format": "uri",
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "paymentStatus": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "authorizationUrl",
+          "accessCode",
+          "reference",
+          "paymentStatus",
+          "amountMinor",
+          "currency"
+        ],
+        "title": "DirectPaymentCheckoutResponse",
+        "type": "object"
+      },
+      "DirectPlacementDetailResponse": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/DirectCandidateCard"
+            },
+            "type": "array"
+          },
+          "placement": {
+            "$ref": "#/components/schemas/DirectPlacementSummary"
+          }
+        },
+        "required": [
+          "placement",
+          "candidates"
+        ],
+        "title": "DirectPlacementDetailResponse",
+        "type": "object"
+      },
+      "DirectVerifyPaymentRequest": {
+        "properties": {
+          "reference": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "title": "DirectVerifyPaymentRequest",
+        "type": "object"
+      },
+      "DirectHelperListResponse": {
+        "properties": {
+          "helpers": {
+            "items": {
+              "$ref": "#/components/schemas/DirectHelperListItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "helpers"
+        ],
+        "title": "DirectHelperListResponse",
+        "type": "object"
+      },
+      "DirectCreatePlacementRequest": {
+        "properties": {
+          "desiredStartDate": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "employmentType": {
+            "enum": [
+              "full_time",
+              "part_time",
+              "flexible"
+            ],
+            "type": "string"
+          },
+          "householdAddress": {
+            "minLength": 3,
+            "type": "string"
+          },
+          "livingArrangement": {
+            "enum": [
+              "live_in",
+              "live_out",
+              "flexible"
+            ],
+            "type": "string"
+          },
+          "notes": {
+            "nullable": true,
+            "type": "string"
+          },
+          "requirements": {
+            "additionalProperties": true,
+            "default": {},
+            "type": "object"
+          },
+          "role": {
+            "enum": [
+              "househelp",
+              "nanny",
+              "cleaner",
+              "elder_caregiver",
+              "cook",
+              "driver",
+              "gardener"
+            ],
+            "type": "string"
+          },
+          "salaryFrequency": {
+            "enum": [
+              "hourly",
+              "daily",
+              "weekly",
+              "monthly"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "salaryMaxPesewas": {
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "salaryMinPesewas": {
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "role",
+          "livingArrangement",
+          "employmentType",
+          "householdAddress"
+        ],
+        "title": "DirectCreatePlacementRequest",
+        "type": "object"
+      },
+      "DirectAdminAssistedBookingRequest": {
+        "properties": {
+          "address": {
+            "maxLength": 500,
+            "minLength": 3,
+            "type": "string"
+          },
+          "adminNote": {
+            "maxLength": 2000,
+            "nullable": true,
+            "type": "string"
+          },
+          "cleanerId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "consentConfirmed": {
+            "type": "boolean"
+          },
+          "customerUserId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "durationHours": {
+            "minimum": 0.5,
+            "type": "number"
+          },
+          "scheduledDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "scheduledTime": {
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?$",
+            "type": "string"
+          },
+          "serviceId": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "source": {
+            "default": "admin",
+            "enum": [
+              "admin",
+              "phone",
+              "whatsapp"
+            ],
+            "type": "string"
+          },
+          "specialInstructions": {
+            "maxLength": 4000,
+            "nullable": true,
+            "type": "string"
+          },
+          "timezone": {
+            "default": "Africa/Accra",
+            "type": "string"
+          }
+        },
+        "required": [
+          "customerUserId",
+          "serviceId",
+          "cleanerId",
+          "scheduledDate",
+          "scheduledTime",
+          "durationHours",
+          "address",
+          "consentConfirmed"
+        ],
+        "title": "DirectAdminAssistedBookingRequest",
+        "type": "object"
+      },
+      "DirectPrivateHelperRequest": {
+        "properties": {
+          "email": {
+            "nullable": true,
+            "type": "string"
+          },
+          "firstName": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "lastName": {
+            "nullable": true,
+            "type": "string"
+          },
+          "liveIn": {
+            "default": false,
+            "type": "boolean"
+          },
+          "phone": {
+            "minLength": 6,
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "househelp",
+              "nanny",
+              "cleaner",
+              "elder_caregiver",
+              "cook",
+              "driver",
+              "gardener"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "startDate": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "firstName",
+          "phone"
+        ],
+        "title": "DirectPrivateHelperRequest",
+        "type": "object"
+      },
+      "DirectAdminAssignServiceRequestRequest": {
+        "properties": {
+          "adminNote": {
+            "maxLength": 2000,
+            "nullable": true,
+            "type": "string"
+          },
+          "workerUserId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workerUserId"
+        ],
+        "title": "DirectAdminAssignServiceRequestRequest",
+        "type": "object"
+      },
+      "DirectCreateBookingResponse": {
+        "properties": {
+          "amountMinor": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "paymentStatus": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "paymentStatus",
+          "amountMinor",
+          "currency"
+        ],
+        "title": "DirectCreateBookingResponse",
+        "type": "object"
+      },
+      "DirectAdminServiceRequestMutationResponse": {
+        "properties": {
+          "assignedWorkerUserId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "submitted",
+              "triaging",
+              "matching",
+              "assigned",
+              "resolved",
+              "cancelled"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "DirectAdminServiceRequestMutationResponse",
+        "type": "object"
+      },
+      "DirectAdminMatchResponse": {
+        "properties": {
+          "matchId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "matchId"
+        ],
+        "title": "DirectAdminMatchResponse",
+        "type": "object"
+      },
+      "DirectAdminCandidatesResponse": {
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/DirectAdminCandidate"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "candidates"
+        ],
+        "title": "DirectAdminCandidatesResponse",
+        "type": "object"
+      },
+      "DirectPlacementListItem": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "desiredStartDate": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "employmentType": {
+            "enum": [
+              "full_time",
+              "part_time",
+              "flexible"
+            ],
+            "type": "string"
+          },
+          "householdAddress": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "livingArrangement": {
+            "enum": [
+              "live_in",
+              "live_out",
+              "flexible"
+            ],
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "househelp",
+              "nanny",
+              "cleaner",
+              "elder_caregiver",
+              "cook",
+              "driver",
+              "gardener"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "submitted",
+              "matching",
+              "shortlisted",
+              "placed",
+              "cancelled",
+              "expired"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "role",
+          "livingArrangement",
+          "employmentType",
+          "desiredStartDate",
+          "householdAddress",
+          "createdAt"
+        ],
+        "title": "DirectPlacementListItem",
+        "type": "object"
+      },
+      "DirectPlacementListResponse": {
+        "properties": {
+          "placements": {
+            "items": {
+              "$ref": "#/components/schemas/DirectPlacementListItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "placements"
+        ],
+        "title": "DirectPlacementListResponse",
+        "type": "object"
+      },
+      "DirectCandidateCard": {
+        "properties": {
+          "availableFrom": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "avatarUrl": {
+            "nullable": true,
+            "type": "string"
+          },
+          "bio": {
+            "nullable": true,
+            "type": "string"
+          },
+          "candidateUserId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "completedJobs": {
+            "nullable": true,
+            "type": "integer"
+          },
+          "customerVisibleNote": {
+            "nullable": true,
+            "type": "string"
+          },
+          "firstName": {
+            "type": "string"
+          },
+          "identityVerified": {
+            "type": "boolean"
+          },
+          "lastInitial": {
+            "type": "string"
+          },
+          "matchId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "matchStatus": {
+            "enum": [
+              "suggested",
+              "selected",
+              "rejected",
+              "cancelled",
+              "hired"
+            ],
+            "type": "string"
+          },
+          "preferredLanguages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "providerVerified": {
+            "type": "boolean"
+          },
+          "rating": {
+            "nullable": true,
+            "type": "number"
+          },
+          "yearsExperience": {
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "matchId",
+          "candidateUserId",
+          "firstName",
+          "lastInitial",
+          "avatarUrl",
+          "yearsExperience",
+          "bio",
+          "preferredLanguages",
+          "availableFrom",
+          "rating",
+          "completedJobs",
+          "customerVisibleNote",
+          "identityVerified",
+          "providerVerified",
+          "matchStatus"
+        ],
+        "title": "DirectCandidateCard",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Instaclean backend API contracts.",
+    "title": "Mithril API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/direct/admin/bookings": {
+      "post": {
+        "callbacks": {},
+        "operationId": "direct.createAdminAssistedBooking",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectAdminAssistedBookingRequest"
+              }
+            }
+          },
+          "description": "Admin-assisted booking",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectAdminAssistedBookingResponse"
+                }
+              }
+            },
+            "description": "Created booking"
+          }
+        },
+        "summary": "Create a booking for a customer with recorded consent and source",
+        "tags": [
+          "direct-dispatch"
+        ]
+      }
+    },
+    "/direct/admin/candidates": {
+      "get": {
+        "callbacks": {},
+        "operationId": "direct.listAdminCandidates",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectAdminCandidatesResponse"
+                }
+              }
+            },
+            "description": "Admin placement candidates"
+          }
+        },
+        "summary": "List vetted placement candidates for Direct operations",
+        "tags": [
+          "direct"
+        ]
+      }
+    },
+    "/direct/admin/customers": {
+      "get": {
+        "callbacks": {},
+        "operationId": "direct.listAdminCustomers",
+        "parameters": [
+          {
+            "description": "Name, email, or phone search",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "maxLength": 120,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectAdminCustomerListResponse"
+                }
+              }
+            },
+            "description": "Customers"
+          }
+        },
+        "summary": "Search customers for admin-assisted booking",
+        "tags": [
+          "direct-dispatch"
+        ]
+      }
+    },
+    "/direct/admin/placements": {
+      "get": {
+        "callbacks": {},
+        "operationId": "direct.listAdminPlacements",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectAdminPlacementsResponse"
+                }
+              }
+            },
+            "description": "Admin placement requests"
+          }
+        },
+        "summary": "List placement requests for Direct operations",
+        "tags": [
+          "direct"
+        ]
+      }
+    },
+    "/direct/admin/placements/{id}/matches": {
+      "post": {
+        "callbacks": {},
+        "operationId": "direct.matchAdminCandidate",
+        "parameters": [
+          {
+            "description": "Placement request ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectAdminMatchRequest"
+              }
+            }
+          },
+          "description": "Candidate match",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectAdminMatchResponse"
+                }
+              }
+            },
+            "description": "Placement match"
+          }
+        },
+        "summary": "Match a vetted candidate to a placement request",
+        "tags": [
+          "direct"
+        ]
+      }
+    },
+    "/direct/admin/service-requests": {
+      "get": {
+        "callbacks": {},
+        "operationId": "direct.listAdminServiceRequests",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectAdminServiceRequestListResponse"
+                }
+              }
+            },
+            "description": "Dispatch queue"
+          }
+        },
+        "summary": "List urgent-help and replacement requests for dispatch operations",
+        "tags": [
+          "direct-dispatch"
+        ]
+      }
+    },
+    "/direct/admin/service-requests/{id}/assign": {
+      "post": {
+        "callbacks": {},
+        "operationId": "direct.assignAdminServiceRequest",
+        "parameters": [
+          {
+            "description": "Service request ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectAdminAssignServiceRequestRequest"
+              }
+            }
+          },
+          "description": "Worker assignment",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectAdminServiceRequestMutationResponse"
+                }
+              }
+            },
+            "description": "Updated service request"
+          }
+        },
+        "summary": "Assign a vetted worker to an urgent-help or replacement request",
+        "tags": [
+          "direct-dispatch"
+        ]
+      }
+    },
+    "/direct/admin/service-requests/{id}/status": {
+      "post": {
+        "callbacks": {},
+        "operationId": "direct.updateAdminServiceRequest",
+        "parameters": [
+          {
+            "description": "Service request ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectAdminUpdateServiceRequestRequest"
+              }
+            }
+          },
+          "description": "Dispatch status",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectAdminServiceRequestMutationResponse"
+                }
+              }
+            },
+            "description": "Updated service request"
+          }
+        },
+        "summary": "Advance or close a dispatch request",
+        "tags": [
+          "direct-dispatch"
+        ]
+      }
+    },
+    "/direct/booking-cleaners": {
+      "get": {
+        "callbacks": {},
+        "operationId": "direct.listBookingCleaners",
+        "parameters": [
+          {
+            "description": "Active service type ID",
+            "in": "query",
+            "name": "serviceId",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectBookingCleanerListResponse"
+                }
+              }
+            },
+            "description": "Booking professionals"
+          }
+        },
+        "summary": "List active verified professionals eligible for a Direct service",
+        "tags": [
+          "direct-bookings"
+        ]
+      }
+    },
+    "/direct/booking-price": {
+      "post": {
+        "callbacks": {},
+        "operationId": "direct.previewBookingPrice",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectBookingPricingRequest"
+              }
+            }
+          },
+          "description": "Booking pricing input",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectBookingPriceResponse"
+                }
+              }
+            },
+            "description": "Authoritative booking price"
+          }
+        },
+        "summary": "Compute authoritative booking pricing",
+        "tags": [
+          "direct-bookings"
+        ]
+      }
+    },
+    "/direct/booking-services": {
+      "get": {
+        "callbacks": {},
+        "operationId": "direct.listBookingServices",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectBookingServicesResponse"
+                }
+              }
+            },
+            "description": "Booking services"
+          }
+        },
+        "summary": "List active services available for Direct booking",
+        "tags": [
+          "direct-bookings"
+        ]
+      }
+    },
+    "/direct/bookings": {
+      "post": {
+        "callbacks": {},
+        "operationId": "direct.createBooking",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectCreateBookingRequest"
+              }
+            }
+          },
+          "description": "Booking",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectCreateBookingResponse"
+                }
+              }
+            },
+            "description": "Created booking"
+          }
+        },
+        "summary": "Create a pending Instaclean booking",
+        "tags": [
+          "direct-bookings"
+        ]
+      }
+    },
+    "/direct/bookings/{id}": {
+      "get": {
+        "callbacks": {},
+        "operationId": "direct.showBooking",
+        "parameters": [
+          {
+            "description": "Booking ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectBookingDetailResponse"
+                }
+              }
+            },
+            "description": "Booking"
+          }
+        },
+        "summary": "Get a signed-in customer's booking",
+        "tags": [
+          "direct-bookings"
+        ]
+      }
+    },
+    "/direct/bookings/{id}/payment": {
+      "post": {
+        "callbacks": {},
+        "operationId": "direct.initializeBookingPayment",
+        "parameters": [
+          {
+            "description": "Booking ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectInitializePaymentRequest"
+              }
+            }
+          },
+          "description": "Payment checkout",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectPaymentCheckoutResponse"
+                }
+              }
+            },
+            "description": "Paystack checkout"
+          }
+        },
+        "summary": "Start Paystack checkout for a pending Direct booking",
+        "tags": [
+          "direct-bookings"
+        ]
+      }
+    },
+    "/direct/bookings/{id}/payment/verify": {
+      "post": {
+        "callbacks": {},
+        "operationId": "direct.verifyBookingPayment",
+        "parameters": [
+          {
+            "description": "Booking ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectVerifyPaymentRequest"
+              }
+            }
+          },
+          "description": "Payment verification",
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectPaymentVerifyResponse"
+                }
+              }
+            },
+            "description": "Paid booking"
+          }
+        },
+        "summary": "Verify Paystack payment and mark the booking paid",
+        "tags": [
+          "direct-bookings"
+        ]
+      }
+    },
+    "/direct/bookings/{id}/replacement-request": {
+      "post": {
+        "callbacks": {},
+        "operationId": "direct.requestReplacementWorker",
+        "parameters": [
+          {
+            "description": "Booking ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectReplacementRequest"
+              }
+            }
+          },
+          "description": "Replacement request",
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectCreateServiceRequestResponse"
+                }
+              }
+            },
+            "description": "Created service request"
+          }
+        },
+        "summary": "Request a replacement worker for an owned booking",
+        "tags": [
+          "direct-dispatch"
+        ]
+      }
+    },
+    "/direct/helpers": {
+      "get": {
+        "callbacks": {},
+        "operationId": "direct.listHelpers",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectHelperListResponse"
+                }
+              }
+            },
+            "description": "Household helpers"
+          }
+        },
+        "summary": "List household helpers",
+        "tags": [
+          "direct"
+        ]
+      },
+      "post": {
+        "callbacks": {},
+        "operationId": "direct.createHelper",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectPrivateHelperRequest"
+              }
+            }
+          },
+          "description": "Private helper",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectHouseholdWorkerResponse"
+                }
+              }
+            },
+            "description": "Household worker"
+          }
+        },
+        "summary": "Add a private household helper",
+        "tags": [
+          "direct"
+        ]
+      }
+    },
+    "/direct/matches/{id}/hire": {
+      "post": {
+        "callbacks": {},
+        "operationId": "direct.hireMatch",
+        "parameters": [
+          {
+            "description": "Placement match ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectHouseholdWorkerResponse"
+                }
+              }
+            },
+            "description": "Household worker"
+          }
+        },
+        "summary": "Hire a matched candidate",
+        "tags": [
+          "direct"
+        ]
+      }
+    },
+    "/direct/placements": {
+      "get": {
+        "callbacks": {},
+        "operationId": "direct.listPlacements",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectPlacementListResponse"
+                }
+              }
+            },
+            "description": "Placement requests"
+          }
+        },
+        "summary": "List the signed-in customer's placement requests",
+        "tags": [
+          "direct"
+        ]
+      },
+      "post": {
+        "callbacks": {},
+        "operationId": "direct.createPlacement",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectCreatePlacementRequest"
+              }
+            }
+          },
+          "description": "Placement request",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectCreatePlacementResponse"
+                }
+              }
+            },
+            "description": "Created placement"
+          }
+        },
+        "summary": "Create a household placement request",
+        "tags": [
+          "direct"
+        ]
+      }
+    },
+    "/direct/placements/{id}": {
+      "get": {
+        "callbacks": {},
+        "operationId": "direct.showPlacement",
+        "parameters": [
+          {
+            "description": "Placement request ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectPlacementDetailResponse"
+                }
+              }
+            },
+            "description": "Placement detail"
+          }
+        },
+        "summary": "Get a placement request and its candidates",
+        "tags": [
+          "direct"
+        ]
+      }
+    },
+    "/direct/service-requests": {
+      "get": {
+        "callbacks": {},
+        "operationId": "direct.listServiceRequests",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectServiceRequestListResponse"
+                }
+              }
+            },
+            "description": "Service requests"
+          }
+        },
+        "summary": "List the signed-in customer's urgent-help and replacement requests",
+        "tags": [
+          "direct-dispatch"
+        ]
+      }
+    },
+    "/direct/urgent-help": {
+      "post": {
+        "callbacks": {},
+        "operationId": "direct.createUrgentHelpRequest",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectUrgentHelpRequest"
+              }
+            }
+          },
+          "description": "Urgent help",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectCreateServiceRequestResponse"
+                }
+              }
+            },
+            "description": "Created service request"
+          }
+        },
+        "summary": "Request urgent non-medical household help",
+        "tags": [
+          "direct-dispatch"
+        ]
+      }
+    }
+  },
+  "security": [],
+  "servers": [
+    {
+      "url": "http://localhost:4002",
+      "variables": {}
+    }
+  ],
+  "tags": []
+}
