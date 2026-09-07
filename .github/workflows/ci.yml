@@ -37,6 +37,8 @@ jobs:
         run: bash -n scripts/*.sh
       - name: Exercise production shadow sync workflow
         run: bash scripts/test_db_sync.sh
+      - name: Exercise Direct worker schedule reservations
+        run: bash scripts/test_direct_schedule_reservations.sh
 
       - uses: erlef/setup-beam@v1
         with:
