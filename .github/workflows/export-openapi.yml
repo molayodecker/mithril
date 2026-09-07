@@ -1,0 +1,36 @@
+name: Export merged OpenAPI
+
+on:
+  push:
+    branches: [feat/direct-concierge-dispatch]
+
+permissions:
+  contents: write
+
+jobs:
+  export:
+    if: ${{ !contains(github.event.head_commit.message, '[skip openapi export]') }}
+    runs-on: ubuntu-latest
+    env:
+      MIX_ENV: test
+      DATABASE_URL: ecto://postgres:postgres@localhost:5432/mithril_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: 28.5.0.6
+          elixir-version: 1.20.0
+      - run: mix local.hex --force
+      - run: mix local.rebar --force
+      - run: mix deps.get
+      - run: mix run --no-start scripts/export_openapi.exs
+      - name: Commit exported contract
+        run: |
+          if git diff --quiet -- openapi-export.json; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add openapi-export.json
+          git commit -m "chore: export merged OpenAPI [skip openapi export]"
+          git push
