@@ -20,12 +20,28 @@ if [[ "$TARGET_DATABASE_URL" == *"supabase.co"* || "$TARGET_DATABASE_URL" == *"s
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SQL_FILE="$SCRIPT_DIR/../priv/repo/sql/direct/20260903170000_direct_phase1.sql"
+SQL_DIR="$SCRIPT_DIR/../priv/repo/sql/direct"
 
-if [[ ! -f "$SQL_FILE" ]]; then
-  echo "Missing Direct schema file: $SQL_FILE" >&2
+if [[ ! -d "$SQL_DIR" ]]; then
+  echo "Missing Direct schema directory: $SQL_DIR" >&2
   exit 1
 fi
 
-psql "$TARGET_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$SQL_FILE"
-echo "Applied Direct Phase 1 schema from $SQL_FILE"
+SQL_FILES="$(find "$SQL_DIR" -maxdepth 1 -type f -name '*.sql' -print | sort)"
+
+if [[ -z "$SQL_FILES" ]]; then
+  echo "No Direct schema files found in $SQL_DIR" >&2
+  exit 1
+fi
+
+count=0
+while IFS= read -r sql_file; do
+  [[ -n "$sql_file" ]] || continue
+  echo "Applying $(basename "$sql_file")"
+  psql "$TARGET_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$sql_file"
+  count=$((count + 1))
+done <<EOF
+$SQL_FILES
+EOF
+
+echo "Applied $count Direct schema phase(s) from $SQL_DIR"
