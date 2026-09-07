@@ -72,6 +72,7 @@ defmodule Mithril.DirectDispatchTest do
     CREATE TABLE public.bookings (
       id uuid PRIMARY KEY,
       customer_id uuid NOT NULL,
+      service_id integer NOT NULL,
       address text NOT NULL,
       scheduled_date date NOT NULL,
       scheduled_time time NOT NULL,
@@ -93,6 +94,7 @@ defmodule Mithril.DirectDispatchTest do
       duration_hours numeric,
       household_address_snapshot text NOT NULL,
       related_booking_id uuid,
+      related_service_id integer,
       requirements jsonb NOT NULL DEFAULT '{}'::jsonb,
       notes text,
       admin_note text,
@@ -158,9 +160,9 @@ defmodule Mithril.DirectDispatchTest do
     Repo.query!(
       """
       INSERT INTO public.bookings (
-        id, customer_id, address, scheduled_date, scheduled_time,
+        id, customer_id, service_id, address, scheduled_date, scheduled_time,
         duration_hours, timezone, status
-      ) VALUES ($1, $2, 'Labone, Accra', '2026-09-08', '10:00', 3, 'Africa/Accra', 'pending')
+      ) VALUES ($1, $2, 1, 'Labone, Accra', '2026-09-08', '10:00', 3, 'Africa/Accra', 'pending')
       """,
       [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(customer_id)]
     )
