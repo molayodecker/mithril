@@ -14,7 +14,9 @@ defmodule Mithril.DirectDispatchSafetyTest do
       raise "Refusing to recreate dispatch safety fixtures; expected mithril_test, got #{inspect(database)}"
     end
 
-    Repo.query!("DROP FUNCTION IF EXISTS public.cleaner_has_booking_conflict(uuid, timestamptz, timestamptz, uuid)")
+    Repo.query!(
+      "DROP FUNCTION IF EXISTS public.cleaner_has_booking_conflict(uuid, timestamptz, timestamptz, uuid)"
+    )
 
     for table <- [
           "test_cleaner_conflicts",
