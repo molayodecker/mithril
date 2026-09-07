@@ -150,7 +150,7 @@ defmodule MithrilWeb.DirectDispatchController do
   )
 
   def update_admin_service_request(conn, %{"id" => id} = params) do
-    respond(conn, DirectDispatch.update_admin_service_request(user_id(conn), id, params))
+    respond(conn, DirectDispatchSafety.update_admin_service_request(user_id(conn), id, params))
   end
 
   defp user_id(conn), do: conn.assigns.instaclean_user_id
@@ -177,6 +177,7 @@ defmodule MithrilWeb.DirectDispatchController do
   defp error_response(:booking_closed), do: {409, "booking_closed"}
   defp error_response(:booking_unpaid), do: {409, "booking_unpaid"}
   defp error_response(:request_closed), do: {409, "request_closed"}
+  defp error_response(:invalid_status_transition), do: {409, "invalid_status_transition"}
   defp error_response(:replacement_already_requested), do: {409, "replacement_already_requested"}
   defp error_response(:candidate_unavailable), do: {409, "candidate_unavailable"}
   defp error_response(:database_unavailable), do: {503, "database_unavailable"}
