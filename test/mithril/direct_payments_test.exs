@@ -124,6 +124,39 @@ defmodule Mithril.DirectPaymentsTest do
              DirectPayments.verify(customer_id, booking_id, %{"reference" => checkout.reference})
   end
 
+  test "retires a terminal Paystack verification so checkout can restart" do
+    customer_id = Ecto.UUID.generate()
+    booking_id = insert_booking!(customer_id, 19_350)
+
+    {:ok, checkout} =
+      DirectPayments.initialize(customer_id, booking_id, %{
+        "callbackUrl" => "https://direct.tryinstaclean.com/bookings/#{booking_id}"
+      })
+
+    Mithril.Paystack.Test.put_attempt(checkout.reference, %{
+      status: "failed",
+      amount: 19_350,
+      currency: "GHS",
+      reference: checkout.reference
+    })
+
+    assert {:error, :payment_failed} =
+             DirectPayments.verify(customer_id, booking_id, %{"reference" => checkout.reference})
+
+    assert [["failed"]] =
+             Repo.query!(
+               "SELECT status FROM public.payment_attempts WHERE reference = $1",
+               [checkout.reference]
+             ).rows
+
+    assert {:ok, retry} =
+             DirectPayments.initialize(customer_id, booking_id, %{
+               "callbackUrl" => "https://direct.tryinstaclean.com/bookings/#{booking_id}"
+             })
+
+    refute retry.reference == checkout.reference
+  end
+
   test "cannot reuse a successful reference from another booking" do
     customer_id = Ecto.UUID.generate()
     first_booking = insert_booking!(customer_id, 19_350)
