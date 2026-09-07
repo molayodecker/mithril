@@ -164,7 +164,11 @@ defmodule MithrilWeb.DirectBookingController do
   defp error_response(:payment_failed), do: {422, "payment_failed"}
   defp error_response(:already_paid), do: {409, "already_paid"}
   defp error_response(:payment_conflict), do: {409, "payment_conflict"}
+  defp error_response(:payment_not_payable), do: {409, "payment_not_payable"}
+  defp error_response(:payment_reference_mismatch), do: {409, "payment_reference_mismatch"}
   defp error_response(:amount_mismatch), do: {409, "amount_mismatch"}
+  defp error_response(:payment_in_progress), do: {503, "payment_in_progress"}
+  defp error_response(:payment_routing_unavailable), do: {503, "payment_routing_unavailable"}
   defp error_response(:payment_not_configured), do: {503, "payment_not_configured"}
   defp error_response(:database_unavailable), do: {503, "database_unavailable"}
   defp error_response(reason) when is_atom(reason), do: {422, Atom.to_string(reason)}
