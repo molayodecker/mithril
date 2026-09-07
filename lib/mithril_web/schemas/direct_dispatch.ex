@@ -169,7 +169,10 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
         serviceId: %Schema{type: :integer, minimum: 1},
         cleanerId: %Schema{type: :string, format: :uuid},
         scheduledDate: %Schema{type: :string, format: :date},
-        scheduledTime: %Schema{type: :string, pattern: "^([01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?$"},
+        scheduledTime: %Schema{
+          type: :string,
+          pattern: "^([01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?$"
+        },
         durationHours: %Schema{type: :number, minimum: 0.5},
         address: %Schema{type: :string, minLength: 3, maxLength: 500},
         specialInstructions: %Schema{type: :string, maxLength: 4000, nullable: true},
