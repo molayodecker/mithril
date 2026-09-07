@@ -538,10 +538,10 @@ defmodule Mithril.DirectOperations do
     case Repo.query(
            """
            SELECT CASE
-             WHEN $1::date = (now() AT TIME ZONE $3::text)::date
-               OR (($1::date + $2::time) AT TIME ZONE $3::text) <= now()
+             WHEN $1::text::date = (now() AT TIME ZONE $3::text)::date
+               OR (($1::text::date + $2::text::time) AT TIME ZONE $3::text) <= now()
                THEN 'no_refund'
-             WHEN (($1::date + $2::time) AT TIME ZONE $3::text) - now() >= interval '24 hours'
+             WHEN (($1::text::date + $2::text::time) AT TIME ZONE $3::text) - now() >= interval '24 hours'
                THEN 'full_refund'
              ELSE 'partial_refund'
            END
