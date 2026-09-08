@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: mithril-production
@@ -16,7 +17,17 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # PRs never deploy. Only a successful CI run on a push to this
+    # repository's main branch, or a manual dispatch of main, can continue.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      || (
+        github.event_name == 'workflow_run'
+        && github.event.workflow_run.conclusion == 'success'
+        && github.event.workflow_run.event == 'push'
+        && github.event.workflow_run.head_branch == 'main'
+        && github.event.workflow_run.head_repository.full_name == github.repository
+      )
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -36,12 +47,33 @@ jobs:
               missing=1
             fi
           done
+          if [[ -n "${TARGET_DATABASE_URL:-}" ]] && [[ "$TARGET_DATABASE_URL" == *"localhost"* || "$TARGET_DATABASE_URL" == *"127.0.0.1"* ]]; then
+            echo "::error::TARGET_DATABASE_URL is a local proxy URL. GitHub Actions needs a runner-reachable production connection string, not fly mpg proxy."
+            missing=1
+          fi
           exit "$missing"
 
-      - name: Check out main
+      - name: Check out the commit that passed CI
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Confirm CI passed for this commit
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          echo "Manual deploy of $sha; requiring a successful CI run for this commit."
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow CI --branch main --commit "$sha" \
+            --json conclusion,status,databaseId --limit 10 \
+            | python3 -c '
+          import json, sys
+          runs = json.load(sys.stdin)
+          if not any(run.get("conclusion") == "success" for run in runs):
+              raise SystemExit("No successful CI run found for this commit. Refusing to deploy.")
+          '
 
       - name: Install PostgreSQL client
         run: |
@@ -57,7 +89,7 @@ jobs:
         uses: superfly/flyctl-actions/setup-flyctl@master
 
       - name: Deploy Mithril to Fly
-        run: flyctl deploy --remote-only --app "$FLY_APP"
+        run: flyctl deploy --remote-only --wait-timeout 180 --app "$FLY_APP"
 
       - name: Verify production readiness
         run: |
