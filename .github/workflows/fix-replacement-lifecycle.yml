@@ -21,6 +21,7 @@ jobs:
         with:
           otp-version: "28.5.0.6"
           elixir-version: "1.20.0"
+      - run: mix deps.get
       - name: Apply lifecycle fixes
         run: python scripts/apply_replacement_lifecycle_patch.py
       - name: Format changed Elixir
