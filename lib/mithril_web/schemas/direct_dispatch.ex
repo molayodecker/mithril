@@ -33,6 +33,7 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
       type: :object,
       properties: %{
         priority: %Schema{type: :string, enum: ~w(urgent same_day standard), default: "same_day"},
+        neededBy: %Schema{type: :string, format: :"date-time", nullable: true},
         requirements: %Schema{type: :object, additionalProperties: true, default: %{}},
         notes: %Schema{type: :string, maxLength: 4000, nullable: true}
       }

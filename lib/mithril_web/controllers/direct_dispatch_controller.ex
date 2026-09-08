@@ -184,6 +184,7 @@ defmodule MithrilWeb.DirectDispatchController do
   defp error_response(:replacement_already_requested), do: {409, "replacement_already_requested"}
   defp error_response(:candidate_unavailable), do: {409, "candidate_unavailable"}
   defp error_response(:needed_by_past), do: {422, "needed_by_past"}
+  defp error_response(:replacement_time_required), do: {422, "replacement_time_required"}
   defp error_response(:database_unavailable), do: {503, "database_unavailable"}
   defp error_response(reason) when is_atom(reason), do: {422, Atom.to_string(reason)}
   defp error_response(_reason), do: {500, "internal_error"}

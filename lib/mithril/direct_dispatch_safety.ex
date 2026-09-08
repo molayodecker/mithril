@@ -299,7 +299,7 @@ defmodule Mithril.DirectDispatchSafety do
        when not is_nil(booking_id) and not is_nil(service_id) do
     case Repo.query(
            """
-           SELECT cleaner_id, status, payment_status, service_id
+           SELECT cleaner_id, status, payment_status, service_id, timezone
            FROM public.bookings
            WHERE id = $1
            LIMIT 1
@@ -307,22 +307,29 @@ defmodule Mithril.DirectDispatchSafety do
            """,
            [booking_id]
          ) do
-      {:ok, %{rows: [[current_worker, status, payment_status, ^service_id]]}} ->
+      {:ok, %{rows: [[current_worker, status, payment_status, ^service_id, timezone]]}} ->
         cond do
           String.downcase(to_string(payment_status)) != "paid" ->
             {:error, :booking_unpaid}
 
-          String.downcase(to_string(status)) in ~w(cancelled completed) ->
+          String.downcase(to_string(status)) not in ~w(pending confirmed scheduled) ->
             {:error, :booking_closed}
 
           current_worker == worker_uid ->
             {:error, :candidate_unavailable}
 
           true ->
-            persist_replacement_handoff(booking_id, current_worker, worker_uid)
+            persist_replacement_handoff(
+              booking_id,
+              current_worker,
+              worker_uid,
+              request.requested_start_at,
+              request.duration_hours,
+              timezone
+            )
         end
 
-      {:ok, %{rows: [[_, _, _, _]]}} ->
+      {:ok, %{rows: [[_, _, _, _, _]]}} ->
         {:error, :invalid_request}
 
       {:ok, %{rows: []}} ->
@@ -335,7 +342,14 @@ defmodule Mithril.DirectDispatchSafety do
 
   defp reassign_related_booking(_request, _worker_uid), do: {:error, :invalid_request}
 
-  defp persist_replacement_handoff(booking_id, previous_worker, worker_uid) do
+  defp persist_replacement_handoff(
+         booking_id,
+         previous_worker,
+         worker_uid,
+         requested_start_at,
+         duration_hours,
+         timezone
+       ) do
     with {:ok, _} <-
            Repo.query("SELECT set_config('app.booking_assignment_write', '1', true)"),
          {:ok, _} <-
@@ -356,6 +370,13 @@ defmodule Mithril.DirectDispatchSafety do
              UPDATE public.bookings
              SET cleaner_id = $2,
                  direct_assigned_cleaner_id = $2,
+                 scheduled_date = (($3::timestamptz AT TIME ZONE COALESCE(NULLIF($5::text, ''), 'Africa/Accra'))::date),
+                 scheduled_time = (($3::timestamptz AT TIME ZONE COALESCE(NULLIF($5::text, ''), 'Africa/Accra'))::time),
+                 booking_period = tstzrange(
+                   $3::timestamptz,
+                   $3::timestamptz + make_interval(secs => ($4::numeric * 3600)::double precision),
+                   '[)'
+                 ),
                  cleaner_accepted_at = now(),
                  assignment_phase = 'accepted',
                  assignment_hold_until = NULL,
@@ -365,7 +386,7 @@ defmodule Mithril.DirectDispatchSafety do
              WHERE id = $1
              RETURNING id
              """,
-             [booking_id, worker_uid]
+             [booking_id, worker_uid, requested_start_at, duration_hours, timezone]
            ) do
       :ok
     else

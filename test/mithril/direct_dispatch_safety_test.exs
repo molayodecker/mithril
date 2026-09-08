@@ -47,6 +47,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
       scheduled_time time NOT NULL,
       duration_hours numeric NOT NULL,
       timezone text,
+      booking_period tstzrange,
       status text NOT NULL DEFAULT 'pending',
       payment_status text NOT NULL DEFAULT 'pending',
       updated_at timestamptz NOT NULL DEFAULT now(),
@@ -216,6 +217,49 @@ defmodule Mithril.DirectDispatchSafetyTest do
 
     assert related_service_id == 1
     assert requirements == %{}
+  end
+
+  test "rejects replacement requests once a booking is already in progress" do
+    customer_id = Ecto.UUID.generate()
+    booking_id = Ecto.UUID.generate()
+
+    insert_booking!(booking_id, customer_id, "paid")
+
+    Repo.query!("UPDATE public.bookings SET status = 'in_progress' WHERE id = $1", [
+      Ecto.UUID.dump!(booking_id)
+    ])
+
+    assert {:error, :booking_closed} =
+             DirectDispatchSafety.request_replacement(customer_id, booking_id, %{
+               "priority" => "urgent",
+               "neededBy" => "2026-09-08T12:00:00Z"
+             })
+  end
+
+  test "late replacement accepts a new future start time" do
+    customer_id = Ecto.UUID.generate()
+    booking_id = Ecto.UUID.generate()
+
+    insert_booking!(booking_id, customer_id, "paid")
+
+    Repo.query!(
+      "UPDATE public.bookings SET scheduled_date = '2026-09-07', scheduled_time = '10:00' WHERE id = $1",
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:ok, request} =
+             DirectDispatchSafety.request_replacement(customer_id, booking_id, %{
+               "priority" => "urgent",
+               "neededBy" => "2026-09-08T12:00:00Z"
+             })
+
+    [[requested_start_at]] =
+      Repo.query!(
+        "SELECT requested_start_at FROM public.direct_service_requests WHERE id = $1",
+        [Ecto.UUID.dump!(request.id)]
+      ).rows
+
+    assert requested_start_at == ~U[2026-09-08 12:00:00Z]
   end
 
   test "rejects dispatch assignment on a worker availability exception" do
@@ -417,9 +461,9 @@ defmodule Mithril.DirectDispatchSafetyTest do
       """
       INSERT INTO public.bookings (
         id, customer_id, cleaner_id, service_id, address, scheduled_date, scheduled_time,
-        duration_hours, timezone, status, payment_status
+        duration_hours, timezone, booking_period, status, payment_status
       ) VALUES ($1, $2, $4, 1, 'Labone, Accra', '2026-09-08', '10:00', 3,
-                'Africa/Accra', 'pending', $3)
+                'Africa/Accra', tstzrange('2026-09-08T10:00:00Z', '2026-09-08T13:00:00Z', '[)'), 'pending', $3)
       """,
       [
         Ecto.UUID.dump!(booking_id),
