@@ -177,7 +177,10 @@ defmodule Mithril.DirectVideosTest do
   end
 
   defp insert_user(id) do
-    Repo.query!("INSERT INTO public.users (id, email) VALUES ($1, $2)", [id, "user@example.com"])
+    Repo.query!("INSERT INTO public.users (id, email) VALUES ($1, $2)", [
+      Ecto.UUID.dump!(id),
+      "user@example.com"
+    ])
   end
 
   defp insert_candidate(id) do
@@ -185,7 +188,7 @@ defmodule Mithril.DirectVideosTest do
 
     Repo.query!(
       "INSERT INTO public.cleaner_data (user_id, verified, status) VALUES ($1, true, 'active')",
-      [id]
+      [Ecto.UUID.dump!(id)]
     )
   end
 
@@ -200,7 +203,7 @@ defmodule Mithril.DirectVideosTest do
       ) VALUES ($1, $2, $3, $4)
       """,
       [
-        candidate_id,
+        Ecto.UUID.dump!(candidate_id),
         "https://media.example.com/intro.mp4",
         "https://media.example.com/intro.jpg",
         "Meet this helper"
@@ -211,7 +214,7 @@ defmodule Mithril.DirectVideosTest do
   defp insert_placement(id, customer_id) do
     Repo.query!(
       "INSERT INTO public.placement_requests (id, customer_id, status) VALUES ($1, $2, 'shortlisted')",
-      [id, customer_id]
+      [Ecto.UUID.dump!(id), Ecto.UUID.dump!(customer_id)]
     )
   end
 
@@ -225,11 +228,18 @@ defmodule Mithril.DirectVideosTest do
         status
       ) VALUES ($1, $2, $3, $4)
       """,
-      [Ecto.UUID.generate(), placement_id, candidate_id, status]
+      [
+        Ecto.UUID.dump!(Ecto.UUID.generate()),
+        Ecto.UUID.dump!(placement_id),
+        Ecto.UUID.dump!(candidate_id),
+        status
+      ]
     )
   end
 
   defp make_admin(user_id) do
-    Repo.query!("INSERT INTO public.user_roles (user_id, role_id) VALUES ($1, 'admin')", [user_id])
+    Repo.query!("INSERT INTO public.user_roles (user_id, role_id) VALUES ($1, 'admin')", [
+      Ecto.UUID.dump!(user_id)
+    ])
   end
 end
