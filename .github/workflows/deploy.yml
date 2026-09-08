@@ -87,7 +87,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          fly mpg proxy "$FLY_MPG_CLUSTER_ID" --local-port 16380 > /tmp/fly-mpg-proxy.log 2>&1 &
+          flyctl mpg proxy "$FLY_MPG_CLUSTER_ID" --local-port 16380 > /tmp/fly-mpg-proxy.log 2>&1 &
           proxy_pid=$!
           echo "FLY_MPG_PROXY_PID=$proxy_pid" >> "$GITHUB_ENV"
 
