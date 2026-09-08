@@ -104,6 +104,7 @@ defmodule Mithril.DirectDispatch do
          {:ok, bid} <- dump_uuid(booking_id),
          {:ok, input} <- validate_replacement_request(params),
          {:ok, booking} <- fetch_replaceable_booking(uid, bid),
+         {:ok, requested_start_at} <- replacement_requested_start(input, booking),
          {:ok, result} <-
            Repo.query(
              """
@@ -120,7 +121,7 @@ defmodule Mithril.DirectDispatch do
              [
                uid,
                input.priority,
-               booking.requested_start_at,
+               requested_start_at,
                booking.duration_hours,
                booking.address,
                bid,
@@ -374,7 +375,7 @@ defmodule Mithril.DirectDispatch do
            [bid, uid]
          ) do
       {:ok, %{rows: [[address, requested_start_at, duration_hours, status, service_id]]}} ->
-        if String.downcase(to_string(status)) in ~w(completed cancelled) do
+        if String.downcase(to_string(status)) not in ~w(pending confirmed scheduled) do
           {:error, :booking_closed}
         else
           {:ok,
@@ -540,16 +541,34 @@ defmodule Mithril.DirectDispatch do
 
   defp validate_replacement_request(params) do
     with {:ok, priority} <- priority(params["priority"] || "same_day"),
+         {:ok, needed_by} <- optional_iso_datetime(params["neededBy"]),
          {:ok, request_requirements} <- requirements(params["requirements"]) do
       {:ok,
        %{
          priority: priority,
+         needed_by: needed_by,
          requirements: request_requirements,
          notes: optional_text(params["notes"], 4_000)
        }}
     else
       _ -> {:error, :invalid_request}
     end
+  end
+
+  defp replacement_requested_start(%{needed_by: %DateTime{} = needed_by}, _booking) do
+    minimum = DateTime.add(DateTime.utc_now(), 60, :second)
+
+    if DateTime.compare(needed_by, minimum) == :gt,
+      do: {:ok, needed_by},
+      else: {:error, :needed_by_past}
+  end
+
+  defp replacement_requested_start(%{needed_by: nil}, %{requested_start_at: requested_start_at}) do
+    minimum = DateTime.add(DateTime.utc_now(), 60, :second)
+
+    if DateTime.compare(requested_start_at, minimum) == :gt,
+      do: {:ok, requested_start_at},
+      else: {:error, :replacement_time_required}
   end
 
   defp validate_admin_booking(params) do
@@ -597,6 +616,10 @@ defmodule Mithril.DirectDispatch do
   end
 
   defp iso_datetime(_), do: :error
+
+  defp optional_iso_datetime(nil), do: {:ok, nil}
+  defp optional_iso_datetime(""), do: {:ok, nil}
+  defp optional_iso_datetime(value), do: iso_datetime(value)
 
   defp duration_hours(value) when is_integer(value) and value >= 1 and value <= 24,
     do: {:ok, Decimal.new(value)}

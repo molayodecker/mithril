@@ -1,5 +1,12 @@
 import Config
 
+# Phoenix 1.8 starts Bandit only when the endpoint has server: true.
+# MIX_ENV=test compiles with server: false, so CI must set PHX_SERVER=true
+# here — before the application boots — rather than relying on mix phx.server.
+if System.get_env("PHX_SERVER") do
+  config :mithril, MithrilWeb.Endpoint, server: true
+end
+
 parse_positive_integer = fn name, default ->
   value = System.get_env(name) || default
 

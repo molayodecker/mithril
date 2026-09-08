@@ -33,6 +33,7 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
       type: :object,
       properties: %{
         priority: %Schema{type: :string, enum: ~w(urgent same_day standard), default: "same_day"},
+        neededBy: %Schema{type: :string, format: :"date-time", nullable: true},
         requirements: %Schema{type: :object, additionalProperties: true, default: %{}},
         notes: %Schema{type: :string, maxLength: 4000, nullable: true}
       }
@@ -251,6 +252,7 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
         durationHours: %Schema{type: :number, nullable: true},
         householdAddress: %Schema{type: :string},
         relatedBookingId: %Schema{type: :string, format: :uuid, nullable: true},
+        relatedServiceId: %Schema{type: :integer, nullable: true},
         requirements: %Schema{type: :object, additionalProperties: true},
         notes: %Schema{type: :string, nullable: true},
         adminNote: %Schema{type: :string, nullable: true},
@@ -272,6 +274,7 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
         :durationHours,
         :householdAddress,
         :relatedBookingId,
+        :relatedServiceId,
         :requirements,
         :notes,
         :adminNote,
@@ -307,6 +310,7 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
       type: :object,
       properties: %{
         workerUserId: %Schema{type: :string, format: :uuid},
+        neededBy: %Schema{type: :string, format: :"date-time", nullable: true},
         adminNote: %Schema{type: :string, maxLength: 2000, nullable: true}
       },
       required: [:workerUserId]

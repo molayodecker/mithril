@@ -3,6 +3,8 @@ defmodule MithrilWeb.DirectDispatchController do
   use OpenApiSpex.ControllerSpecs
 
   alias Mithril.DirectDispatch
+  alias Mithril.DirectDispatchRequestSafety
+  alias Mithril.DirectDispatchSafety
 
   alias MithrilWeb.Schemas.DirectDispatch.{
     AdminAssignServiceRequestRequest,
@@ -11,12 +13,14 @@ defmodule MithrilWeb.DirectDispatchController do
     AdminCustomerListResponse,
     AdminServiceRequestListResponse,
     AdminServiceRequestMutationResponse,
-    AdminUpdateServiceRequestRequest,
     CreateServiceRequestResponse,
     ReplacementRequest,
     ServiceRequestListResponse,
     UrgentHelpRequest
   }
+
+  alias MithrilWeb.Schemas.DirectDispatch.AdminUpdateServiceRequestRequestV2,
+    as: AdminUpdateServiceRequestRequest
 
   alias OpenApiSpex.Schema
 
@@ -42,12 +46,12 @@ defmodule MithrilWeb.DirectDispatchController do
   )
 
   def create_urgent_request(conn, params) do
-    respond(conn, DirectDispatch.create_urgent_request(user_id(conn), params))
+    respond(conn, DirectDispatchRequestSafety.create_urgent_request(user_id(conn), params))
   end
 
   operation(:request_replacement,
     operation_id: "direct.requestReplacementWorker",
-    summary: "Request a replacement worker for an owned booking",
+    summary: "Request a replacement worker for an owned paid booking",
     parameters: [
       id: [
         in: :path,
@@ -61,7 +65,7 @@ defmodule MithrilWeb.DirectDispatchController do
   )
 
   def request_replacement(conn, %{"id" => id} = params) do
-    respond(conn, DirectDispatch.request_replacement(user_id(conn), id, params))
+    respond(conn, DirectDispatchSafety.request_replacement(user_id(conn), id, params))
   end
 
   operation(:list_admin_customers,
@@ -103,14 +107,14 @@ defmodule MithrilWeb.DirectDispatchController do
   )
 
   def list_admin_service_requests(conn, _params) do
-    respond(conn, DirectDispatch.list_admin_service_requests(user_id(conn)), fn requests ->
+    respond(conn, DirectDispatchSafety.list_admin_service_requests(user_id(conn)), fn requests ->
       %{requests: requests}
     end)
   end
 
   operation(:assign_admin_service_request,
     operation_id: "direct.assignAdminServiceRequest",
-    summary: "Assign a vetted worker to an urgent-help or replacement request",
+    summary: "Assign an available vetted worker to an urgent-help or replacement request",
     parameters: [
       id: [
         in: :path,
@@ -127,7 +131,7 @@ defmodule MithrilWeb.DirectDispatchController do
   )
 
   def assign_admin_service_request(conn, %{"id" => id} = params) do
-    respond(conn, DirectDispatch.assign_admin_service_request(user_id(conn), id, params))
+    respond(conn, DirectDispatchSafety.assign_admin_service_request(user_id(conn), id, params))
   end
 
   operation(:update_admin_service_request,
@@ -149,7 +153,7 @@ defmodule MithrilWeb.DirectDispatchController do
   )
 
   def update_admin_service_request(conn, %{"id" => id} = params) do
-    respond(conn, DirectDispatch.update_admin_service_request(user_id(conn), id, params))
+    respond(conn, DirectDispatchSafety.update_admin_service_request(user_id(conn), id, params))
   end
 
   defp user_id(conn), do: conn.assigns.instaclean_user_id
@@ -174,9 +178,13 @@ defmodule MithrilWeb.DirectDispatchController do
   defp error_response(:customer_not_found), do: {404, "customer_not_found"}
   defp error_response(:consent_required), do: {409, "consent_required"}
   defp error_response(:booking_closed), do: {409, "booking_closed"}
+  defp error_response(:booking_unpaid), do: {409, "booking_unpaid"}
   defp error_response(:request_closed), do: {409, "request_closed"}
+  defp error_response(:invalid_status_transition), do: {409, "invalid_status_transition"}
   defp error_response(:replacement_already_requested), do: {409, "replacement_already_requested"}
   defp error_response(:candidate_unavailable), do: {409, "candidate_unavailable"}
+  defp error_response(:needed_by_past), do: {422, "needed_by_past"}
+  defp error_response(:replacement_time_required), do: {422, "replacement_time_required"}
   defp error_response(:database_unavailable), do: {503, "database_unavailable"}
   defp error_response(reason) when is_atom(reason), do: {422, Atom.to_string(reason)}
   defp error_response(_reason), do: {500, "internal_error"}
