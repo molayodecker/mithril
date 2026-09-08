@@ -105,6 +105,7 @@ defmodule Mithril.DirectDispatchSafety do
         with :ok <- lock_worker_schedule(worker_uid),
              {:ok, request} <- fetch_request_window_for_update(rid),
              :ok <- ensure_assignable_request(request.status),
+             {:ok, request} <- resolve_assignment_window(request, params, rid),
              :ok <- ensure_worker_available(worker_uid, request),
              :ok <- reassign_related_booking(request, worker_uid),
              {:ok, assigned} <-
@@ -189,10 +190,7 @@ defmodule Mithril.DirectDispatchSafety do
                   r.related_service_id,
                   r.requested_start_at,
                   r.duration_hours,
-                  COALESCE(
-                    b.scheduled_date,
-                    (r.requested_start_at AT TIME ZONE $2::text)::date
-                  ) AS exception_date
+                  COALESCE(NULLIF(b.timezone, ''), $2::text) AS request_timezone
            FROM public.direct_service_requests r
            LEFT JOIN public.bookings b ON b.id = r.related_booking_id
            WHERE r.id = $1
@@ -211,7 +209,7 @@ defmodule Mithril.DirectDispatchSafety do
              related_service_id,
              %DateTime{} = requested_start_at,
              duration_hours,
-             %Date{} = exception_date
+             request_timezone
            ]
          ]
        }}
@@ -224,7 +222,7 @@ defmodule Mithril.DirectDispatchSafety do
            related_service_id: related_service_id,
            requested_start_at: requested_start_at,
            duration_hours: duration_hours,
-           exception_date: exception_date
+           request_timezone: request_timezone
          }}
 
       {:ok, %{rows: [_]}} ->
@@ -257,6 +255,61 @@ defmodule Mithril.DirectDispatchSafety do
 
   defp ensure_assignable_request(status) when status in @assignable_statuses, do: :ok
   defp ensure_assignable_request(_), do: {:error, :request_closed}
+
+  defp resolve_assignment_window(request, params, rid) do
+    with {:ok, override} <- optional_assignment_datetime(params["neededBy"]),
+         requested_start_at <- override || request.requested_start_at,
+         :ok <- ensure_future_assignment(requested_start_at),
+         {:ok, exception_date} <- exception_date(requested_start_at, request.request_timezone),
+         :ok <- persist_assignment_override(rid, override) do
+      {:ok,
+       request
+       |> Map.put(:requested_start_at, requested_start_at)
+       |> Map.put(:exception_date, exception_date)}
+    end
+  end
+
+  defp optional_assignment_datetime(nil), do: {:ok, nil}
+  defp optional_assignment_datetime(""), do: {:ok, nil}
+
+  defp optional_assignment_datetime(value) when is_binary(value) do
+    case DateTime.from_iso8601(String.trim(value)) do
+      {:ok, datetime, _offset} -> {:ok, datetime}
+      _ -> {:error, :invalid_request}
+    end
+  end
+
+  defp optional_assignment_datetime(_), do: {:error, :invalid_request}
+
+  defp ensure_future_assignment(%DateTime{} = requested_start_at) do
+    minimum = DateTime.add(DateTime.utc_now(), 60, :second)
+
+    if DateTime.compare(requested_start_at, minimum) == :gt,
+      do: :ok,
+      else: {:error, :needed_by_past}
+  end
+
+  defp exception_date(requested_start_at, timezone) do
+    case Repo.query(
+           "SELECT ($1::timestamptz AT TIME ZONE COALESCE(NULLIF($2::text, ''), $3::text))::date",
+           [requested_start_at, timezone, @default_timezone]
+         ) do
+      {:ok, %{rows: [[%Date{} = date]]}} -> {:ok, date}
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp persist_assignment_override(_rid, nil), do: :ok
+
+  defp persist_assignment_override(rid, %DateTime{} = requested_start_at) do
+    case Repo.query(
+           "UPDATE public.direct_service_requests SET requested_start_at = $2, updated_at = now() WHERE id = $1",
+           [rid, requested_start_at]
+         ) do
+      {:ok, _} -> :ok
+      {:error, error} -> {:error, error}
+    end
+  end
 
   defp ensure_worker_available(worker_uid, request) do
     case Repo.query(
