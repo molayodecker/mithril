@@ -1,0 +1,116 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: mithril-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # PRs never deploy. Only a successful CI run on a push to this
+    # repository's main branch, or a manual dispatch of main, can continue.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      || (
+        github.event_name == 'workflow_run'
+        && github.event.workflow_run.conclusion == 'success'
+        && github.event.workflow_run.event == 'push'
+        && github.event.workflow_run.head_branch == 'main'
+        && github.event.workflow_run.head_repository.full_name == github.repository
+      )
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      FLY_APP: instaclean-mithril
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      TARGET_DATABASE_URL: ${{ secrets.TARGET_DATABASE_URL }}
+
+    steps:
+      - name: Check required deployment secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in FLY_API_TOKEN TARGET_DATABASE_URL; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is not configured in the GitHub production environment or repository secrets."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Check out the commit that passed CI
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Confirm CI passed for this commit
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          echo "Manual deploy of $sha; requiring a successful push CI run for this commit."
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow CI --branch main --commit "$sha" \
+            --json conclusion,status,databaseId,event --limit 10 \
+            | python3 -c '
+          import json, sys
+          runs = json.load(sys.stdin)
+          if not any(
+              run.get("conclusion") == "success" and run.get("event") == "push"
+              for run in runs
+          ):
+              raise SystemExit("No successful push CI run found for this commit. Refusing to deploy.")
+          '
+
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Apply Direct schema phases
+        env:
+          CONFIRM_DIRECT_SCHEMA: "YES"
+        run: bash scripts/apply_direct_schema.sh
+
+      - name: Deploy Mithril to Fly
+        run: flyctl deploy --remote-only --wait-timeout 180 --app "$FLY_APP"
+
+      - name: Verify production readiness
+        run: |
+          curl --fail --show-error --silent --retry 12 --retry-delay 5 --retry-all-errors \
+            https://api.tryinstaclean.com/ready | tee /tmp/ready.json
+          python3 - <<'PY'
+          import json
+          with open('/tmp/ready.json') as f:
+              payload = json.load(f)
+          if payload.get('status') != 'ready' or payload.get('database') != 'ok':
+              raise SystemExit(f"Unexpected readiness response: {payload}")
+          PY
+
+      - name: Verify production OpenAPI
+        run: |
+          curl --fail --show-error --silent --retry 6 --retry-delay 3 --retry-all-errors \
+            https://api.tryinstaclean.com/openapi.json -o /tmp/openapi.json
+          python3 - <<'PY'
+          import json
+          with open('/tmp/openapi.json') as f:
+              spec = json.load(f)
+          if not spec.get('paths'):
+              raise SystemExit('Production OpenAPI has no paths')
+          print(f"Verified {len(spec['paths'])} production API paths")
+          PY
