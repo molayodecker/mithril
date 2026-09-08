@@ -259,7 +259,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
         [Ecto.UUID.dump!(request.id)]
       ).rows
 
-    assert requested_start_at == ~U[2026-09-08 12:00:00Z]
+    assert DateTime.compare(requested_start_at, ~U[2026-09-08 12:00:00Z]) == :eq
   end
 
   test "rejects dispatch assignment on a worker availability exception" do
