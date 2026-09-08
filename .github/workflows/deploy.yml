@@ -33,6 +33,7 @@ jobs:
     env:
       FLY_APP: instaclean-mithril
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_MPG_CLUSTER_ID: ${{ secrets.FLY_MPG_CLUSTER_ID }}
       TARGET_DATABASE_URL: ${{ secrets.TARGET_DATABASE_URL }}
 
     steps:
@@ -41,7 +42,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for name in FLY_API_TOKEN TARGET_DATABASE_URL; do
+          for name in FLY_API_TOKEN FLY_MPG_CLUSTER_ID TARGET_DATABASE_URL; do
             if [[ -z "${!name:-}" ]]; then
               echo "::error::$name is not configured in the GitHub production environment or repository secrets."
               missing=1
@@ -82,10 +83,42 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y postgresql-client
 
+      - name: Start Fly Managed Postgres proxy
+        shell: bash
+        run: |
+          set -euo pipefail
+          fly mpg proxy "$FLY_MPG_CLUSTER_ID" --local-port 16380 > /tmp/fly-mpg-proxy.log 2>&1 &
+          proxy_pid=$!
+          echo "FLY_MPG_PROXY_PID=$proxy_pid" >> "$GITHUB_ENV"
+
+          for _ in $(seq 1 30); do
+            if pg_isready -h 127.0.0.1 -p 16380 >/dev/null 2>&1; then
+              exit 0
+            fi
+            if ! kill -0 "$proxy_pid" 2>/dev/null; then
+              cat /tmp/fly-mpg-proxy.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          cat /tmp/fly-mpg-proxy.log
+          echo "::error::Fly Managed Postgres proxy did not become ready on 127.0.0.1:16380."
+          exit 1
+
       - name: Apply Direct schema phases
         env:
           CONFIRM_DIRECT_SCHEMA: "YES"
         run: bash scripts/apply_direct_schema.sh
+
+      - name: Stop Fly Managed Postgres proxy
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${FLY_MPG_PROXY_PID:-}" ]]; then
+            kill "$FLY_MPG_PROXY_PID" 2>/dev/null || true
+            wait "$FLY_MPG_PROXY_PID" 2>/dev/null || true
+          fi
 
       - name: Deploy Mithril to Fly
         run: flyctl deploy --remote-only --wait-timeout 180 --app "$FLY_APP"
