@@ -3,6 +3,7 @@ defmodule MithrilWeb.DirectDispatchController do
   use OpenApiSpex.ControllerSpecs
 
   alias Mithril.DirectDispatch
+  alias Mithril.DirectDispatchRequestSafety
   alias Mithril.DirectDispatchSafety
 
   alias MithrilWeb.Schemas.DirectDispatch.{
@@ -43,7 +44,7 @@ defmodule MithrilWeb.DirectDispatchController do
   )
 
   def create_urgent_request(conn, params) do
-    respond(conn, DirectDispatch.create_urgent_request(user_id(conn), params))
+    respond(conn, DirectDispatchRequestSafety.create_urgent_request(user_id(conn), params))
   end
 
   operation(:request_replacement,
@@ -180,6 +181,7 @@ defmodule MithrilWeb.DirectDispatchController do
   defp error_response(:invalid_status_transition), do: {409, "invalid_status_transition"}
   defp error_response(:replacement_already_requested), do: {409, "replacement_already_requested"}
   defp error_response(:candidate_unavailable), do: {409, "candidate_unavailable"}
+  defp error_response(:needed_by_past), do: {422, "needed_by_past"}
   defp error_response(:database_unavailable), do: {503, "database_unavailable"}
   defp error_response(reason) when is_atom(reason), do: {422, Atom.to_string(reason)}
   defp error_response(_reason), do: {500, "internal_error"}
