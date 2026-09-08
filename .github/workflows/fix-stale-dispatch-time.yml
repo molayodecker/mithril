@@ -1,0 +1,197 @@
+name: Fix stale dispatch time
+
+on:
+  push:
+    branches: [fix/direct-dispatch-availability]
+    paths:
+      - .github/workflows/fix-stale-dispatch-time.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/direct-dispatch-availability
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '28.0'
+          elixir-version: '1.18.4'
+      - run: mix deps.get
+      - name: Patch stale assignment handling
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('lib/mithril/direct_dispatch_safety.ex')
+          s = p.read_text()
+          old = '''        with :ok <- lock_worker_schedule(worker_uid),
+             {:ok, request} <- fetch_request_window_for_update(rid),
+             :ok <- ensure_assignable_request(request.status),
+             :ok <- ensure_worker_available(worker_uid, request),
+'''
+          new = '''        with :ok <- lock_worker_schedule(worker_uid),
+             {:ok, request} <- fetch_request_window_for_update(rid),
+             :ok <- ensure_assignable_request(request.status),
+             {:ok, request} <- resolve_assignment_window(request, params, rid),
+             :ok <- ensure_worker_available(worker_uid, request),
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''                  r.duration_hours,
+                  COALESCE(
+                    b.scheduled_date,
+                    (r.requested_start_at AT TIME ZONE $2::text)::date
+                  ) AS exception_date
+'''
+          new = '''                  r.duration_hours,
+                  COALESCE(NULLIF(b.timezone, ''), $2::text) AS request_timezone
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''             duration_hours,
+             %Date{} = exception_date
+'''
+          new = '''             duration_hours,
+             request_timezone
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''           duration_hours: duration_hours,
+           exception_date: exception_date
+'''
+          new = '''           duration_hours: duration_hours,
+           request_timezone: request_timezone
+'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          marker = '''  defp ensure_assignable_request(status) when status in @assignable_statuses, do: :ok
+  defp ensure_assignable_request(_), do: {:error, :request_closed}
+
+'''
+          insert = '''  defp ensure_assignable_request(status) when status in @assignable_statuses, do: :ok
+  defp ensure_assignable_request(_), do: {:error, :request_closed}
+
+  defp resolve_assignment_window(request, params, rid) do
+    with {:ok, override} <- optional_assignment_datetime(params["neededBy"]),
+         requested_start_at <- override || request.requested_start_at,
+         :ok <- ensure_future_assignment(requested_start_at),
+         {:ok, exception_date} <- exception_date(requested_start_at, request.request_timezone),
+         :ok <- persist_assignment_override(rid, override) do
+      {:ok,
+       request
+       |> Map.put(:requested_start_at, requested_start_at)
+       |> Map.put(:exception_date, exception_date)}
+    end
+  end
+
+  defp optional_assignment_datetime(nil), do: {:ok, nil}
+  defp optional_assignment_datetime(""), do: {:ok, nil}
+
+  defp optional_assignment_datetime(value) when is_binary(value) do
+    case DateTime.from_iso8601(String.trim(value)) do
+      {:ok, datetime, _offset} -> {:ok, datetime}
+      _ -> {:error, :invalid_request}
+    end
+  end
+
+  defp optional_assignment_datetime(_), do: {:error, :invalid_request}
+
+  defp ensure_future_assignment(%DateTime{} = requested_start_at) do
+    minimum = DateTime.add(DateTime.utc_now(), 60, :second)
+
+    if DateTime.compare(requested_start_at, minimum) == :gt,
+      do: :ok,
+      else: {:error, :needed_by_past}
+  end
+
+  defp exception_date(requested_start_at, timezone) do
+    case Repo.query(
+           "SELECT ($1::timestamptz AT TIME ZONE COALESCE(NULLIF($2::text, ''), $3::text))::date",
+           [requested_start_at, timezone, @default_timezone]
+         ) do
+      {:ok, %{rows: [[%Date{} = date]]}} -> {:ok, date}
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp persist_assignment_override(_rid, nil), do: :ok
+
+  defp persist_assignment_override(rid, %DateTime{} = requested_start_at) do
+    case Repo.query(
+           "UPDATE public.direct_service_requests SET requested_start_at = $2, updated_at = now() WHERE id = $1",
+           [rid, requested_start_at]
+         ) do
+      {:ok, _} -> :ok
+      {:error, error} -> {:error, error}
+    end
+  end
+
+'''
+          assert marker in s
+          s = s.replace(marker, insert, 1)
+          p.write_text(s)
+
+          p = Path('lib/mithril_web/schemas/direct_dispatch.ex')
+          s = p.read_text()
+          old = '''        workerUserId: %Schema{type: :string, format: :uuid},
+        adminNote: %Schema{type: :string, maxLength: 2000, nullable: true}
+'''
+          new = '''        workerUserId: %Schema{type: :string, format: :uuid},
+        neededBy: %Schema{type: :string, format: :"date-time", nullable: true},
+        adminNote: %Schema{type: :string, maxLength: 2000, nullable: true}
+'''
+          assert old in s
+          p.write_text(s.replace(old, new, 1))
+
+          p = Path('test/mithril/direct_dispatch_safety_test.exs')
+          s = p.read_text()
+          marker = '''  test "delegates assignment when the worker is eligible and schedule-safe" do
+'''
+          tests = '''  test "rejects assignment when a queued request start has gone stale" do
+    %{admin_id: admin_id, worker_id: worker_id, request_id: request_id} = dispatch_fixture!()
+
+    Repo.query!("UPDATE public.direct_service_requests SET requested_start_at = now() - interval '5 minutes' WHERE id = $1", [Ecto.UUID.dump!(request_id)])
+
+    assert {:error, :needed_by_past} =
+             DirectDispatchSafety.assign_admin_service_request(admin_id, request_id, %{
+               "workerUserId" => worker_id
+             })
+  end
+
+  test "admin assignment can move a stale request to a new future time" do
+    %{admin_id: admin_id, worker_id: worker_id, request_id: request_id} = dispatch_fixture!()
+    future = DateTime.utc_now() |> DateTime.add(7200, :second) |> DateTime.truncate(:second)
+
+    Repo.query!("UPDATE public.direct_service_requests SET requested_start_at = now() - interval '5 minutes' WHERE id = $1", [Ecto.UUID.dump!(request_id)])
+
+    assert {:ok, assigned} =
+             DirectDispatchSafety.assign_admin_service_request(admin_id, request_id, %{
+               "workerUserId" => worker_id,
+               "neededBy" => DateTime.to_iso8601(future)
+             })
+
+    assert assigned.status == "assigned"
+    [[stored]] = Repo.query!("SELECT requested_start_at FROM public.direct_service_requests WHERE id = $1", [Ecto.UUID.dump!(request_id)]).rows
+    assert DateTime.compare(stored, future) == :eq
+  end
+
+'''
+          assert marker in s
+          p.write_text(s.replace(marker, tests + marker, 1))
+          PY
+      - run: mix format
+      - run: mix test test/mithril/direct_dispatch_safety_test.exs
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/mithril/direct_dispatch_safety.ex lib/mithril_web/schemas/direct_dispatch.ex test/mithril/direct_dispatch_safety_test.exs
+          git commit -m "fix: revalidate dispatch time at assignment"
+          git push origin HEAD:fix/direct-dispatch-availability
