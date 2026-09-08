@@ -293,7 +293,11 @@ defmodule Mithril.DirectDispatchSafety do
   defp reassign_related_booking(%{kind: "urgent_help"}, _worker_uid), do: :ok
 
   defp reassign_related_booking(
-         %{kind: "replacement", related_booking_id: booking_id, related_service_id: service_id},
+         request = %{
+           kind: "replacement",
+           related_booking_id: booking_id,
+           related_service_id: service_id
+         },
          worker_uid
        )
        when not is_nil(booking_id) and not is_nil(service_id) do
