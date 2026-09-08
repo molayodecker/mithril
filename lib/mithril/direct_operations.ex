@@ -583,7 +583,7 @@ defmodule Mithril.DirectOperations do
              booking_id, customer_id, requested_by_user_id, status, reason,
              policy_tier, proposed_refund_percent, proposed_refund_amount_minor, source
            ) VALUES (
-             $1, $2::uuid, $3, 'requested', $4, $5, $6, $7, 'mcp'
+             $1, $2::text::uuid, $3, 'requested', $4, $5, $6, $7, 'mcp'
            )
            RETURNING id::text, status
            """,
