@@ -232,7 +232,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
     assert {:error, :booking_closed} =
              DirectDispatchSafety.request_replacement(customer_id, booking_id, %{
                "priority" => "urgent",
-               "neededBy" => "2026-09-08T12:00:00Z"
+               "neededBy" => "2099-09-08T12:00:00Z"
              })
   end
 
@@ -243,14 +243,14 @@ defmodule Mithril.DirectDispatchSafetyTest do
     insert_booking!(booking_id, customer_id, "paid")
 
     Repo.query!(
-      "UPDATE public.bookings SET scheduled_date = '2026-09-07', scheduled_time = '10:00' WHERE id = $1",
+      "UPDATE public.bookings SET scheduled_date = '2020-09-07', scheduled_time = '10:00' WHERE id = $1",
       [Ecto.UUID.dump!(booking_id)]
     )
 
     assert {:ok, request} =
              DirectDispatchSafety.request_replacement(customer_id, booking_id, %{
                "priority" => "urgent",
-               "neededBy" => "2026-09-08T12:00:00Z"
+               "neededBy" => "2099-09-08T12:00:00Z"
              })
 
     [[requested_start_at]] =
@@ -259,14 +259,14 @@ defmodule Mithril.DirectDispatchSafetyTest do
         [Ecto.UUID.dump!(request.id)]
       ).rows
 
-    assert DateTime.compare(requested_start_at, ~U[2026-09-08 12:00:00Z]) == :eq
+    assert DateTime.compare(requested_start_at, ~U[2099-09-08 12:00:00Z]) == :eq
   end
 
   test "rejects dispatch assignment on a worker availability exception" do
     %{admin_id: admin_id, worker_id: worker_id, request_id: request_id} = dispatch_fixture!()
 
     Repo.query!(
-      "INSERT INTO public.cleaner_availability_exceptions (cleaner_id, exception_date) VALUES ($1, '2026-09-08')",
+      "INSERT INTO public.cleaner_availability_exceptions (cleaner_id, exception_date) VALUES ($1, '2099-09-08')",
       [Ecto.UUID.dump!(worker_id)]
     )
 
@@ -285,7 +285,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
       INSERT INTO public.bookings (
         id, customer_id, service_id, address, scheduled_date, scheduled_time,
         duration_hours, timezone, status, payment_status
-      ) VALUES ($1, $2, 1, 'Labone, Accra', '2026-09-08', '23:30', 2,
+      ) VALUES ($1, $2, 1, 'Labone, Accra', '2099-09-08', '23:30', 2,
                 'America/New_York', 'pending', 'paid')
       """,
       [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(customer_id)]
@@ -299,7 +299,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
           household_address_snapshot, related_booking_id, related_service_id,
           requirements, created_by_user_id
         ) VALUES ($1, 'replacement', 'submitted', 'same_day',
-                  '2026-09-09T03:30:00Z', 2, 'Labone, Accra', $2, 1,
+                  '2099-09-09T03:30:00Z', 2, 'Labone, Accra', $2, 1,
                   '{}'::jsonb, $1)
         RETURNING id::text
         """,
@@ -307,7 +307,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
       ).rows
 
     Repo.query!(
-      "INSERT INTO public.cleaner_availability_exceptions (cleaner_id, exception_date) VALUES ($1, '2026-09-08')",
+      "INSERT INTO public.cleaner_availability_exceptions (cleaner_id, exception_date) VALUES ($1, '2099-09-08')",
       [Ecto.UUID.dump!(worker_id)]
     )
 
@@ -323,7 +323,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
     Repo.query!(
       """
       INSERT INTO public.test_cleaner_conflicts (cleaner_id, starts_at, ends_at)
-      VALUES ($1, '2026-09-08T09:30:00Z', '2026-09-08T11:00:00Z')
+      VALUES ($1, '2099-09-08T09:30:00Z', '2099-09-08T11:00:00Z')
       """,
       [Ecto.UUID.dump!(worker_id)]
     )
@@ -345,7 +345,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
         duration_hours, household_address_snapshot, requirements, created_by_user_id,
         assigned_worker_user_id, assigned_by_user_id, assigned_at
       ) VALUES ($1, 'urgent_help', 'assigned', 'standard', 'elder_caregiver',
-                '2026-09-08T14:30:00Z', 1, 'Osu, Accra', '{}'::jsonb, $1,
+                '2099-09-08T14:30:00Z', 1, 'Osu, Accra', '{}'::jsonb, $1,
                 $2, $3, now())
       """,
       [Ecto.UUID.dump!(customer_id), Ecto.UUID.dump!(worker_id), Ecto.UUID.dump!(admin_id)]
@@ -385,7 +385,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
           household_address_snapshot, related_booking_id, related_service_id,
           requirements, created_by_user_id
         ) VALUES ($1, 'replacement', 'matching', 'same_day',
-                  '2026-09-08T10:00:00Z', 3, 'Labone, Accra', $2, 1,
+                  '2099-09-08T10:00:00Z', 3, 'Labone, Accra', $2, 1,
                   '{}'::jsonb, $1)
         RETURNING id::text
         """,
@@ -462,8 +462,8 @@ defmodule Mithril.DirectDispatchSafetyTest do
       INSERT INTO public.bookings (
         id, customer_id, cleaner_id, service_id, address, scheduled_date, scheduled_time,
         duration_hours, timezone, booking_period, status, payment_status
-      ) VALUES ($1, $2, $4, 1, 'Labone, Accra', '2026-09-08', '10:00', 3,
-                'Africa/Accra', tstzrange('2026-09-08T10:00:00Z', '2026-09-08T13:00:00Z', '[)'), 'pending', $3)
+      ) VALUES ($1, $2, $4, 1, 'Labone, Accra', '2099-09-08', '10:00', 3,
+                'Africa/Accra', tstzrange('2099-09-08T10:00:00Z', '2099-09-08T13:00:00Z', '[)'), 'pending', $3)
       """,
       [
         Ecto.UUID.dump!(booking_id),
@@ -508,7 +508,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
           customer_id, kind, status, priority, role, requested_start_at,
           duration_hours, household_address_snapshot, requirements, created_by_user_id
         ) VALUES ($1, 'urgent_help', 'submitted', 'urgent', 'elder_caregiver',
-                  '2026-09-08T10:00:00Z', 4, 'Cantonments, Accra', '{}'::jsonb, $1)
+                  '2099-09-08T10:00:00Z', 4, 'Cantonments, Accra', '{}'::jsonb, $1)
         RETURNING id::text
         """,
         [Ecto.UUID.dump!(customer_id)]

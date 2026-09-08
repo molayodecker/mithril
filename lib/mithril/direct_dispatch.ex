@@ -245,6 +245,7 @@ defmodule Mithril.DirectDispatch do
              'durationHours', r.duration_hours,
              'householdAddress', r.household_address_snapshot,
              'relatedBookingId', r.related_booking_id,
+             'relatedServiceId', r.related_service_id,
              'requirements', r.requirements,
              'notes', r.notes,
              'adminNote', r.admin_note,
