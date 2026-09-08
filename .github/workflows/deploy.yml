@@ -32,8 +32,6 @@ jobs:
     environment: production
     env:
       FLY_APP: instaclean-mithril
-      FLY_ORG: personal
-      FLY_MPG_NAME: instaclean-mithril-pg
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       TARGET_DATABASE_URL: ${{ secrets.TARGET_DATABASE_URL }}
 
@@ -63,14 +61,17 @@ jobs:
         run: |
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
-          echo "Manual deploy of $sha; requiring a successful CI run for this commit."
+          echo "Manual deploy of $sha; requiring a successful push CI run for this commit."
           gh run list --repo "$GITHUB_REPOSITORY" --workflow CI --branch main --commit "$sha" \
-            --json conclusion,status,databaseId --limit 10 \
+            --json conclusion,status,databaseId,event --limit 10 \
             | python3 -c '
           import json, sys
           runs = json.load(sys.stdin)
-          if not any(run.get("conclusion") == "success" for run in runs):
-              raise SystemExit("No successful CI run found for this commit. Refusing to deploy.")
+          if not any(
+              run.get("conclusion") == "success" and run.get("event") == "push"
+              for run in runs
+          ):
+              raise SystemExit("No successful push CI run found for this commit. Refusing to deploy.")
           '
 
       - name: Install flyctl
@@ -80,47 +81,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client
-
-      - name: Proxy Fly Managed Postgres
-        run: |
-          set -euo pipefail
-          cluster_id="$(
-            fly mpg list --org "$FLY_ORG" --json | python3 -c '
-          import json, sys
-          target = sys.argv[1]
-          data = json.load(sys.stdin)
-
-          def find(value):
-              if isinstance(value, dict):
-                  name = value.get("name") or value.get("Name")
-                  ident = value.get("id") or value.get("ID")
-                  if name == target and ident:
-                      print(ident)
-                      return True
-                  return any(find(child) for child in value.values())
-              if isinstance(value, list):
-                  return any(find(child) for child in value)
-              return False
-
-          if not find(data):
-              raise SystemExit(f"Managed Postgres cluster {target!r} was not found")
-          ' "$FLY_MPG_NAME"
-          )"
-          echo "Proxying $FLY_MPG_NAME to 127.0.0.1:16380"
-          fly mpg proxy "$cluster_id" --bind-addr 127.0.0.1 --local-port 16380 >/tmp/mpg-proxy.log 2>&1 &
-          echo $! > /tmp/mpg-proxy.pid
-          for attempt in $(seq 1 30); do
-            if (echo >/dev/tcp/127.0.0.1/16380) >/dev/null 2>&1; then
-              exit 0
-            fi
-            if ! kill -0 "$(cat /tmp/mpg-proxy.pid)" >/dev/null 2>&1; then
-              cat /tmp/mpg-proxy.log >&2
-              exit 1
-            fi
-            sleep 1
-          done
-          cat /tmp/mpg-proxy.log >&2
-          exit 1
 
       - name: Apply Direct schema phases
         env:
