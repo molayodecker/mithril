@@ -13,12 +13,14 @@ defmodule MithrilWeb.DirectDispatchController do
     AdminCustomerListResponse,
     AdminServiceRequestListResponse,
     AdminServiceRequestMutationResponse,
-    AdminUpdateServiceRequestRequest,
     CreateServiceRequestResponse,
     ReplacementRequest,
     ServiceRequestListResponse,
     UrgentHelpRequest
   }
+
+  alias MithrilWeb.Schemas.DirectDispatch.AdminUpdateServiceRequestRequestV2,
+    as: AdminUpdateServiceRequestRequest
 
   alias OpenApiSpex.Schema
 
