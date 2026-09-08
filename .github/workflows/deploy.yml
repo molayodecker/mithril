@@ -1,0 +1,85 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mithril-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      FLY_APP: instaclean-mithril
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      TARGET_DATABASE_URL: ${{ secrets.TARGET_DATABASE_URL }}
+
+    steps:
+      - name: Check required deployment secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in FLY_API_TOKEN TARGET_DATABASE_URL; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is not configured in the GitHub production environment or repository secrets."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Apply Direct schema phases
+        env:
+          CONFIRM_DIRECT_SCHEMA: "YES"
+        run: bash scripts/apply_direct_schema.sh
+
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy Mithril to Fly
+        run: flyctl deploy --remote-only --app "$FLY_APP"
+
+      - name: Verify production readiness
+        run: |
+          curl --fail --show-error --silent --retry 12 --retry-delay 5 --retry-all-errors \
+            https://api.tryinstaclean.com/ready | tee /tmp/ready.json
+          python3 - <<'PY'
+          import json
+          with open('/tmp/ready.json') as f:
+              payload = json.load(f)
+          if payload.get('status') != 'ready' or payload.get('database') != 'ok':
+              raise SystemExit(f"Unexpected readiness response: {payload}")
+          PY
+
+      - name: Verify production OpenAPI
+        run: |
+          curl --fail --show-error --silent --retry 6 --retry-delay 3 --retry-all-errors \
+            https://api.tryinstaclean.com/openapi.json -o /tmp/openapi.json
+          python3 - <<'PY'
+          import json
+          with open('/tmp/openapi.json') as f:
+              spec = json.load(f)
+          if not spec.get('paths'):
+              raise SystemExit('Production OpenAPI has no paths')
+          print(f"Verified {len(spec['paths'])} production API paths")
+          PY
