@@ -91,8 +91,15 @@ defmodule MithrilWeb.Router do
 
     get "/admin/placements", DirectController, :list_admin_placements
     get "/admin/candidates", DirectController, :list_admin_candidates
-    get "/admin/candidates/:candidate_id/video", DirectVideoController, :show_admin_candidate_video
-    put "/admin/candidates/:candidate_id/video", DirectVideoController, :update_admin_candidate_video
+
+    get "/admin/candidates/:candidate_id/video",
+        DirectVideoController,
+        :show_admin_candidate_video
+
+    put "/admin/candidates/:candidate_id/video",
+        DirectVideoController,
+        :update_admin_candidate_video
+
     post "/admin/placements/:id/matches", DirectController, :match_admin_candidate
 
     get "/admin/customers", DirectDispatchController, :list_admin_customers

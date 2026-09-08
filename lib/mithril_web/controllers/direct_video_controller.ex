@@ -70,7 +70,8 @@ defmodule MithrilWeb.DirectVideoController do
       ]
     ],
     request_body:
-      {"Candidate video metadata", "application/json", UpdateCandidateVideoRequest, required: true},
+      {"Candidate video metadata", "application/json", UpdateCandidateVideoRequest,
+       required: true},
     responses: [ok: {"Candidate video", "application/json", CandidateVideoResponse}]
   )
 
