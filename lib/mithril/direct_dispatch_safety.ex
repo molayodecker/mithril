@@ -337,9 +337,7 @@ defmodule Mithril.DirectDispatchSafety do
 
   defp persist_replacement_handoff(booking_id, previous_worker, worker_uid) do
     with {:ok, _} <-
-           Repo.query(
-             "SELECT set_config('app.booking_assignment_write', '1', true)"
-           ),
+           Repo.query("SELECT set_config('app.booking_assignment_write', '1', true)"),
          {:ok, _} <-
            Repo.query(
              """
