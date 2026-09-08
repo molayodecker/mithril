@@ -146,6 +146,11 @@ defmodule Mithril.DirectOperationsTest do
     booking_id = insert_booking!(customer_id, "partially_refunded", 10_000, 1)
 
     Repo.query!(
+      "UPDATE public.bookings SET cancellation_tier = 'partial_refund' WHERE id = $1",
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    Repo.query!(
       """
       INSERT INTO public.booking_refunds (booking_id, refund_amount_minor, status)
       VALUES ($1, 5000, 'processed')
