@@ -80,6 +80,10 @@ defmodule MithrilWeb.Router do
     post "/placements", DirectController, :create_placement
     get "/placements/:id", DirectController, :show_placement
 
+    get "/placements/:placement_id/candidates/:candidate_id/video",
+        DirectVideoController,
+        :show_candidate_video
+
     get "/helpers", DirectController, :list_helpers
     post "/helpers", DirectController, :create_helper
 
@@ -87,6 +91,8 @@ defmodule MithrilWeb.Router do
 
     get "/admin/placements", DirectController, :list_admin_placements
     get "/admin/candidates", DirectController, :list_admin_candidates
+    get "/admin/candidates/:candidate_id/video", DirectVideoController, :show_admin_candidate_video
+    put "/admin/candidates/:candidate_id/video", DirectVideoController, :update_admin_candidate_video
     post "/admin/placements/:id/matches", DirectController, :match_admin_candidate
 
     get "/admin/customers", DirectDispatchController, :list_admin_customers
