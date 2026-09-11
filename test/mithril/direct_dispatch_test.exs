@@ -249,6 +249,85 @@ defmodule Mithril.DirectDispatchTest do
              })
   end
 
+  test "reviewers can book for a customer the same way admins can" do
+    reviewer_id = insert_user!("reviewer@tryinstaclean.com", "+233555000111")
+    grant_role!(reviewer_id, "reviewer")
+
+    assert {:error, :customer_not_found} =
+             DirectDispatch.create_admin_booking(reviewer_id, %{
+               "customerUserId" => Ecto.UUID.generate(),
+               "source" => "phone",
+               "consentConfirmed" => true,
+               "scheduledDate" => "2026-10-01"
+             })
+  end
+
+  test "customers cannot use the admin-assisted booking path" do
+    customer_id = insert_user!("client@tryinstaclean.com", "+233555000222")
+
+    assert {:error, :forbidden} =
+             DirectDispatch.create_admin_booking(customer_id, %{
+               "customerUserId" => customer_id,
+               "source" => "phone",
+               "consentConfirmed" => true,
+               "scheduledDate" => "2026-10-01"
+             })
+  end
+
+  test "custom-day and recurring schedules expand into visit dates" do
+    assert {:ok, ["2026-10-01"]} =
+             DirectDispatch.expand_booking_dates(%{"scheduledDate" => "2026-10-01"})
+
+    assert {:ok, ["2026-10-01", "2026-10-08", "2026-10-15"]} =
+             DirectDispatch.expand_booking_dates(%{
+               "scheduleKind" => "recurring",
+               "scheduledDate" => "2026-10-01",
+               "recurrenceInterval" => "weekly",
+               "occurrenceCount" => 3
+             })
+
+    assert {:ok, ["2026-01-31", "2026-02-28"]} =
+             DirectDispatch.expand_booking_dates(%{
+               "scheduleKind" => "recurring",
+               "scheduledDate" => "2026-01-31",
+               "recurrenceInterval" => "monthly",
+               "occurrenceCount" => "2"
+             })
+
+    assert {:ok, ["2026-10-02", "2026-10-09"]} =
+             DirectDispatch.expand_booking_dates(%{
+               "scheduleKind" => "custom_days",
+               "customDates" => ["2026-10-09", "2026-10-02", "2026-10-02"]
+             })
+
+    assert {:error, :invalid_request} =
+             DirectDispatch.expand_booking_dates(%{
+               "scheduleKind" => "custom_days",
+               "customDates" => []
+             })
+
+    assert {:error, :invalid_request} =
+             DirectDispatch.expand_booking_dates(%{
+               "scheduleKind" => "custom_days",
+               "customDates" => ["not-a-date"]
+             })
+  end
+
+  test "invalid custom days are rejected before a booking is created" do
+    admin_id = insert_user!("ops@tryinstaclean.com", "+233555000333")
+    customer_id = insert_user!("booked@tryinstaclean.com", "+233555000444")
+    grant_role!(admin_id, "admin")
+
+    assert {:error, :invalid_request} =
+             DirectDispatch.create_admin_booking(admin_id, %{
+               "customerUserId" => customer_id,
+               "source" => "whatsapp",
+               "consentConfirmed" => true,
+               "scheduleKind" => "custom_days",
+               "customDates" => []
+             })
+  end
+
   defp insert_user!(email, phone) do
     user_id = Ecto.UUID.generate()
 
@@ -259,5 +338,12 @@ defmodule Mithril.DirectDispatchTest do
     ])
 
     user_id
+  end
+
+  defp grant_role!(user_id, role) do
+    Repo.query!("INSERT INTO public.user_roles (user_id, role_id) VALUES ($1, $2)", [
+      Ecto.UUID.dump!(user_id),
+      role
+    ])
   end
 end

@@ -83,6 +83,14 @@ defmodule Mithril.DirectBookings do
     end
   end
 
+  def create_customer_booking(user_id, params) when is_map(params) do
+    if client_bookings_enabled?() do
+      create_booking(user_id, params)
+    else
+      {:error, :client_bookings_disabled}
+    end
+  end
+
   def create_booking(user_id, params) when is_map(params) do
     with {:ok, customer_id} <- dump_uuid(user_id),
          {:ok, input} <- validate_create_input(params) do
@@ -535,6 +543,10 @@ defmodule Mithril.DirectBookings do
   defp decimal_hours(value) when is_float(value), do: Decimal.from_float(value)
 
   defp format_hhmm(%Time{} = time), do: Calendar.strftime(time, "%H:%M")
+
+  def client_bookings_enabled? do
+    Application.get_env(:mithril, :direct_client_bookings, false) == true
+  end
 
   defp booking_json_select do
     """

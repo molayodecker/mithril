@@ -20,6 +20,7 @@ defmodule Mithril.AuthTest do
           "mithril_auth_otps",
           "mithril_auth_identities",
           "mithril_auth_accounts",
+          "user_roles",
           "users"
         ] do
       Repo.query!("DROP TABLE IF EXISTS public.#{table} CASCADE")
@@ -48,6 +49,13 @@ defmodule Mithril.AuthTest do
       status text DEFAULT 'active',
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.user_roles (
+      user_id uuid NOT NULL REFERENCES public.users(id),
+      role_id text NOT NULL
     )
     """)
 
@@ -162,6 +170,33 @@ defmodule Mithril.AuthTest do
     assert {:ok, session} = Auth.login("0244123456", "correct-horse")
     assert session.user.id == user_id
     assert session.user.phone == "+233244123456"
+  end
+
+  test "me reports reviewer and staff from user_roles" do
+    {user_id, _email} = insert_account("reviewer@tryinstaclean.com", "correct-horse")
+
+    Repo.query!(
+      "INSERT INTO public.user_roles (user_id, role_id) VALUES ($1::uuid, 'reviewer')",
+      [
+        dump_uuid(user_id)
+      ]
+    )
+
+    assert {:ok, me} = Auth.me(user_id)
+    refute me.admin
+    assert me.reviewer
+    assert Auth.reviewer?(user_id)
+    assert Auth.staff?(user_id)
+    refute Auth.admin?(user_id)
+  end
+
+  test "grant_staff assigns a reviewer role by email" do
+    {_user_id, email} = insert_account("ops@tryinstaclean.com", "correct-horse")
+
+    assert {:ok, staff} = Auth.grant_staff(%{email: email, role: "reviewer"})
+    assert staff.reviewer
+    refute staff.admin
+    assert Auth.reviewer?(staff.id)
   end
 
   test "login rejects inactive accounts" do
