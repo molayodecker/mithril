@@ -178,6 +178,23 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
         address: %Schema{type: :string, minLength: 3, maxLength: 500},
         specialInstructions: %Schema{type: :string, maxLength: 4000, nullable: true},
         timezone: %Schema{type: :string, default: "Africa/Accra"},
+        scheduleKind: %Schema{
+          type: :string,
+          enum: ~w(once recurring custom_days),
+          default: "once"
+        },
+        recurrenceInterval: %Schema{
+          type: :string,
+          enum: ~w(weekly bi_weekly monthly),
+          nullable: true
+        },
+        occurrenceCount: %Schema{type: :integer, minimum: 2, maximum: 12, nullable: true},
+        customDates: %Schema{
+          type: :array,
+          items: %Schema{type: :string, format: :date},
+          maxItems: 14,
+          nullable: true
+        },
         source: %Schema{type: :string, enum: ~w(admin phone whatsapp), default: "admin"},
         consentConfirmed: %Schema{type: :boolean},
         adminNote: %Schema{type: :string, maxLength: 2000, nullable: true}
@@ -210,7 +227,22 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
         currency: %Schema{type: :string},
         customerUserId: %Schema{type: :string, format: :uuid},
         source: %Schema{type: :string, enum: ~w(admin phone whatsapp)},
-        createdByAdmin: %Schema{type: :boolean}
+        createdByAdmin: %Schema{type: :boolean},
+        count: %Schema{type: :integer, minimum: 1},
+        bookings: %Schema{
+          type: :array,
+          items: %Schema{
+            type: :object,
+            properties: %{
+              id: %Schema{type: :string, format: :uuid},
+              status: %Schema{type: :string},
+              paymentStatus: %Schema{type: :string},
+              amountMinor: %Schema{type: :integer, minimum: 0},
+              currency: %Schema{type: :string},
+              scheduledDate: %Schema{type: :string, format: :date}
+            }
+          }
+        }
       },
       required: [
         :id,

@@ -167,51 +167,67 @@ defmodule Mithril.DirectDispatch do
     with {:ok, admin_uid} <- dump_uuid(user_id),
          {:ok, input} <- validate_admin_booking(params),
          :ok <- require_admin(admin_uid),
-         :ok <- ensure_customer_exists(input.customer_uuid) do
+         :ok <- ensure_customer_exists(input.customer_uuid),
+         {:ok, dates} <- expand_booking_dates(params) do
       Repo.transaction(fn ->
-        booking_params =
-          Map.take(params, [
-            "serviceId",
-            "cleanerId",
-            "scheduledDate",
-            "scheduledTime",
-            "durationHours",
-            "address",
-            "specialInstructions",
-            "timezone"
-          ])
+        created =
+          Enum.map(dates, fn date ->
+            booking_params =
+              params
+              |> Map.take([
+                "serviceId",
+                "cleanerId",
+                "scheduledTime",
+                "durationHours",
+                "address",
+                "specialInstructions",
+                "timezone"
+              ])
+              |> Map.put("scheduledDate", date)
 
-        case DirectBookings.create_booking(input.customer_user_id, booking_params) do
-          {:ok, booking} ->
-            case Repo.query(
-                   """
-                   INSERT INTO public.direct_booking_origins (
-                     booking_id, customer_id, created_by_user_id, source,
-                     consent_confirmed, admin_note
-                   ) VALUES ($1::uuid, $2, $3, $4, true, NULLIF($5::text, ''))
-                   """,
-                   [
-                     booking.id,
-                     input.customer_uuid,
-                     admin_uid,
-                     input.source,
-                     input.admin_note
-                   ]
-                 ) do
-              {:ok, _} ->
-                Map.merge(booking, %{
-                  customerUserId: input.customer_user_id,
-                  source: input.source,
-                  createdByAdmin: true
-                })
+            case DirectBookings.create_booking(input.customer_user_id, booking_params) do
+              {:ok, booking} ->
+                case insert_booking_origin(
+                       booking.id,
+                       input.customer_uuid,
+                       admin_uid,
+                       input.source,
+                       input.admin_note
+                     ) do
+                  :ok ->
+                    Map.merge(booking, %{
+                      scheduledDate: date,
+                      customerUserId: input.customer_user_id,
+                      source: input.source,
+                      createdByAdmin: true
+                    })
 
-              {:error, error} ->
-                Repo.rollback({:database, error})
+                  {:error, error} ->
+                    Repo.rollback({:database, error})
+                end
+
+              {:error, reason} ->
+                Repo.rollback(reason)
             end
+          end)
 
-          {:error, reason} ->
-            Repo.rollback(reason)
-        end
+        total_amount_minor =
+          Enum.reduce(created, 0, fn booking, sum -> sum + booking.amountMinor end)
+
+        first = hd(created)
+
+        %{
+          id: first.id,
+          status: first.status,
+          paymentStatus: first.paymentStatus,
+          amountMinor: total_amount_minor,
+          currency: first.currency,
+          customerUserId: input.customer_user_id,
+          source: input.source,
+          createdByAdmin: true,
+          count: length(created),
+          bookings: created
+        }
       end)
       |> normalize_transaction()
     else
@@ -572,6 +588,97 @@ defmodule Mithril.DirectDispatch do
       else: {:error, :replacement_time_required}
   end
 
+  defp insert_booking_origin(booking_id, customer_uuid, admin_uid, source, admin_note) do
+    case Repo.query(
+           """
+           INSERT INTO public.direct_booking_origins (
+             booking_id, customer_id, created_by_user_id, source,
+             consent_confirmed, admin_note
+           ) VALUES ($1::uuid, $2, $3, $4, true, NULLIF($5::text, ''))
+           """,
+           [booking_id, customer_uuid, admin_uid, source, admin_note]
+         ) do
+      {:ok, _} -> :ok
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  def expand_booking_dates(params) do
+    case params["scheduleKind"] || "once" do
+      "once" ->
+        case iso_date(params["scheduledDate"]) do
+          {:ok, date} -> {:ok, [Date.to_iso8601(date)]}
+          _ -> {:error, :invalid_request}
+        end
+
+      "custom_days" ->
+        parse_custom_dates(params["customDates"])
+
+      "recurring" ->
+        expand_recurring_dates(params)
+
+      _ ->
+        {:error, :invalid_request}
+    end
+  end
+
+  defp parse_custom_dates(dates) when is_list(dates) do
+    parsed =
+      dates
+      |> Enum.map(&iso_date/1)
+      |> Enum.reduce_while([], fn
+        {:ok, date}, acc -> {:cont, [date | acc]}
+        _, _ -> {:halt, :error}
+      end)
+
+    cond do
+      parsed == :error -> {:error, :invalid_request}
+      parsed == [] -> {:error, :invalid_request}
+      length(parsed) > 14 -> {:error, :invalid_request}
+      true -> {:ok, parsed |> Enum.uniq() |> Enum.sort() |> Enum.map(&Date.to_iso8601/1)}
+    end
+  end
+
+  defp parse_custom_dates(_), do: {:error, :invalid_request}
+
+  defp expand_recurring_dates(params) do
+    with {:ok, start_date} <- iso_date(params["scheduledDate"]),
+         {:ok, interval} <- recurrence_interval(params["recurrenceInterval"]),
+         {:ok, count} <- occurrence_count(params["occurrenceCount"]) do
+      dates =
+        0..(count - 1)
+        |> Enum.map(&shift_recurrence(start_date, interval, &1))
+        |> Enum.map(&Date.to_iso8601/1)
+
+      {:ok, dates}
+    else
+      _ -> {:error, :invalid_request}
+    end
+  end
+
+  defp recurrence_interval(value) when value in ~w(weekly bi_weekly monthly), do: {:ok, value}
+  defp recurrence_interval(_), do: :error
+
+  defp occurrence_count(value) when is_integer(value) and value >= 2 and value <= 12,
+    do: {:ok, value}
+
+  defp occurrence_count(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {count, ""} -> occurrence_count(count)
+      _ -> :error
+    end
+  end
+
+  defp occurrence_count(_), do: :error
+
+  defp shift_recurrence(date, "weekly", index), do: Date.add(date, 7 * index)
+  defp shift_recurrence(date, "bi_weekly", index), do: Date.add(date, 14 * index)
+  defp shift_recurrence(date, "monthly", index), do: Date.shift(date, month: index)
+
+  defp iso_date(value) when is_binary(value), do: Date.from_iso8601(String.trim(value))
+  defp iso_date(%Date{} = date), do: {:ok, date}
+  defp iso_date(_), do: :error
+
   defp validate_admin_booking(params) do
     with true <- params["consentConfirmed"] == true,
          {:ok, customer_uuid} <- dump_uuid(params["customerUserId"]),
@@ -653,7 +760,14 @@ defmodule Mithril.DirectDispatch do
 
   defp require_admin(uid) do
     case Repo.query(
-           "SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = $1 AND role_id = 'admin')",
+           """
+           SELECT EXISTS (
+             SELECT 1
+             FROM public.user_roles
+             WHERE user_id = $1
+               AND role_id IN ('admin', 'reviewer')
+           )
+           """,
            [uid]
          ) do
       {:ok, %{rows: [[true]]}} -> :ok

@@ -5,7 +5,8 @@ config :mithril,
   generators: [timestamp_type: :utc_datetime_usec],
   database_backend: "supabase",
   auth_access_ttl: 3600,
-  auth_refresh_ttl: 60 * 60 * 24 * 30
+  auth_refresh_ttl: 60 * 60 * 24 * 30,
+  direct_client_bookings: false
 
 config :mithril, MithrilWeb.Endpoint,
   url: [host: "localhost"],
