@@ -64,6 +64,7 @@ defmodule MithrilWeb.Router do
     get "/booking-cleaners", DirectBookingController, :list_cleaners
     post "/booking-price", DirectBookingController, :preview_price
     post "/bookings", DirectBookingController, :create
+    get "/bookings", DirectBookingController, :index
     get "/bookings/:id", DirectBookingController, :show
     get "/bookings/:id/cancellation-policy", DirectOperationsController, :cancellation_policy
     post "/bookings/:id/cancel", DirectOperationsController, :cancel_booking
