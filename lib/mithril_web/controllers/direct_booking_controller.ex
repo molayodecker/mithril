@@ -7,6 +7,7 @@ defmodule MithrilWeb.DirectBookingController do
 
   alias MithrilWeb.Schemas.DirectBooking.{
     BookingDetailResponse,
+    BookingListResponse,
     BookingPriceResponse,
     BookingPricingRequest,
     BookingServicesResponse,
@@ -74,6 +75,18 @@ defmodule MithrilWeb.DirectBookingController do
 
   def create(conn, params) do
     respond(conn, DirectBookings.create_booking(user_id(conn), params))
+  end
+
+  operation(:index,
+    operation_id: "direct.listBookings",
+    summary: "List the signed-in customer's Direct bookings",
+    responses: [ok: {"Bookings", "application/json", BookingListResponse}]
+  )
+
+  def index(conn, _params) do
+    respond(conn, DirectBookings.list_bookings(user_id(conn)), fn bookings ->
+      %{bookings: bookings}
+    end)
   end
 
   operation(:show,

@@ -226,6 +226,19 @@ defmodule MithrilWeb.Schemas.DirectBooking do
     })
   end
 
+  defmodule BookingListResponse do
+    require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectBooking.BookingDetailResponse
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectBookingListResponse",
+      type: :object,
+      properties: %{bookings: %Schema{type: :array, items: BookingDetailResponse}},
+      required: [:bookings]
+    })
+  end
+
   defmodule InitializePaymentRequest do
     require OpenApiSpex
     alias OpenApiSpex.Schema

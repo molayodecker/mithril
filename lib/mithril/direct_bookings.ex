@@ -112,31 +112,38 @@ defmodule Mithril.DirectBookings do
     end
   end
 
+  def list_bookings(user_id) do
+    with {:ok, customer_id} <- dump_uuid(user_id),
+         {:ok, result} <-
+           Repo.query(
+             """
+             SELECT #{booking_json_select()}
+             FROM public.bookings b
+             JOIN public.service_types st ON st.id = b.service_id
+             LEFT JOIN public.profiles p ON p.id = b.cleaner_id
+             WHERE b.customer_id = $1
+             ORDER BY b.scheduled_date DESC NULLS LAST,
+                      b.scheduled_time DESC NULLS LAST,
+                      b.created_at DESC
+             LIMIT 100
+             """,
+             [customer_id]
+           ) do
+      {:ok, Enum.map(result.rows, &hd/1)}
+    else
+      :error -> {:error, :invalid_user}
+      {:error, error} when is_atom(error) -> {:error, error}
+      {:error, error} -> database_error(error)
+    end
+  end
+
   def get_booking(user_id, booking_id) do
     with {:ok, customer_id} <- dump_uuid(user_id),
          {:ok, bid} <- dump_uuid(booking_id),
          {:ok, result} <-
            Repo.query(
              """
-             SELECT jsonb_build_object(
-               'id', b.id,
-               'status', b.status,
-               'paymentStatus', b.payment_status,
-               'serviceId', b.service_id,
-               'serviceName', st.name,
-               'cleanerId', b.cleaner_id,
-               'cleanerName', COALESCE(
-                 NULLIF(btrim(p.fullname), ''),
-                 NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
-                 'Instaclean professional'
-               ),
-               'scheduledDate', b.scheduled_date,
-               'scheduledTime', b.scheduled_time,
-               'durationHours', b.duration_hours,
-               'address', b.address,
-               'amountMinor', COALESCE(b.final_amount_minor, b.total_price),
-               'currency', COALESCE(b.currency, 'GHS')
-             )
+             SELECT #{booking_json_select()}
              FROM public.bookings b
              JOIN public.service_types st ON st.id = b.service_id
              LEFT JOIN public.profiles p ON p.id = b.cleaner_id
@@ -528,6 +535,30 @@ defmodule Mithril.DirectBookings do
   defp decimal_hours(value) when is_float(value), do: Decimal.from_float(value)
 
   defp format_hhmm(%Time{} = time), do: Calendar.strftime(time, "%H:%M")
+
+  defp booking_json_select do
+    """
+    jsonb_build_object(
+      'id', b.id,
+      'status', b.status,
+      'paymentStatus', b.payment_status,
+      'serviceId', b.service_id,
+      'serviceName', st.name,
+      'cleanerId', b.cleaner_id,
+      'cleanerName', COALESCE(
+        NULLIF(btrim(p.fullname), ''),
+        NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
+        'Instaclean professional'
+      ),
+      'scheduledDate', b.scheduled_date,
+      'scheduledTime', b.scheduled_time,
+      'durationHours', b.duration_hours,
+      'address', b.address,
+      'amountMinor', COALESCE(b.final_amount_minor, b.total_price),
+      'currency', COALESCE(b.currency, 'GHS')
+    )
+    """
+  end
 
   defp dump_uuid(value) when is_binary(value), do: Ecto.UUID.dump(value)
   defp dump_uuid(_), do: :error

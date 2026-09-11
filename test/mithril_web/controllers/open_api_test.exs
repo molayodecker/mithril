@@ -13,6 +13,9 @@ defmodule MithrilWeb.OpenApiTest do
     assert spec["paths"]["/direct/placements"]["get"]
     assert spec["paths"]["/direct/placements"]["post"]
     assert spec["paths"]["/direct/admin/placements/{id}/matches"]["post"]
+    assert spec["paths"]["/direct/bookings"]["get"]
+    assert spec["paths"]["/direct/bookings"]["post"]
+    assert spec["paths"]["/direct/bookings/{id}"]["get"]
     assert spec["components"]["schemas"]["DirectCreatePlacementRequest"]
     assert spec["components"]["schemas"]["DirectPlacementDetailResponse"]
   end
