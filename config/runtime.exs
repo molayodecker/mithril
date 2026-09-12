@@ -69,6 +69,8 @@ if parity_token = System.get_env("MITHRIL_PARITY_TOKEN") do
   config :mithril, :parity_token, parity_token
 end
 
+config :mithril, :direct_client_bookings, truthy_env?.("DIRECT_CLIENT_BOOKINGS")
+
 if direct_gateway_token = System.get_env("MITHRIL_DIRECT_TOKEN") do
   config :mithril, :direct_gateway_token, direct_gateway_token
 end

@@ -7,6 +7,7 @@ defmodule MithrilWeb.DirectBookingController do
 
   alias MithrilWeb.Schemas.DirectBooking.{
     BookingDetailResponse,
+    BookingListResponse,
     BookingPriceResponse,
     BookingPricingRequest,
     BookingServicesResponse,
@@ -73,7 +74,19 @@ defmodule MithrilWeb.DirectBookingController do
   )
 
   def create(conn, params) do
-    respond(conn, DirectBookings.create_booking(user_id(conn), params))
+    respond(conn, DirectBookings.create_customer_booking(user_id(conn), params))
+  end
+
+  operation(:index,
+    operation_id: "direct.listBookings",
+    summary: "List the signed-in customer's Direct bookings",
+    responses: [ok: {"Bookings", "application/json", BookingListResponse}]
+  )
+
+  def index(conn, _params) do
+    respond(conn, DirectBookings.list_bookings(user_id(conn)), fn bookings ->
+      %{bookings: bookings}
+    end)
   end
 
   operation(:show,
@@ -152,6 +165,7 @@ defmodule MithrilWeb.DirectBookingController do
   end
 
   defp error_response(:invalid_user), do: {401, "invalid_user"}
+  defp error_response(:client_bookings_disabled), do: {403, "client_bookings_disabled"}
   defp error_response(:not_found), do: {404, "not_found"}
   defp error_response(:invalid_service), do: {422, "invalid_service"}
   defp error_response(:invalid_request), do: {422, "invalid_request"}
