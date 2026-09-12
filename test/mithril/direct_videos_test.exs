@@ -205,7 +205,7 @@ defmodule Mithril.DirectVideosTest do
     assert current["introVideoUrl"] == "https://media.example.com/reviewer-intro.mp4"
   end
 
-  test "video updates reject non-HTTPS URLs and non-admin users" do
+  test "video updates reject non-HTTPS URLs and non-staff users" do
     admin_id = Ecto.UUID.generate()
     customer_id = Ecto.UUID.generate()
     candidate_id = Ecto.UUID.generate()
