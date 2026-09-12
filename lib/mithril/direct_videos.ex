@@ -3,7 +3,7 @@ defmodule Mithril.DirectVideos do
   Access-controlled candidate video introductions for Instaclean Direct.
 
   Customers may only read a video for a candidate currently matched to one of
-  their placement requests. Direct admins may read or update video metadata for
+  their placement requests. Direct staff may read or update video metadata for
   active, vetted candidates.
   """
 
@@ -53,7 +53,7 @@ defmodule Mithril.DirectVideos do
   def show_admin_candidate_video(user_id, candidate_user_id) do
     with {:ok, uid} <- dump_uuid(user_id),
          {:ok, candidate_id} <- dump_uuid(candidate_user_id),
-         :ok <- require_admin(uid),
+         :ok <- require_staff(uid),
          :ok <- require_active_candidate(candidate_id),
          {:ok, result} <-
            Repo.query(
@@ -83,7 +83,7 @@ defmodule Mithril.DirectVideos do
   def update_admin_candidate_video(user_id, candidate_user_id, params) when is_map(params) do
     with {:ok, uid} <- dump_uuid(user_id),
          {:ok, candidate_id} <- dump_uuid(candidate_user_id),
-         :ok <- require_admin(uid),
+         :ok <- require_staff(uid),
          :ok <- require_active_candidate(candidate_id),
          {:ok, video_url} <- normalize_https_url(params["introVideoUrl"], :invalid_video_url),
          {:ok, thumbnail_url} <-
@@ -121,9 +121,16 @@ defmodule Mithril.DirectVideos do
     end
   end
 
-  defp require_admin(uid) do
+  defp require_staff(uid) do
     case Repo.query(
-           "SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = $1 AND role_id = 'admin')",
+           """
+           SELECT EXISTS (
+             SELECT 1
+             FROM public.user_roles
+             WHERE user_id = $1
+               AND role_id IN ('admin', 'reviewer')
+           )
+           """,
            [uid]
          ) do
       {:ok, %{rows: [[true]]}} -> :ok
