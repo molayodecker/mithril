@@ -64,6 +64,18 @@ DATABASE_URL=ecto://user:password@host:5432/database mix phx.server
 
 `.env.example` documents the runtime configuration contract. Mithril does not require that file at runtime and does not automatically load it; it is an example only.
 
+### Admin API access
+
+Mithril does not serve a browser admin UI. The frontend signs in through `/auth` and calls `/direct/admin/*` with the user JWT. Grant `admin` or `reviewer` on an existing user against the database Mithril is using:
+
+```bash
+mix mithril.staff.grant --phone +233… --role reviewer
+# or
+mix mithril.staff.grant --email you@tryinstaclean.com --role admin
+```
+
+The user must already exist. `GET /auth/me` then returns `"admin": true` and/or `"reviewer": true`. Ghana local numbers are accepted (`0555000000` matches `+233555000000`). For local development without Twilio, put the number in `AUTH_TEST_PHONES`.
+
 ### Phone OTP test numbers
 
 Phone login normally sends a Twilio SMS. For local development, App Store review, or other cases where a real SMS is not wanted, set `AUTH_TEST_PHONES` to comma-separated `phone:otp` pairs. Listed numbers skip Twilio and accept the paired code, the same as Supabase Auth test phone numbers.
