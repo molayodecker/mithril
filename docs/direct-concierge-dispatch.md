@@ -28,7 +28,7 @@ POST /direct/urgent-help
 POST /direct/bookings/:id/replacement-request
 ```
 
-Admin and reviewer (`GET /auth/me` reports `"admin"` and/or `"reviewer"`):
+Dispatch staff: admin or reviewer (`GET /auth/me` reports `"admin"` and/or `"reviewer"`):
 
 ```text
 GET  /direct/admin/customers?q=...
@@ -41,10 +41,12 @@ POST /direct/admin/service-requests/:id/status
 Grant those roles on an existing user. Point Mix at the intended database (`DATABASE_BACKEND=fly` and `FLY_DATABASE_URL` for production):
 
 ```bash
-mix mithril.staff.grant --phone +233… --role reviewer
+mix mithril.staff.grant --phone +233555000000 --role reviewer
 # or
 mix mithril.staff.grant --email you@tryinstaclean.com --role admin
 ```
+
+The dispatch endpoints listed above accept either role. Do not infer that `reviewer` can call every `/direct/admin/*` route; endpoints outside this dispatch workflow may still require `admin`.
 
 ## Database rollout
 
