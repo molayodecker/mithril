@@ -76,7 +76,7 @@ If that globally unique app name is unavailable, choose another name and update 
 
 ## 3. Set production secrets
 
-Mithril currently requires `SECRET_KEY_BASE` plus the database URLs selected by `DATABASE_BACKEND`. JWT login uses `AUTH_JWT_SECRET` when set, otherwise `SECRET_KEY_BASE`. Phone OTP needs `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_MESSAGING_SERVICE_SID` or `TWILIO_PHONE_NUMBER`. Optional `AUTH_TEST_PHONES` (comma-separated `phone:otp` pairs) skips Twilio for those numbers, the same as Supabase Auth test phone numbers. Google/Facebook need `GOOGLE_CLIENT_IDS` and `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET`.
+Mithril currently requires `SECRET_KEY_BASE` plus the database URLs selected by `DATABASE_BACKEND`. JWT login uses `AUTH_JWT_SECRET` when set, otherwise `SECRET_KEY_BASE`. Phone OTP needs `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_MESSAGING_SERVICE_SID` or `TWILIO_PHONE_NUMBER`. Optional `AUTH_TEST_PHONES` (comma-separated `phone:otp` pairs) skips Twilio for those numbers, the same as Supabase Auth test phone numbers. Google/Facebook need `GOOGLE_CLIENT_IDS` and `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET`. Grant `admin`, or `reviewer` for reviewer-enabled staff workflows, on an existing user with `mix mithril.staff.grant` against the app's current database (`--email` or `--phone`, and `--role admin|reviewer`). Reviewer is not a blanket replacement for admin on every `/direct/admin/*` route. The frontend signs in through `/auth`; phone sign-in requires `POST /auth/otp` followed by `POST /auth/otp/verify` to receive JWTs. There is no browser admin UI.
 
 Generate a Phoenix secret locally:
 
