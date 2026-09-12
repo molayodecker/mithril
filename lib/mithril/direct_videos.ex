@@ -9,7 +9,6 @@ defmodule Mithril.DirectVideos do
 
   alias Mithril.Repo
 
-
   def show_candidate_video(user_id, placement_id, candidate_user_id) do
     with {:ok, uid} <- dump_uuid(user_id),
          {:ok, pid} <- dump_uuid(placement_id),
