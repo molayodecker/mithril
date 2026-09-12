@@ -154,7 +154,7 @@ defmodule Mithril.DirectVideosTest do
 
     insert_user(admin_id)
     insert_candidate(candidate_id)
-    make_admin(admin_id)
+    grant_role(admin_id, "admin")
 
     params = %{
       "introVideoUrl" => "https://media.example.com/intro.mp4",
@@ -182,6 +182,29 @@ defmodule Mithril.DirectVideosTest do
     assert cleared["introVideoUrl"] == nil
   end
 
+  test "reviewers can read and update vetted candidate videos" do
+    reviewer_id = Ecto.UUID.generate()
+    candidate_id = Ecto.UUID.generate()
+
+    insert_user(reviewer_id)
+    insert_candidate(candidate_id)
+    grant_role(reviewer_id, "reviewer")
+
+    assert {:ok, saved} =
+             DirectVideos.update_admin_candidate_video(reviewer_id, candidate_id, %{
+               "introVideoUrl" => "https://media.example.com/reviewer-intro.mp4",
+               "introVideoThumbnailUrl" => nil,
+               "introVideoTitle" => "Reviewed intro"
+             })
+
+    assert saved["introVideoTitle"] == "Reviewed intro"
+
+    assert {:ok, current} =
+             DirectVideos.show_admin_candidate_video(reviewer_id, candidate_id)
+
+    assert current["introVideoUrl"] == "https://media.example.com/reviewer-intro.mp4"
+  end
+
   test "video updates reject non-HTTPS URLs and non-admin users" do
     admin_id = Ecto.UUID.generate()
     customer_id = Ecto.UUID.generate()
@@ -190,7 +213,7 @@ defmodule Mithril.DirectVideosTest do
     insert_user(admin_id)
     insert_user(customer_id)
     insert_candidate(candidate_id)
-    make_admin(admin_id)
+    grant_role(admin_id, "admin")
 
     assert {:error, :invalid_video_url} =
              DirectVideos.update_admin_candidate_video(admin_id, candidate_id, %{
@@ -209,7 +232,7 @@ defmodule Mithril.DirectVideosTest do
 
     insert_user(admin_id)
     insert_candidate(candidate_id)
-    make_admin(admin_id)
+    grant_role(admin_id, "admin")
 
     decomposed_title = String.duplicate("e\u0301", 120)
 
@@ -284,9 +307,10 @@ defmodule Mithril.DirectVideosTest do
     )
   end
 
-  defp make_admin(user_id) do
-    Repo.query!("INSERT INTO public.user_roles (user_id, role_id) VALUES ($1, 'admin')", [
-      Ecto.UUID.dump!(user_id)
+  defp grant_role(user_id, role) do
+    Repo.query!("INSERT INTO public.user_roles (user_id, role_id) VALUES ($1, $2)", [
+      Ecto.UUID.dump!(user_id),
+      role
     ])
   end
 end
