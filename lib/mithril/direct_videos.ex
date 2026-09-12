@@ -9,7 +9,6 @@ defmodule Mithril.DirectVideos do
 
   alias Mithril.Repo
 
-  @match_statuses ~w(suggested selected hired)
 
   def show_candidate_video(user_id, placement_id, candidate_user_id) do
     with {:ok, uid} <- dump_uuid(user_id),
@@ -32,11 +31,14 @@ defmodule Mithril.DirectVideos do
              WHERE pr.id = $1
                AND pr.customer_id = $2
                AND pm.candidate_user_id = $3
-               AND pm.status = ANY($4::text[])
+               AND (
+                 (pr.status = 'shortlisted' AND pm.status IN ('suggested', 'selected'))
+                 OR (pr.status = 'placed' AND pm.status = 'hired')
+               )
                AND pcp.intro_video_url IS NOT NULL
              LIMIT 1
              """,
-             [pid, uid, candidate_id, @match_statuses]
+             [pid, uid, candidate_id]
            ) do
       case result.rows do
         [[video]] -> {:ok, video}
@@ -177,7 +179,7 @@ defmodule Mithril.DirectVideos do
 
     cond do
       value == "" -> {:ok, nil}
-      String.length(value) <= 120 -> {:ok, value}
+      length(String.to_charlist(value)) <= 120 -> {:ok, value}
       true -> {:error, :video_title_too_long}
     end
   end
