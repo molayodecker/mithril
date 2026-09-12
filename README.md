@@ -66,15 +66,17 @@ DATABASE_URL=ecto://user:password@host:5432/database mix phx.server
 
 ### Admin API access
 
-Mithril does not serve a browser admin UI. The frontend signs in through `/auth` and calls `/direct/admin/*` with the user JWT. Grant `admin` or `reviewer` on an existing user against the database Mithril is using:
+Mithril does not serve a browser admin UI. The frontend signs in through `/auth` and sends the resulting user JWT to Direct endpoints. Grant `admin` for admin-only operations, or `reviewer` for staff workflows that explicitly accept the reviewer role:
 
 ```bash
-mix mithril.staff.grant --phone +233… --role reviewer
+mix mithril.staff.grant --phone +233555000000 --role reviewer
 # or
 mix mithril.staff.grant --email you@tryinstaclean.com --role admin
 ```
 
-The user must already exist. `GET /auth/me` then returns `"admin": true` and/or `"reviewer": true`. Ghana local numbers are accepted (`0555000000` matches `+233555000000`). For local development without Twilio, put the number in `AUTH_TEST_PHONES`.
+The user must already exist. Email/password users sign in with `POST /auth/login`. Phone users first call `POST /auth/otp` to request a code, then `POST /auth/otp/verify` to receive JWTs. `GET /auth/me` returns `"admin": true` and/or `"reviewer": true`.
+
+`reviewer` is not equivalent to `admin` across every `/direct/admin/*` route. Reviewer-enabled areas currently include concierge/dispatch and candidate-video administration; placement administration and Direct operations still require `admin`. Ghana local numbers are accepted (`0555000000` matches `+233555000000`). For local development without Twilio, put the number in `AUTH_TEST_PHONES`.
 
 ### Phone OTP test numbers
 
