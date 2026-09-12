@@ -121,6 +121,33 @@ defmodule Mithril.DirectVideosTest do
              DirectVideos.show_candidate_video(customer_id, placement_id, candidate_id)
   end
 
+  test "customer video access follows placement and match lifecycle states" do
+    customer_id = Ecto.UUID.generate()
+    candidate_id = Ecto.UUID.generate()
+    cancelled_placement_id = Ecto.UUID.generate()
+    placed_placement_id = Ecto.UUID.generate()
+
+    insert_user(customer_id)
+    insert_candidate(candidate_id)
+    insert_video(candidate_id)
+
+    insert_placement(cancelled_placement_id, customer_id, "cancelled")
+    insert_match(cancelled_placement_id, candidate_id, "suggested")
+
+    assert {:error, :not_found} =
+             DirectVideos.show_candidate_video(
+               customer_id,
+               cancelled_placement_id,
+               candidate_id
+             )
+
+    insert_placement(placed_placement_id, customer_id, "placed")
+    insert_match(placed_placement_id, candidate_id, "hired")
+
+    assert {:ok, _video} =
+             DirectVideos.show_candidate_video(customer_id, placed_placement_id, candidate_id)
+  end
+
   test "admin can attach, read, and clear a vetted candidate video" do
     admin_id = Ecto.UUID.generate()
     candidate_id = Ecto.UUID.generate()
@@ -176,6 +203,26 @@ defmodule Mithril.DirectVideosTest do
              })
   end
 
+  test "video title length uses PostgreSQL character semantics" do
+    admin_id = Ecto.UUID.generate()
+    candidate_id = Ecto.UUID.generate()
+
+    insert_user(admin_id)
+    insert_candidate(candidate_id)
+    make_admin(admin_id)
+
+    decomposed_title = String.duplicate("e\u0301", 120)
+
+    assert String.length(decomposed_title) == 120
+    assert length(String.to_charlist(decomposed_title)) == 240
+
+    assert {:error, :video_title_too_long} =
+             DirectVideos.update_admin_candidate_video(admin_id, candidate_id, %{
+               "introVideoUrl" => "https://media.example.com/intro.mp4",
+               "introVideoTitle" => decomposed_title
+             })
+  end
+
   defp insert_user(id) do
     Repo.query!("INSERT INTO public.users (id, email) VALUES ($1, $2)", [
       Ecto.UUID.dump!(id),
@@ -211,10 +258,10 @@ defmodule Mithril.DirectVideosTest do
     )
   end
 
-  defp insert_placement(id, customer_id) do
+  defp insert_placement(id, customer_id, status \\ "shortlisted") do
     Repo.query!(
-      "INSERT INTO public.placement_requests (id, customer_id, status) VALUES ($1, $2, 'shortlisted')",
-      [Ecto.UUID.dump!(id), Ecto.UUID.dump!(customer_id)]
+      "INSERT INTO public.placement_requests (id, customer_id, status) VALUES ($1, $2, $3)",
+      [Ecto.UUID.dump!(id), Ecto.UUID.dump!(customer_id), status]
     )
   end
 
