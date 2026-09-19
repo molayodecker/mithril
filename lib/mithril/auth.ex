@@ -195,6 +195,26 @@ defmodule Mithril.Auth do
     end
   end
 
+  def grant_staff(attrs) when is_map(attrs) do
+    role = to_string(Map.get(attrs, :role) || Map.get(attrs, "role") || "admin")
+    email = blank_to_nil(Map.get(attrs, :email) || Map.get(attrs, "email"))
+    phone = blank_to_nil(Map.get(attrs, :phone) || Map.get(attrs, "phone"))
+
+    with {:ok, role} <- staff_role(role),
+         {:ok, user} <- find_staff_user(email, phone),
+         :ok <- insert_staff_role(user.id, role) do
+      {:ok,
+       %{
+         id: user.id,
+         email: user.email,
+         phone: user.phone,
+         role: role,
+         admin: admin?(user.id),
+         reviewer: reviewer?(user.id)
+       }}
+    end
+  end
+
   def set_password(user_id, password, current_password \\ nil)
 
   def set_password(_user_id, password, _current_password)
@@ -1162,6 +1182,85 @@ defmodule Mithril.Auth do
 
   defp maybe_upsert_phone_identity(user_id, phone) do
     upsert_identity(user_id, %{provider: "phone", subject: phone, email: nil})
+  end
+
+  defp staff_role(role) when role in ~w(admin reviewer), do: {:ok, role}
+  defp staff_role(_), do: {:error, :invalid_role}
+
+  defp find_staff_user(email, phone) do
+    cond do
+      is_binary(phone) ->
+        with {:ok, phone} <- normalize_phone(phone),
+             {:ok, user} <- fetch_user_by_phone(phone) do
+          {:ok, user}
+        end
+
+      is_binary(email) ->
+        fetch_user_by_email(normalize_login(email))
+
+      true ->
+        {:error, :invalid_request}
+    end
+  end
+
+  defp fetch_user_by_phone(phone) do
+    case Repo.query(
+           """
+           SELECT id::text, email, phone
+           FROM public.users
+           WHERE phone = $1
+              OR lower(coalesce(email, '')) = $1
+           LIMIT 1
+           """,
+           [phone]
+         ) do
+      {:ok, %{num_rows: 1, rows: [[id, email, stored_phone]]}} ->
+        {:ok, %{id: id, email: email, phone: stored_phone}}
+
+      {:ok, _} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp fetch_user_by_email(email) do
+    case Repo.query(
+           """
+           SELECT id::text, email, phone
+           FROM public.users
+           WHERE lower(coalesce(email, '')) = $1
+           LIMIT 1
+           """,
+           [email]
+         ) do
+      {:ok, %{num_rows: 1, rows: [[id, stored_email, phone]]}} ->
+        {:ok, %{id: id, email: stored_email, phone: phone}}
+
+      {:ok, _} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp insert_staff_role(user_id, role) do
+    case Repo.query(
+           """
+           INSERT INTO public.user_roles (user_id, role_id)
+           SELECT $1::uuid, $2
+           WHERE NOT EXISTS (
+             SELECT 1 FROM public.user_roles
+             WHERE user_id = $1::uuid AND role_id = $2
+           )
+           """,
+           [dump_uuid(user_id), role]
+         ) do
+      {:ok, _} -> :ok
+      {:error, error} -> database_error(error)
+    end
   end
 
   defp blank_to_nil(value) when is_binary(value) do
