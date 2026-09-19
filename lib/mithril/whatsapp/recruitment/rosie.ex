@@ -43,7 +43,10 @@ defmodule Mithril.WhatsApp.Recruitment.Rosie do
     text = normalize(message)
 
     cond do
-      includes_any?(text, ~w(download app android iphone ios install link onelink) ++ ["play store", "app store"]) ->
+      includes_any?(
+        text,
+        ~w(download app android iphone ios install link onelink) ++ ["play store", "app store"]
+      ) ->
         "You can download Instaclean here:\n\n" <>
           "All app links:\n#{@onelink}\n\n" <>
           "Android:\n#{@android}\n\n" <>
@@ -56,7 +59,10 @@ defmodule Mithril.WhatsApp.Recruitment.Rosie do
           "#{app_url}\n#{@linktree}\n\n" <>
           "If you are a new customer, check the booking screen for any welcome offers before payment."
 
-      includes_any?(text, ~w(apply application job work join recruitment) ++ ["cleaner job", "become a cleaner"]) ->
+      includes_any?(
+        text,
+        ~w(apply application job work join recruitment) ++ ["cleaner job", "become a cleaner"]
+      ) ->
         "You can apply to become an Instaclean cleaner right here on WhatsApp.\n\n" <>
           "Reply APPLY to start.\n\n" <>
           "You can also apply on the website:\n#{app_url}/join-as-cleaner"
@@ -66,8 +72,20 @@ defmodule Mithril.WhatsApp.Recruitment.Rosie do
           "#{app_url}\n#{@linktree}\n\n" <>
           "Operations support phone: #{@support_phone}"
 
-      includes_any?(text, ~w(service services cleaning book booking instaclean) ++
-                     ["home cleaning", "house cleaning", "book a cleaner", "who are you", "who is instaclean", "what is instaclean", "about instaclean", "about you"]) ->
+      includes_any?(
+        text,
+        ~w(service services cleaning book booking instaclean) ++
+            [
+              "home cleaning",
+              "house cleaning",
+              "book a cleaner",
+              "who are you",
+              "who is instaclean",
+              "what is instaclean",
+              "about instaclean",
+              "about you"
+            ]
+      ) ->
         "Instaclean helps customers book trusted home services in Ghana, including cleaning and related household services.\n\n" <>
           "You can book through the app or website:\n\n" <>
           "#{app_url}\n#{@linktree}\n\n" <>

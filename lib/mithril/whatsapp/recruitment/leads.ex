@@ -171,8 +171,8 @@ defmodule Mithril.WhatsApp.Recruitment.Leads do
       {sets, values, _} =
         Enum.reduce(allowed, {[], [], 2}, fn key, {sets, values, index} ->
           if Map.has_key?(patch, key) do
-            {["#{key} = #{placeholder(key, index)}" | sets], [dump(key, Map.get(patch, key)) | values],
-             index + 1}
+            {["#{key} = #{placeholder(key, index)}" | sets],
+             [dump(key, Map.get(patch, key)) | values], index + 1}
           else
             {sets, values, index}
           end
@@ -221,6 +221,7 @@ defmodule Mithril.WhatsApp.Recruitment.Leads do
     end
 
     defp history(value) when is_list(value), do: Enum.map(value, &to_string/1)
+
     defp history(value) when is_binary(value) do
       case Jason.decode(value) do
         {:ok, list} when is_list(list) -> Enum.map(list, &to_string/1)
@@ -231,6 +232,7 @@ defmodule Mithril.WhatsApp.Recruitment.Leads do
     defp history(_), do: []
 
     defp decode_json(value) when is_map(value), do: value
+
     defp decode_json(value) when is_binary(value) do
       case Jason.decode(value) do
         {:ok, map} -> map
@@ -241,6 +243,7 @@ defmodule Mithril.WhatsApp.Recruitment.Leads do
     defp decode_json(_), do: %{}
 
     defp uuid(nil), do: nil
+
     defp uuid(value) when is_binary(value) do
       case Ecto.UUID.load(value) do
         {:ok, id} -> id
@@ -261,7 +264,8 @@ defmodule Mithril.WhatsApp.Recruitment.Leads do
     end
 
     def reset do
-      if Process.whereis(__MODULE__), do: Agent.update(__MODULE__, fn _ -> %{by_phone: %{}, by_id: %{}} end)
+      if Process.whereis(__MODULE__),
+        do: Agent.update(__MODULE__, fn _ -> %{by_phone: %{}, by_id: %{}} end)
     end
 
     def get_or_create(phone) do

@@ -87,7 +87,10 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
           awaiting_apply(from, lead, cmd, message, ctx)
 
         cmd == "APPLY" ->
-          reply({:text, "You already started. Reply STATUS for progress or RESTART to begin again."}, ctx)
+          reply(
+            {:text, "You already started. Reply STATUS for progress or RESTART to begin again."},
+            ctx
+          )
 
         true ->
           step(from, lead, message, cmd, ctx, lat, lng)
@@ -102,7 +105,14 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
   defp awaiting_apply(from, lead, cmd, message, ctx) do
     if cmd == "APPLY" or String.upcase(String.trim(message)) == "APPLY" do
       p = lead.payload
-      p = put_in(p, ["personalInfo", "phone"], Parse.normalize_ghana_phone(from) || String.trim(from))
+
+      p =
+        put_in(
+          p,
+          ["personalInfo", "phone"],
+          Parse.normalize_ghana_phone(from) || String.trim(from)
+        )
+
       adv = Payload.advance(lead, "personal_email")
       save(from, Map.merge(adv, %{payload: p}))
       reply({:text, "What is your email address?\n\nReply SKIP to add it later."}, ctx)
@@ -117,7 +127,8 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
     cond do
       cmd == "APPLY" ->
         reply(
-          {:plain, "Your draft is already saved ✅\n\nReply SIGNUP to continue with phone sign-in, or open:\n#{join_url}"},
+          {:plain,
+           "Your draft is already saved ✅\n\nReply SIGNUP to continue with phone sign-in, or open:\n#{join_url}"},
           ctx
         )
 
@@ -171,51 +182,420 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
     p = lead.payload
 
     case lead.current_step do
-      "personal_email" -> personal_email(from, lead, p, message, cmd, ctx)
-      "personal_first_name" -> required_text(from, lead, p, message, ctx, ["personalInfo", "firstName"], "personal_last_name", "What is your last name?", "Please enter your first name.\n\nWhat is your first name?", name?: true)
-      "personal_last_name" -> required_text(from, lead, p, message, ctx, ["personalInfo", "lastName"], "personal_address", @address_prompt, "Please enter your last name.\n\nWhat is your last name?", name?: true)
-      "personal_address" -> personal_address(from, lead, p, message, ctx, lat, lng)
-      "personal_city_area" -> personal_city_area(from, lead, p, message, ctx)
-      "personal_city_other" -> required_text(from, lead, p, message, ctx, ["personalInfo", "city"], "personal_bio", "Tell customers about yourself (max 500 chars).\n\nReply SKIP to add later.", "Please type which area you are in.\n\nWhich area? (free text)", area?: true)
-      "personal_bio" -> personal_bio(from, lead, p, message, cmd, ctx)
-      "experience_has_cleaned" -> experience_has_cleaned(from, lead, p, message, ctx)
-      "years_of_experience" -> menu(from, lead, p, message, ctx, 4, ["<1 year", "1–2 years", "3–5 years", ">5 years"], ["experience", "yearsOfExperience"], "previous_employers", "Where have you worked before?\n\nReply SKIP if not applicable.", years_prompt())
-      "previous_employers" -> skippable(from, lead, p, message, cmd, ctx, ["experience", "previousEmployers"], "ref1_name", "Reference 1: what is their name?")
-      "ref1_name" -> required_text(from, lead, p, message, ctx, ["references", "client1Name"], "ref1_contact", "Reference 1 phone?\nExample: +233 55 123 4567", "A name is required for this reference.\n\nReference 1: what is their name?")
-      "ref1_contact" -> phone_field(from, lead, p, message, ctx, ["references", "client1Contact"], "ref1_relationship", relationship_prompt(1), "That does not look like a valid phone number.\n\nReference 1 phone?\nExample: +233 55 123 4567")
-      "ref1_relationship" -> menu(from, lead, p, message, ctx, 5, @relationships, ["references", "client1Relationship"], "ask_ref2", yes_no(@q_ref2), relationship_prompt(1), quick?: true)
-      "ask_ref2" -> yes_no_branch(from, lead, p, message, ctx, "ref2_name", "ask_ref3", "Reference 2: name?", yes_no(@q_ref3), @q_ref2)
-      "ref2_name" -> required_text(from, lead, p, message, ctx, ["references", "client2Name"], "ref2_contact", "Reference 2 phone?", "Please enter their name.\n\nReference 2: name?")
-      "ref2_contact" -> phone_field(from, lead, p, message, ctx, ["references", "client2Contact"], "ref2_relationship", relationship_prompt(nil), "That does not look like a valid phone number.\n\nReference 2 phone?")
-      "ref2_relationship" -> menu(from, lead, p, message, ctx, 5, @relationships, ["references", "client2Relationship"], "ask_ref3", yes_no(@q_ref3), relationship_prompt(nil), quick?: true)
-      "ask_ref3" -> yes_no_branch(from, lead, p, message, ctx, "ref3_name", "client_description", "Reference 3: name?", {:menu, client_desc_prompt()}, @q_ref3)
-      "ref3_name" -> required_text(from, lead, p, message, ctx, ["references", "client3Name"], "ref3_contact", "Reference 3 phone?", "Please enter their name.\n\nReference 3: name?")
-      "ref3_contact" -> phone_field(from, lead, p, message, ctx, ["references", "client3Contact"], "ref3_relationship", relationship_prompt(nil), "That does not look like a valid phone number.\n\nReference 3 phone?")
-      "ref3_relationship" -> menu(from, lead, p, message, ctx, 5, @relationships, ["references", "client3Relationship"], "client_description", {:menu, client_desc_prompt()}, relationship_prompt(nil))
-      "client_description" -> menu(from, lead, p, message, ctx, 5, client_desc_opts(), ["experience", "clientDescription"], "specializations", {:multi, spec_prompt(), 5}, client_desc_prompt())
-      "specializations" -> multi(from, lead, p, message, ctx, 5, spec_opts(), ["services", "specializations"], "certifications", {:text, "Certifications or training?\n\nReply SKIP if none."}, spec_prompt())
-      "certifications" -> certifications(from, lead, p, message, cmd, ctx)
-      "services_offered" -> services_offered(from, lead, p, message, cmd, ctx)
-      "equipment" -> equipment(from, lead, p, message, ctx)
-      "availability_days" -> availability_days(from, lead, p, message, cmd, ctx)
-      "hours_per_week" -> menu(from, lead, p, message, ctx, 4, ["<10 hours", "10–20 hours", "20–40 hours", "40+ hours / full-time"], ["availability", "hoursPerWeek"], "preferred_shifts", {:multi, shifts_prompt(), 4}, hours_prompt())
-      "preferred_shifts" -> preferred_shifts(from, lead, p, message, cmd, ctx)
-      "start_date" -> start_date(from, lead, p, message, ctx)
-      "work_areas" -> work_areas(from, lead, p, message, ctx)
-      "office_cleaning_skill" -> yes_no_set(from, lead, p, message, ctx, ["skills", "cleanedOffices"], "ironing_confidence", {:menu, confidence_prompt("Ironing")}, @q_office)
-      "ironing_confidence" -> menu(from, lead, p, message, ctx, 3, confidence_opts(), ["skills", "ironingConfidence"], "laundry_confidence", {:menu, confidence_prompt("Laundry")}, confidence_prompt("Ironing"))
-      "laundry_confidence" -> menu(from, lead, p, message, ctx, 3, confidence_opts(), ["skills", "laundryConfidence"], "pets", {:menu, pets_prompt()}, confidence_prompt("Laundry"))
-      "pets" -> menu(from, lead, p, message, ctx, 4, pets_opts(), ["skills", "petComfort"], "cooking_course", yes_no(@q_cook), pets_prompt(), quick?: true)
-      "cooking_course" -> yes_no_set(from, lead, p, message, ctx, ["skills", "cookingCourse"], "drivers_license", yes_no(@q_license), @q_cook)
-      "drivers_license" -> yes_no_set(from, lead, p, message, ctx, ["skills", "driversLicense"], "local_languages", {:multi, local_lang_prompt(), 5}, @q_license)
-      "local_languages" -> languages(from, lead, p, message, ctx, 5, ["Twi", "Ga", "Ewe", "Hausa", "None"], 5, ["skills", "localLanguages"], "international_languages", {:multi, intl_lang_prompt(), 4}, local_lang_prompt())
-      "international_languages" -> international_languages(from, lead, p, message, ctx)
-      "ghana_card_front" -> skip_ghana_to_terms(from, lead, ctx)
-      "ghana_card_back" -> skip_ghana_to_terms(from, lead, ctx)
-      "terms_agreement" -> terms(from, lead, p, message, ctx)
-      "background_check" -> background(from, lead, p, message, ctx)
-      "whatsapp_background_verify" -> background_verify(from, lead, p, message, cmd, ctx)
-      "review_submit" -> review_submit(from, lead, p, cmd, ctx)
+      "personal_email" ->
+        personal_email(from, lead, p, message, cmd, ctx)
+
+      "personal_first_name" ->
+        required_text(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          ["personalInfo", "firstName"],
+          "personal_last_name",
+          "What is your last name?",
+          "Please enter your first name.\n\nWhat is your first name?", name?: true)
+
+      "personal_last_name" ->
+        required_text(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          ["personalInfo", "lastName"],
+          "personal_address",
+          @address_prompt,
+          "Please enter your last name.\n\nWhat is your last name?", name?: true)
+
+      "personal_address" ->
+        personal_address(from, lead, p, message, ctx, lat, lng)
+
+      "personal_city_area" ->
+        personal_city_area(from, lead, p, message, ctx)
+
+      "personal_city_other" ->
+        required_text(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          ["personalInfo", "city"],
+          "personal_bio",
+          "Tell customers about yourself (max 500 chars).\n\nReply SKIP to add later.",
+          "Please type which area you are in.\n\nWhich area? (free text)", area?: true)
+
+      "personal_bio" ->
+        personal_bio(from, lead, p, message, cmd, ctx)
+
+      "experience_has_cleaned" ->
+        experience_has_cleaned(from, lead, p, message, ctx)
+
+      "years_of_experience" ->
+        menu(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          4,
+          ["<1 year", "1–2 years", "3–5 years", ">5 years"],
+          ["experience", "yearsOfExperience"],
+          "previous_employers",
+          "Where have you worked before?\n\nReply SKIP if not applicable.",
+          years_prompt()
+        )
+
+      "previous_employers" ->
+        skippable(
+          from,
+          lead,
+          p,
+          message,
+          cmd,
+          ctx,
+          ["experience", "previousEmployers"],
+          "ref1_name",
+          "Reference 1: what is their name?"
+        )
+
+      "ref1_name" ->
+        required_text(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          ["references", "client1Name"],
+          "ref1_contact",
+          "Reference 1 phone?\nExample: +233 55 123 4567",
+          "A name is required for this reference.\n\nReference 1: what is their name?"
+        )
+
+      "ref1_contact" ->
+        phone_field(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          ["references", "client1Contact"],
+          "ref1_relationship",
+          relationship_prompt(1),
+          "That does not look like a valid phone number.\n\nReference 1 phone?\nExample: +233 55 123 4567"
+        )
+
+      "ref1_relationship" ->
+        menu(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          5,
+          @relationships,
+          ["references", "client1Relationship"],
+          "ask_ref2",
+          yes_no(@q_ref2),
+          relationship_prompt(1), quick?: true)
+
+      "ask_ref2" ->
+        yes_no_branch(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          "ref2_name",
+          "ask_ref3",
+          "Reference 2: name?",
+          yes_no(@q_ref3),
+          @q_ref2
+        )
+
+      "ref2_name" ->
+        required_text(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          ["references", "client2Name"],
+          "ref2_contact",
+          "Reference 2 phone?",
+          "Please enter their name.\n\nReference 2: name?"
+        )
+
+      "ref2_contact" ->
+        phone_field(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          ["references", "client2Contact"],
+          "ref2_relationship",
+          relationship_prompt(nil),
+          "That does not look like a valid phone number.\n\nReference 2 phone?"
+        )
+
+      "ref2_relationship" ->
+        menu(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          5,
+          @relationships,
+          ["references", "client2Relationship"],
+          "ask_ref3",
+          yes_no(@q_ref3),
+          relationship_prompt(nil), quick?: true)
+
+      "ask_ref3" ->
+        yes_no_branch(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          "ref3_name",
+          "client_description",
+          "Reference 3: name?",
+          {:menu, client_desc_prompt()},
+          @q_ref3
+        )
+
+      "ref3_name" ->
+        required_text(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          ["references", "client3Name"],
+          "ref3_contact",
+          "Reference 3 phone?",
+          "Please enter their name.\n\nReference 3: name?"
+        )
+
+      "ref3_contact" ->
+        phone_field(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          ["references", "client3Contact"],
+          "ref3_relationship",
+          relationship_prompt(nil),
+          "That does not look like a valid phone number.\n\nReference 3 phone?"
+        )
+
+      "ref3_relationship" ->
+        menu(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          5,
+          @relationships,
+          ["references", "client3Relationship"],
+          "client_description",
+          {:menu, client_desc_prompt()},
+          relationship_prompt(nil)
+        )
+
+      "client_description" ->
+        menu(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          5,
+          client_desc_opts(),
+          ["experience", "clientDescription"],
+          "specializations",
+          {:multi, spec_prompt(), 5},
+          client_desc_prompt()
+        )
+
+      "specializations" ->
+        multi(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          5,
+          spec_opts(),
+          ["services", "specializations"],
+          "certifications",
+          {:text, "Certifications or training?\n\nReply SKIP if none."},
+          spec_prompt()
+        )
+
+      "certifications" ->
+        certifications(from, lead, p, message, cmd, ctx)
+
+      "services_offered" ->
+        services_offered(from, lead, p, message, cmd, ctx)
+
+      "equipment" ->
+        equipment(from, lead, p, message, ctx)
+
+      "availability_days" ->
+        availability_days(from, lead, p, message, cmd, ctx)
+
+      "hours_per_week" ->
+        menu(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          4,
+          ["<10 hours", "10–20 hours", "20–40 hours", "40+ hours / full-time"],
+          ["availability", "hoursPerWeek"],
+          "preferred_shifts",
+          {:multi, shifts_prompt(), 4},
+          hours_prompt()
+        )
+
+      "preferred_shifts" ->
+        preferred_shifts(from, lead, p, message, cmd, ctx)
+
+      "start_date" ->
+        start_date(from, lead, p, message, ctx)
+
+      "work_areas" ->
+        work_areas(from, lead, p, message, ctx)
+
+      "office_cleaning_skill" ->
+        yes_no_set(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          ["skills", "cleanedOffices"],
+          "ironing_confidence",
+          {:menu, confidence_prompt("Ironing")},
+          @q_office
+        )
+
+      "ironing_confidence" ->
+        menu(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          3,
+          confidence_opts(),
+          ["skills", "ironingConfidence"],
+          "laundry_confidence",
+          {:menu, confidence_prompt("Laundry")},
+          confidence_prompt("Ironing")
+        )
+
+      "laundry_confidence" ->
+        menu(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          3,
+          confidence_opts(),
+          ["skills", "laundryConfidence"],
+          "pets",
+          {:menu, pets_prompt()},
+          confidence_prompt("Laundry")
+        )
+
+      "pets" ->
+        menu(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          4,
+          pets_opts(),
+          ["skills", "petComfort"],
+          "cooking_course",
+          yes_no(@q_cook),
+          pets_prompt(), quick?: true)
+
+      "cooking_course" ->
+        yes_no_set(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          ["skills", "cookingCourse"],
+          "drivers_license",
+          yes_no(@q_license),
+          @q_cook
+        )
+
+      "drivers_license" ->
+        yes_no_set(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          ["skills", "driversLicense"],
+          "local_languages",
+          {:multi, local_lang_prompt(), 5},
+          @q_license
+        )
+
+      "local_languages" ->
+        languages(
+          from,
+          lead,
+          p,
+          message,
+          ctx,
+          5,
+          ["Twi", "Ga", "Ewe", "Hausa", "None"],
+          5,
+          ["skills", "localLanguages"],
+          "international_languages",
+          {:multi, intl_lang_prompt(), 4},
+          local_lang_prompt()
+        )
+
+      "international_languages" ->
+        international_languages(from, lead, p, message, ctx)
+
+      "ghana_card_front" ->
+        skip_ghana_to_terms(from, lead, ctx)
+
+      "ghana_card_back" ->
+        skip_ghana_to_terms(from, lead, ctx)
+
+      "terms_agreement" ->
+        terms(from, lead, p, message, ctx)
+
+      "background_check" ->
+        background(from, lead, p, message, ctx)
+
+      "whatsapp_background_verify" ->
+        background_verify(from, lead, p, message, cmd, ctx)
+
+      "review_submit" ->
+        review_submit(from, lead, p, cmd, ctx)
+
       _ ->
         Logger.error("unhandled recruitment step #{lead.current_step}")
         reply({:text, "Something went wrong with your session. Reply RESTART or HELP."}, ctx)
@@ -234,21 +614,32 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
         advance_save(from, lead, p, "personal_first_name", %{email: email})
         reply({:text, "What is your first name?"}, ctx)
       else
-        reply({:text, "That does not look like a valid email.\n\nWhat is your email address? Reply SKIP to add it later."}, ctx)
+        reply(
+          {:text,
+           "That does not look like a valid email.\n\nWhat is your email address? Reply SKIP to add it later."},
+          ctx
+        )
       end
     end
   end
 
   defp personal_address(from, lead, p, message, ctx, lat, lng) do
     if String.trim(message) == "" and is_nil(lat) do
-      reply({:text, "Please type your address or share your WhatsApp location pin.\n\n#{@address_prompt}"}, ctx)
+      reply(
+        {:text,
+         "Please type your address or share your WhatsApp location pin.\n\n#{@address_prompt}"},
+        ctx
+      )
     else
       p =
         p
         |> maybe_put_address(message, lat, lng)
         |> maybe_put_coords(lat, lng)
 
-      advance_save(from, lead, p, "personal_city_area", %{area: get_in(p, ["personalInfo", "address"])})
+      advance_save(from, lead, p, "personal_city_area", %{
+        area: get_in(p, ["personalInfo", "address"])
+      })
+
       reply({:menu, city_prompt()}, ctx)
     end
   end
@@ -269,7 +660,11 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
         else
           p = put_in(p, ["personalInfo", "city"], area)
           advance_save(from, lead, p, "personal_bio", %{area: area})
-          reply({:text, "Tell customers about yourself (max 500 chars).\n\nReply SKIP to add later."}, ctx)
+
+          reply(
+            {:text, "Tell customers about yourself (max 500 chars).\n\nReply SKIP to add later."},
+            ctx
+          )
         end
     end
   end
@@ -282,7 +677,11 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
         reply(yes_no(@q_prior), ctx)
 
       String.length(message) > 500 ->
-        reply({:text, "Too long. Max 500 characters.\n\nTell customers about yourself, or reply SKIP to add it later."}, ctx)
+        reply(
+          {:text,
+           "Too long. Max 500 characters.\n\nTell customers about yourself, or reply SKIP to add it later."},
+          ctx
+        )
 
       true ->
         p = put_in(p, ["personalInfo", "bio"], String.trim(message))
@@ -294,7 +693,13 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
   defp experience_has_cleaned(from, lead, p, message, ctx) do
     case Parse.yes_no_choice(message) do
       nil ->
-        reply(yes_no(@q_prior, "Use the Yes or No buttons, or type Yes / No (or reply 1 / 2).\n\n#{@q_prior}"), ctx)
+        reply(
+          yes_no(
+            @q_prior,
+            "Use the Yes or No buttons, or type Yes / No (or reply 1 / 2).\n\n#{@q_prior}"
+          ),
+          ctx
+        )
 
       2 ->
         p =
@@ -314,7 +719,13 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
   end
 
   defp certifications(from, lead, p, message, cmd, ctx) do
-    p = put_in(p, ["services", "certifications"], if(cmd == "SKIP", do: "", else: String.trim(message)))
+    p =
+      put_in(
+        p,
+        ["services", "certifications"],
+        if(cmd == "SKIP", do: "", else: String.trim(message))
+      )
+
     catalog = Leads.fetch_service_catalog()
     flow = Map.merge(p["_flow"] || %{}, %{"serviceCatalog" => catalog, "servicesPage" => 0})
     p = Map.put(p, "_flow", flow)
@@ -418,7 +829,9 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
         reply({:text, start_prompt()}, ctx)
 
       sel = Parse.parse_multi_select(message, 4) ->
-        p = put_in(p, ["availability", "preferredShifts"], Enum.map(sel, &Enum.at(labels, &1 - 1)))
+        p =
+          put_in(p, ["availability", "preferredShifts"], Enum.map(sel, &Enum.at(labels, &1 - 1)))
+
         advance_save(from, lead, p, "start_date")
         reply({:text, start_prompt()}, ctx)
 
@@ -504,7 +917,13 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
       advance_save(from, lead, p, "background_check")
       reply(accept_qr(@q_background), ctx)
     else
-      reply(accept_qr(@q_terms, "Please choose one:\n\n#{@q_terms}\n\n1. Accept\n2. Back (type BACK)\n3. Website (type WEB)"), ctx)
+      reply(
+        accept_qr(
+          @q_terms,
+          "Please choose one:\n\n#{@q_terms}\n\n1. Accept\n2. Back (type BACK)\n3. Website (type WEB)"
+        ),
+        ctx
+      )
     end
   end
 
@@ -513,12 +932,26 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
       p =
         p
         |> put_in(["verification", "backgroundCheckConsent"], true)
-        |> put_in(["verification", "backgroundCheckConsentAt"], DateTime.to_iso8601(DateTime.utc_now()))
+        |> put_in(
+          ["verification", "backgroundCheckConsentAt"],
+          DateTime.to_iso8601(DateTime.utc_now())
+        )
 
       advance_save(from, lead, p, "whatsapp_background_verify")
-      background_link_reply(from, ctx, "One last step: verify your identity for your background check.\n\n")
+
+      background_link_reply(
+        from,
+        ctx,
+        "One last step: verify your identity for your background check.\n\n"
+      )
     else
-      reply(accept_qr(@q_background, "Please choose one:\n\n#{@q_background}\n\n1. Accept\n2. Back (type BACK)\n3. Website (type WEB)"), ctx)
+      reply(
+        accept_qr(
+          @q_background,
+          "Please choose one:\n\n#{@q_background}\n\n1. Accept\n2. Back (type BACK)\n3. Website (type WEB)"
+        ),
+        ctx
+      )
     end
   end
 
@@ -531,7 +964,11 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
         background_link_reply(from, ctx, "Background check verification:\n")
 
       not done? ->
-        reply({:plain, "Finish your verification on the secure page, then reply DONE.\n\nReply LINK if you need a new verification link.\nReply SIGNUP if you need to sign in first."}, ctx)
+        reply(
+          {:plain,
+           "Finish your verification on the secure page, then reply DONE.\n\nReply LINK if you need a new verification link.\nReply SIGNUP if you need to sign in first."},
+          ctx
+        )
 
       true ->
         advance_save(from, lead, lead.payload, "review_submit")
@@ -553,7 +990,13 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
       _ = Outbound.send_plain_text(ctx.to, ctx.from, "Processing your request…")
       reply({:plain, submitted_message("#{app_url()}/sign-in")}, ctx)
     else
-      reply(submit_qr(review_summary(p), "Please choose one:\n\n#{review_summary(p)}\n\n1. Submit (type SUBMIT)\n2. Back (type BACK)\n3. Website (type WEB)\n4. Phone sign-in on web (type SIGNUP)"), ctx)
+      reply(
+        submit_qr(
+          review_summary(p),
+          "Please choose one:\n\n#{review_summary(p)}\n\n1. Submit (type SUBMIT)\n2. Back (type BACK)\n3. Website (type WEB)\n4. Phone sign-in on web (type SIGNUP)"
+        ),
+        ctx
+      )
     end
   end
 
@@ -642,57 +1085,162 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
     p = lead.payload
 
     case lead.current_step do
-      "awaiting_apply" -> reply(welcome(), ctx)
-      "personal_email" -> reply({:text, "What is your email address?\n\nReply SKIP to add it later."}, ctx)
-      "personal_first_name" -> reply({:text, "What is your first name?"}, ctx)
-      "personal_last_name" -> reply({:text, "What is your last name?"}, ctx)
-      "personal_address" -> reply({:text, @address_prompt}, ctx)
-      "personal_city_area" -> reply({:menu, city_prompt()}, ctx)
-      "personal_city_other" -> reply({:text, "Which area? (free text)"}, ctx)
-      "personal_bio" -> reply({:text, "Tell customers about yourself (max 500 chars).\n\nReply SKIP to add later."}, ctx)
-      "experience_has_cleaned" -> reply(yes_no(@q_prior), ctx)
-      "years_of_experience" -> reply({:menu, years_prompt()}, ctx)
-      "previous_employers" -> reply({:text, "Where have you worked before?\n\nReply SKIP if not applicable."}, ctx)
-      "ref1_name" -> reply({:text, "Provide a name for your reference: what is their name?"}, ctx)
-      "ref1_contact" -> reply({:text, "Provide a phone number for your reference: what is their phone number?\nExample: +233 55 123 4567"}, ctx)
-      "ref1_relationship" -> reply({:menu, relationship_prompt(1)}, ctx)
-      "ask_ref2" -> reply(yes_no(@q_ref2), ctx)
-      "ref2_name" -> reply({:text, "Reference 2: name?"}, ctx)
-      "ref2_contact" -> reply({:text, "Reference 2 phone?"}, ctx)
-      "ref2_relationship" -> reply({:menu, relationship_prompt(nil)}, ctx)
-      "ask_ref3" -> reply(yes_no(@q_ref3), ctx)
-      "ref3_name" -> reply({:text, "Reference 3: name?"}, ctx)
-      "ref3_contact" -> reply({:text, "Reference 3 phone?"}, ctx)
-      "ref3_relationship" -> reply({:menu, relationship_prompt(nil)}, ctx)
-      "client_description" -> reply({:menu, client_desc_prompt()}, ctx)
-      "specializations" -> reply({:multi, spec_prompt(), 5}, ctx)
-      "certifications" -> reply({:text, "Certifications or training?\n\nReply SKIP if none."}, ctx)
+      "awaiting_apply" ->
+        reply(welcome(), ctx)
+
+      "personal_email" ->
+        reply({:text, "What is your email address?\n\nReply SKIP to add it later."}, ctx)
+
+      "personal_first_name" ->
+        reply({:text, "What is your first name?"}, ctx)
+
+      "personal_last_name" ->
+        reply({:text, "What is your last name?"}, ctx)
+
+      "personal_address" ->
+        reply({:text, @address_prompt}, ctx)
+
+      "personal_city_area" ->
+        reply({:menu, city_prompt()}, ctx)
+
+      "personal_city_other" ->
+        reply({:text, "Which area? (free text)"}, ctx)
+
+      "personal_bio" ->
+        reply(
+          {:text, "Tell customers about yourself (max 500 chars).\n\nReply SKIP to add later."},
+          ctx
+        )
+
+      "experience_has_cleaned" ->
+        reply(yes_no(@q_prior), ctx)
+
+      "years_of_experience" ->
+        reply({:menu, years_prompt()}, ctx)
+
+      "previous_employers" ->
+        reply({:text, "Where have you worked before?\n\nReply SKIP if not applicable."}, ctx)
+
+      "ref1_name" ->
+        reply({:text, "Provide a name for your reference: what is their name?"}, ctx)
+
+      "ref1_contact" ->
+        reply(
+          {:text,
+           "Provide a phone number for your reference: what is their phone number?\nExample: +233 55 123 4567"},
+          ctx
+        )
+
+      "ref1_relationship" ->
+        reply({:menu, relationship_prompt(1)}, ctx)
+
+      "ask_ref2" ->
+        reply(yes_no(@q_ref2), ctx)
+
+      "ref2_name" ->
+        reply({:text, "Reference 2: name?"}, ctx)
+
+      "ref2_contact" ->
+        reply({:text, "Reference 2 phone?"}, ctx)
+
+      "ref2_relationship" ->
+        reply({:menu, relationship_prompt(nil)}, ctx)
+
+      "ask_ref3" ->
+        reply(yes_no(@q_ref3), ctx)
+
+      "ref3_name" ->
+        reply({:text, "Reference 3: name?"}, ctx)
+
+      "ref3_contact" ->
+        reply({:text, "Reference 3 phone?"}, ctx)
+
+      "ref3_relationship" ->
+        reply({:menu, relationship_prompt(nil)}, ctx)
+
+      "client_description" ->
+        reply({:menu, client_desc_prompt()}, ctx)
+
+      "specializations" ->
+        reply({:multi, spec_prompt(), 5}, ctx)
+
+      "certifications" ->
+        reply({:text, "Certifications or training?\n\nReply SKIP if none."}, ctx)
+
       "services_offered" ->
         catalog = get_in(p, ["_flow", "serviceCatalog"]) || []
         page = get_in(p, ["_flow", "servicesPage"]) || 0
         reply({:multi, services_prompt(catalog, page), max(length(catalog), 1)}, ctx)
-      "equipment" -> reply(equipment_qr(), ctx)
-      "availability_days" -> reply({:multi, days_prompt(), 7}, ctx)
-      "hours_per_week" -> reply({:menu, hours_prompt()}, ctx)
-      "preferred_shifts" -> reply({:multi, shifts_prompt(), 4}, ctx)
-      "start_date" -> reply({:text, start_prompt()}, ctx)
-      "work_areas" -> reply({:multi, work_areas_prompt(), length(work_area_list())}, ctx)
-      "office_cleaning_skill" -> reply(yes_no(@q_office), ctx)
-      "ironing_confidence" -> reply({:menu, confidence_prompt("Ironing")}, ctx)
-      "laundry_confidence" -> reply({:menu, confidence_prompt("Laundry")}, ctx)
-      "pets" -> reply({:menu, pets_prompt()}, ctx)
-      "cooking_course" -> reply(yes_no(@q_cook), ctx)
-      "drivers_license" -> reply(yes_no(@q_license), ctx)
-      "local_languages" -> reply({:multi, local_lang_prompt(), 5}, ctx)
-      "international_languages" -> reply({:multi, intl_lang_prompt(), 4}, ctx)
-      "ghana_card_front" -> reply(accept_qr(@q_terms), ctx)
-      "ghana_card_back" -> reply(accept_qr(@q_terms), ctx)
-      "terms_agreement" -> reply(accept_qr(@q_terms), ctx)
-      "background_check" -> reply(accept_qr(@q_background), ctx)
-      "whatsapp_background_verify" -> background_link_reply(lead.phone, ctx, "Background check verification:\n")
-      "review_submit" -> reply(submit_qr(review_summary(p)), ctx)
-      "completed" -> reply({:plain, "Your application draft is saved ✅\n\nReply SIGNUP to sign in with your phone and continue verification on the web.\nReply WEB if you prefer to open the website with a continue code.\n\n#{app_url()}/join-as-cleaner"}, ctx)
-      _ -> reply({:text, "Something went wrong with your session. Reply RESTART or HELP."}, ctx)
+
+      "equipment" ->
+        reply(equipment_qr(), ctx)
+
+      "availability_days" ->
+        reply({:multi, days_prompt(), 7}, ctx)
+
+      "hours_per_week" ->
+        reply({:menu, hours_prompt()}, ctx)
+
+      "preferred_shifts" ->
+        reply({:multi, shifts_prompt(), 4}, ctx)
+
+      "start_date" ->
+        reply({:text, start_prompt()}, ctx)
+
+      "work_areas" ->
+        reply({:multi, work_areas_prompt(), length(work_area_list())}, ctx)
+
+      "office_cleaning_skill" ->
+        reply(yes_no(@q_office), ctx)
+
+      "ironing_confidence" ->
+        reply({:menu, confidence_prompt("Ironing")}, ctx)
+
+      "laundry_confidence" ->
+        reply({:menu, confidence_prompt("Laundry")}, ctx)
+
+      "pets" ->
+        reply({:menu, pets_prompt()}, ctx)
+
+      "cooking_course" ->
+        reply(yes_no(@q_cook), ctx)
+
+      "drivers_license" ->
+        reply(yes_no(@q_license), ctx)
+
+      "local_languages" ->
+        reply({:multi, local_lang_prompt(), 5}, ctx)
+
+      "international_languages" ->
+        reply({:multi, intl_lang_prompt(), 4}, ctx)
+
+      "ghana_card_front" ->
+        reply(accept_qr(@q_terms), ctx)
+
+      "ghana_card_back" ->
+        reply(accept_qr(@q_terms), ctx)
+
+      "terms_agreement" ->
+        reply(accept_qr(@q_terms), ctx)
+
+      "background_check" ->
+        reply(accept_qr(@q_background), ctx)
+
+      "whatsapp_background_verify" ->
+        background_link_reply(lead.phone, ctx, "Background check verification:\n")
+
+      "review_submit" ->
+        reply(submit_qr(review_summary(p)), ctx)
+
+      "completed" ->
+        reply(
+          {:plain,
+           "Your application draft is saved ✅\n\nReply SIGNUP to sign in with your phone and continue verification on the web.\nReply WEB if you prefer to open the website with a continue code.\n\n#{app_url()}/join-as-cleaner"},
+          ctx
+        )
+
+      _ ->
+        reply({:text, "Something went wrong with your session. Reply RESTART or HELP."}, ctx)
     end
   end
 
@@ -706,14 +1254,20 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
         )
 
       _ ->
-        reply({:plain, "We could not create a continue code right now. Please try again in a moment, or reply WEB."}, ctx)
+        reply(
+          {:plain,
+           "We could not create a continue code right now. Please try again in a moment, or reply WEB."},
+          ctx
+        )
     end
   end
 
   defp signup_reply(from, lead, ctx) do
     pi = lead.payload["personalInfo"] || %{}
     full_name = String.trim("#{pi["firstName"]} #{pi["lastName"]}")
-    signup_phone = Parse.normalize_ghana_phone(pi["phone"] || "") || Parse.normalize_ghana_phone(from) || from
+
+    signup_phone =
+      Parse.normalize_ghana_phone(pi["phone"] || "") || Parse.normalize_ghana_phone(from) || from
 
     case Leads.issue_continuation_code(from) do
       {:ok, %{display: display}} ->
@@ -724,29 +1278,53 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
             "/join-as-cleaner?apply=1&continue=#{URI.encode_www_form(display)}"
           end
 
-        q = URI.encode_query(%{"returnUrl" => return_path, "phone" => signup_phone} |> maybe_name(full_name))
+        q =
+          URI.encode_query(
+            %{"returnUrl" => return_path, "phone" => signup_phone}
+            |> maybe_name(full_name)
+          )
+
         link = "#{app_url()}/sign-up?#{q}"
 
         extra =
           if lead.current_step == "whatsapp_background_verify",
-            do: "After signing in, your background-check page will open. When you finish, reply DONE here.",
+            do:
+              "After signing in, your background-check page will open. When you finish, reply DONE here.",
             else: "After signing in, you can complete your verification."
 
-        reply({:plain, "Continue with phone sign-in here:\n\n#{link}\n\nUse the same phone number you used on WhatsApp so we can find your saved application.\n\n#{extra}"}, ctx)
+        reply(
+          {:plain,
+           "Continue with phone sign-in here:\n\n#{link}\n\nUse the same phone number you used on WhatsApp so we can find your saved application.\n\n#{extra}"},
+          ctx
+        )
 
       _ ->
-        reply({:plain, "We could not create a continue link. Please try again in a moment, or reply WEB or CODE."}, ctx)
+        reply(
+          {:plain,
+           "We could not create a continue link. Please try again in a moment, or reply WEB or CODE."},
+          ctx
+        )
     end
   end
 
   defp background_link_reply(phone, ctx, prefix) do
     case Leads.issue_continuation_code(phone) do
       {:ok, %{display: display}} ->
-        link = "#{app_url()}/join-as-cleaner/whatsapp-background-check?continue=#{URI.encode_www_form(display)}"
-        reply({:plain, "#{prefix}#{if String.contains?(prefix, "http"), do: "", else: "Open this secure verification page:\n"}#{link}\n\nReply DONE after you finish, or LINK for a new link."}, ctx)
+        link =
+          "#{app_url()}/join-as-cleaner/whatsapp-background-check?continue=#{URI.encode_www_form(display)}"
+
+        reply(
+          {:plain,
+           "#{prefix}#{if String.contains?(prefix, "http"), do: "", else: "Open this secure verification page:\n"}#{link}\n\nReply DONE after you finish, or LINK for a new link."},
+          ctx
+        )
 
       _ ->
-        reply({:plain, "We could not create your verification link. Please try again in a moment, or reply LINK."}, ctx)
+        reply(
+          {:plain,
+           "We could not create your verification link. Please try again in a moment, or reply LINK."},
+          ctx
+        )
     end
   end
 
@@ -754,7 +1332,14 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
     if Payload.known_step?(lead.current_step) do
       lead
     else
-      patch = %{current_step: "awaiting_apply", step: "awaiting_apply", step_history: [], payload: lead.payload, status: "new"}
+      patch = %{
+        current_step: "awaiting_apply",
+        step: "awaiting_apply",
+        step_history: [],
+        payload: lead.payload,
+        status: "new"
+      }
+
       save(from, patch)
       Map.merge(lead, patch)
     end
@@ -807,30 +1392,67 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
 
   defp welcome(prefix \\ "") do
     body =
-      (if prefix == "", do: "", else: prefix <> "\n\n") <>
+      if(prefix == "", do: "", else: prefix <> "\n\n") <>
         "Hi 👋 Welcome to Instaclean cleaner recruitment.\n\nYou can complete the first part right here on WhatsApp.\n\nTap Apply to start.\nTap Website only if you prefer to continue in your browser."
 
     fallback =
-      (if prefix == "", do: "", else: prefix <> "\n\n") <>
+      if(prefix == "", do: "", else: prefix <> "\n\n") <>
         "Hi 👋 Welcome to Instaclean cleaner recruitment.\n\nYou can complete the first part right here on WhatsApp.\n\nReply APPLY to start.\nReply HELP if you need help.\nReply WEB only if you prefer to continue in your browser."
 
-    quick(:welcome, body, [%{id: "APPLY", title: "Apply"}, %{id: "HELP", title: "Help"}, %{id: "WEB", title: "Website"}], fallback)
+    quick(
+      :welcome,
+      body,
+      [
+        %{id: "APPLY", title: "Apply"},
+        %{id: "HELP", title: "Help"},
+        %{id: "WEB", title: "Website"}
+      ],
+      fallback
+    )
   end
 
   defp yes_no(message, fallback \\ nil) do
-    quick(:yes_no, message, [%{id: "1", title: "Yes"}, %{id: "2", title: "No"}, %{id: "WEB", title: "Website"}], fallback)
+    quick(
+      :yes_no,
+      message,
+      [%{id: "1", title: "Yes"}, %{id: "2", title: "No"}, %{id: "WEB", title: "Website"}],
+      fallback
+    )
   end
 
   defp accept_qr(message, fallback \\ nil) do
-    quick(:accept, message, [%{id: "1", title: "Accept"}, %{id: "BACK", title: "Back"}, %{id: "WEB", title: "Website"}], fallback)
+    quick(
+      :accept,
+      message,
+      [%{id: "1", title: "Accept"}, %{id: "BACK", title: "Back"}, %{id: "WEB", title: "Website"}],
+      fallback
+    )
   end
 
   defp submit_qr(message, fallback \\ nil) do
-    quick(:submit, message, [%{id: "SUBMIT", title: "Submit"}, %{id: "BACK", title: "Back"}, %{id: "WEB", title: "Website"}], fallback)
+    quick(
+      :submit,
+      message,
+      [
+        %{id: "SUBMIT", title: "Submit"},
+        %{id: "BACK", title: "Back"},
+        %{id: "WEB", title: "Website"}
+      ],
+      fallback
+    )
   end
 
   defp equipment_qr do
-    quick(:equipment, @q_equipment, [%{id: "1", title: "All equipment"}, %{id: "2", title: "Some"}, %{id: "3", title: "Need provided"}], nil)
+    quick(
+      :equipment,
+      @q_equipment,
+      [
+        %{id: "1", title: "All equipment"},
+        %{id: "2", title: "Some"},
+        %{id: "3", title: "Need provided"}
+      ],
+      nil
+    )
   end
 
   defp quick(template, message, buttons, fallback) do
@@ -838,34 +1460,95 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
   end
 
   defp city_prompt do
-    lines = Payload.areas() |> Enum.with_index(1) |> Enum.map(fn {area, i} -> "#{i}. #{area}" end) |> Enum.join("\n")
+    lines =
+      Payload.areas()
+      |> Enum.with_index(1)
+      |> Enum.map(fn {area, i} -> "#{i}. #{area}" end)
+      |> Enum.join("\n")
+
     "Which city or area are you in?\n\nReply with a number:\n#{lines}"
   end
 
-  defp years_prompt, do: "Years of experience?\n1. Less than 1 year\n2. 1–2 years\n3. 3–5 years\n4. More than 5 years"
-  defp relationship_prompt(1), do: "Relationship with Reference 1?\n1. Client\n2. Employer\n3. Supervisor\n4. Family Friend\n5. Colleague"
-  defp relationship_prompt(_), do: "Relationship?\n1. Client\n2. Employer\n3. Supervisor\n4. Family Friend\n5. Colleague"
-  defp client_desc_prompt, do: "How would clients describe you?\n1. Reliable and punctual\n2. Friendly and respectful\n3. Thorough and detail-oriented\n4. Professional and trustworthy\n5. Fast and efficient"
-  defp client_desc_opts, do: ["Reliable and punctual", "Friendly and respectful", "Thorough and detail-oriented", "Professional and trustworthy", "Fast and efficient"]
-  defp spec_prompt, do: "Specializations:\n1. Residential\n2. Commercial/office\n3. Window cleaning\n4. Carpet cleaning\n5. Pressure washing"
-  defp spec_opts, do: ["Residential", "Commercial/office", "Window cleaning", "Carpet cleaning", "Pressure washing"]
-  defp days_prompt, do: "Available days?\n1. Monday\n2. Tuesday\n3. Wednesday\n4. Thursday\n5. Friday\n6. Saturday\n7. Sunday\n\nReply SKIP to decide later."
+  defp years_prompt,
+    do:
+      "Years of experience?\n1. Less than 1 year\n2. 1–2 years\n3. 3–5 years\n4. More than 5 years"
+
+  defp relationship_prompt(1),
+    do:
+      "Relationship with Reference 1?\n1. Client\n2. Employer\n3. Supervisor\n4. Family Friend\n5. Colleague"
+
+  defp relationship_prompt(_),
+    do: "Relationship?\n1. Client\n2. Employer\n3. Supervisor\n4. Family Friend\n5. Colleague"
+
+  defp client_desc_prompt,
+    do:
+      "How would clients describe you?\n1. Reliable and punctual\n2. Friendly and respectful\n3. Thorough and detail-oriented\n4. Professional and trustworthy\n5. Fast and efficient"
+
+  defp client_desc_opts,
+    do: [
+      "Reliable and punctual",
+      "Friendly and respectful",
+      "Thorough and detail-oriented",
+      "Professional and trustworthy",
+      "Fast and efficient"
+    ]
+
+  defp spec_prompt,
+    do:
+      "Specializations:\n1. Residential\n2. Commercial/office\n3. Window cleaning\n4. Carpet cleaning\n5. Pressure washing"
+
+  defp spec_opts,
+    do: [
+      "Residential",
+      "Commercial/office",
+      "Window cleaning",
+      "Carpet cleaning",
+      "Pressure washing"
+    ]
+
+  defp days_prompt,
+    do:
+      "Available days?\n1. Monday\n2. Tuesday\n3. Wednesday\n4. Thursday\n5. Friday\n6. Saturday\n7. Sunday\n\nReply SKIP to decide later."
+
   defp hours_prompt, do: "Hours per week?\n1. <10\n2. 10–20\n3. 20–40\n4. 40+ / full-time"
-  defp shifts_prompt, do: "Preferred shifts?\n1. Morning 6–12\n2. Afternoon 12–6\n3. Evening 6–10\n4. Weekends only\n\nReply SKIP if no preference."
-  defp start_prompt, do: "When can you start? Reply with a date (e.g. 15 June 2026), or type TODAY or TOMORROW."
+
+  defp shifts_prompt,
+    do:
+      "Preferred shifts?\n1. Morning 6–12\n2. Afternoon 12–6\n3. Evening 6–10\n4. Weekends only\n\nReply SKIP if no preference."
+
+  defp start_prompt,
+    do: "When can you start? Reply with a date (e.g. 15 June 2026), or type TODAY or TOMORROW."
+
   defp work_area_list, do: Enum.reject(Payload.areas(), &(&1 == "Other"))
+
   defp work_areas_prompt do
-    lines = work_area_list() |> Enum.with_index(1) |> Enum.map(fn {area, i} -> "#{i}. #{area}" end) |> Enum.join("\n")
+    lines =
+      work_area_list()
+      |> Enum.with_index(1)
+      |> Enum.map(fn {area, i} -> "#{i}. #{area}" end)
+      |> Enum.join("\n")
+
     "Areas you can reach by public transport?\n#{lines}"
   end
-  defp confidence_prompt(kind), do: "#{kind} confidence?\n1. Very confident\n2. Somewhat confident\n3. Still learning"
-  defp confidence_opts, do: ["Very confident", "Somewhat confident", "Still learning"]
-  defp pets_prompt, do: "Pets in homes?\n1. Yes, dogs\n2. Yes, cats\n3. Both\n4. No, pet-free only"
-  defp pets_opts, do: ["Yes, with dogs", "Yes, with cats", "Both dogs and cats", "No, I prefer pet-free homes"]
-  defp local_lang_prompt, do: "Local languages?\n1. Twi\n2. Ga\n3. Ewe\n4. Hausa\n5. None"
-  defp intl_lang_prompt, do: "International languages?\n1. French\n2. Portuguese\n3. Spanish\n4. None"
 
-  defp services_prompt([], _page), do: "No services found in catalog. Reply SKIP to continue (contact support)."
+  defp confidence_prompt(kind),
+    do: "#{kind} confidence?\n1. Very confident\n2. Somewhat confident\n3. Still learning"
+
+  defp confidence_opts, do: ["Very confident", "Somewhat confident", "Still learning"]
+
+  defp pets_prompt,
+    do: "Pets in homes?\n1. Yes, dogs\n2. Yes, cats\n3. Both\n4. No, pet-free only"
+
+  defp pets_opts,
+    do: ["Yes, with dogs", "Yes, with cats", "Both dogs and cats", "No, I prefer pet-free homes"]
+
+  defp local_lang_prompt, do: "Local languages?\n1. Twi\n2. Ga\n3. Ewe\n4. Hausa\n5. None"
+
+  defp intl_lang_prompt,
+    do: "International languages?\n1. French\n2. Portuguese\n3. Spanish\n4. None"
+
+  defp services_prompt([], _page),
+    do: "No services found in catalog. Reply SKIP to continue (contact support)."
 
   defp services_prompt(catalog, page) do
     start = page * 8
@@ -890,6 +1573,7 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
     idx = Enum.find_index(steps, &(&1 == lead.current_step)) || 0
     total = length(steps) - 1
     pct = round(idx / total * 100)
+
     "Progress: ~#{pct}% (step #{idx + 1} of ~#{total + 1})\nCurrent: #{lead.current_step}\nReply HELP for commands.\n\nStop anytime. Reply CODE for your web continue code, or WEB:\n#{join_url}"
   end
 
@@ -901,8 +1585,11 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
 
     svc =
       case get_in(p, ["services", "servicesOffered"]) do
-        list when is_list(list) and list != [] -> Enum.map_join(list, ", ", &(&1["name"] || &1[:name]))
-        _ -> "—"
+        list when is_list(list) and list != [] ->
+          Enum.map_join(list, ", ", &(&1["name"] || &1[:name]))
+
+        _ ->
+          "—"
       end
 
     areas =
@@ -912,11 +1599,18 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
       end
 
     pi = p["personalInfo"] || %{}
+
     "Review your application:\n\nName: #{pi["firstName"]} #{pi["lastName"]}\nPhone: #{mask(pi["phone"])}\nArea: #{pi["city"]}\nExperience: #{exp}\nServices: #{svc}\nWork areas: #{areas}\n\nReply SUBMIT to save your draft.\nReply BACK to edit the previous step.\nReply RESTART to start over.\nReply SIGNUP for phone sign-in on the web, or WEB to open the site."
   end
 
   defp submitted_message(sign_in) do
-    support = Application.get_env(:mithril, :recruitment_mirror_support_email, "support@tryinstaclean.com")
+    support =
+      Application.get_env(
+        :mithril,
+        :recruitment_mirror_support_email,
+        "support@tryinstaclean.com"
+      )
+
     "Your application draft has been submitted for review. Please allow 24–48 hours while we review your application.\n\nOpen the website with your phone number or email to log in:\n#{sign_in}\n\nIf you have any issues signing in, email #{support} or open our help chat on the website:\n#{app_url()}/?openBeacon=1\n\nWe are excited to have you onboard! ✨"
   end
 
@@ -971,7 +1665,12 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
 
   defp name_extra(p, opts) do
     if opts[:name?] do
-      %{name: String.trim("#{get_in(p, ["personalInfo", "firstName"])} #{get_in(p, ["personalInfo", "lastName"])}")}
+      %{
+        name:
+          String.trim(
+            "#{get_in(p, ["personalInfo", "firstName"])} #{get_in(p, ["personalInfo", "lastName"])}"
+          )
+      }
     else
       %{}
     end

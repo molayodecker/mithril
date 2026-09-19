@@ -26,8 +26,17 @@ defmodule Mithril.WhatsApp.TwilioSignatureTest do
   end
 
   test "is independent of param insertion order" do
-    left = %{"To" => "whatsapp:+233246326939", "Body" => "APPLY", "From" => "whatsapp:+233555000001"}
-    right = %{"From" => "whatsapp:+233555000001", "Body" => "APPLY", "To" => "whatsapp:+233246326939"}
+    left = %{
+      "To" => "whatsapp:+233246326939",
+      "Body" => "APPLY",
+      "From" => "whatsapp:+233555000001"
+    }
+
+    right = %{
+      "From" => "whatsapp:+233555000001",
+      "Body" => "APPLY",
+      "To" => "whatsapp:+233246326939"
+    }
 
     assert TwilioSignature.valid?(right, sign(left, @url), @auth_token, @url)
   end

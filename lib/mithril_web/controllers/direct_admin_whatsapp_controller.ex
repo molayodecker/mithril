@@ -42,9 +42,13 @@ defmodule MithrilWeb.DirectAdminWhatsAppController do
   )
 
   def messages(conn, params) do
-    respond(conn, DirectAdminWhatsApp.list_messages(user_id(conn), params["phone"]), fn messages ->
-      %{messages: messages}
-    end)
+    respond(
+      conn,
+      DirectAdminWhatsApp.list_messages(user_id(conn), params["phone"]),
+      fn messages ->
+        %{messages: messages}
+      end
+    )
   end
 
   operation(:send,

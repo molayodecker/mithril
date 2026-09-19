@@ -87,7 +87,8 @@ defmodule MithrilWeb.DirectAdminBookingsController do
         description: "Booking ID"
       ]
     ],
-    request_body: {"Cleaner assignment", "application/json", AssignCleanerRequest, required: true},
+    request_body:
+      {"Cleaner assignment", "application/json", AssignCleanerRequest, required: true},
     responses: [ok: {"Updated booking", "application/json", AdminBooking}]
   )
 
@@ -270,8 +271,13 @@ defmodule MithrilWeb.DirectAdminBookingsController do
   defp error_response(:wallet_not_found), do: {409, "wallet_not_found"}
   defp error_response(:invalid_amount), do: {422, "invalid_amount"}
   defp error_response(:cash_payout_already_recorded), do: {409, "cash_payout_already_recorded"}
-  defp error_response(:booking_has_no_cleaner_earnings), do: {409, "booking_has_no_cleaner_earnings"}
-  defp error_response(:amount_exceeds_booking_earnings), do: {409, "amount_exceeds_booking_earnings"}
+
+  defp error_response(:booking_has_no_cleaner_earnings),
+    do: {409, "booking_has_no_cleaner_earnings"}
+
+  defp error_response(:amount_exceeds_booking_earnings),
+    do: {409, "amount_exceeds_booking_earnings"}
+
   defp error_response(:booking_not_completed), do: {409, "booking_not_completed"}
   defp error_response(:booking_not_paid), do: {409, "booking_not_paid"}
   defp error_response(:booking_cleaner_mismatch), do: {409, "booking_cleaner_mismatch"}

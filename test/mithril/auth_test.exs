@@ -241,9 +241,12 @@ defmodule Mithril.AuthTest do
   test "me reports reviewer and staff from user_roles" do
     {user_id, _email} = insert_account("reviewer@tryinstaclean.com", "correct-horse")
 
-    Repo.query!("INSERT INTO public.user_roles (user_id, role_id) VALUES ($1::uuid, 'reviewer')", [
-      dump_uuid(user_id)
-    ])
+    Repo.query!(
+      "INSERT INTO public.user_roles (user_id, role_id) VALUES ($1::uuid, 'reviewer')",
+      [
+        dump_uuid(user_id)
+      ]
+    )
 
     assert {:ok, me} = Auth.me(user_id)
     refute me.admin

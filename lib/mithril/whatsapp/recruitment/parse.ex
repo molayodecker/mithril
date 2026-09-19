@@ -9,21 +9,47 @@ defmodule Mithril.WhatsApp.Recruitment.Parse do
       |> String.replace(~r/\s+/u, " ")
 
     cond do
-      t in ["APPLY", "START"] -> "APPLY"
-      t in ["RESTART", "RESET"] -> "RESTART"
-      t == "BACK" -> "BACK"
-      t == "SKIP" -> "SKIP"
-      t in ["STATUS", "PROGRESS"] -> "STATUS"
-      t in ["HELP", "?"] -> "HELP"
-      t in ["SUBMIT", "SEND"] -> "SUBMIT"
-      t in ["CONTINUE", "RESUME", "NEXT QUESTION"] -> "CONTINUE"
-      t in ["MORE", "NEXT"] -> "MORE"
-      t in ["LINK", "URL"] -> "LINK"
-      t in ["CODE", "GET CODE", "WEB CODE", "CONTINUE CODE", "PASTE CODE"] -> "CODE"
+      t in ["APPLY", "START"] ->
+        "APPLY"
+
+      t in ["RESTART", "RESET"] ->
+        "RESTART"
+
+      t == "BACK" ->
+        "BACK"
+
+      t == "SKIP" ->
+        "SKIP"
+
+      t in ["STATUS", "PROGRESS"] ->
+        "STATUS"
+
+      t in ["HELP", "?"] ->
+        "HELP"
+
+      t in ["SUBMIT", "SEND"] ->
+        "SUBMIT"
+
+      t in ["CONTINUE", "RESUME", "NEXT QUESTION"] ->
+        "CONTINUE"
+
+      t in ["MORE", "NEXT"] ->
+        "MORE"
+
+      t in ["LINK", "URL"] ->
+        "LINK"
+
+      t in ["CODE", "GET CODE", "WEB CODE", "CONTINUE CODE", "PASTE CODE"] ->
+        "CODE"
+
       t in ["SIGNUP", "SIGN UP", "CREATE ACCOUNT", "LOGIN", "LOG IN", "VERIFY PHONE", "PHONE"] ->
         "SIGNUP"
-      t in ["WEB", "WEBSITE", "SITE", "BROWSER", "ONLINE"] -> "WEB"
-      true -> nil
+
+      t in ["WEB", "WEBSITE", "SITE", "BROWSER", "ONLINE"] ->
+        "WEB"
+
+      true ->
+        nil
     end
   end
 
@@ -70,11 +96,20 @@ defmodule Mithril.WhatsApp.Recruitment.Parse do
         digits = if String.starts_with?(raw, "+"), do: String.slice(raw, 1..-1//1), else: raw
 
         cond do
-          not String.match?(digits, ~r/^\d+$/) -> nil
-          String.starts_with?(digits, "233") and String.length(digits) >= 12 -> "+" <> digits
-          String.starts_with?(digits, "0") and String.length(digits) == 10 -> "+233" <> String.slice(digits, 1..-1//1)
-          String.length(digits) == 9 -> "+233" <> digits
-          true -> nil
+          not String.match?(digits, ~r/^\d+$/) ->
+            nil
+
+          String.starts_with?(digits, "233") and String.length(digits) >= 12 ->
+            "+" <> digits
+
+          String.starts_with?(digits, "0") and String.length(digits) == 10 ->
+            "+233" <> String.slice(digits, 1..-1//1)
+
+          String.length(digits) == 9 ->
+            "+233" <> digits
+
+          true ->
+            nil
         end
     end
   end

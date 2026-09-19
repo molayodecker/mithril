@@ -53,14 +53,16 @@ defmodule Mithril.WhatsApp.Recruitment.Payload do
     ]
   end
 
-  def skip_allowed?, do: MapSet.new([
-    "personal_email",
-    "personal_bio",
-    "previous_employers",
-    "certifications",
-    "availability_days",
-    "preferred_shifts"
-  ])
+  def skip_allowed?,
+    do:
+      MapSet.new([
+        "personal_email",
+        "personal_bio",
+        "previous_employers",
+        "certifications",
+        "availability_days",
+        "preferred_shifts"
+      ])
 
   def areas do
     [
@@ -156,7 +158,12 @@ defmodule Mithril.WhatsApp.Recruitment.Payload do
     |> Map.put("skills", Map.merge(d["skills"], nested(raw, "skills")))
     |> Map.put("verification", Map.merge(d["verification"], nested(raw, "verification")))
     |> Map.put("_flow", Map.merge(d["_flow"], nested(raw, "_flow")))
-    |> put_in(["personalInfo", "email"], Mithril.WhatsApp.Recruitment.Parse.normalize_email(get_in(nested(raw, "personalInfo"), ["email"])))
+    |> put_in(
+      ["personalInfo", "email"],
+      Mithril.WhatsApp.Recruitment.Parse.normalize_email(
+        get_in(nested(raw, "personalInfo"), ["email"])
+      )
+    )
   end
 
   def merge(_), do: default()

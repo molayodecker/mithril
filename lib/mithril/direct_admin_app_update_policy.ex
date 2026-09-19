@@ -13,18 +13,18 @@ defmodule Mithril.DirectAdminAppUpdatePolicy do
     with {:ok, uid} <- dump_uuid(user_id),
          :ok <- require_admin(uid) do
       case Repo.query("""
-             SELECT jsonb_build_object(
-               'channel', channel,
-               'minVersion', min_version,
-               'recommendedVersion', recommended_version,
-               'requiredMessage', required_message,
-               'recommendedMessage', recommended_message,
-               'updatedAt', updated_at
-             )
-             FROM public.app_update_policy
-             WHERE channel IN ('production', 'preview')
-             ORDER BY channel ASC
-             """) do
+           SELECT jsonb_build_object(
+             'channel', channel,
+             'minVersion', min_version,
+             'recommendedVersion', recommended_version,
+             'requiredMessage', required_message,
+             'recommendedMessage', recommended_message,
+             'updatedAt', updated_at
+           )
+           FROM public.app_update_policy
+           WHERE channel IN ('production', 'preview')
+           ORDER BY channel ASC
+           """) do
         {:ok, result} -> {:ok, Enum.map(result.rows, &hd/1)}
         {:error, error} -> database_error(error)
       end

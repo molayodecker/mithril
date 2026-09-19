@@ -45,11 +45,21 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
     end
   end
 
-  defp content_sid(:welcome), do: Application.get_env(:mithril, :twilio_whatsapp_welcome_content_sid)
-  defp content_sid(:yes_no), do: Application.get_env(:mithril, :twilio_whatsapp_yes_no_content_sid)
-  defp content_sid(:accept), do: Application.get_env(:mithril, :twilio_whatsapp_accept_content_sid)
-  defp content_sid(:submit), do: Application.get_env(:mithril, :twilio_whatsapp_submit_content_sid)
-  defp content_sid(:equipment), do: Application.get_env(:mithril, :twilio_whatsapp_equipment_content_sid)
+  defp content_sid(:welcome),
+    do: Application.get_env(:mithril, :twilio_whatsapp_welcome_content_sid)
+
+  defp content_sid(:yes_no),
+    do: Application.get_env(:mithril, :twilio_whatsapp_yes_no_content_sid)
+
+  defp content_sid(:accept),
+    do: Application.get_env(:mithril, :twilio_whatsapp_accept_content_sid)
+
+  defp content_sid(:submit),
+    do: Application.get_env(:mithril, :twilio_whatsapp_submit_content_sid)
+
+  defp content_sid(:equipment),
+    do: Application.get_env(:mithril, :twilio_whatsapp_equipment_content_sid)
+
   defp content_sid(_), do: nil
 
   defp twilio_env do
@@ -88,7 +98,9 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
     url = "https://api.twilio.com/2010-04-01/Accounts/#{env.sid}/Messages.json"
 
     case Req.post(url, form: fields, auth: {:basic, "#{env.sid}:#{env.token}"}) do
-      {:ok, %{status: status}} when status in 200..299 -> :ok
+      {:ok, %{status: status}} when status in 200..299 ->
+        :ok
+
       {:ok, %{status: status}} ->
         Logger.warning("whatsapp recruitment twilio send failed status=#{status}")
         {:error, :twilio_failed}

@@ -711,11 +711,13 @@ defmodule MithrilWeb.Schemas.Direct do
 
   defmodule AdminCleanerHealthCaseDetail do
     require OpenApiSpex
+
     alias MithrilWeb.Schemas.Direct.{
       AdminCleanerHealthCaseAction,
       AdminCleanerHealthPreviousCase,
       AdminCleanerHealthRiskReason
     }
+
     alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{
@@ -931,12 +933,14 @@ defmodule MithrilWeb.Schemas.Direct do
 
   defmodule AdminCustomerTrustDetail do
     require OpenApiSpex
+
     alias MithrilWeb.Schemas.Direct.{
       AdminCustomerTrustAdminAction,
       AdminCustomerTrustBooking,
       AdminCustomerTrustNote,
       AdminCustomerTrustRiskEvent
     }
+
     alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{

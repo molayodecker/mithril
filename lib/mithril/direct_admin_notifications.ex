@@ -288,7 +288,9 @@ defmodule Mithril.DirectAdminNotifications do
     case phone_for(input) do
       {:ok, phone} ->
         case SMS.send_message(phone, channel_body(input)) do
-          :ok -> true
+          :ok ->
+            true
+
           {:error, reason} ->
             Logger.warning("admin notification sms failed: #{inspect(reason)}")
             false
@@ -308,7 +310,9 @@ defmodule Mithril.DirectAdminNotifications do
                "phoneE164" => phone,
                "body" => channel_body(input)
              }) do
-          {:ok, _} -> true
+          {:ok, _} ->
+            true
+
           {:error, reason} ->
             Logger.warning("admin notification whatsapp failed: #{inspect(reason)}")
             false

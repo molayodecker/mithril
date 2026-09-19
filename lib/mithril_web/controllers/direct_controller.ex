@@ -249,7 +249,8 @@ defmodule MithrilWeb.DirectController do
       ]
     ],
     request_body:
-      {"Cleaner health action", "application/json", AdminCleanerHealthActionRequest, required: true},
+      {"Cleaner health action", "application/json", AdminCleanerHealthActionRequest,
+       required: true},
     responses: [ok: {"Action recorded", "application/json", AdminOpsMutationResponse}]
   )
 

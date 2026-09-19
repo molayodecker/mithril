@@ -12,30 +12,28 @@ defmodule Mithril.DirectAdminWhatsApp do
   def list_threads(user_id) do
     with {:ok, uid} <- dump_uuid(user_id),
          :ok <- require_admin(uid) do
-      case Repo.query(
-             """
-             SELECT jsonb_build_object(
-               'phoneE164', t.phone_e164,
-               'lastAt', t.created_at,
-               'preview', left(t.body, 120),
-               'userId', t.user_id,
-               'displayLabel', COALESCE(
-                 NULLIF(btrim(p.fullname), ''),
-                 NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
-                 t.phone_e164
-               )
+      case Repo.query("""
+           SELECT jsonb_build_object(
+             'phoneE164', t.phone_e164,
+             'lastAt', t.created_at,
+             'preview', left(t.body, 120),
+             'userId', t.user_id,
+             'displayLabel', COALESCE(
+               NULLIF(btrim(p.fullname), ''),
+               NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
+               t.phone_e164
              )
-             FROM (
-               SELECT DISTINCT ON (phone_e164)
-                 phone_e164, created_at, body, user_id
-               FROM public.whatsapp_inbox_messages
-               ORDER BY phone_e164, created_at DESC
-             ) t
-             LEFT JOIN public.profiles p ON p.id = t.user_id
-             ORDER BY t.created_at DESC
-             LIMIT 200
-             """
-           ) do
+           )
+           FROM (
+             SELECT DISTINCT ON (phone_e164)
+               phone_e164, created_at, body, user_id
+             FROM public.whatsapp_inbox_messages
+             ORDER BY phone_e164, created_at DESC
+           ) t
+           LEFT JOIN public.profiles p ON p.id = t.user_id
+           ORDER BY t.created_at DESC
+           LIMIT 200
+           """) do
         {:ok, result} -> {:ok, Enum.map(result.rows, &hd/1)}
         {:error, error} -> database_error(error)
       end
@@ -82,7 +80,10 @@ defmodule Mithril.DirectAdminWhatsApp do
          :ok <- require_admin(admin_uid),
          {:ok, e164} <- normalize_phone(params["phoneE164"] || params[:phoneE164]),
          {:ok, body} <- required_body(params["body"] || params[:body]),
-         {:ok, from} <- admin_from(params["businessPhoneE164"] || params[:businessPhoneE164] || last_business(e164)),
+         {:ok, from} <-
+           admin_from(
+             params["businessPhoneE164"] || params[:businessPhoneE164] || last_business(e164)
+           ),
          :ok <- deliver_whatsapp(e164, from, body),
          {:ok, thread_user} <- resolve_user_id(e164) do
       insert_outbound(e164, body, thread_user, admin_uid, from)
@@ -181,7 +182,10 @@ defmodule Mithril.DirectAdminWhatsApp do
 
   defp phone_variants(e164) do
     digits = String.replace(e164, ~r/\D/, "")
-    local = if String.starts_with?(digits, "233"), do: "0" <> String.slice(digits, 3..-1//1), else: nil
+
+    local =
+      if String.starts_with?(digits, "233"), do: "0" <> String.slice(digits, 3..-1//1), else: nil
+
     [e164, "+" <> digits, digits, local] |> Enum.reject(&is_nil/1) |> Enum.uniq()
   end
 

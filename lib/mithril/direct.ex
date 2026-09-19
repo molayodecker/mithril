@@ -1532,6 +1532,7 @@ defmodule Mithril.Direct do
   end
 
   defp optional_text(nil, _max), do: nil
+
   defp optional_text(value, max) when is_binary(value) do
     trimmed = String.trim(value)
 

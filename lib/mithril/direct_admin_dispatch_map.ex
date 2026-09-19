@@ -51,38 +51,38 @@ defmodule Mithril.DirectAdminDispatchMap do
   end
 
   defp fallback_cleaners do
-    case Repo.query(
-           """
-           SELECT jsonb_build_object(
-             'userId', cd.user_id,
-             'displayName', COALESCE(
-               NULLIF(btrim(p.fullname), ''),
-               NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
-               'Cleaner'
-             ),
-             'latitude', CASE
-               WHEN cd.base_location IS NULL THEN NULL
-               ELSE ST_Y(cd.base_location::geometry)
-             END,
-             'longitude', CASE
-               WHEN cd.base_location IS NULL THEN NULL
-               ELSE ST_X(cd.base_location::geometry)
-             END,
-             'maxTravelDistanceMeters', COALESCE(cd.max_travel_distance_meters, 30000),
-             'specialties', COALESCE(cd.specialties, '{}'::text[]),
-             'serviceAreas', COALESCE(cd.service_areas, '{}'::text[]),
-             'rating', cd.rating,
-             'completedJobs', cd.completed_jobs,
-             'verified', COALESCE(cd.verified, false),
-             'status', COALESCE(cd.status::text, 'active')
-           )
-           FROM public.cleaner_data cd
-           LEFT JOIN public.profiles p ON p.id = cd.user_id
-           WHERE COALESCE(cd.status::text, 'active') = 'active'
-           LIMIT 400
-           """
-         ) do
-      {:ok, result} -> Enum.map(result.rows, &hd/1)
+    case Repo.query("""
+         SELECT jsonb_build_object(
+           'userId', cd.user_id,
+           'displayName', COALESCE(
+             NULLIF(btrim(p.fullname), ''),
+             NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
+             'Cleaner'
+           ),
+           'latitude', CASE
+             WHEN cd.base_location IS NULL THEN NULL
+             ELSE ST_Y(cd.base_location::geometry)
+           END,
+           'longitude', CASE
+             WHEN cd.base_location IS NULL THEN NULL
+             ELSE ST_X(cd.base_location::geometry)
+           END,
+           'maxTravelDistanceMeters', COALESCE(cd.max_travel_distance_meters, 30000),
+           'specialties', COALESCE(cd.specialties, '{}'::text[]),
+           'serviceAreas', COALESCE(cd.service_areas, '{}'::text[]),
+           'rating', cd.rating,
+           'completedJobs', cd.completed_jobs,
+           'verified', COALESCE(cd.verified, false),
+           'status', COALESCE(cd.status::text, 'active')
+         )
+         FROM public.cleaner_data cd
+         LEFT JOIN public.profiles p ON p.id = cd.user_id
+         WHERE COALESCE(cd.status::text, 'active') = 'active'
+         LIMIT 400
+         """) do
+      {:ok, result} ->
+        Enum.map(result.rows, &hd/1)
+
       {:error, error} ->
         Logger.error("Direct admin dispatch map cleaner fallback failed: #{inspect(error)}")
         []
@@ -136,7 +136,9 @@ defmodule Mithril.DirectAdminDispatchMap do
            """,
            [filters.statuses, filters.days_ahead]
          ) do
-      {:ok, result} -> Enum.map(result.rows, &hd/1)
+      {:ok, result} ->
+        Enum.map(result.rows, &hd/1)
+
       {:error, error} ->
         Logger.error("Direct admin dispatch map booking fallback failed: #{inspect(error)}")
         []
@@ -152,6 +154,7 @@ defmodule Mithril.DirectAdminDispatchMap do
 
   defp normalize_cleaner(row) when is_map(row) do
     user_id = str(row["userId"] || row["user_id"])
+
     if user_id == "" do
       nil
     else
@@ -163,7 +166,10 @@ defmodule Mithril.DirectAdminDispatchMap do
         "displayName" => str(row["displayName"] || row["display_name"]) || "Cleaner",
         "latitude" => lat,
         "longitude" => lng,
-        "maxTravelDistanceMeters" => trunc(num(row["maxTravelDistanceMeters"] || row["max_travel_distance_meters"]) || 30_000),
+        "maxTravelDistanceMeters" =>
+          trunc(
+            num(row["maxTravelDistanceMeters"] || row["max_travel_distance_meters"]) || 30_000
+          ),
         "specialties" => list(row["specialties"]),
         "serviceAreas" => list(row["serviceAreas"] || row["service_areas"]),
         "rating" => num(row["rating"]),
@@ -261,4 +267,3 @@ defmodule Mithril.DirectAdminDispatchMap do
   defp dump_uuid(value) when is_binary(value), do: Ecto.UUID.dump(value)
   defp dump_uuid(_), do: :error
 end
-

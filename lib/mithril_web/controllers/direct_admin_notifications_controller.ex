@@ -54,9 +54,13 @@ defmodule MithrilWeb.DirectAdminNotificationsController do
   )
 
   def search(conn, params) do
-    respond(conn, DirectAdminNotifications.search_targets(user_id(conn), params["q"]), fn targets ->
-      %{targets: targets}
-    end)
+    respond(
+      conn,
+      DirectAdminNotifications.search_targets(user_id(conn), params["q"]),
+      fn targets ->
+        %{targets: targets}
+      end
+    )
   end
 
   operation(:create,

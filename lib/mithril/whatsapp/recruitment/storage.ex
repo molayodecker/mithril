@@ -18,7 +18,9 @@ defmodule Mithril.WhatsApp.Recruitment.Storage do
              ],
              body: body
            ) do
-        {:ok, %{status: status}} when status in 200..299 -> :ok
+        {:ok, %{status: status}} when status in 200..299 ->
+          :ok
+
         {:ok, %{status: status}} ->
           Logger.error("whatsapp recruitment storage upload failed status=#{status}")
           {:error, :upload_failed}
@@ -41,7 +43,8 @@ defmodule Mithril.WhatsApp.Recruitment.Storage do
              ]
            ) do
         {:ok, %{status: status, body: body}} when status in 200..299 and is_binary(body) ->
-          byte_size(body) <= @max_bytes and sniff(body) in ["image/jpeg", "image/png", "image/webp"]
+          byte_size(body) <= @max_bytes and
+            sniff(body) in ["image/jpeg", "image/png", "image/webp"]
 
         _ ->
           false
@@ -89,7 +92,9 @@ defmodule Mithril.WhatsApp.Recruitment.Storage do
   defp storage_env do
     url = Application.get_env(:mithril, :supabase_url)
     key = Application.get_env(:mithril, :supabase_service_role_key)
-    bucket = Application.get_env(:mithril, :ghana_card_recruitment_bucket, "cleaner-ghana-card-id")
+
+    bucket =
+      Application.get_env(:mithril, :ghana_card_recruitment_bucket, "cleaner-ghana-card-id")
 
     if is_binary(url) and url != "" and is_binary(key) and key != "" do
       {:ok, %{base: String.trim_trailing(url, "/"), service_key: key, bucket: bucket}}

@@ -104,7 +104,10 @@ defmodule MithrilWeb.Router do
     get "/admin/candidates", DirectController, :list_admin_candidates
     get "/admin/cleaner-applications", DirectController, :list_admin_cleaner_applications
     get "/admin/cleaner-applications/:id", DirectController, :show_admin_cleaner_application
-    get "/admin/cleaner-application-drafts", DirectController, :list_admin_cleaner_application_drafts
+
+    get "/admin/cleaner-application-drafts",
+        DirectController,
+        :list_admin_cleaner_application_drafts
 
     get "/admin/cleaner-application-drafts/:id",
         DirectController,
@@ -112,11 +115,18 @@ defmodule MithrilWeb.Router do
 
     get "/admin/cleaner-health", DirectController, :list_admin_cleaner_health
     get "/admin/cleaner-health/:id", DirectController, :show_admin_cleaner_health_case
-    post "/admin/cleaner-health/:id/actions", DirectController, :record_admin_cleaner_health_action
+
+    post "/admin/cleaner-health/:id/actions",
+         DirectController,
+         :record_admin_cleaner_health_action
+
     get "/admin/customer-trust", DirectController, :list_admin_customer_trust
     get "/admin/customer-trust/:id", DirectController, :show_admin_customer_trust
     post "/admin/customer-trust/:id/notes", DirectController, :add_admin_customer_trust_note
-    post "/admin/customer-trust/:id/actions", DirectController, :record_admin_customer_trust_action
+
+    post "/admin/customer-trust/:id/actions",
+         DirectController,
+         :record_admin_customer_trust_action
 
     post "/admin/placements/:id/matches", DirectController, :match_admin_candidate
 
@@ -125,7 +135,11 @@ defmodule MithrilWeb.Router do
     post "/admin/app-update-policy", DirectAdminAppUpdatePolicyController, :save
     get "/admin/notifications", DirectAdminNotificationsController, :index
     get "/admin/notification-targets", DirectAdminNotificationsController, :search
-    get "/admin/notification-broadcast/preview", DirectAdminNotificationsController, :preview_broadcast
+
+    get "/admin/notification-broadcast/preview",
+        DirectAdminNotificationsController,
+        :preview_broadcast
+
     post "/admin/notification-broadcast", DirectAdminNotificationsController, :broadcast
     post "/admin/notifications", DirectAdminNotificationsController, :create
     get "/admin/whatsapp/threads", DirectAdminWhatsAppController, :index

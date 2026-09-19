@@ -173,7 +173,13 @@ defmodule Mithril.DirectAdminOpsDesksTest do
   defp insert_user!(email, phone, name) do
     id = Ecto.UUID.generate()
     uid = Ecto.UUID.dump!(id)
-    Repo.query!("INSERT INTO public.users (id, email, phone) VALUES ($1, $2, $3)", [uid, email, phone])
+
+    Repo.query!("INSERT INTO public.users (id, email, phone) VALUES ($1, $2, $3)", [
+      uid,
+      email,
+      phone
+    ])
+
     Repo.query!("INSERT INTO public.profiles (id, fullname) VALUES ($1, $2)", [uid, name])
     id
   end

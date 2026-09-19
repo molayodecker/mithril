@@ -21,7 +21,15 @@ defmodule MithrilWeb.Schemas.DirectAdminDispatchMap do
         verified: %Schema{type: :boolean},
         status: %Schema{type: :string}
       },
-      required: [:userId, :displayName, :maxTravelDistanceMeters, :specialties, :serviceAreas, :verified, :status]
+      required: [
+        :userId,
+        :displayName,
+        :maxTravelDistanceMeters,
+        :specialties,
+        :serviceAreas,
+        :verified,
+        :status
+      ]
     })
   end
 

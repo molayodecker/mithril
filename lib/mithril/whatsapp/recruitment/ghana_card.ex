@@ -85,7 +85,10 @@ defmodule Mithril.WhatsApp.Recruitment.GhanaCard do
 
   def handle_browser_upload(params) do
     file = Map.get(params, "file")
-    short_code = String.trim(to_string(Map.get(params, "code") || Map.get(params, "short_code") || ""))
+
+    short_code =
+      String.trim(to_string(Map.get(params, "code") || Map.get(params, "short_code") || ""))
+
     legacy_token = String.trim(to_string(Map.get(params, "t") || ""))
 
     cond do
@@ -132,7 +135,8 @@ defmodule Mithril.WhatsApp.Recruitment.GhanaCard do
          {:ok, binary} <- read_upload(file),
          content_type when is_binary(content_type) <- Storage.sniff(binary),
          ext <- ext_for(content_type),
-         path <- "recruitment/#{payload.lead_id}/ghana-#{payload.side}-#{System.system_time(:millisecond)}.#{ext}",
+         path <-
+           "recruitment/#{payload.lead_id}/ghana-#{payload.side}-#{System.system_time(:millisecond)}.#{ext}",
          :ok <- Storage.upload(path, binary, content_type),
          {:ok, lead} <- Leads.get(payload.lead_id) do
       flow =
@@ -324,7 +328,11 @@ defmodule Mithril.WhatsApp.Recruitment.GhanaCard do
   end
 
   defp b64url(value) do
-    value |> Base.encode64() |> String.replace("+", "-") |> String.replace("/", "_") |> String.replace("=", "")
+    value
+    |> Base.encode64()
+    |> String.replace("+", "-")
+    |> String.replace("/", "_")
+    |> String.replace("=", "")
   end
 
   defp decode_b64url(value) do

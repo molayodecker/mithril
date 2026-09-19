@@ -25,7 +25,10 @@ defmodule MithrilWeb.WhatsAppRecruitmentControllerTest do
       |> post("/whatsapp/join-as-cleaner-bot", params)
 
     assert conn.status == 200
-    assert conn.resp_headers |> Enum.any?(fn {k, v} -> k == "content-type" and String.contains?(v, "xml") end)
+
+    assert conn.resp_headers
+           |> Enum.any?(fn {k, v} -> k == "content-type" and String.contains?(v, "xml") end)
+
     assert conn.resp_body =~ "What is your email address?"
   end
 

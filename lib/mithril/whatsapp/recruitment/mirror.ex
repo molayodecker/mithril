@@ -8,9 +8,13 @@ defmodule Mithril.WhatsApp.Recruitment.Mirror do
     base = Application.get_env(:mithril, :app_url)
 
     if present?(secret) and present?(base) do
-      Task.start(fn -> sync_lead(lead_id, String.trim(secret), String.trim_trailing(base, "/")) end)
+      Task.start(fn ->
+        sync_lead(lead_id, String.trim(secret), String.trim_trailing(base, "/"))
+      end)
     else
-      Logger.warning("whatsapp recruitment skipping cleaner_applications sync: missing secret or APP_URL")
+      Logger.warning(
+        "whatsapp recruitment skipping cleaner_applications sync: missing secret or APP_URL"
+      )
     end
 
     :ok
@@ -32,10 +36,14 @@ defmodule Mithril.WhatsApp.Recruitment.Mirror do
         :ok
 
       {:ok, %{status: status}} ->
-        Logger.error("whatsapp recruitment cleaner_applications sync failed status=#{status} lead=#{lead_id}")
+        Logger.error(
+          "whatsapp recruitment cleaner_applications sync failed status=#{status} lead=#{lead_id}"
+        )
 
       {:error, error} ->
-        Logger.error("whatsapp recruitment cleaner_applications sync failed #{inspect(error)} lead=#{lead_id}")
+        Logger.error(
+          "whatsapp recruitment cleaner_applications sync failed #{inspect(error)} lead=#{lead_id}"
+        )
     end
   end
 
