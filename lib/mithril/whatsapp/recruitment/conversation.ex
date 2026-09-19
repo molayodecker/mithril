@@ -195,7 +195,9 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
           ["personalInfo", "firstName"],
           "personal_last_name",
           "What is your last name?",
-          "Please enter your first name.\n\nWhat is your first name?",\n          name?: true\n        )
+          "Please enter your first name.\n\nWhat is your first name?",
+          name?: true
+        )
 
       "personal_last_name" ->
         required_text(
@@ -207,7 +209,9 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
           ["personalInfo", "lastName"],
           "personal_address",
           @address_prompt,
-          "Please enter your last name.\n\nWhat is your last name?",\n          name?: true\n        )
+          "Please enter your last name.\n\nWhat is your last name?",
+          name?: true
+        )
 
       "personal_address" ->
         personal_address(from, lead, p, message, ctx, lat, lng)
@@ -225,7 +229,9 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
           ["personalInfo", "city"],
           "personal_bio",
           "Tell customers about yourself (max 500 chars).\n\nReply SKIP to add later.",
-          "Please type which area you are in.\n\nWhich area? (free text)",\n          area?: true\n        )
+          "Please type which area you are in.\n\nWhich area? (free text)",
+          area?: true
+        )
 
       "personal_bio" ->
         personal_bio(from, lead, p, message, cmd, ctx)
@@ -299,7 +305,9 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
           ["references", "client1Relationship"],
           "ask_ref2",
           yes_no(@q_ref2),
-          relationship_prompt(1),\n          quick?: true\n        )
+          relationship_prompt(1),
+          quick?: true
+        )
 
       "ask_ref2" ->
         yes_no_branch(
@@ -353,7 +361,9 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
           ["references", "client2Relationship"],
           "ask_ref3",
           yes_no(@q_ref3),
-          relationship_prompt(nil),\n          quick?: true\n        )
+          relationship_prompt(nil),
+          quick?: true
+        )
 
       "ask_ref3" ->
         yes_no_branch(
@@ -531,7 +541,9 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
           ["skills", "petComfort"],
           "cooking_course",
           yes_no(@q_cook),
-          pets_prompt(),\n          quick?: true\n        )
+          pets_prompt(),
+          quick?: true
+        )
 
       "cooking_course" ->
         yes_no_set(
