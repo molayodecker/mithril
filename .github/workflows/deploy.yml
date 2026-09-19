@@ -14,62 +14,78 @@ on:
           - staging
           - production
         default: staging
+      commit_sha:
+        description: Exact main commit SHA to deploy. Required for production; optional for staging.
+        required: false
+        type: string
 
 permissions:
   contents: read
   actions: read
+  statuses: write
 
 jobs:
-  staging:
-    # PRs never deploy. A successful CI run on a push to this
-    # repository's main branch deploys staging. Manual dispatch of
-    # main can deploy staging too.
+  staging_after_ci:
+    # Every successful CI run for a push to main deploys that exact commit
+    # to staging. Pull-request CI never deploys.
     if: >-
-      (
-        github.event_name == 'workflow_dispatch'
-        && github.ref == 'refs/heads/main'
-        && github.event.inputs.environment == 'staging'
-      )
-      || (
-        github.event_name == 'workflow_run'
-        && github.event.workflow_run.conclusion == 'success'
-        && github.event.workflow_run.event == 'push'
-        && github.event.workflow_run.head_branch == 'main'
-        && github.event.workflow_run.head_repository.full_name == github.repository
-      )
-    environment: staging
+      github.event_name == 'workflow_run'
+      && github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.head_branch == 'main'
+      && github.event.workflow_run.head_repository.full_name == github.repository
     uses: ./.github/workflows/deploy-environment.yml
     with:
       environment_name: staging
       fly_app: instaclean-mithril-staging
       fly_config: fly.staging.toml
-      fly_org: personal
-      fly_mpg_name: instaclean-mithril-staging-pg
       ready_url: https://instaclean-mithril-staging.fly.dev/ready
       openapi_url: https://instaclean-mithril-staging.fly.dev/openapi.json
-      checkout_ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-      confirm_ci: ${{ github.event_name == 'workflow_dispatch' }}
+      checkout_ref: ${{ github.event.workflow_run.head_sha }}
+      confirm_ci: false
+      require_staging_status: false
+      mark_staging_status: true
+      apply_auth_schema: true
+    secrets: inherit
+
+  staging_manual:
+    # Manual staging deploys are allowed from main. If commit_sha is omitted,
+    # deploy the main commit from which the workflow was dispatched.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && github.ref == 'refs/heads/main'
+      && inputs.environment == 'staging'
+    uses: ./.github/workflows/deploy-environment.yml
+    with:
+      environment_name: staging
+      fly_app: instaclean-mithril-staging
+      fly_config: fly.staging.toml
+      ready_url: https://instaclean-mithril-staging.fly.dev/ready
+      openapi_url: https://instaclean-mithril-staging.fly.dev/openapi.json
+      checkout_ref: ${{ inputs.commit_sha != '' && inputs.commit_sha || github.sha }}
+      confirm_ci: true
+      require_staging_status: false
+      mark_staging_status: true
       apply_auth_schema: true
     secrets: inherit
 
   production:
-    # Production never deploys from a pull request or from automatic
-    # main CI. Promote with workflow_dispatch on main after staging.
+    # Production is an explicit promotion. The operator must supply the exact
+    # main commit SHA that already deployed successfully to staging.
     if: >-
       github.event_name == 'workflow_dispatch'
       && github.ref == 'refs/heads/main'
-      && github.event.inputs.environment == 'production'
-    environment: production
+      && inputs.environment == 'production'
     uses: ./.github/workflows/deploy-environment.yml
     with:
       environment_name: production
       fly_app: instaclean-mithril
       fly_config: fly.toml
-      fly_org: personal
-      fly_mpg_name: instaclean-mithril-pg
       ready_url: https://api.tryinstaclean.com/ready
       openapi_url: https://api.tryinstaclean.com/openapi.json
-      checkout_ref: ${{ github.sha }}
+      checkout_ref: ${{ inputs.commit_sha }}
       confirm_ci: true
+      require_staging_status: true
+      mark_staging_status: false
       apply_auth_schema: false
     secrets: inherit
