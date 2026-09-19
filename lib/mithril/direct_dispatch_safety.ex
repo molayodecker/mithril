@@ -129,7 +129,6 @@ defmodule Mithril.DirectDispatchSafety do
     else
       :error -> {:error, :invalid_request}
       {:error, reason} when is_atom(reason) -> {:error, reason}
-      {:error, error} -> database_error(error)
     end
   end
 
@@ -153,7 +152,6 @@ defmodule Mithril.DirectDispatchSafety do
     else
       :error -> {:error, :invalid_request}
       {:error, reason} when is_atom(reason) -> {:error, reason}
-      {:error, error} -> database_error(error)
     end
   end
 
