@@ -133,7 +133,7 @@ defmodule Mithril.Auth do
   def staff?(user_id) when is_binary(user_id), do: admin?(user_id) or reviewer?(user_id)
 
   def staff_uuid?(uid) when is_binary(uid) do
-    case Ecto.UUID.load(uid) do
+    case Ecto.UUID.cast(uid) do
       {:ok, user_id} -> staff?(user_id)
       :error -> false
     end
