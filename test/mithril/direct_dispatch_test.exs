@@ -156,15 +156,16 @@ defmodule Mithril.DirectDispatchTest do
   test "prevents duplicate active replacement requests for one booking" do
     customer_id = insert_user!("customer@example.com", "+233500000002")
     booking_id = Ecto.UUID.generate()
+    scheduled_date = Date.utc_today() |> Date.add(1)
 
     Repo.query!(
       """
       INSERT INTO public.bookings (
         id, customer_id, service_id, address, scheduled_date, scheduled_time,
         duration_hours, timezone, status
-      ) VALUES ($1, $2, 1, 'Labone, Accra', '2026-09-08', '10:00', 3, 'Africa/Accra', 'pending')
+      ) VALUES ($1, $2, 1, 'Labone, Accra', $3, '10:00', 3, 'Africa/Accra', 'pending')
       """,
-      [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(customer_id)]
+      [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(customer_id), scheduled_date]
     )
 
     assert {:ok, first} =
