@@ -59,8 +59,10 @@ Production
 Deploy policy:
 
 - Pull requests run CI only.
-- A successful CI run on a **push** to this repository's `main` deploys **staging**.
-- **Production** deploys only from `workflow_dispatch` on `main` (Actions → Deploy → Run workflow → `production`), after staging looks good.
+- A successful CI run on a **push** to this repository's `main` deploys that exact commit to **staging**.
+- After staging passes `/ready` and `/openapi.json`, the workflow records a `mithril/staging` success status on that commit.
+- **Production** is a manual promotion from `workflow_dispatch` on `main`. Select `production` and enter the exact 40-character commit SHA that was tested in staging.
+- Production refuses a SHA that is not reachable from `main`, lacks successful push CI, or lacks a successful `mithril/staging` status.
 
 Staging resources:
 
@@ -73,7 +75,13 @@ fly mpg attach vmkq60913zvo35ln -a instaclean-mithril-staging \
 
 Preview is **not** Managed Postgres. Fly MPG has no plan smaller than Basic ($38/mo). Preview uses unmanaged Fly Postgres (`shared-cpu-1x`, 512MB, 1GB volume) plus `fly.preview.toml`. It is unsupported by Fly, single-node, and fine for PR/demo traffic only.
 
-Set GitHub Environment secrets (`staging` and `production` separately): `FLY_API_TOKEN` (app-scoped deploy token) and `TARGET_DATABASE_URL` (the `localhost:16380` DSN used with `fly mpg proxy`). Direct should use a Vercel Preview or staging host with `MITHRIL_API_URL=https://instaclean-mithril-staging.fly.dev`. For the Mithril preview API, use `https://instaclean-mithril-preview.fly.dev`.
+Set GitHub Environment secrets (`staging` and `production` separately):
+
+- `FLY_API_TOKEN` — app-scoped deploy token.
+- `FLY_MPG_CLUSTER_ID` — the explicit Managed Postgres cluster ID. Staging is `vmkq60913zvo35ln`; production should use its own cluster ID.
+- `TARGET_DATABASE_URL` — the `localhost:16380` DSN used while `flyctl mpg proxy` is running.
+
+The workflow deliberately uses the cluster ID rather than discovering a database by name. Direct should use a Vercel Preview or staging host with `MITHRIL_API_URL=https://instaclean-mithril-staging.fly.dev`. For the Mithril preview API, use `https://instaclean-mithril-preview.fly.dev`.
 
 In parallel, create a Fly MPG cluster for restore rehearsal:
 
