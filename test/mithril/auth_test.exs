@@ -250,6 +250,8 @@ defmodule Mithril.AuthTest do
     assert me.reviewer
     assert Auth.reviewer?(user_id)
     assert Auth.staff?(user_id)
+    assert Auth.staff_uuid?(user_id)
+    refute Auth.staff_uuid?("not-a-uuid")
     refute Auth.admin?(user_id)
   end
 
