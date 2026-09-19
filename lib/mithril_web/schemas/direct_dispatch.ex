@@ -197,6 +197,12 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
         },
         source: %Schema{type: :string, enum: ~w(admin phone whatsapp), default: "admin"},
         consentConfirmed: %Schema{type: :boolean},
+        sendNotifications: %Schema{
+          type: :boolean,
+          default: true,
+          description:
+            "When true, notify the customer and assigned professional after create. Uncheck when they already confirmed on the same call or WhatsApp thread."
+        },
         adminNote: %Schema{type: :string, maxLength: 2000, nullable: true}
       },
       required: [
@@ -228,6 +234,7 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
         customerUserId: %Schema{type: :string, format: :uuid},
         source: %Schema{type: :string, enum: ~w(admin phone whatsapp)},
         createdByAdmin: %Schema{type: :boolean},
+        notificationsSent: %Schema{type: :boolean},
         count: %Schema{type: :integer, minimum: 1},
         bookings: %Schema{
           type: :array,
@@ -252,7 +259,10 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
         :currency,
         :customerUserId,
         :source,
-        :createdByAdmin
+        :createdByAdmin,
+        :notificationsSent,
+        :count,
+        :bookings
       ]
     })
   end
@@ -343,6 +353,11 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
       properties: %{
         workerUserId: %Schema{type: :string, format: :uuid},
         neededBy: %Schema{type: :string, format: :"date-time", nullable: true},
+        sendNotifications: %Schema{
+          type: :boolean,
+          default: true,
+          description: "When true, notify the customer and assigned worker after assignment."
+        },
         adminNote: %Schema{type: :string, maxLength: 2000, nullable: true}
       },
       required: [:workerUserId]
@@ -380,7 +395,8 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
           type: :string,
           enum: ~w(submitted triaging matching assigned resolved cancelled)
         },
-        assignedWorkerUserId: %Schema{type: :string, format: :uuid, nullable: true}
+        assignedWorkerUserId: %Schema{type: :string, format: :uuid, nullable: true},
+        notificationsSent: %Schema{type: :boolean, nullable: true}
       },
       required: [:id, :status]
     })

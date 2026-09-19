@@ -172,15 +172,78 @@ defmodule Mithril.AuthTest do
     assert session.user.phone == "+233244123456"
   end
 
+  test "provision_admin creates a password login with the admin role" do
+    assert {:ok, user} = Auth.provision_admin("ops@tryinstaclean.com", "correct-horse")
+    assert user.email == "ops@tryinstaclean.com"
+    assert user.admin
+    assert Auth.admin?(user.id)
+
+    assert {:ok, session} = Auth.login("ops@tryinstaclean.com", "correct-horse")
+    assert session.user.id == user.id
+    assert {:ok, me} = Auth.me(user.id)
+    assert me.admin
+  end
+
+  test "provision_admin updates an existing account and is idempotent" do
+    {user_id, email} = insert_account("ops@tryinstaclean.com", "old-password")
+
+    assert {:ok, user} = Auth.provision_admin(email, "correct-horse")
+    assert user.id == user_id
+    assert Auth.admin?(user_id)
+    assert {:ok, _} = Auth.login(email, "correct-horse")
+    assert {:ok, _} = Auth.provision_admin(email, "correct-horse")
+    assert Auth.admin?(user_id)
+  end
+
+  test "provision_admin creates a phone login that can use a password or OTP" do
+    assert {:ok, user} =
+             Auth.provision_admin(%{phone: "0555000000", password: "correct-horse"})
+
+    assert user.phone == "+233555000000"
+    assert user.admin
+    assert {:ok, session} = Auth.login("0555000000", "correct-horse")
+    assert session.user.id == user.id
+
+    assert {:ok, _} = Auth.request_otp("0555000000")
+    {_phone, code} = Application.get_env(:mithril, :test_last_otp)
+    assert {:ok, otp_session} = Auth.verify_otp("0555000000", code)
+    assert otp_session.user.id == user.id
+    assert {:ok, me} = Auth.me(user.id)
+    assert me.admin
+  end
+
+  test "provision_admin can attach the admin role to an existing public user by phone" do
+    {user_id, _email} =
+      insert_account("ops-phone@tryinstaclean.com", "old-password", phone: "+233555000222")
+
+    Repo.query!("DELETE FROM public.mithril_auth_accounts WHERE user_id = $1::uuid", [
+      dump_uuid(user_id)
+    ])
+
+    assert {:ok, user} = Auth.provision_admin(%{phone: "+233555000222"})
+    assert user.id == user_id
+    assert Auth.admin?(user_id)
+    assert {:ok, _} = Auth.request_otp("+233555000222", %{"should_create_user" => false})
+  end
+
+  test "phone OTP on a non-admin account does not grant admin" do
+    {_user_id, _email} =
+      insert_account("staff@tryinstaclean.com", "correct-horse", phone: "+233555000333")
+
+    assert {:ok, _} = Auth.request_otp("+233555000333")
+    {_phone, code} = Application.get_env(:mithril, :test_last_otp)
+    assert {:ok, session} = Auth.verify_otp("+233555000333", code)
+    assert {:ok, me} = Auth.me(session.user.id)
+    refute me.admin
+    refute me.reviewer
+  end
+
   test "me reports reviewer and staff from user_roles" do
     {user_id, _email} = insert_account("reviewer@tryinstaclean.com", "correct-horse")
 
-    Repo.query!(
-      "INSERT INTO public.user_roles (user_id, role_id) VALUES ($1::uuid, 'reviewer')",
-      [
-        dump_uuid(user_id)
-      ]
-    )
+    Repo.query!("INSERT INTO public.user_roles (user_id, role_id) VALUES ($1::uuid, 'reviewer')", [
+      dump_uuid(user_id)
+    ])
 
     assert {:ok, me} = Auth.me(user_id)
     refute me.admin
@@ -188,15 +251,6 @@ defmodule Mithril.AuthTest do
     assert Auth.reviewer?(user_id)
     assert Auth.staff?(user_id)
     refute Auth.admin?(user_id)
-  end
-
-  test "grant_staff assigns a reviewer role by email" do
-    {_user_id, email} = insert_account("ops@tryinstaclean.com", "correct-horse")
-
-    assert {:ok, staff} = Auth.grant_staff(%{email: email, role: "reviewer"})
-    assert staff.reviewer
-    refute staff.admin
-    assert Auth.reviewer?(staff.id)
   end
 
   test "login rejects inactive accounts" do
@@ -389,6 +443,22 @@ defmodule Mithril.AuthTest do
 
     assert {:ok, session} = Auth.oauth("google", "google-id-token")
     assert session.user.id == user_id
+
+    [[count]] = Repo.query!("SELECT count(*) FROM public.users").rows
+    assert count == 1
+  end
+
+  test "google oauth links to an Instaclean user who has not used Direct yet" do
+    user_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      "INSERT INTO auth.users (id, email, encrypted_password) VALUES ($1, $2, $3)",
+      [dump_uuid(user_id), "google@example.com", ""]
+    )
+
+    assert {:ok, session} = Auth.oauth("google", "google-id-token")
+    assert session.user.id == user_id
+    assert session.user.email == "google@example.com"
 
     [[count]] = Repo.query!("SELECT count(*) FROM public.users").rows
     assert count == 1

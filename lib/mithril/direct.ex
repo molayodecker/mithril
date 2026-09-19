@@ -226,15 +226,48 @@ defmodule Mithril.Direct do
          {:ok, result} <-
            Repo.query("""
            SELECT jsonb_build_object(
-             'id', id,
-             'customerUserId', customer_id,
-             'status', status,
-             'role', role,
-             'householdAddress', household_address_snapshot,
-             'createdAt', created_at
+             'id', pr.id,
+             'customerUserId', pr.customer_id,
+             'customerName', COALESCE(
+               NULLIF(btrim(p.fullname), ''),
+               NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
+               NULLIF(btrim(u.email), ''),
+               NULLIF(btrim(u.phone), ''),
+               'Customer'
+             ),
+             'customerEmail', u.email,
+             'customerPhone', u.phone,
+             'status', pr.status,
+             'role', pr.role,
+             'livingArrangement', pr.living_arrangement,
+             'employmentType', pr.employment_type,
+             'desiredStartDate', pr.desired_start_date,
+             'householdAddress', pr.household_address_snapshot,
+             'salaryMinPesewas', pr.salary_min_pesewas,
+             'salaryMaxPesewas', pr.salary_max_pesewas,
+             'salaryFrequency', pr.salary_frequency,
+             'notes', pr.notes,
+             'shortlistCount', COALESCE(matches.shortlist_count, 0),
+             'shortlistUserIds', COALESCE(matches.shortlist_user_ids, '[]'::jsonb),
+             'createdAt', pr.created_at
            )
-           FROM public.placement_requests
-           ORDER BY created_at DESC
+           FROM public.placement_requests pr
+           LEFT JOIN public.users u ON u.id = pr.customer_id
+           LEFT JOIN public.profiles p ON p.id = pr.customer_id
+           LEFT JOIN LATERAL (
+             SELECT
+               count(*) FILTER (
+                 WHERE pm.status IN ('suggested', 'selected', 'hired')
+               )::int AS shortlist_count,
+               COALESCE(
+                 jsonb_agg(pm.candidate_user_id::text ORDER BY pm.created_at)
+                   FILTER (WHERE pm.status IN ('suggested', 'selected', 'hired')),
+                 '[]'::jsonb
+               ) AS shortlist_user_ids
+             FROM public.placement_matches pm
+             WHERE pm.placement_request_id = pr.id
+           ) matches ON true
+           ORDER BY pr.created_at DESC
            LIMIT 100
            """) do
       {:ok, Enum.map(result.rows, &hd/1)}
@@ -277,6 +310,528 @@ defmodule Mithril.Direct do
       {:ok, Enum.map(result.rows, &hd/1)}
     else
       :error -> {:error, :invalid_user}
+      {:error, error} when is_atom(error) -> {:error, error}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  def list_admin_cleaner_applications(user_id) do
+    admin_json_list(user_id, """
+    SELECT jsonb_build_object(
+      'id', ca.id,
+      'userId', ca.user_id,
+      'name', COALESCE(NULLIF(btrim(ca.name), ''), 'Applicant'),
+      'email', ca.email,
+      'phone', ca.phone,
+      'status', COALESCE(NULLIF(btrim(ca.status), ''), 'pending'),
+      'kycStatus', COALESCE(NULLIF(btrim(ca.kyc_status), ''), 'pending'),
+      'hourlyRateGhs', ca.hourly_rate,
+      'skills', COALESCE(to_jsonb(ca.skills), '[]'::jsonb),
+      'createdAt', ca.created_at
+    )
+    FROM public.cleaner_applications ca
+    ORDER BY ca.created_at DESC NULLS LAST
+    LIMIT 200
+    """)
+  end
+
+  def get_admin_cleaner_application(user_id, application_id) do
+    admin_json_row(user_id, application_id, """
+    SELECT jsonb_build_object(
+      'id', ca.id,
+      'userId', ca.user_id,
+      'name', COALESCE(NULLIF(btrim(ca.name), ''), 'Applicant'),
+      'email', ca.email,
+      'phone', ca.phone,
+      'status', COALESCE(NULLIF(btrim(ca.status), ''), 'pending'),
+      'kycStatus', COALESCE(NULLIF(btrim(ca.kyc_status), ''), 'pending'),
+      'hourlyRateGhs', ca.hourly_rate,
+      'skills', COALESCE(to_jsonb(ca.skills), '[]'::jsonb),
+      'createdAt', ca.created_at,
+      'bio', NULLIF(btrim(ca.bio), ''),
+      'applicantBio', NULLIF(btrim(ca.applicant_bio), ''),
+      'languages', COALESCE(to_jsonb(ca.languages), '[]'::jsonb),
+      'serviceAreas', COALESCE(to_jsonb(ca.service_areas), '[]'::jsonb),
+      'yearsOfExperience', ca.years_of_experience,
+      'hoursPerWeek', ca.hours_per_week,
+      'certifications', COALESCE(to_jsonb(ca.certifications), '[]'::jsonb),
+      'adminFeedback', NULLIF(btrim(ca.admin_feedback), '')
+    )
+    FROM public.cleaner_applications ca
+    WHERE ca.id = $1
+    LIMIT 1
+    """)
+  end
+
+  def list_admin_cleaner_application_drafts(user_id) do
+    admin_json_list(user_id, """
+    SELECT jsonb_build_object(
+      'id', d.id,
+      'userId', d.user_id,
+      'name', COALESCE(
+        NULLIF(btrim(p.fullname), ''),
+        NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
+        NULLIF(btrim(concat_ws(' ', d.payload->>'firstName', d.payload->>'lastName')), ''),
+        u.email,
+        d.email,
+        'Applicant'
+      ),
+      'email', COALESCE(NULLIF(btrim(d.email), ''), u.email),
+      'phone', COALESCE(NULLIF(btrim(u.phone), ''), NULLIF(btrim(d.payload->>'phone'), '')),
+      'currentStep', d.current_step,
+      'createdAt', d.created_at,
+      'updatedAt', d.updated_at,
+      'lastSavedAt', d.last_saved_at
+    )
+    FROM public.cleaner_application_drafts d
+    LEFT JOIN public.users u ON u.id = d.user_id
+    LEFT JOIN public.profiles p ON p.id = d.user_id
+    ORDER BY d.updated_at DESC
+    LIMIT 200
+    """)
+  end
+
+  def get_admin_cleaner_application_draft(user_id, draft_id) do
+    admin_json_row(user_id, draft_id, """
+    SELECT jsonb_build_object(
+      'id', d.id,
+      'userId', d.user_id,
+      'name', COALESCE(
+        NULLIF(btrim(p.fullname), ''),
+        NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
+        NULLIF(btrim(concat_ws(' ', d.payload->>'firstName', d.payload->>'lastName')), ''),
+        u.email,
+        d.email,
+        'Applicant'
+      ),
+      'email', COALESCE(NULLIF(btrim(d.email), ''), u.email),
+      'phone', COALESCE(NULLIF(btrim(u.phone), ''), NULLIF(btrim(d.payload->>'phone'), '')),
+      'currentStep', d.current_step,
+      'createdAt', d.created_at,
+      'updatedAt', d.updated_at,
+      'lastSavedAt', d.last_saved_at,
+      'city', NULLIF(btrim(d.payload->>'city'), ''),
+      'bio', NULLIF(btrim(d.payload->>'bio'), ''),
+      'hoursPerWeek', NULLIF(btrim(d.payload->>'hoursPerWeek'), ''),
+      'skills', CASE
+        WHEN jsonb_typeof(d.payload->'skills') = 'array' THEN d.payload->'skills'
+        ELSE '[]'::jsonb
+      END,
+      'workAreas', CASE
+        WHEN jsonb_typeof(d.payload->'workAreas') = 'array' THEN d.payload->'workAreas'
+        ELSE '[]'::jsonb
+      END
+    )
+    FROM public.cleaner_application_drafts d
+    LEFT JOIN public.users u ON u.id = d.user_id
+    LEFT JOIN public.profiles p ON p.id = d.user_id
+    WHERE d.id = $1
+    LIMIT 1
+    """)
+  end
+
+  def list_admin_cleaner_health(user_id) do
+    with {:ok, uid} <- dump_uuid(user_id),
+         :ok <- require_admin(uid),
+         {:ok, kpis} <- query_json_row(admin_cleaner_health_kpis_sql()),
+         {:ok, cases} <- query_json_list(admin_cleaner_health_cases_sql()) do
+      {:ok, %{kpis: kpis, cases: cases}}
+    else
+      :error -> {:error, :invalid_user}
+      {:error, error} when is_atom(error) -> {:error, error}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  def get_admin_cleaner_health_case(user_id, case_id) do
+    admin_json_row(user_id, case_id, """
+    SELECT jsonb_build_object(
+      'id', c.id,
+      'cleanerId', c.cleaner_id,
+      'cleanerName', COALESCE(
+        NULLIF(btrim(p.fullname), ''),
+        NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
+        'Unknown cleaner'
+      ),
+      'severity', c.severity,
+      'riskScore', COALESCE(s.risk_score, 0),
+      'riskLevel', s.risk_level,
+      'mainReason', c.title,
+      'rating', s.rating,
+      'recentJobs', COALESCE(s.completed_jobs, 0),
+      'assignedToName', CASE
+        WHEN c.assigned_to IS NULL THEN NULL
+        ELSE COALESCE(
+          NULLIF(btrim(a.fullname), ''),
+          NULLIF(btrim(concat_ws(' ', a.firstname, a.lastname)), ''),
+          NULL
+        )
+      END,
+      'status', c.status,
+      'createdAt', c.created_at,
+      'aiSummary', NULLIF(btrim(c.ai_summary), ''),
+      'aiRecommendation', NULLIF(btrim(c.ai_recommendation), ''),
+      'aiCategories', COALESCE(to_jsonb(c.ai_categories), '[]'::jsonb),
+      'resolutionNotes', NULLIF(btrim(c.resolution_notes), ''),
+      'evidenceJson', CASE
+        WHEN c.evidence IS NULL OR c.evidence = '{}'::jsonb THEN NULL
+        ELSE c.evidence::text
+      END,
+      'riskReasons', COALESCE((
+        SELECT jsonb_agg(
+          jsonb_build_object(
+            'label', CASE
+              WHEN jsonb_typeof(r) = 'object' THEN COALESCE(
+                NULLIF(r->>'label', ''),
+                NULLIF(r->>'code', ''),
+                'Risk factor'
+              )
+              ELSE COALESCE(NULLIF(btrim(r#>>'{}'), ''), 'Risk factor')
+            END,
+            'points', CASE
+              WHEN jsonb_typeof(r) = 'object' THEN COALESCE((r->>'points')::int, 0)
+              ELSE 0
+            END
+          )
+          ORDER BY ordinality
+        )
+        FROM jsonb_array_elements(
+          CASE
+            WHEN jsonb_typeof(s.risk_reasons) = 'array' AND jsonb_array_length(s.risk_reasons) > 0 THEN s.risk_reasons
+            WHEN jsonb_typeof(c.evidence->'risk_reasons') = 'array' THEN c.evidence->'risk_reasons'
+            ELSE '[]'::jsonb
+          END
+        ) WITH ORDINALITY AS t(r, ordinality)
+      ), '[]'::jsonb),
+      'reviewComments', COALESCE((
+        SELECT jsonb_agg(btrim(elem#>>'{}') ORDER BY ordinality)
+        FROM jsonb_array_elements(
+          CASE
+            WHEN jsonb_typeof(c.evidence->'review_comments') = 'array' THEN c.evidence->'review_comments'
+            ELSE '[]'::jsonb
+          END
+        ) WITH ORDINALITY AS t(elem, ordinality)
+        WHERE NULLIF(btrim(elem#>>'{}'), '') IS NOT NULL
+      ), '[]'::jsonb),
+      'actions', COALESCE((
+        SELECT jsonb_agg(x ORDER BY ordinality)
+        FROM (
+          SELECT jsonb_build_object(
+            'actionType', act.action_type,
+            'notes', NULLIF(btrim(act.notes), ''),
+            'createdAt', act.created_at
+          ) AS x,
+          row_number() OVER (ORDER BY act.created_at DESC) AS ordinality
+          FROM public.cleaner_case_actions act
+          WHERE act.case_id = c.id
+          ORDER BY act.created_at DESC
+          LIMIT 20
+        ) history
+      ), '[]'::jsonb),
+      'previousCases', COALESCE((
+        SELECT jsonb_agg(x ORDER BY ordinality)
+        FROM (
+          SELECT jsonb_build_object(
+            'id', prev.id,
+            'title', prev.title,
+            'status', prev.status,
+            'severity', prev.severity,
+            'createdAt', prev.created_at
+          ) AS x,
+          row_number() OVER (ORDER BY prev.created_at DESC) AS ordinality
+          FROM public.cleaner_operations_cases prev
+          WHERE prev.cleaner_id = c.cleaner_id AND prev.id <> c.id
+          ORDER BY prev.created_at DESC
+          LIMIT 10
+        ) earlier
+      ), '[]'::jsonb)
+    )
+    FROM public.cleaner_operations_cases c
+    LEFT JOIN public.cleaner_health_snapshots s ON s.id = c.snapshot_id
+    LEFT JOIN public.profiles p ON p.id = c.cleaner_id
+    LEFT JOIN public.profiles a ON a.id = c.assigned_to
+    WHERE c.id = $1
+    LIMIT 1
+    """)
+  end
+
+  def list_admin_customer_trust(user_id) do
+    admin_json_list(user_id, """
+    SELECT jsonb_build_object(
+      'customerId', t.customer_id,
+      'name', COALESCE(
+        NULLIF(btrim(p.fullname), ''),
+        NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
+        u.email,
+        u.phone,
+        'Customer'
+      ),
+      'email', u.email,
+      'phone', u.phone,
+      'verificationStage', t.verification_required_stage,
+      'verificationRequired', t.verification_required,
+      'idVerified', t.id_verified,
+      'phoneVerified', t.phone_verified,
+      'canProceedToPayment', t.verification_required_stage IS NULL OR t.verification_required_stage = 'before_dispatch',
+      'canDispatchCleaner', t.verification_required_stage IS NULL,
+      'riskScore', t.risk_score,
+      'failedPaymentCount', t.failed_payment_count,
+      'chargebackCount', t.chargeback_count,
+      'cleanerComplaintCount', t.cleaner_complaint_count,
+      'completedBookingsCount', t.completed_bookings_count,
+      'lastRiskEventAt', t.last_risk_event_at
+    )
+    FROM public.customer_trust_profiles t
+    LEFT JOIN public.users u ON u.id = t.customer_id
+    LEFT JOIN public.profiles p ON p.id = t.customer_id
+    ORDER BY t.last_risk_event_at DESC NULLS LAST, t.updated_at DESC
+    LIMIT 200
+    """)
+  end
+
+  def get_admin_customer_trust(user_id, customer_id) do
+    admin_json_row(user_id, customer_id, """
+    SELECT jsonb_build_object(
+      'customerId', t.customer_id,
+      'name', COALESCE(
+        NULLIF(btrim(p.fullname), ''),
+        NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
+        u.email,
+        u.phone,
+        'Customer'
+      ),
+      'email', u.email,
+      'phone', u.phone,
+      'verificationStage', t.verification_required_stage,
+      'verificationRequired', t.verification_required,
+      'verificationReason', NULLIF(btrim(t.verification_required_reason), ''),
+      'idVerified', t.id_verified,
+      'phoneVerified', t.phone_verified,
+      'canProceedToPayment', t.verification_required_stage IS NULL OR t.verification_required_stage = 'before_dispatch',
+      'canDispatchCleaner', t.verification_required_stage IS NULL,
+      'riskScore', t.risk_score,
+      'failedPaymentCount', t.failed_payment_count,
+      'chargebackCount', t.chargeback_count,
+      'cleanerComplaintCount', t.cleaner_complaint_count,
+      'completedBookingsCount', t.completed_bookings_count,
+      'lastRiskEventAt', t.last_risk_event_at,
+      'lastReviewedAt', t.last_reviewed_at,
+      'adminOverrideStage', t.admin_override_stage,
+      'adminOverrideReason', NULLIF(btrim(t.admin_override_reason), ''),
+      'adminExplanation', CASE t.verification_required_stage
+        WHEN 'before_payment' THEN
+          'Blocked before payment: ' || COALESCE(NULLIF(btrim(t.verification_required_reason), ''), 'verification required')
+          || ' (failed payments total=' || t.failed_payment_count::text
+          || ', chargebacks=' || t.chargeback_count::text
+          || ', complaints=' || t.cleaner_complaint_count::text || ').'
+        WHEN 'before_dispatch' THEN
+          'Allowed to pay but blocked before dispatch: ' || COALESCE(NULLIF(btrim(t.verification_required_reason), ''), 'verification required')
+          || ' ID verified=' || t.id_verified::text
+          || ', completed bookings=' || t.completed_bookings_count::text || '.'
+        WHEN 'manual_review' THEN
+          'Manual review: ' || COALESCE(NULLIF(btrim(t.verification_required_reason), ''), 'verification required')
+          || ' (chargebacks=' || t.chargeback_count::text
+          || ', complaints=' || t.cleaner_complaint_count::text || ').'
+        ELSE 'Allowed because customer is not in manual review and payment/dispatch gates are clear.'
+      END,
+      'kycStatus', kyc.kyc_status,
+      'kycSubjectType', kyc.subject_type,
+      'kycReviewAnswer', kyc.review_answer,
+      'kycUpdatedAt', kyc.updated_at,
+      'riskEvents', COALESCE((
+        SELECT jsonb_agg(x ORDER BY ordinality)
+        FROM (
+          SELECT jsonb_build_object(
+            'eventType', e.event_type,
+            'severity', e.severity,
+            'createdAt', e.created_at,
+            'voided', e.voided_at IS NOT NULL,
+            'bookingId', e.booking_id
+          ) AS x,
+          row_number() OVER (ORDER BY e.created_at DESC) AS ordinality
+          FROM public.customer_risk_events e
+          WHERE e.customer_id = t.customer_id
+          ORDER BY e.created_at DESC
+          LIMIT 40
+        ) events
+      ), '[]'::jsonb),
+      'bookings', COALESCE((
+        SELECT jsonb_agg(x ORDER BY ordinality)
+        FROM (
+          SELECT jsonb_build_object(
+            'id', b.id,
+            'scheduledDate', b.scheduled_date,
+            'scheduledTime', b.scheduled_time,
+            'status', b.status,
+            'paymentStatus', b.payment_status,
+            'finalAmountMinor', b.final_amount_minor,
+            'title', NULLIF(btrim(b.title), ''),
+            'address', NULLIF(btrim(b.address), '')
+          ) AS x,
+          row_number() OVER (ORDER BY b.created_at DESC) AS ordinality
+          FROM public.bookings b
+          WHERE b.customer_id = t.customer_id
+          ORDER BY b.created_at DESC
+          LIMIT 20
+        ) recent
+      ), '[]'::jsonb),
+      'adminNotes', COALESCE((
+        SELECT jsonb_agg(x ORDER BY ordinality)
+        FROM (
+          SELECT jsonb_build_object(
+            'note', n.note,
+            'createdAt', n.created_at
+          ) AS x,
+          row_number() OVER (ORDER BY n.created_at DESC) AS ordinality
+          FROM public.customer_risk_admin_notes n
+          WHERE n.customer_id = t.customer_id
+          ORDER BY n.created_at DESC
+          LIMIT 50
+        ) notes
+      ), '[]'::jsonb),
+      'adminActions', COALESCE((
+        SELECT jsonb_agg(x ORDER BY ordinality)
+        FROM (
+          SELECT jsonb_build_object(
+            'actionType', a.action_type,
+            'reason', NULLIF(btrim(a.reason), ''),
+            'createdAt', a.created_at
+          ) AS x,
+          row_number() OVER (ORDER BY a.created_at DESC) AS ordinality
+          FROM public.customer_risk_admin_actions a
+          WHERE a.customer_id = t.customer_id
+          ORDER BY a.created_at DESC
+          LIMIT 50
+        ) history
+      ), '[]'::jsonb)
+    )
+    FROM public.customer_trust_profiles t
+    LEFT JOIN public.users u ON u.id = t.customer_id
+    LEFT JOIN public.profiles p ON p.id = t.customer_id
+    LEFT JOIN LATERAL (
+      SELECT kp.kyc_status, kp.subject_type, kp.review_answer, kp.updated_at
+      FROM public.kyc_profiles kp
+      WHERE kp.user_id = t.customer_id
+      ORDER BY kp.updated_at DESC NULLS LAST
+      LIMIT 1
+    ) kyc ON true
+    WHERE t.customer_id = $1
+    LIMIT 1
+    """)
+  end
+
+  def record_admin_cleaner_health_action(user_id, case_id, params) when is_map(params) do
+    with {:ok, uid} <- dump_uuid(user_id),
+         {:ok, cid} <- dump_uuid(case_id),
+         :ok <- require_admin(uid),
+         {:ok, action_type, notes, next_status} <- parse_health_action(params) do
+      Repo.transaction(fn ->
+        [_id, current_status] =
+          one_row_or_rollback(
+            """
+            SELECT id, status
+            FROM public.cleaner_operations_cases
+            WHERE id = $1
+            FOR UPDATE
+            """,
+            [cid],
+            :not_found
+          )
+
+        status = next_status || current_status
+
+        with_query_or_rollback(
+          """
+          INSERT INTO public.cleaner_case_actions (case_id, action_type, notes, created_by)
+          VALUES ($1, $2, $3, $4)
+          """,
+          [cid, action_type, notes, uid]
+        )
+
+        with_query_or_rollback(
+          """
+          UPDATE public.cleaner_operations_cases
+          SET
+            status = $2,
+            updated_at = now(),
+            reviewed_by = CASE WHEN $2 IN ('resolved', 'dismissed') THEN $3 ELSE reviewed_by END,
+            reviewed_at = CASE WHEN $2 IN ('resolved', 'dismissed') THEN now() ELSE reviewed_at END,
+            resolution_notes = CASE WHEN $2 IN ('resolved', 'dismissed') THEN $4 ELSE resolution_notes END
+          WHERE id = $1
+          """,
+          [cid, status, uid, notes]
+        )
+
+        %{message: "Action recorded"}
+      end)
+      |> normalize_transaction()
+    else
+      :error -> {:error, :invalid_request}
+      {:error, error} when is_atom(error) -> {:error, error}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  def add_admin_customer_trust_note(user_id, customer_id, params) when is_map(params) do
+    with {:ok, uid} <- dump_uuid(user_id),
+         {:ok, cid} <- dump_uuid(customer_id),
+         :ok <- require_admin(uid),
+         {:ok, note} <- required_text(params["note"], 4000) do
+      Repo.transaction(fn ->
+        one_row_or_rollback(
+          """
+          SELECT customer_id
+          FROM public.customer_trust_profiles
+          WHERE customer_id = $1
+          FOR UPDATE
+          """,
+          [cid],
+          :not_found
+        )
+
+        with_query_or_rollback(
+          """
+          INSERT INTO public.customer_risk_admin_notes (customer_id, admin_user_id, note)
+          VALUES ($1, $2, $3)
+          """,
+          [cid, uid, note]
+        )
+
+        insert_trust_admin_action(cid, uid, "admin_note_added", note)
+        %{message: "Note saved"}
+      end)
+      |> normalize_transaction()
+    else
+      :error -> {:error, :invalid_request}
+      {:error, error} when is_atom(error) -> {:error, error}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  def record_admin_customer_trust_action(user_id, customer_id, params) when is_map(params) do
+    with {:ok, uid} <- dump_uuid(user_id),
+         {:ok, cid} <- dump_uuid(customer_id),
+         :ok <- require_admin(uid),
+         {:ok, action, reason} <- parse_trust_action(params) do
+      Repo.transaction(fn ->
+        one_row_or_rollback(
+          """
+          SELECT customer_id
+          FROM public.customer_trust_profiles
+          WHERE customer_id = $1
+          FOR UPDATE
+          """,
+          [cid],
+          :not_found
+        )
+
+        recalculate_trust_profile(cid)
+        apply_trust_action(cid, uid, action, reason)
+        %{message: "Action recorded"}
+      end)
+      |> normalize_transaction()
+    else
+      :error -> {:error, :invalid_request}
       {:error, error} when is_atom(error) -> {:error, error}
       {:error, error} -> database_error(error)
     end
@@ -386,6 +941,121 @@ defmodule Mithril.Direct do
          ) do
       {:ok, result} -> {:ok, Enum.map(result.rows, &hd/1)}
       {:error, error} -> {:error, error}
+    end
+  end
+
+  defp admin_cleaner_health_kpis_sql do
+    """
+    SELECT jsonb_build_object(
+      'openCases', (
+        SELECT count(*)::int
+        FROM public.cleaner_operations_cases
+        WHERE status IN ('open', 'reviewing', 'monitoring')
+      ),
+      'redRiskCleaners', (
+        SELECT count(*)::int
+        FROM public.cleaner_health_snapshots
+        WHERE snapshot_date = current_date AND risk_level = 'red'
+      ),
+      'yellowRiskCleaners', (
+        SELECT count(*)::int
+        FROM public.cleaner_health_snapshots
+        WHERE snapshot_date = current_date AND risk_level = 'yellow'
+      ),
+      'averageCleanerRating', (
+        SELECT round(avg(rating)::numeric, 1)::float
+        FROM public.cleaner_data
+        WHERE rating IS NOT NULL
+      ),
+      'noShowsThisMonth', (
+        SELECT coalesce(sum(no_show_count), 0)::int
+        FROM public.cleaner_health_snapshots
+        WHERE snapshot_date >= date_trunc('month', current_date)::date
+      ),
+      'complaintsThisMonth', (
+        SELECT coalesce(sum(complaint_count), 0)::int
+        FROM public.cleaner_health_snapshots
+        WHERE snapshot_date >= date_trunc('month', current_date)::date
+      )
+    )
+    """
+  end
+
+  defp admin_cleaner_health_cases_sql do
+    """
+    SELECT jsonb_build_object(
+      'id', c.id,
+      'cleanerId', c.cleaner_id,
+      'cleanerName', COALESCE(
+        NULLIF(btrim(p.fullname), ''),
+        NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
+        'Unknown cleaner'
+      ),
+      'severity', c.severity,
+      'riskScore', COALESCE(s.risk_score, 0),
+      'mainReason', c.title,
+      'rating', s.rating,
+      'recentJobs', COALESCE(s.completed_jobs, 0),
+      'assignedToName', CASE
+        WHEN c.assigned_to IS NULL THEN NULL
+        ELSE COALESCE(
+          NULLIF(btrim(a.fullname), ''),
+          NULLIF(btrim(concat_ws(' ', a.firstname, a.lastname)), ''),
+          NULL
+        )
+      END,
+      'status', c.status,
+      'createdAt', c.created_at
+    )
+    FROM public.cleaner_operations_cases c
+    LEFT JOIN public.cleaner_health_snapshots s ON s.id = c.snapshot_id
+    LEFT JOIN public.profiles p ON p.id = c.cleaner_id
+    LEFT JOIN public.profiles a ON a.id = c.assigned_to
+    ORDER BY c.created_at DESC
+    LIMIT 200
+    """
+  end
+
+  defp query_json_list(sql) do
+    case Repo.query(sql) do
+      {:ok, result} -> {:ok, Enum.map(result.rows, &hd/1)}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp query_json_row(sql) do
+    case Repo.query(sql) do
+      {:ok, %{rows: [[row]]}} -> {:ok, row}
+      {:ok, %{rows: []}} -> {:error, :not_found}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp admin_json_list(user_id, sql) do
+    with {:ok, uid} <- dump_uuid(user_id),
+         :ok <- require_admin(uid),
+         {:ok, result} <- Repo.query(sql) do
+      {:ok, Enum.map(result.rows, &hd/1)}
+    else
+      :error -> {:error, :invalid_user}
+      {:error, error} when is_atom(error) -> {:error, error}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp admin_json_row(user_id, id, sql) do
+    with {:ok, uid} <- dump_uuid(user_id),
+         {:ok, rid} <- dump_uuid(id),
+         :ok <- require_admin(uid),
+         {:ok, result} <- Repo.query(sql, [rid]) do
+      case result.rows do
+        [[row]] -> {:ok, row}
+        [] -> {:error, :not_found}
+      end
+    else
+      :error -> {:error, :invalid_request}
+      {:error, error} when is_atom(error) -> {:error, error}
+      {:error, error} -> database_error(error)
     end
   end
 
@@ -814,6 +1484,183 @@ defmodule Mithril.Direct do
   defp text_or_empty(nil), do: ""
   defp text_or_empty(value) when is_binary(value), do: String.trim(value)
   defp text_or_empty(value), do: to_string(value)
+
+  @health_actions ~w(monitor coaching training warning investigation resolved dismissed)
+  @disciplinary_health_actions ~w(warning training investigation)
+  @trust_actions ~w(
+    mark_reviewed
+    clear_manual_review
+    require_manual_review
+    require_id_before_payment
+    require_id_before_dispatch
+  )
+
+  defp parse_health_action(params) do
+    action = params["actionType"]
+    notes = optional_text(params["notes"], 4000)
+
+    cond do
+      action not in @health_actions ->
+        {:error, :invalid_request}
+
+      notes == :error ->
+        {:error, :invalid_request}
+
+      true ->
+        {db_action, next_status, stored_notes} =
+          case action do
+            "dismissed" -> {"note", "dismissed", notes || "Case dismissed"}
+            "resolved" -> {"resolved", "resolved", notes || "Case resolved"}
+            "monitor" -> {"monitor", "monitoring", notes}
+            other when other in @disciplinary_health_actions -> {other, "reviewing", notes}
+            other -> {other, nil, notes}
+          end
+
+        {:ok, db_action, stored_notes, next_status}
+    end
+  end
+
+  defp parse_trust_action(params) do
+    action = params["action"]
+
+    with true <- action in @trust_actions,
+         {:ok, reason} <- required_text(params["reason"], 2000) do
+      {:ok, action, reason}
+    else
+      _ -> {:error, :invalid_request}
+    end
+  end
+
+  defp optional_text(nil, _max), do: nil
+  defp optional_text(value, max) when is_binary(value) do
+    trimmed = String.trim(value)
+
+    cond do
+      trimmed == "" -> nil
+      byte_size(trimmed) > max -> :error
+      true -> trimmed
+    end
+  end
+
+  defp optional_text(_value, _max), do: :error
+
+  defp required_text(value, max) do
+    case optional_text(value, max) do
+      :error -> {:error, :invalid_request}
+      nil -> {:error, :invalid_request}
+      text -> {:ok, text}
+    end
+  end
+
+  defp recalculate_trust_profile(cid) do
+    case Repo.query("SELECT public.recalculate_customer_trust_profile($1)", [cid]) do
+      {:ok, _} -> :ok
+      {:error, %Postgrex.Error{postgres: %{code: :undefined_function}}} -> :ok
+      {:error, error} -> Repo.rollback({:database, error})
+    end
+  end
+
+  defp apply_trust_action(cid, uid, "mark_reviewed", reason) do
+    with_query_or_rollback(
+      """
+      UPDATE public.customer_trust_profiles
+      SET last_reviewed_at = now(), updated_at = now()
+      WHERE customer_id = $1
+      """,
+      [cid]
+    )
+
+    insert_trust_admin_action(cid, uid, "customer_risk_reviewed", reason)
+  end
+
+  defp apply_trust_action(cid, uid, "clear_manual_review", reason) do
+    with_query_or_rollback(
+      """
+      UPDATE public.customer_trust_profiles
+      SET
+        manual_review_cleared_at = now(),
+        admin_override_stage = NULL,
+        admin_override_reason = $2,
+        admin_override_set_at = now(),
+        admin_override_set_by = $3,
+        updated_at = now()
+      WHERE customer_id = $1
+      """,
+      [cid, reason, uid]
+    )
+
+    insert_trust_admin_action(cid, uid, "manual_review_cleared", reason)
+  end
+
+  defp apply_trust_action(cid, uid, "require_manual_review", reason) do
+    with_query_or_rollback(
+      """
+      UPDATE public.customer_trust_profiles
+      SET
+        admin_override_stage = 'manual_review',
+        admin_override_reason = $2,
+        admin_override_set_at = now(),
+        admin_override_set_by = $3,
+        manual_review_cleared_at = NULL,
+        updated_at = now()
+      WHERE customer_id = $1
+      """,
+      [cid, reason, uid]
+    )
+
+    insert_trust_admin_action(cid, uid, "manual_review_required", reason)
+  end
+
+  defp apply_trust_action(cid, uid, "require_id_before_payment", reason) do
+    with_query_or_rollback(
+      """
+      UPDATE public.customer_trust_profiles
+      SET
+        admin_override_stage = 'before_payment',
+        admin_override_reason = $2,
+        admin_override_set_at = now(),
+        admin_override_set_by = $3,
+        updated_at = now()
+      WHERE customer_id = $1
+      """,
+      [cid, reason, uid]
+    )
+
+    insert_trust_admin_action(cid, uid, "id_verification_required", reason)
+  end
+
+  defp apply_trust_action(cid, uid, "require_id_before_dispatch", reason) do
+    with_query_or_rollback(
+      """
+      UPDATE public.customer_trust_profiles
+      SET
+        admin_override_stage = 'before_dispatch',
+        admin_override_reason = $2,
+        admin_override_set_at = now(),
+        admin_override_set_by = $3,
+        updated_at = now()
+      WHERE customer_id = $1
+      """,
+      [cid, reason, uid]
+    )
+
+    insert_trust_admin_action(cid, uid, "id_verification_required", reason)
+  end
+
+  defp insert_trust_admin_action(cid, uid, action_type, reason) do
+    with_query_or_rollback(
+      """
+      INSERT INTO public.customer_risk_admin_actions (
+        customer_id,
+        admin_user_id,
+        action_type,
+        reason,
+        metadata
+      ) VALUES ($1, $2, $3, $4, '{}'::jsonb)
+      """,
+      [cid, uid, action_type, reason]
+    )
+  end
 
   defp dump_uuid(value) when is_binary(value), do: Ecto.UUID.dump(value)
   defp dump_uuid(_value), do: :error

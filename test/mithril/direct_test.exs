@@ -226,6 +226,10 @@ defmodule Mithril.DirectTest do
 
     assert {:ok, [placement]} = Direct.list_admin_placements(user_id)
     assert placement["role"] == "gardener"
+    assert placement["customerName"] == "Customer"
+    assert placement["employmentType"] == "flexible"
+    assert placement["shortlistCount"] == 0
+    assert placement["shortlistUserIds"] == []
   end
 
   test "admin matching appends the placement role when desired_roles is null" do

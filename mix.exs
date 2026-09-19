@@ -25,6 +25,8 @@ defmodule Mithril.MixProject do
   defp deps do
     [
       {:phoenix, "~> 1.8.13"},
+      {:phoenix_html, "~> 4.2"},
+      {:phoenix_live_view, "~> 1.1"},
       {:phoenix_ecto, "~> 4.7"},
       {:ecto_sql, "~> 3.14"},
       {:postgrex, "~> 0.22.4"},
@@ -33,7 +35,8 @@ defmodule Mithril.MixProject do
       {:joken, "~> 2.6"},
       {:bcrypt_elixir, "~> 3.3"},
       {:req, "~> 0.5"},
-      {:open_api_spex, "~> 3.22.3"}
+      {:open_api_spex, "~> 3.22.3"},
+      {:oban, "~> 2.19"}
     ]
   end
 end

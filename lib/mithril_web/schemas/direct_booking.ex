@@ -168,6 +168,23 @@ defmodule MithrilWeb.Schemas.DirectBooking do
     })
   end
 
+  defmodule RescheduleBookingRequest do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectRescheduleBookingRequest",
+      type: :object,
+      properties: %{
+        scheduledDate: %Schema{type: :string, format: :date},
+        scheduledTime: %Schema{type: :string, example: "09:00"},
+        durationHours: %Schema{type: :number, nullable: true, minimum: 0},
+        timezone: %Schema{type: :string, default: "Africa/Accra"}
+      },
+      required: [:scheduledDate, :scheduledTime, :timezone]
+    })
+  end
+
   defmodule CreateBookingResponse do
     require OpenApiSpex
     alias OpenApiSpex.Schema
@@ -236,6 +253,64 @@ defmodule MithrilWeb.Schemas.DirectBooking do
       type: :object,
       properties: %{bookings: %Schema{type: :array, items: BookingDetailResponse}},
       required: [:bookings]
+    })
+  end
+
+  defmodule CancelBookingRequest do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectCancelBookingRequest",
+      type: :object,
+      properties: %{
+        cancellationReason: %Schema{
+          type: :string,
+          maxLength: 500,
+          nullable: true,
+          description: "Optional customer note stored on the cancelled booking"
+        }
+      }
+    })
+  end
+
+  defmodule CancelBookingResponse do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectCancelBookingResponse",
+      type: :object,
+      properties: %{
+        id: %Schema{type: :string, format: :uuid},
+        status: %Schema{type: :string},
+        paymentStatus: %Schema{type: :string},
+        currency: %Schema{type: :string},
+        amountMinor: %Schema{type: :integer},
+        tier: %Schema{
+          type: :string,
+          enum: ["full_refund", "partial_refund", "no_refund"]
+        },
+        refundPercent: %Schema{type: :integer, enum: [0, 50, 100]},
+        refundAmountMinor: %Schema{type: :integer},
+        refundStatus: %Schema{
+          type: :string,
+          enum: ["skipped", "pending", "processed", "failed", "manual_review"]
+        },
+        successMessage: %Schema{type: :string}
+      },
+      required: [
+        :id,
+        :status,
+        :paymentStatus,
+        :currency,
+        :amountMinor,
+        :tier,
+        :refundPercent,
+        :refundAmountMinor,
+        :refundStatus,
+        :successMessage
+      ]
     })
   end
 

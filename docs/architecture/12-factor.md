@@ -6,7 +6,7 @@ Mithril follows the 12-Factor methodology as an operational baseline for Phoenix
 
 ### One codebase, many deploys
 
-`molayodecker/mithril` is the application codebase. Development, test, staging, and production must run the same code and differ through runtime configuration.
+`molayodecker/mithril` is the application codebase. Development, test, preview, staging, and production must run the same code and differ through runtime configuration. Preview is `instaclean-mithril-preview` on unmanaged Fly Postgres. Staging is `instaclean-mithril-staging` on `instaclean-mithril-staging-pg`. Production is `instaclean-mithril` on `instaclean-mithril-pg`.
 
 ### Explicit dependencies
 

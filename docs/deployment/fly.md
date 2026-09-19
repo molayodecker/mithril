@@ -35,6 +35,46 @@ bash scripts/db_sync_from_live.sh
 
 The underlying Fly hostname remains available as `instaclean-mithril.fly.dev`, but production clients should use `api.tryinstaclean.com` once DNS and TLS are configured.
 
+## Staging vs production
+
+Local `mix` uses Homebrew PostgreSQL (`mithril_dev` / `mithril_test`). Shared environments are separate Fly apps and separate Managed Postgres clusters. London (`lhr`) would not provision a second MPG cluster; staging Postgres is in `iad`.
+
+```text
+Dev (laptop)
+  mix phx.server  -->  localhost Postgres
+
+Preview
+  instaclean-mithril-preview.fly.dev  (iad)
+    -->  instaclean-mithril-preview-pg  (unmanaged, 512MB, 1GB volume)
+
+Staging
+  instaclean-mithril-staging.fly.dev  (iad)
+    -->  instaclean-mithril-staging-pg / fly-db  (Managed Postgres Basic)
+
+Production
+  api.tryinstaclean.com  (lhr)
+    -->  instaclean-mithril-pg / fly-db  (Managed Postgres Basic)
+```
+
+Deploy policy:
+
+- Pull requests run CI only.
+- A successful CI run on a **push** to this repository's `main` deploys **staging**.
+- **Production** deploys only from `workflow_dispatch` on `main` (Actions → Deploy → Run workflow → `production`), after staging looks good.
+
+Staging resources:
+
+```bash
+fly mpg attach vmkq60913zvo35ln -a instaclean-mithril-staging \
+  -d fly-db -u fly-user --variable-name FLY_DATABASE_URL
+```
+
+`fly.staging.toml` sets `FLY_DATABASE_SSL_DISABLE=true` because the iad MPG pgbouncer speaks PostgreSQL over 6PN without TLS. Production in `lhr` keeps TLS.
+
+Preview is **not** Managed Postgres. Fly MPG has no plan smaller than Basic ($38/mo). Preview uses unmanaged Fly Postgres (`shared-cpu-1x`, 512MB, 1GB volume) plus `fly.preview.toml`. It is unsupported by Fly, single-node, and fine for PR/demo traffic only.
+
+Set GitHub Environment secrets (`staging` and `production` separately): `FLY_API_TOKEN` (app-scoped deploy token) and `TARGET_DATABASE_URL` (the `localhost:16380` DSN used with `fly mpg proxy`). Direct should use a Vercel Preview or staging host with `MITHRIL_API_URL=https://instaclean-mithril-staging.fly.dev`. For the Mithril preview API, use `https://instaclean-mithril-preview.fly.dev`.
+
 In parallel, create a Fly MPG cluster for restore rehearsal:
 
 ```text
@@ -76,7 +116,7 @@ If that globally unique app name is unavailable, choose another name and update 
 
 ## 3. Set production secrets
 
-Mithril currently requires `SECRET_KEY_BASE` plus the database URLs selected by `DATABASE_BACKEND`. JWT login uses `AUTH_JWT_SECRET` when set, otherwise `SECRET_KEY_BASE`. Phone OTP needs `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_MESSAGING_SERVICE_SID` or `TWILIO_PHONE_NUMBER`. Optional `AUTH_TEST_PHONES` (comma-separated `phone:otp` pairs) skips Twilio for those numbers, the same as Supabase Auth test phone numbers. Google/Facebook need `GOOGLE_CLIENT_IDS` and `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET`. Grant `admin`, or `reviewer` for reviewer-enabled staff workflows, on an existing user with `mix mithril.staff.grant` against the app's current database (`--email` or `--phone`, and `--role admin|reviewer`). Reviewer is not a blanket replacement for admin on every `/direct/admin/*` route. The frontend signs in through `/auth`; phone sign-in requires `POST /auth/otp` followed by `POST /auth/otp/verify` to receive JWTs. There is no browser admin UI.
+Mithril currently requires `SECRET_KEY_BASE` plus the database URLs selected by `DATABASE_BACKEND`. JWT login uses `AUTH_JWT_SECRET` when set, otherwise `SECRET_KEY_BASE`. Phone OTP needs `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_MESSAGING_SERVICE_SID` or `TWILIO_PHONE_NUMBER`. Optional `AUTH_TEST_PHONES` (comma-separated `phone:otp` pairs) skips Twilio for those numbers, the same as Supabase Auth test phone numbers. Google/Facebook need `GOOGLE_CLIENT_IDS` and `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET`. Grant `admin` or `reviewer` on an existing user with `mix mithril.staff.grant` against the app's current database (`--email` or `--phone`, and `--role admin|reviewer`). The frontend signs in through `/auth`; there is no browser admin UI.
 
 Generate a Phoenix secret locally:
 

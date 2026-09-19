@@ -9,7 +9,9 @@ defmodule Mithril.DirectDispatchSafety do
 
   require Logger
 
+  alias Mithril.Auth
   alias Mithril.DirectDispatch
+  alias Mithril.Notifications
   alias Mithril.Repo
 
   @default_timezone "Africa/Accra"
@@ -117,6 +119,13 @@ defmodule Mithril.DirectDispatchSafety do
         end
       end)
       |> normalize_transaction()
+      |> case do
+        {:ok, assigned} ->
+          {:ok, Map.put(assigned, :notificationsSent, notify_assignment(assigned, params))}
+
+        error ->
+          error
+      end
     else
       :error -> {:error, :invalid_request}
       {:error, reason} when is_atom(reason) -> {:error, reason}
@@ -145,6 +154,50 @@ defmodule Mithril.DirectDispatchSafety do
       :error -> {:error, :invalid_request}
       {:error, reason} when is_atom(reason) -> {:error, reason}
       {:error, error} -> database_error(error)
+    end
+  end
+
+  defp notify_assignment(assigned, params) do
+    if Notifications.enabled?(params) do
+      request_id = assigned[:id] || assigned["id"]
+      worker_id = assigned[:assignedWorkerUserId] || assigned["assignedWorkerUserId"]
+
+      case load_assignment_row(request_id) do
+        {:ok, [customer_id, address, role, start_at]} ->
+          Notifications.notify(%{
+            send_notifications: true,
+            kind: :dispatch_assignment,
+            request_id: request_id,
+            customer: Notifications.load_party(customer_id),
+            worker: Notifications.load_party(worker_id),
+            address: address,
+            role: role,
+            requested_start_at: start_at
+          })
+
+        _ ->
+          false
+      end
+    else
+      false
+    end
+  end
+
+  defp load_assignment_row(request_id) do
+    with {:ok, rid} <- dump_uuid(request_id),
+         {:ok, %{rows: [row]}} <-
+           Repo.query(
+             """
+             SELECT customer_id::text, household_address_snapshot, role, requested_start_at
+             FROM public.direct_service_requests
+             WHERE id = $1
+             LIMIT 1
+             """,
+             [rid]
+           ) do
+      {:ok, row}
+    else
+      _ -> :error
     end
   end
 
@@ -478,21 +531,7 @@ defmodule Mithril.DirectDispatchSafety do
   defp mutable_status(_), do: :error
 
   defp require_admin(uid) do
-    case Repo.query(
-           """
-           SELECT EXISTS (
-             SELECT 1
-             FROM public.user_roles
-             WHERE user_id = $1
-               AND role_id IN ('admin', 'reviewer')
-           )
-           """,
-           [uid]
-         ) do
-      {:ok, %{rows: [[true]]}} -> :ok
-      {:ok, %{rows: [[false]]}} -> {:error, :forbidden}
-      {:error, error} -> {:error, error}
-    end
+    if Auth.staff_uuid?(uid), do: :ok, else: {:error, :forbidden}
   end
 
   defp dump_uuid(value) when is_binary(value), do: Ecto.UUID.dump(value)
