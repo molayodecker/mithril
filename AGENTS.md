@@ -32,6 +32,8 @@ For high-risk changes, perform the deeper review below before finishing.
 
 Identify the state before and after the operation.
 
+For booking or dispatch status work, derive the authoritative status vocabulary and transition constraints from the current implementation, OpenAPI schemas, database functions/constraints, and tests. Do not rely on a simplified lifecycle copied into documentation. Current active booking statuses include at least `pending`, `confirmed`, `scheduled`, `en_route`, `arrived`, `in_progress`, and `completed`, with cancellation handled separately.
+
 Check that the change cannot create impossible or inconsistent combinations, especially for bookings, payments, refunds, assignments, dispatch offers, cancellations, reschedules, verification, and notifications.
 
 Examples:
