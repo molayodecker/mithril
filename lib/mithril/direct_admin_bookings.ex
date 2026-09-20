@@ -85,7 +85,7 @@ defmodule Mithril.DirectAdminBookings do
       Repo.transaction(fn ->
         with {:ok, booking} <- lock_booking_for_assignment(bid) do
           if booking.current_cleaner_id == cleaner_uid do
-            :ok
+            repair_same_cleaner_reservation(cleaner_uid, booking)
           else
             with :ok <- ensure_reassignable(booking),
                  :ok <- lock_cleaner_schedule(cleaner_uid),
@@ -419,8 +419,8 @@ defmodule Mithril.DirectAdminBookings do
   end
 
   # Assignment mutations use one global lock order: booking row first,
-  # then the target cleaner schedule advisory lock. Same-cleaner retries stop
-  # after the booking row lock because they do not mutate scheduling state.
+  # then the target cleaner schedule advisory lock. Same-cleaner retries skip
+  # mutable worker validation, but may still repair a missing legacy period.
   defp lock_cleaner_schedule(cleaner_uid) do
     case Repo.query(
            "SELECT pg_advisory_xact_lock(hashtextextended($1::uuid::text, 0))",
@@ -438,6 +438,7 @@ defmodule Mithril.DirectAdminBookings do
              status::text,
              service_id,
              cleaner_id,
+             booking_period IS NULL AS missing_booking_period,
              COALESCE(
                lower(booking_period),
                (scheduled_date + scheduled_time)
@@ -465,12 +466,25 @@ defmodule Mithril.DirectAdminBookings do
            [bid, @default_timezone]
          ) do
       {:ok,
-       %{rows: [[status, service_id, current_cleaner_id, starts_at, ends_at, scheduled_date]]}} ->
+       %{
+         rows: [
+           [
+             status,
+             service_id,
+             current_cleaner_id,
+             missing_booking_period,
+             starts_at,
+             ends_at,
+             scheduled_date
+           ]
+         ]
+       }} ->
         {:ok,
          %{
            status: status,
            service_id: service_id,
            current_cleaner_id: current_cleaner_id,
+           missing_booking_period: missing_booking_period,
            starts_at: starts_at,
            ends_at: ends_at,
            scheduled_date: scheduled_date,
@@ -479,6 +493,47 @@ defmodule Mithril.DirectAdminBookings do
 
       {:ok, %{rows: []}} ->
         {:error, :not_found}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp repair_same_cleaner_reservation(_cleaner_uid, %{missing_booking_period: false}), do: :ok
+
+  defp repair_same_cleaner_reservation(cleaner_uid, booking) do
+    with :ok <- ensure_reservation_window(booking),
+         :ok <- lock_cleaner_schedule(cleaner_uid) do
+      persist_legacy_booking_period(booking)
+    end
+  end
+
+  defp ensure_reservation_window(%{starts_at: %DateTime{} = starts_at, ends_at: %DateTime{} = ends_at}) do
+    if DateTime.compare(ends_at, starts_at) == :gt, do: :ok, else: {:error, :invalid_timeslot}
+  end
+
+  defp ensure_reservation_window(_booking), do: {:error, :invalid_timeslot}
+
+  defp persist_legacy_booking_period(booking) do
+    case Repo.query(
+           """
+           UPDATE public.bookings
+           SET booking_period = tstzrange($2::timestamptz, $3::timestamptz, '[)'),
+               updated_at = now()
+           WHERE id = $1
+             AND booking_period IS NULL
+           RETURNING id
+           """,
+           [booking.booking_id, booking.starts_at, booking.ends_at]
+         ) do
+      {:ok, %{num_rows: 1}} ->
+        :ok
+
+      {:ok, %{num_rows: 0}} ->
+        :ok
+
+      {:error, %Postgrex.Error{postgres: %{code: :exclusion_violation}}} ->
+        {:error, :cleaner_unavailable}
 
       {:error, error} ->
         {:error, error}
