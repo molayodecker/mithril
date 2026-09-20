@@ -155,7 +155,13 @@ defmodule MithrilWeb.Schemas.DirectBooking do
         durationHours: %Schema{type: :number, minimum: 0},
         address: %Schema{type: :string, minLength: 3, maxLength: 500},
         specialInstructions: %Schema{type: :string, nullable: true, maxLength: 4000},
-        timezone: %Schema{type: :string, default: "Africa/Accra"}
+        timezone: %Schema{type: :string, default: "Africa/Accra"},
+        idempotencyKey: %Schema{
+          type: :string,
+          minLength: 8,
+          maxLength: 128,
+          description: "Per-booking intent key reused across retries"
+        }
       },
       required: [
         :serviceId,
