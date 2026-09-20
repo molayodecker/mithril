@@ -170,6 +170,54 @@ defmodule Mithril.DirectBookingsTest do
     end
   end
 
+  test "allows same-day cancellation when an actionable refund request has zero value" do
+    customer_id = Ecto.UUID.generate()
+    [[local_today]] = Repo.query!("SELECT (now() AT TIME ZONE 'Africa/Accra')::date").rows
+
+    booking_id =
+      insert_booking!(customer_id, local_today, ~T[23:59:00], "scheduled",
+        payment_status: "paid",
+        reference: "T_direct_zero_value_request"
+      )
+
+    Repo.query!(
+      """
+      INSERT INTO public.direct_refund_requests (booking_id, status)
+      VALUES ($1, 'requested')
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:ok, result} = DirectBookingCancels.cancel(customer_id, booking_id, %{})
+    assert result.status == "cancelled"
+    assert result.tier == "no_refund"
+    assert result.refundAmountMinor == 0
+    assert result.refundStatus == "skipped"
+
+    assert [["cancelled"]] =
+             Repo.query!(
+               "SELECT status FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert [["skipped", 0]] =
+             Repo.query!(
+               "SELECT status, refund_amount_minor FROM public.booking_refunds WHERE booking_id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert [[1]] =
+             Repo.query!(
+               """
+               SELECT count(*)
+               FROM public.direct_refund_requests
+               WHERE booking_id = $1
+                 AND status = 'requested'
+               """,
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+  end
+
   test "is idempotent once a refund row exists" do
     customer_id = Ecto.UUID.generate()
 
@@ -180,6 +228,15 @@ defmodule Mithril.DirectBookingsTest do
       )
 
     assert {:ok, first} = DirectBookingCancels.cancel(customer_id, booking_id, %{})
+
+    Repo.query!(
+      """
+      INSERT INTO public.direct_refund_requests (booking_id, status)
+      VALUES ($1, 'requested')
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
     assert {:ok, second} = DirectBookingCancels.cancel(customer_id, booking_id, %{})
     assert second.refundStatus == first.refundStatus
     assert second.refundAmountMinor == first.refundAmountMinor
