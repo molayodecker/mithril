@@ -16,15 +16,6 @@ defmodule Mithril.DirectAdminBookings do
   @assignable_statuses ~w(pending confirmed scheduled en_route arrived in_progress completed)
   @assignable_hold_statuses ~w(pending confirmed scheduled)
   @default_timezone "Africa/Accra"
-  @status_transitions %{
-    "pending" => ~w(confirmed),
-    "confirmed" => ~w(scheduled),
-    "scheduled" => ~w(en_route),
-    "en_route" => ~w(arrived),
-    "arrived" => ~w(in_progress),
-    "in_progress" => ~w(completed),
-    "completed" => []
-  }
 
   def list_bookings(user_id, params \\ %{}) do
     with {:ok, uid} <- dump_uuid(user_id),
@@ -121,21 +112,18 @@ defmodule Mithril.DirectAdminBookings do
          {:ok, bid} <- dump_uuid(booking_id),
          {:ok, status} <- validate_status(params["status"] || params[:status]),
          :ok <- require_admin(admin_uid) do
-      Repo.transaction(fn ->
-        with {:ok, booking} <- lock_status_booking(bid),
-             :ok <- ensure_status_transition(booking.status, status),
-             :ok <- ensure_status_prerequisites(booking, status),
-             :ok <- persist_status(bid, booking.status, status) do
-          :ok
-        else
-          {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
-          {:error, error} -> Repo.rollback({:database, error})
-        end
-      end)
-      |> normalize_transaction()
-      |> case do
-        {:ok, :ok} -> fetch_booking(bid)
-        {:error, reason} -> {:error, reason}
+      case Repo.query(
+             """
+             UPDATE public.bookings
+             SET status = $2, updated_at = now()
+             WHERE id = $1 AND status::text <> 'cancelled'
+             RETURNING id
+             """,
+             [bid, status]
+           ) do
+        {:ok, %{num_rows: 1}} -> fetch_booking(bid)
+        {:ok, %{num_rows: 0}} -> {:error, :not_found}
+        {:error, error} -> database_error(error)
       end
     else
       :error -> {:error, :invalid_request}
@@ -393,7 +381,7 @@ defmodule Mithril.DirectAdminBookings do
     Map.merge(booking, %{
       "canReassignCleaner" => status in @reassignable,
       "canCancel" => status not in ~w(cancelled completed),
-      "canChangeStatus" => status not in ~w(cancelled completed),
+      "canChangeStatus" => status != "cancelled",
       "canResetHold" => can_reset_hold?(booking),
       "canRecordCashPayout" =>
         status == "completed" and payment == "paid" and is_binary(booking["cleanerId"]) and
@@ -568,59 +556,6 @@ defmodule Mithril.DirectAdminBookings do
       {:ok, %{num_rows: 0}} -> {:error, :not_reassignable}
       {:error, %Postgrex.Error{postgres: %{code: :exclusion_violation}}} ->
         {:error, :cleaner_unavailable}
-      {:error, error} -> {:error, error}
-    end
-  end
-
-  defp lock_status_booking(bid) do
-    case Repo.query(
-           """
-           SELECT status::text, cleaner_id
-           FROM public.bookings
-           WHERE id = $1
-           FOR UPDATE
-           """,
-           [bid]
-         ) do
-      {:ok, %{rows: [[status, cleaner_id]]}} ->
-        {:ok, %{status: status, cleaner_id: cleaner_id}}
-
-      {:ok, %{rows: []}} ->
-        {:error, :not_found}
-
-      {:error, error} ->
-        {:error, error}
-    end
-  end
-
-  defp ensure_status_transition(status, status), do: :ok
-
-  defp ensure_status_transition(current, target) do
-    if target in Map.get(@status_transitions, current, []) do
-      :ok
-    else
-      {:error, :invalid_status_transition}
-    end
-  end
-
-  defp ensure_status_prerequisites(%{cleaner_id: nil}, target)
-       when target in ~w(confirmed scheduled en_route arrived in_progress completed),
-       do: {:error, :cleaner_missing}
-
-  defp ensure_status_prerequisites(_booking, _target), do: :ok
-
-  defp persist_status(bid, current_status, target_status) do
-    case Repo.query(
-           """
-           UPDATE public.bookings
-           SET status = $2, updated_at = now()
-           WHERE id = $1 AND status::text = $3
-           RETURNING id
-           """,
-           [bid, target_status, current_status]
-         ) do
-      {:ok, %{num_rows: 1}} -> :ok
-      {:ok, %{num_rows: 0}} -> {:error, :invalid_status_transition}
       {:error, error} -> {:error, error}
     end
   end
