@@ -290,7 +290,9 @@ defmodule Mithril.DirectAdminBookingsTest do
     )
 
     assert {:ok, assigned} =
-             DirectAdminBookings.assign_cleaner(admin_id, booking_id, %{"cleanerId" => new_cleaner_id})
+             DirectAdminBookings.assign_cleaner(admin_id, booking_id, %{
+               "cleanerId" => new_cleaner_id
+             })
 
     assert assigned["cleanerId"] == new_cleaner_id
     assert assigned["directAssignedCleanerId"] == new_cleaner_id
