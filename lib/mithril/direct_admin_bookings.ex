@@ -508,7 +508,10 @@ defmodule Mithril.DirectAdminBookings do
     end
   end
 
-  defp ensure_reservation_window(%{starts_at: %DateTime{} = starts_at, ends_at: %DateTime{} = ends_at}) do
+  defp ensure_reservation_window(%{
+         starts_at: %DateTime{} = starts_at,
+         ends_at: %DateTime{} = ends_at
+       }) do
     if DateTime.compare(ends_at, starts_at) == :gt, do: :ok, else: {:error, :invalid_timeslot}
   end
 
