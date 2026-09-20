@@ -411,7 +411,9 @@ defmodule Mithril.DirectDispatch do
            [bid, uid]
          ) do
       {:ok,
-       %{rows: [[address, requested_start_at, duration_hours, status, payment_status, service_id]]}} ->
+       %{
+         rows: [[address, requested_start_at, duration_hours, status, payment_status, service_id]]
+       }} ->
         cond do
           String.downcase(to_string(payment_status)) != "paid" ->
             {:error, :booking_unpaid}
