@@ -823,7 +823,7 @@ defmodule Mithril.DirectBookings do
                is_weekend = $9,
                pricing_version = $10,
                platform_fee = $11,
-               booking_cover = $12,
+               booking_cover = true,
                booking_cover_amount = $12,
                work_rate_ghs_per_hour = $13,
                supplies_option = $14,
