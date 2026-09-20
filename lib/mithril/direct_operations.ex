@@ -536,7 +536,7 @@ defmodule Mithril.DirectOperations do
        do: tier
 
   defp cancellation_tier(booking) do
-    timezone = booking.timezone_name || booking.timezone || @default_timezone
+    timezone = booking_timezone(booking)
 
     case Repo.query(
            """
@@ -554,6 +554,14 @@ defmodule Mithril.DirectOperations do
       {:ok, %{rows: [[tier]]}} -> tier
       _ -> "no_refund"
     end
+  end
+
+  defp booking_timezone(booking) do
+    [booking.timezone_name, booking.timezone, @default_timezone]
+    |> Enum.find(@default_timezone, fn value ->
+      is_binary(value) and String.trim(value) != ""
+    end)
+    |> String.trim()
   end
 
   defp ensure_no_actionable_booking_refund!(booking_id) do
