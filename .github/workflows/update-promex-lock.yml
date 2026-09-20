@@ -1,0 +1,44 @@
+name: Update PromEx lock
+
+on:
+  push:
+    branches: [feat/promex-observability]
+    paths:
+      - mix.exs
+      - .github/workflows/update-promex-lock.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/promex-observability
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28.5.0.6"
+          elixir-version: "1.20.0"
+
+      - run: mix local.hex --force
+      - run: mix local.rebar --force
+      - run: mix deps.get
+      - run: mix format
+
+      - name: Commit dependency lock and formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add mix.lock mix.exs lib config
+          if git diff --cached --quiet; then
+            echo "No lock or formatting changes."
+            exit 0
+          fi
+          git commit -m "chore: refresh PromEx dependency lock"
+          git push origin HEAD:feat/promex-observability
