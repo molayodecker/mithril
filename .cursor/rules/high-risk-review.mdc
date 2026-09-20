@@ -1,0 +1,103 @@
+---
+description: Deep behavioral review for money, bookings, auth, dispatch, refunds, rescheduling, messaging, and webhooks
+globs:
+  - "lib/mithril/**/*payment*.ex"
+  - "lib/mithril/**/*booking*.ex"
+  - "lib/mithril/**/*refund*.ex"
+  - "lib/mithril/**/*dispatch*.ex"
+  - "lib/mithril/**/*auth*.ex"
+  - "lib/mithril/**/*whatsapp*.ex"
+  - "lib/mithril/**/*webhook*.ex"
+  - "lib/mithril/**/*reschedul*.ex"
+  - "lib/mithril/**/*schedule*.ex"
+  - "lib/mithril/**/*verification*.ex"
+alwaysApply: false
+---
+
+# High-Risk Mithril Review
+
+These files are part of workflows where a locally correct edit can still create an invalid business state.
+
+Before completing a change, perform a deeper behavioral review.
+
+For every changed workflow:
+
+1. Identify the state before the operation.
+2. Identify the intended state afterward.
+3. Identify dependent records that can become stale.
+4. Check whether a second request can race with this one.
+5. Check whether the operation is safe if repeated.
+6. Check whether client-controlled input can modify server-owned state.
+7. Check authorization and resource ownership.
+8. Check whether payment references or amounts can become stale.
+9. Trace external integrations through callbacks and webhooks.
+10. Check what happens if the operation fails halfway through.
+
+Actively search for a sequence of individually valid operations that creates an invalid business state.
+
+## Payments
+
+When price-affecting data changes, verify:
+
+- active payment attempts still match the canonical amount
+- stale checkout references are invalidated
+- amount and currency are server-verified
+- callbacks cannot settle an obsolete amount
+- duplicate callbacks are idempotent
+- paid bookings cannot gain additional service for free
+- payment and booking mutations are atomic when they must be
+
+## Bookings
+
+Review supported transitions between:
+
+pending -> confirmed -> scheduled -> in_progress -> completed
+
+and cancellation paths.
+
+Do not permit unsupported backwards transitions.
+
+Rescheduling must inspect at least:
+
+- duration
+- amount
+- payment status
+- cleaner availability
+- reservations
+- reminders
+- dispatch state
+- active payment attempts
+
+## Authorization
+
+Verify that users can only read or mutate resources they own unless an explicit staff role authorizes the action.
+
+Never trust a resource UUID by itself as proof of access.
+
+## Concurrency
+
+Look for:
+
+- duplicate payment
+- double cleaner assignment
+- overlapping schedules
+- duplicate bookings
+- webhook replay
+- stale update races
+- double refund or cancellation
+
+Prefer PostgreSQL constraints, transactions, locks, and idempotency controls over check-then-write logic.
+
+## External integrations
+
+Trace the complete round trip:
+
+request -> provider -> callback/webhook -> database -> API/UI
+
+Verify both outbound and inbound paths.
+
+## Tests
+
+For every discovered bug or dangerous edge case, add a regression test that would fail before the fix.
+
+Do not consider green existing tests proof that the implementation is correct.
