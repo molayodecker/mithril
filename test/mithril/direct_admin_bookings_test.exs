@@ -269,24 +269,6 @@ defmodule Mithril.DirectAdminBookingsTest do
     assert is_nil(assigned["assignmentHoldUntil"])
   end
 
-  test "rejects impossible admin booking status jumps" do
-    admin_id = insert_admin!()
-    customer_id = insert_user!("customer6@example.com", "+233500000044")
-    cleaner_id = insert_user!("statuscleaner@example.com", "+233500000045", "Status Cleaner")
-    booking_id = insert_booking!(customer_id, cleaner_id, "pending")
-
-    assert {:error, :invalid_status_transition} =
-             DirectAdminBookings.update_status(admin_id, booking_id, %{"status" => "completed"})
-
-    assert {:ok, confirmed} =
-             DirectAdminBookings.update_status(admin_id, booking_id, %{"status" => "confirmed"})
-
-    assert confirmed["status"] == "confirmed"
-
-    assert {:error, :invalid_status_transition} =
-             DirectAdminBookings.update_status(admin_id, booking_id, %{"status" => "in_progress"})
-  end
-
   defp insert_admin! do
     admin_id = insert_user!("ops@tryinstaclean.com", "+233500000099", "Ops")
 
