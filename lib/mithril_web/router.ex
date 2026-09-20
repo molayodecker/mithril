@@ -106,6 +106,7 @@ defmodule MithrilWeb.Router do
     get "/admin/candidates", DirectController, :list_admin_candidates
     get "/admin/cleaner-applications", DirectController, :list_admin_cleaner_applications
     get "/admin/cleaner-applications/:id", DirectController, :show_admin_cleaner_application
+
     post "/admin/cleaner-applications/:id/approve",
          DirectOperationsController,
          :approve_cleaner_application
@@ -154,7 +155,11 @@ defmodule MithrilWeb.Router do
     get "/admin/dispatch-map", DirectAdminDispatchMapController, :show
     get "/admin/bookings", DirectAdminBookingsController, :index
     get "/admin/cleaners", DirectOperationsController, :list_admin_cleaners
-    get "/admin/bookings/:id/payment-diagnostics", DirectOperationsController, :payment_diagnostics
+
+    get "/admin/bookings/:id/payment-diagnostics",
+        DirectOperationsController,
+        :payment_diagnostics
+
     get "/admin/bookings/:id", DirectAdminBookingsController, :show
     post "/admin/bookings", DirectDispatchController, :create_admin_booking
     post "/admin/bookings/:id/assign", DirectAdminBookingsController, :assign
