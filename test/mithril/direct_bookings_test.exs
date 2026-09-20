@@ -136,36 +136,38 @@ defmodule Mithril.DirectBookingsTest do
   test "rejects automatic cancellation while a direct refund request is actionable" do
     customer_id = Ecto.UUID.generate()
 
-    booking_id =
-      insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "scheduled",
-        payment_status: "paid",
-        reference: "T_direct_queued_request"
+    for status <- ["requested", "reviewing", "approved", "processing"] do
+      booking_id =
+        insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "scheduled",
+          payment_status: "paid",
+          reference: "T_direct_queued_request_#{status}"
+        )
+
+      Repo.query!(
+        """
+        INSERT INTO public.direct_refund_requests (booking_id, status)
+        VALUES ($1, $2)
+        """,
+        [Ecto.UUID.dump!(booking_id), status]
       )
 
-    Repo.query!(
-      """
-      INSERT INTO public.direct_refund_requests (booking_id, status)
-      VALUES ($1, 'requested')
-      """,
-      [Ecto.UUID.dump!(booking_id)]
-    )
+      assert {:error, {:refund_request_conflict, message}} =
+               DirectBookingCancels.cancel(customer_id, booking_id, %{})
 
-    assert {:error, {:refund_request_conflict, message}} =
-             DirectBookingCancels.cancel(customer_id, booking_id, %{})
+      assert message =~ "refund request in progress"
 
-    assert message =~ "refund request in progress"
+      assert [["scheduled"]] =
+               Repo.query!(
+                 "SELECT status FROM public.bookings WHERE id = $1",
+                 [Ecto.UUID.dump!(booking_id)]
+               ).rows
 
-    assert [["scheduled"]] =
-             Repo.query!(
-               "SELECT status FROM public.bookings WHERE id = $1",
-               [Ecto.UUID.dump!(booking_id)]
-             ).rows
-
-    assert [[0]] =
-             Repo.query!(
-               "SELECT count(*) FROM public.booking_refunds WHERE booking_id = $1",
-               [Ecto.UUID.dump!(booking_id)]
-             ).rows
+      assert [[0]] =
+               Repo.query!(
+                 "SELECT count(*) FROM public.booking_refunds WHERE booking_id = $1",
+                 [Ecto.UUID.dump!(booking_id)]
+               ).rows
+    end
   end
 
   test "is idempotent once a refund row exists" do
