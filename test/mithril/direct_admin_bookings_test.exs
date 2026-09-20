@@ -73,6 +73,7 @@ defmodule Mithril.DirectAdminBookingsTest do
       scheduled_time time,
       duration_hours numeric,
       timezone text,
+      timezone_name text,
       address text,
       special_instructions text,
       total_price numeric,
@@ -219,7 +220,13 @@ defmodule Mithril.DirectAdminBookingsTest do
     booking_id = insert_booking!(customer_id, nil, "pending")
 
     Repo.query!(
-      "UPDATE public.bookings SET booking_period = NULL WHERE id = $1",
+      """
+      UPDATE public.bookings
+      SET booking_period = NULL,
+          timezone = 'America/New_York',
+          timezone_name = 'Africa/Accra'
+      WHERE id = $1
+      """,
       [Ecto.UUID.dump!(booking_id)]
     )
 
@@ -234,7 +241,8 @@ defmodule Mithril.DirectAdminBookingsTest do
                [Ecto.UUID.dump!(booking_id)]
              ).rows
 
-    assert DateTime.compare(ends_at, starts_at) == :gt
+    assert starts_at == ~U[2030-09-13 08:00:00Z]
+    assert ends_at == ~U[2030-09-13 12:00:00Z]
 
     overlapping_booking_id = insert_booking!(other_customer_id, nil, "pending")
 
@@ -288,10 +296,24 @@ defmodule Mithril.DirectAdminBookingsTest do
           cleaner_assigned_at = now() - interval '5 minutes',
           cleaner_accepted_at = now(),
           assignment_phase = 'accepted',
-          assignment_hold_until = now() + interval '10 minutes'
+          assignment_hold_until = now() + interval '10 minutes',
+          status = 'in_progress'
       WHERE id = $1
       """,
       [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    Repo.query!(
+      "UPDATE public.cleaner_data SET status = 'inactive' WHERE user_id = $1",
+      [Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_availability_exceptions (cleaner_id, exception_date)
+      VALUES ($1, '2030-09-13')
+      """,
+      [Ecto.UUID.dump!(cleaner_id)]
     )
 
     assert {:ok, assigned} =
@@ -299,6 +321,7 @@ defmodule Mithril.DirectAdminBookingsTest do
 
     assert assigned["cleanerId"] == cleaner_id
     assert assigned["directAssignedCleanerId"] == cleaner_id
+    assert assigned["status"] == "in_progress"
     assert assigned["assignmentPhase"] == "accepted"
     assert assigned["cleanerAcceptedAt"]
     assert assigned["assignmentHoldUntil"]
