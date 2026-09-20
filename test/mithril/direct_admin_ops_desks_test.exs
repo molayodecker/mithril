@@ -255,6 +255,8 @@ defmodule Mithril.DirectAdminOpsDesksTest do
     assert body == "I need help with my booking"
     assert stored_user_id == Ecto.UUID.dump!(guest_id)
     assert business_phone == "+233559100642"
+    assert DirectAdminWhatsApp.admin_destination?("whatsapp:+233559100642")
+    refute DirectAdminWhatsApp.admin_destination?("whatsapp:+233246326939")
   end
 
   defp insert_admin! do

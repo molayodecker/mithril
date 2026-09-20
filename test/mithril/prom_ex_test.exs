@@ -25,4 +25,15 @@ defmodule Mithril.PromExTest do
     assert {:prom_ex, "ecto.json"} in dashboards
     assert {:prom_ex, "oban.json"} in dashboards
   end
+
+  test "metrics plug answers /metrics and 404s other paths" do
+    opts = Mithril.MetricsPlug.init(prom_ex_module: Mithril.PromEx, path: "/metrics")
+
+    metrics_conn = Plug.Test.conn(:get, "/metrics") |> Mithril.MetricsPlug.call(opts)
+    assert metrics_conn.halted
+    assert metrics_conn.status in [200, 503]
+
+    other_conn = Plug.Test.conn(:get, "/health") |> Mithril.MetricsPlug.call(opts)
+    assert other_conn.status == 404
+  end
 end

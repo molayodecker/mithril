@@ -14,7 +14,7 @@ defmodule Mithril.DirectAdminWhatsApp do
   def record_inbound_from_webhook(params) when is_map(params) do
     case normalize_phone(params["To"] || params[:To]) do
       {:ok, business} ->
-        if admin_line?(business) do
+        if admin_destination?(business) do
           with {:ok, e164} <- normalize_phone(params["From"] || params[:From]),
                {:ok, body} <- required_body(params["Body"] || params[:Body]),
                {:ok, thread_user} <- resolve_user_id(e164) do
@@ -30,6 +30,15 @@ defmodule Mithril.DirectAdminWhatsApp do
   end
 
   def record_inbound_from_webhook(_params), do: :ok
+
+  def admin_destination?(value) when is_binary(value) do
+    case normalize_phone(value) do
+      {:ok, e164} -> admin_line?(e164)
+      _ -> false
+    end
+  end
+
+  def admin_destination?(_), do: false
 
   def list_threads(user_id) do
     with {:ok, uid} <- dump_uuid(user_id),

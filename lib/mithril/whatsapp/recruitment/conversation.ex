@@ -3,6 +3,7 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
 
   require Logger
 
+  alias Mithril.DirectAdminWhatsApp
   alias Mithril.WhatsApp.Recruitment.Leads
   alias Mithril.WhatsApp.Recruitment.Outbound
   alias Mithril.WhatsApp.Recruitment.Parse
@@ -20,7 +21,6 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
   @q_equipment "Own cleaning equipment?"
   @address_prompt "What is your home address?\n\nYou can:\n1. Type your full address or nearest landmark\n2. Share your current WhatsApp location pin\n\nExample: East Legon, near American House"
   @relationships ["Client", "Employer", "Supervisor", "Family Friend", "Colleague"]
-  @admin_default ["+233559100642"]
 
   def handle(params) do
     message = params |> Parse.effective_message() |> String.trim()
@@ -32,7 +32,7 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
     {lat, lng} = coords(params)
 
     cond do
-      business != "" and admin_line?(business) ->
+      business != "" and DirectAdminWhatsApp.admin_destination?(business) ->
         reply(
           {:text,
            "This WhatsApp line is for customer support. Visit tryinstaclean.com/join-as-cleaner to apply as a cleaner."},
@@ -1632,17 +1632,6 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
   end
 
   defp mask(_), do: "****"
-
-  defp admin_line?(e164) do
-    configured =
-      (Application.get_env(:mithril, :twilio_whatsapp_admin_from) || "")
-      |> String.split(",")
-      |> Enum.map(&String.trim/1)
-      |> Enum.reject(&(&1 == ""))
-
-    list = if configured == [], do: @admin_default, else: configured
-    Parse.normalize_ghana_phone(e164) in Enum.map(list, &Parse.normalize_ghana_phone/1)
-  end
 
   defp app_url do
     (Application.get_env(:mithril, :app_url) || "https://tryinstaclean.com")

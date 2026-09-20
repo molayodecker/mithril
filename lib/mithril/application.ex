@@ -30,7 +30,7 @@ defmodule Mithril.Application do
           Supervisor.child_spec(
             {Bandit,
              [
-               plug: {PromEx.Plug, [prom_ex_module: Mithril.PromEx, path: path]},
+               plug: {Mithril.MetricsPlug, [prom_ex_module: Mithril.PromEx, path: path]},
                scheme: :http,
                port: port,
                ip: :any,
@@ -69,5 +69,27 @@ defmodule Mithril.Application do
   def config_change(changed, _new, removed) do
     MithrilWeb.Endpoint.config_change(changed, removed)
     :ok
+  end
+end
+
+defmodule Mithril.MetricsPlug do
+  @moduledoc false
+
+  @behaviour Plug
+
+  import Plug.Conn
+
+  def init(opts), do: PromEx.Plug.init(opts)
+
+  def call(conn, opts) do
+    conn = PromEx.Plug.call(conn, opts)
+
+    if conn.halted do
+      conn
+    else
+      conn
+      |> send_resp(404, "Not Found")
+      |> halt()
+    end
   end
 end
