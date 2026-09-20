@@ -7,6 +7,7 @@ defmodule Mithril.Application do
   def start(_type, _args) do
     children =
       [
+        Mithril.PromEx,
         Mithril.Repo,
         {Phoenix.PubSub, name: Mithril.PubSub},
         MithrilWeb.Endpoint
