@@ -297,7 +297,8 @@ defmodule Mithril.DirectAdminBookingsTest do
           cleaner_accepted_at = now(),
           assignment_phase = 'accepted',
           assignment_hold_until = now() + interval '10 minutes',
-          status = 'in_progress'
+          status = 'in_progress',
+          booking_period = NULL
       WHERE id = $1
       """,
       [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(cleaner_id)]
@@ -325,6 +326,15 @@ defmodule Mithril.DirectAdminBookingsTest do
     assert assigned["assignmentPhase"] == "accepted"
     assert assigned["cleanerAcceptedAt"]
     assert assigned["assignmentHoldUntil"]
+
+    assert [[%DateTime{} = starts_at, %DateTime{} = ends_at]] =
+             Repo.query!(
+               "SELECT lower(booking_period), upper(booking_period) FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert DateTime.compare(starts_at, ~U[2030-09-13 08:00:00Z]) == :eq
+    assert DateTime.compare(ends_at, ~U[2030-09-13 12:00:00Z]) == :eq
   end
 
   test "reassignment clears stale cleaner acceptance state" do
