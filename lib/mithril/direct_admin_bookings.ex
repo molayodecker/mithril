@@ -83,13 +83,23 @@ defmodule Mithril.DirectAdminBookings do
          {:ok, cleaner_uid} <- dump_uuid(params["cleanerId"] || params[:cleanerId]),
          :ok <- require_admin(admin_uid) do
       Repo.transaction(fn ->
-        with {:ok, booking} <- lock_assignment_resources(bid, cleaner_uid),
-             :ok <- ensure_cleaner_role(cleaner_uid),
-             :ok <- ensure_dispatch_cleaner(cleaner_uid, booking.service_id),
-             :ok <- ensure_assignment_window(booking),
-             :ok <- ensure_cleaner_available(cleaner_uid, booking),
-             :ok <- persist_cleaner_assignment(bid, cleaner_uid, booking) do
-          :ok
+        with {:ok, booking} <- lock_booking_for_assignment(bid) do
+          if booking.current_cleaner_id == cleaner_uid do
+            :ok
+          else
+            with :ok <- ensure_reassignable(booking),
+                 :ok <- lock_cleaner_schedule(cleaner_uid),
+                 :ok <- ensure_cleaner_role(cleaner_uid),
+                 :ok <- ensure_dispatch_cleaner(cleaner_uid, booking.service_id),
+                 :ok <- ensure_assignment_window(booking),
+                 :ok <- ensure_cleaner_available(cleaner_uid, booking),
+                 :ok <- persist_cleaner_assignment(bid, cleaner_uid, booking) do
+              :ok
+            else
+              {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
+              {:error, error} -> Repo.rollback({:database, error})
+            end
+          end
         else
           {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
           {:error, error} -> Repo.rollback({:database, error})
@@ -408,16 +418,9 @@ defmodule Mithril.DirectAdminBookings do
     end
   end
 
-  # Keep booking mutations on one global lock order:
-  # booking row first, then the cleaner schedule advisory lock.
-  # The booking reservation trigger follows the same order after UPDATE.
-  defp lock_assignment_resources(bid, cleaner_uid) do
-    with {:ok, booking} <- lock_assignable_booking(bid),
-         :ok <- lock_cleaner_schedule(cleaner_uid) do
-      {:ok, booking}
-    end
-  end
-
+  # Assignment mutations use one global lock order: booking row first,
+  # then the target cleaner schedule advisory lock. Same-cleaner retries stop
+  # after the booking row lock because they do not mutate scheduling state.
   defp lock_cleaner_schedule(cleaner_uid) do
     case Repo.query(
            "SELECT pg_advisory_xact_lock(hashtextextended($1::uuid::text, 0))",
@@ -428,7 +431,7 @@ defmodule Mithril.DirectAdminBookings do
     end
   end
 
-  defp lock_assignable_booking(bid) do
+  defp lock_booking_for_assignment(bid) do
     case Repo.query(
            """
            SELECT
@@ -438,12 +441,20 @@ defmodule Mithril.DirectAdminBookings do
              COALESCE(
                lower(booking_period),
                (scheduled_date + scheduled_time)
-                 AT TIME ZONE COALESCE(NULLIF(timezone, ''), $2::text)
+                 AT TIME ZONE COALESCE(
+                   NULLIF(btrim(to_jsonb(b)->>'timezone_name'), ''),
+                   NULLIF(btrim(to_jsonb(b)->>'timezone'), ''),
+                   $2::text
+                 )
              ) AS starts_at,
              COALESCE(
                upper(booking_period),
                ((scheduled_date + scheduled_time)
-                 AT TIME ZONE COALESCE(NULLIF(timezone, ''), $2::text))
+                 AT TIME ZONE COALESCE(
+                   NULLIF(btrim(to_jsonb(b)->>'timezone_name'), ''),
+                   NULLIF(btrim(to_jsonb(b)->>'timezone'), ''),
+                   $2::text
+                 ))
                  + make_interval(secs => (duration_hours * 3600)::double precision)
              ) AS ends_at,
              scheduled_date
@@ -454,8 +465,7 @@ defmodule Mithril.DirectAdminBookings do
            [bid, @default_timezone]
          ) do
       {:ok,
-       %{rows: [[status, service_id, current_cleaner_id, starts_at, ends_at, scheduled_date]]}}
-      when status in @reassignable ->
+       %{rows: [[status, service_id, current_cleaner_id, starts_at, ends_at, scheduled_date]]}} ->
         {:ok,
          %{
            status: status,
@@ -467,14 +477,6 @@ defmodule Mithril.DirectAdminBookings do
            booking_id: bid
          }}
 
-      {:ok,
-       %{
-         rows: [
-           [_status, _service_id, _current_cleaner_id, _starts_at, _ends_at, _scheduled_date]
-         ]
-       }} ->
-        {:error, :not_reassignable}
-
       {:ok, %{rows: []}} ->
         {:error, :not_found}
 
@@ -482,6 +484,9 @@ defmodule Mithril.DirectAdminBookings do
         {:error, error}
     end
   end
+
+  defp ensure_reassignable(%{status: status}) when status in @reassignable, do: :ok
+  defp ensure_reassignable(_booking), do: {:error, :not_reassignable}
 
   defp ensure_dispatch_cleaner(cleaner_uid, service_id) do
     case Repo.query(
