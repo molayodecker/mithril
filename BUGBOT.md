@@ -18,6 +18,8 @@ Pay special attention to:
 
 For payments, bookings, dispatch, authentication, refunds, rescheduling, and WhatsApp/webhook changes, trace the complete workflow.
 
+For booking or dispatch status changes, derive the current status vocabulary and transition constraints from the implementation, OpenAPI schemas, database functions/constraints, and tests. Do not assume a simplified linear lifecycle.
+
 Actively look for a sequence of individually valid requests that produces an invalid business state.
 
 Flag cases where:
