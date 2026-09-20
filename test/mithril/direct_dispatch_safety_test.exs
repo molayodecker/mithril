@@ -201,6 +201,16 @@ defmodule Mithril.DirectDispatchSafetyTest do
 
     insert_booking!(booking_id, customer_id, "paid")
 
+    Repo.query!(
+      """
+      UPDATE public.bookings
+      SET timezone = 'America/New_York',
+          timezone_name = 'Africa/Accra'
+      WHERE id = $1
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
     assert {:ok, request} =
              DirectDispatchSafety.request_replacement(customer_id, booking_id, %{
                "priority" => "same_day",
@@ -210,14 +220,19 @@ defmodule Mithril.DirectDispatchSafetyTest do
     assert request.kind == "replacement"
     assert request.relatedBookingId == booking_id
 
-    [[related_service_id, requirements]] =
+    [[related_service_id, requirements, requested_start_at]] =
       Repo.query!(
-        "SELECT related_service_id, requirements FROM public.direct_service_requests WHERE id = $1",
+        """
+        SELECT related_service_id, requirements, requested_start_at
+        FROM public.direct_service_requests
+        WHERE id = $1
+        """,
         [Ecto.UUID.dump!(request.id)]
       ).rows
 
     assert related_service_id == 1
     assert requirements == %{}
+    assert DateTime.compare(requested_start_at, ~U[2099-09-08 10:00:00Z]) == :eq
   end
 
   test "rejects replacement requests once a booking is already in progress" do
