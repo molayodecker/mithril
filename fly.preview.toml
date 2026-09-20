@@ -28,6 +28,10 @@ kill_timeout = 30
     protocol = "http"
     timeout = "3s"
 
+[metrics]
+  port = 9091
+  path = "/metrics"
+
 [[vm]]
   memory = "256mb"
   cpu_kind = "shared"
