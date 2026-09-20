@@ -85,7 +85,11 @@ defmodule Mithril.DirectAdminBookings do
       Repo.transaction(fn ->
         with {:ok, booking} <- lock_booking_for_assignment(bid) do
           if booking.current_cleaner_id == cleaner_uid do
-            repair_same_cleaner_reservation(cleaner_uid, booking)
+            case repair_same_cleaner_reservation(cleaner_uid, booking) do
+              :ok -> :ok
+              {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
+              {:error, error} -> Repo.rollback({:database, error})
+            end
           else
             with :ok <- ensure_reassignable(booking),
                  :ok <- lock_cleaner_schedule(cleaner_uid),
