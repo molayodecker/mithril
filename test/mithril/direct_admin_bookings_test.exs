@@ -337,6 +337,34 @@ defmodule Mithril.DirectAdminBookingsTest do
     assert DateTime.compare(ends_at, ~U[2030-09-13 12:00:00Z]) == :eq
   end
 
+  test "same-cleaner legacy repair returns validation errors without crashing" do
+    admin_id = insert_admin!()
+    customer_id = insert_user!("customer-invalid-repair@example.com", "+233500000029")
+    cleaner_id = insert_user!("invalid-repair@example.com", "+233500000030", "Repair Cleaner")
+    booking_id = insert_booking!(customer_id, cleaner_id, "confirmed")
+
+    Repo.query!(
+      """
+      UPDATE public.bookings
+      SET booking_period = NULL,
+          duration_hours = 0
+      WHERE id = $1
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:error, :invalid_timeslot} =
+             DirectAdminBookings.assign_cleaner(admin_id, booking_id, %{
+               "cleanerId" => cleaner_id
+             })
+
+    assert [[nil]] =
+             Repo.query!(
+               "SELECT booking_period FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+  end
+
   test "reassignment clears stale cleaner acceptance state" do
     admin_id = insert_admin!()
     customer_id = insert_user!("customer5@example.com", "+233500000034")
