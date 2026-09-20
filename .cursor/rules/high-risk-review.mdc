@@ -1,22 +1,11 @@
 ---
 description: Deep behavioral review for money, bookings, auth, dispatch, refunds, rescheduling, messaging, and webhooks
-globs:
-  - "lib/mithril/**/*payment*.ex"
-  - "lib/mithril/**/*booking*.ex"
-  - "lib/mithril/**/*refund*.ex"
-  - "lib/mithril/**/*dispatch*.ex"
-  - "lib/mithril/**/*auth*.ex"
-  - "lib/mithril/**/*whatsapp*.ex"
-  - "lib/mithril/**/*webhook*.ex"
-  - "lib/mithril/**/*reschedul*.ex"
-  - "lib/mithril/**/*schedule*.ex"
-  - "lib/mithril/**/*verification*.ex"
-alwaysApply: false
+alwaysApply: true
 ---
 
 # High-Risk Mithril Review
 
-These files are part of workflows where a locally correct edit can still create an invalid business state.
+These rules apply to every coding change because high-risk behavior can cross filename and directory boundaries. Use the relevant sections more deeply whenever a change touches money, bookings, auth, provider integrations, API boundaries, workers/jobs, notifications, or other business-state transitions.
 
 Before completing a change, perform a deeper behavioral review.
 
