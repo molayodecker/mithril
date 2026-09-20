@@ -153,7 +153,7 @@ jobs:
             -f description="Mithril staging deployment is running"
 
       - name: Install flyctl
-        uses: superfly/flyctl-actions/setup-flyctl@master
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master pinned 2026-09-20
 
       - name: Install PostgreSQL client
         run: |
