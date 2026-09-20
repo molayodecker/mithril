@@ -20,7 +20,7 @@ Fly Prometheus
 Grafana (fly-metrics.net, or any Grafana pointed at Fly Prometheus)
 ```
 
-The public Phoenix API remains on port 4000. PromEx explicitly binds its standalone Cowboy listener to `0.0.0.0:9091` so Fly's internal scraper can reach it. Port 9091 is not declared as a public Fly service, so `/metrics` is not exposed through `api.tryinstaclean.com` or the staging API hostname.
+The public Phoenix API remains on port 4000. Mithril serves `PromEx.Plug` from a dedicated Bandit listener on `0.0.0.0:9091` (`ip: :any`) so Fly's internal scraper can reach it. Port 9091 is not declared as a public Fly service, so `/metrics` is not exposed through `api.tryinstaclean.com` or the staging API hostname. This reuses Mithril's existing Bandit server dependency instead of adding Cowboy solely for metrics.
 
 Fly configuration:
 

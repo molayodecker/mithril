@@ -23,14 +23,11 @@ config :mithril, Mithril.PromEx,
   manual_metrics_start_delay: :no_delay,
   drop_metrics_groups: [:phoenix_channel_event_metrics, :phoenix_socket_event_metrics],
   grafana: :disabled,
-  metrics_server: [
-    port: 9091,
-    path: "/metrics",
-    protocol: :http,
-    pool_size: 2,
-    cowboy_opts: [ip: {0, 0, 0, 0}],
-    auth_strategy: :none
-  ]
+  metrics_server: :disabled
+
+config :mithril, :metrics_server,
+  port: 9091,
+  path: "/metrics"
 
 config :mithril, Oban,
   repo: Mithril.Repo,

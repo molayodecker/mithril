@@ -681,7 +681,7 @@ defmodule Mithril.DirectBookings do
                AND payment_status IN ('pending', 'failed')
              RETURNING id
              """,
-             [booking.id]
+             [dump!(booking.id)]
            ) do
         {:ok, %{rows: [[_id]]}} -> :ok
         {:ok, %{rows: []}} -> {:error, :not_found}
