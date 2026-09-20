@@ -2,6 +2,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
   use ExUnit.Case, async: false
 
   alias Ecto.Adapters.SQL.Sandbox
+  alias Mithril.DirectDispatch
   alias Mithril.DirectDispatchSafety
   alias Mithril.Repo
 
@@ -189,6 +190,20 @@ defmodule Mithril.DirectDispatchSafetyTest do
 
     assert {:error, :booking_unpaid} =
              DirectDispatchSafety.request_replacement(customer_id, booking_id, %{
+               "priority" => "same_day"
+             })
+
+    assert Repo.query!("SELECT count(*) FROM public.direct_service_requests").rows == [[0]]
+  end
+
+  test "core replacement creation revalidates payment state under its booking lock" do
+    customer_id = Ecto.UUID.generate()
+    booking_id = Ecto.UUID.generate()
+
+    insert_booking!(booking_id, customer_id, "pending")
+
+    assert {:error, :booking_unpaid} =
+             DirectDispatch.request_replacement(customer_id, booking_id, %{
                "priority" => "same_day"
              })
 
