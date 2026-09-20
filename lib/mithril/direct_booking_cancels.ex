@@ -333,6 +333,21 @@ defmodule Mithril.DirectBookingCancels do
         store_paystack_reference(result.refund_id, refund)
         {:ok, %{result.payload | refundStatus: "pending"}}
 
+      {:error, reason} when reason in [:provider_unavailable, :payment_not_configured] ->
+        mark_refund_manual_review(result.refund_id, reason)
+
+        {:ok,
+         %{
+           result.payload
+           | refundStatus: "manual_review",
+             successMessage:
+               DirectCancellation.success_message_for_refund(
+                 result.payload.tier,
+                 "manual_review",
+                 result.payload.successMessage
+               )
+         }}
+
       {:error, reason} ->
         mark_refund_failed(result.refund_id, reason)
 
@@ -362,6 +377,22 @@ defmodule Mithril.DirectBookingCancels do
       WHERE id = $1 AND status = 'pending'
       """,
       [dump!(refund_id), reference]
+    )
+  end
+
+  defp mark_refund_manual_review(refund_id, reason) do
+    Repo.query(
+      """
+      UPDATE public.booking_refunds
+      SET status = 'manual_review',
+          failure_reason = $2,
+          updated_at = now()
+      WHERE id = $1 AND status = 'pending'
+      """,
+      [
+        dump!(refund_id),
+        "Paystack refund outcome is unknown; verify provider state before retrying: #{failure_reason(reason)}"
+      ]
     )
   end
 
