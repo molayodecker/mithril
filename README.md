@@ -16,6 +16,7 @@ It will incrementally replace application behavior currently implemented in `ins
 - Target production database: Fly Managed Postgres
 - Off-platform database backup archive: Cloudflare R2 bucket `insta-production`
 - Operating baseline: [12-Factor](docs/architecture/12-factor.md)
+- Observability: [PromEx + Fly Prometheus/Grafana](docs/observability.md)
 
 The old repository remains the production source of truth until each capability is migrated and verified. Do not repoint the web/mobile `supabase` submodules to this repository yet.
 
