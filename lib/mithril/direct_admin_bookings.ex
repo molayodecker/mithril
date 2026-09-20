@@ -15,6 +15,16 @@ defmodule Mithril.DirectAdminBookings do
   @reassignable ~w(pending confirmed scheduled)
   @assignable_statuses ~w(pending confirmed scheduled en_route arrived in_progress completed)
   @assignable_hold_statuses ~w(pending confirmed scheduled)
+  @default_timezone "Africa/Accra"
+  @status_transitions %{
+    "pending" => ~w(confirmed),
+    "confirmed" => ~w(scheduled),
+    "scheduled" => ~w(en_route),
+    "en_route" => ~w(arrived),
+    "arrived" => ~w(in_progress),
+    "in_progress" => ~w(completed),
+    "completed" => []
+  }
 
   def list_bookings(user_id, params \\ %{}) do
     with {:ok, uid} <- dump_uuid(user_id),
@@ -80,27 +90,25 @@ defmodule Mithril.DirectAdminBookings do
     with {:ok, admin_uid} <- dump_uuid(user_id),
          {:ok, bid} <- dump_uuid(booking_id),
          {:ok, cleaner_uid} <- dump_uuid(params["cleanerId"] || params[:cleanerId]),
-         :ok <- require_admin(admin_uid),
-         :ok <- ensure_cleaner_role(cleaner_uid) do
-      case Repo.query(
-             """
-             UPDATE public.bookings
-             SET cleaner_id = $2,
-                 status = CASE
-                   WHEN status::text = 'pending' THEN 'confirmed'
-                   ELSE status::text
-                 END,
-                 cleaner_assigned_at = COALESCE(cleaner_assigned_at, now()),
-                 updated_at = now()
-             WHERE id = $1
-               AND status::text = ANY($3::text[])
-             RETURNING id
-             """,
-             [bid, cleaner_uid, @reassignable]
-           ) do
-        {:ok, %{num_rows: 1}} -> fetch_booking(bid)
-        {:ok, %{num_rows: 0}} -> {:error, :not_reassignable}
-        {:error, error} -> database_error(error)
+         :ok <- require_admin(admin_uid) do
+      Repo.transaction(fn ->
+        with :ok <- lock_cleaner_schedule(cleaner_uid),
+             {:ok, booking} <- lock_assignable_booking(bid),
+             :ok <- ensure_cleaner_role(cleaner_uid),
+             :ok <- ensure_dispatch_cleaner(cleaner_uid, booking.service_id),
+             :ok <- ensure_assignment_window(booking),
+             :ok <- ensure_cleaner_available(cleaner_uid, booking),
+             :ok <- persist_cleaner_assignment(bid, cleaner_uid) do
+          :ok
+        else
+          {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
+          {:error, error} -> Repo.rollback({:database, error})
+        end
+      end)
+      |> normalize_transaction()
+      |> case do
+        {:ok, :ok} -> fetch_booking(bid)
+        {:error, reason} -> {:error, reason}
       end
     else
       :error -> {:error, :invalid_request}
@@ -113,18 +121,21 @@ defmodule Mithril.DirectAdminBookings do
          {:ok, bid} <- dump_uuid(booking_id),
          {:ok, status} <- validate_status(params["status"] || params[:status]),
          :ok <- require_admin(admin_uid) do
-      case Repo.query(
-             """
-             UPDATE public.bookings
-             SET status = $2, updated_at = now()
-             WHERE id = $1 AND status::text <> 'cancelled'
-             RETURNING id
-             """,
-             [bid, status]
-           ) do
-        {:ok, %{num_rows: 1}} -> fetch_booking(bid)
-        {:ok, %{num_rows: 0}} -> {:error, :not_found}
-        {:error, error} -> database_error(error)
+      Repo.transaction(fn ->
+        with {:ok, booking} <- lock_status_booking(bid),
+             :ok <- ensure_status_transition(booking.status, status),
+             :ok <- ensure_status_prerequisites(booking, status),
+             :ok <- persist_status(bid, booking.status, status) do
+          :ok
+        else
+          {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
+          {:error, error} -> Repo.rollback({:database, error})
+        end
+      end)
+      |> normalize_transaction()
+      |> case do
+        {:ok, :ok} -> fetch_booking(bid)
+        {:error, reason} -> {:error, reason}
       end
     else
       :error -> {:error, :invalid_request}
@@ -382,7 +393,7 @@ defmodule Mithril.DirectAdminBookings do
     Map.merge(booking, %{
       "canReassignCleaner" => status in @reassignable,
       "canCancel" => status not in ~w(cancelled completed),
-      "canChangeStatus" => status != "cancelled",
+      "canChangeStatus" => status not in ~w(cancelled completed),
       "canResetHold" => can_reset_hold?(booking),
       "canRecordCashPayout" =>
         status == "completed" and payment == "paid" and is_binary(booking["cleanerId"]) and
@@ -407,6 +418,210 @@ defmodule Mithril.DirectAdminBookings do
       {:ok, %{rows: [[customer_id]]}} when is_binary(customer_id) -> {:ok, customer_id}
       {:ok, %{rows: []}} -> {:error, :not_found}
       {:error, error} -> database_error(error)
+    end
+  end
+
+  defp lock_cleaner_schedule(cleaner_uid) do
+    case Repo.query(
+           "SELECT pg_advisory_xact_lock(hashtextextended($1::uuid::text, 0))",
+           [cleaner_uid]
+         ) do
+      {:ok, _} -> :ok
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp lock_assignable_booking(bid) do
+    case Repo.query(
+           """
+           SELECT
+             status::text,
+             service_id,
+             COALESCE(
+               lower(booking_period),
+               (scheduled_date + scheduled_time)
+                 AT TIME ZONE COALESCE(NULLIF(timezone, ''), $2::text)
+             ) AS starts_at,
+             COALESCE(
+               upper(booking_period),
+               ((scheduled_date + scheduled_time)
+                 AT TIME ZONE COALESCE(NULLIF(timezone, ''), $2::text))
+                 + make_interval(secs => (duration_hours * 3600)::double precision)
+             ) AS ends_at,
+             scheduled_date
+           FROM public.bookings
+           WHERE id = $1
+           FOR UPDATE
+           """,
+           [bid, @default_timezone]
+         ) do
+      {:ok, %{rows: [[status, service_id, starts_at, ends_at, scheduled_date]]}}
+      when status in @reassignable ->
+        {:ok,
+         %{
+           status: status,
+           service_id: service_id,
+           starts_at: starts_at,
+           ends_at: ends_at,
+           scheduled_date: scheduled_date,
+           booking_id: bid
+         }}
+
+      {:ok, %{rows: [[_status, _service_id, _starts_at, _ends_at, _scheduled_date]]}} ->
+        {:error, :not_reassignable}
+
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp ensure_dispatch_cleaner(cleaner_uid, service_id) do
+    case Repo.query(
+           """
+           SELECT EXISTS(
+             SELECT 1
+             FROM public.cleaner_data cd
+             JOIN public.service_types st ON st.id = $2
+             WHERE cd.user_id = $1
+               AND cd.verified = true
+               AND cd.status = 'active'
+               AND cd.hourly_rate IS NOT NULL
+               AND cd.hourly_rate > 0
+               AND st.specialty_slug = ANY(COALESCE(cd.specialties, ARRAY[]::text[]))
+           )
+           """,
+           [cleaner_uid, service_id]
+         ) do
+      {:ok, %{rows: [[true]]}} -> :ok
+      {:ok, %{rows: [[false]]}} -> {:error, :cleaner_unavailable}
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp ensure_assignment_window(%{starts_at: %DateTime{} = starts_at, ends_at: %DateTime{} = ends_at}) do
+    cond do
+      DateTime.compare(ends_at, starts_at) != :gt -> {:error, :invalid_timeslot}
+      DateTime.compare(starts_at, DateTime.utc_now()) != :gt -> {:error, :past_schedule}
+      true -> :ok
+    end
+  end
+
+  defp ensure_assignment_window(_), do: {:error, :invalid_timeslot}
+
+  defp ensure_cleaner_available(cleaner_uid, booking) do
+    case Repo.query(
+           """
+           SELECT
+             EXISTS(
+               SELECT 1
+               FROM public.cleaner_availability_exceptions cae
+               WHERE cae.cleaner_id = $1
+                 AND cae.exception_date = $4::date
+             ),
+             public.cleaner_has_booking_conflict(
+               $1,
+               $2::timestamptz,
+               $3::timestamptz,
+               $5::uuid
+             )
+           """,
+           [
+             cleaner_uid,
+             booking.starts_at,
+             booking.ends_at,
+             booking.scheduled_date,
+             booking.booking_id
+           ]
+         ) do
+      {:ok, %{rows: [[false, false]]}} -> :ok
+      {:ok, %{rows: [[true, _]]}} -> {:error, :cleaner_unavailable}
+      {:ok, %{rows: [[_, true]]}} -> {:error, :cleaner_unavailable}
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp persist_cleaner_assignment(bid, cleaner_uid) do
+    case Repo.query(
+           """
+           UPDATE public.bookings
+           SET cleaner_id = $2,
+               direct_assigned_cleaner_id = $2,
+               status = CASE
+                 WHEN status::text = 'pending' THEN 'confirmed'
+                 ELSE status::text
+               END,
+               cleaner_assigned_at = now(),
+               cleaner_accepted_at = NULL,
+               assignment_phase = NULL,
+               assignment_hold_until = NULL,
+               updated_at = now()
+           WHERE id = $1
+             AND status::text = ANY($3::text[])
+           RETURNING id
+           """,
+           [bid, cleaner_uid, @reassignable]
+         ) do
+      {:ok, %{num_rows: 1}} -> :ok
+      {:ok, %{num_rows: 0}} -> {:error, :not_reassignable}
+      {:error, %Postgrex.Error{postgres: %{code: :exclusion_violation}}} ->
+        {:error, :cleaner_unavailable}
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp lock_status_booking(bid) do
+    case Repo.query(
+           """
+           SELECT status::text, cleaner_id
+           FROM public.bookings
+           WHERE id = $1
+           FOR UPDATE
+           """,
+           [bid]
+         ) do
+      {:ok, %{rows: [[status, cleaner_id]]}} ->
+        {:ok, %{status: status, cleaner_id: cleaner_id}}
+
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp ensure_status_transition(status, status), do: :ok
+
+  defp ensure_status_transition(current, target) do
+    if target in Map.get(@status_transitions, current, []) do
+      :ok
+    else
+      {:error, :invalid_status_transition}
+    end
+  end
+
+  defp ensure_status_prerequisites(%{cleaner_id: nil}, target)
+       when target in ~w(confirmed scheduled en_route arrived in_progress completed),
+       do: {:error, :cleaner_missing}
+
+  defp ensure_status_prerequisites(_booking, _target), do: :ok
+
+  defp persist_status(bid, current_status, target_status) do
+    case Repo.query(
+           """
+           UPDATE public.bookings
+           SET status = $2, updated_at = now()
+           WHERE id = $1 AND status::text = $3
+           RETURNING id
+           """,
+           [bid, target_status, current_status]
+         ) do
+      {:ok, %{num_rows: 1}} -> :ok
+      {:ok, %{num_rows: 0}} -> {:error, :invalid_status_transition}
+      {:error, error} -> {:error, error}
     end
   end
 
@@ -570,6 +785,10 @@ defmodule Mithril.DirectAdminBookings do
   end
 
   defp map_rpc_error(error), do: database_error(error)
+
+  defp normalize_transaction({:ok, value}), do: {:ok, value}
+  defp normalize_transaction({:error, {:database, error}}), do: database_error(error)
+  defp normalize_transaction({:error, reason}), do: {:error, reason}
 
   defp require_admin(uid) do
     if Auth.staff_uuid?(uid), do: :ok, else: {:error, :forbidden}
