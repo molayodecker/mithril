@@ -261,13 +261,21 @@ defmodule Mithril.DirectDispatchSafety do
        when not is_nil(booking_id) and not is_nil(service_id) do
     case Repo.query(
            """
-           SELECT cleaner_id, status, payment_status, service_id, timezone
-           FROM public.bookings
-           WHERE id = $1
+           SELECT cleaner_id,
+                  status,
+                  payment_status,
+                  service_id,
+                  COALESCE(
+                    NULLIF(btrim(to_jsonb(b)->>'timezone_name'), ''),
+                    NULLIF(btrim(to_jsonb(b)->>'timezone'), ''),
+                    $2::text
+                  ) AS request_timezone
+           FROM public.bookings b
+           WHERE b.id = $1
            LIMIT 1
            FOR UPDATE
            """,
-           [booking_id]
+           [booking_id, @default_timezone]
          ) do
       {:ok, %{rows: [[current_worker, status, payment_status, ^service_id, timezone]]}} ->
         {:ok,
@@ -322,7 +330,11 @@ defmodule Mithril.DirectDispatchSafety do
                   r.related_service_id,
                   r.requested_start_at,
                   r.duration_hours,
-                  COALESCE(NULLIF(b.timezone, ''), $2::text) AS request_timezone
+                  COALESCE(
+                    NULLIF(btrim(to_jsonb(b)->>'timezone_name'), ''),
+                    NULLIF(btrim(to_jsonb(b)->>'timezone'), ''),
+                    $2::text
+                  ) AS request_timezone
            FROM public.direct_service_requests r
            LEFT JOIN public.bookings b ON b.id = r.related_booking_id
            WHERE r.id = $1
