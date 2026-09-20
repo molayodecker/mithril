@@ -47,6 +47,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
       scheduled_time time NOT NULL,
       duration_hours numeric NOT NULL,
       timezone text,
+      timezone_name text,
       booking_period tstzrange,
       status text NOT NULL DEFAULT 'pending',
       payment_status text NOT NULL DEFAULT 'pending',
@@ -276,7 +277,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
              })
   end
 
-  test "uses the original booking date for replacement availability exceptions" do
+  test "prefers canonical timezone_name for replacement availability exceptions" do
     %{admin_id: admin_id, customer_id: customer_id, worker_id: worker_id} = dispatch_fixture!()
     booking_id = Ecto.UUID.generate()
 
@@ -284,9 +285,9 @@ defmodule Mithril.DirectDispatchSafetyTest do
       """
       INSERT INTO public.bookings (
         id, customer_id, service_id, address, scheduled_date, scheduled_time,
-        duration_hours, timezone, status, payment_status
+        duration_hours, timezone, timezone_name, status, payment_status
       ) VALUES ($1, $2, 1, 'Labone, Accra', '2099-09-08', '23:30', 2,
-                'America/New_York', 'pending', 'paid')
+                'America/New_York', 'Africa/Accra', 'pending', 'paid')
       """,
       [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(customer_id)]
     )
@@ -307,7 +308,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
       ).rows
 
     Repo.query!(
-      "INSERT INTO public.cleaner_availability_exceptions (cleaner_id, exception_date) VALUES ($1, '2099-09-08')",
+      "INSERT INTO public.cleaner_availability_exceptions (cleaner_id, exception_date) VALUES ($1, '2099-09-09')",
       [Ecto.UUID.dump!(worker_id)]
     )
 
@@ -377,6 +378,16 @@ defmodule Mithril.DirectDispatchSafetyTest do
 
     insert_booking!(booking_id, customer_id, "paid", previous_worker_id)
 
+    Repo.query!(
+      """
+      UPDATE public.bookings
+      SET timezone = 'America/New_York',
+          timezone_name = 'Africa/Accra'
+      WHERE id = $1
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
     [[request_id]] =
       Repo.query!(
         """
@@ -399,10 +410,15 @@ defmodule Mithril.DirectDispatchSafetyTest do
 
     assert assigned.status == "assigned"
 
-    [[cleaner_id, direct_cleaner_id, accepted_at, phase]] =
+    [[cleaner_id, direct_cleaner_id, accepted_at, phase, scheduled_date, scheduled_time]] =
       Repo.query!(
         """
-        SELECT cleaner_id, direct_assigned_cleaner_id, cleaner_accepted_at, assignment_phase
+        SELECT cleaner_id,
+               direct_assigned_cleaner_id,
+               cleaner_accepted_at,
+               assignment_phase,
+               scheduled_date,
+               scheduled_time
         FROM public.bookings
         WHERE id = $1
         """,
@@ -413,6 +429,8 @@ defmodule Mithril.DirectDispatchSafetyTest do
     assert direct_cleaner_id == Ecto.UUID.dump!(worker_id)
     assert not is_nil(accepted_at)
     assert phase == "accepted"
+    assert scheduled_date == ~D[2099-09-08]
+    assert Time.compare(scheduled_time, ~T[10:00:00]) == :eq
 
     [[previous_worker, assigned_worker, status]] =
       Repo.query!(
