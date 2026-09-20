@@ -174,7 +174,7 @@ defmodule Mithril.DirectBookingsTest do
     assert {:error, :not_found} = DirectBookingCancels.cancel(other_id, booking_id, %{})
   end
 
-  test "records a failed Paystack refund without rolling back the cancel" do
+  test "holds an ambiguous Paystack refund for manual review without rolling back the cancel" do
     Application.put_env(:mithril, :paystack_test_refund_result, {:error, :provider_unavailable})
 
     customer_id = Ecto.UUID.generate()
@@ -182,7 +182,36 @@ defmodule Mithril.DirectBookingsTest do
     booking_id =
       insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "scheduled",
         payment_status: "paid",
-        reference: "T_direct_fail"
+        reference: "T_direct_unknown_refund"
+      )
+
+    assert {:ok, result} = DirectBookingCancels.cancel(customer_id, booking_id, %{})
+    assert result.status == "cancelled"
+    assert result.refundStatus == "manual_review"
+    assert result.successMessage =~ "process your refund manually"
+
+    assert [["manual_review", reason]] =
+             Repo.query!(
+               "SELECT status, failure_reason FROM public.booking_refunds WHERE booking_id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert reason =~ "verify provider state before retrying"
+  end
+
+  test "records a definite Paystack refund rejection as failed" do
+    Application.put_env(
+      :mithril,
+      :paystack_test_refund_result,
+      {:error, {:provider, 400, "refund rejected"}}
+    )
+
+    customer_id = Ecto.UUID.generate()
+
+    booking_id =
+      insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "scheduled",
+        payment_status: "paid",
+        reference: "T_direct_rejected_refund"
       )
 
     assert {:ok, result} = DirectBookingCancels.cancel(customer_id, booking_id, %{})
