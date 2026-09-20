@@ -89,7 +89,7 @@ defmodule Mithril.DirectAdminBookings do
              :ok <- ensure_dispatch_cleaner(cleaner_uid, booking.service_id),
              :ok <- ensure_assignment_window(booking),
              :ok <- ensure_cleaner_available(cleaner_uid, booking),
-             :ok <- persist_cleaner_assignment(bid, cleaner_uid) do
+             :ok <- persist_cleaner_assignment(bid, cleaner_uid, booking.current_cleaner_id) do
           :ok
         else
           {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
@@ -425,6 +425,7 @@ defmodule Mithril.DirectAdminBookings do
            SELECT
              status::text,
              service_id,
+             cleaner_id,
              COALESCE(
                lower(booking_period),
                (scheduled_date + scheduled_time)
@@ -443,19 +444,25 @@ defmodule Mithril.DirectAdminBookings do
            """,
            [bid, @default_timezone]
          ) do
-      {:ok, %{rows: [[status, service_id, starts_at, ends_at, scheduled_date]]}}
+      {:ok, %{rows: [[status, service_id, current_cleaner_id, starts_at, ends_at, scheduled_date]]}}
       when status in @reassignable ->
         {:ok,
          %{
            status: status,
            service_id: service_id,
+           current_cleaner_id: current_cleaner_id,
            starts_at: starts_at,
            ends_at: ends_at,
            scheduled_date: scheduled_date,
            booking_id: bid
          }}
 
-      {:ok, %{rows: [[_status, _service_id, _starts_at, _ends_at, _scheduled_date]]}} ->
+      {:ok,
+       %{
+         rows: [
+           [_status, _service_id, _current_cleaner_id, _starts_at, _ends_at, _scheduled_date]
+         ]
+       }} ->
         {:error, :not_reassignable}
 
       {:ok, %{rows: []}} ->
@@ -531,7 +538,9 @@ defmodule Mithril.DirectAdminBookings do
     end
   end
 
-  defp persist_cleaner_assignment(bid, cleaner_uid) do
+  defp persist_cleaner_assignment(bid, cleaner_uid, current_cleaner_id) do
+    same_cleaner? = current_cleaner_id == cleaner_uid
+
     case Repo.query(
            """
            UPDATE public.bookings
@@ -541,16 +550,28 @@ defmodule Mithril.DirectAdminBookings do
                  WHEN status::text = 'pending' THEN 'confirmed'
                  ELSE status::text
                END,
-               cleaner_assigned_at = now(),
-               cleaner_accepted_at = NULL,
-               assignment_phase = NULL,
-               assignment_hold_until = NULL,
+               cleaner_assigned_at = CASE
+                 WHEN $4::boolean THEN COALESCE(cleaner_assigned_at, now())
+                 ELSE now()
+               END,
+               cleaner_accepted_at = CASE
+                 WHEN $4::boolean THEN cleaner_accepted_at
+                 ELSE NULL
+               END,
+               assignment_phase = CASE
+                 WHEN $4::boolean THEN assignment_phase
+                 ELSE NULL
+               END,
+               assignment_hold_until = CASE
+                 WHEN $4::boolean THEN assignment_hold_until
+                 ELSE NULL
+               END,
                updated_at = now()
            WHERE id = $1
              AND status::text = ANY($3::text[])
            RETURNING id
            """,
-           [bid, cleaner_uid, @reassignable]
+           [bid, cleaner_uid, @reassignable, same_cleaner?]
          ) do
       {:ok, %{num_rows: 1}} -> :ok
       {:ok, %{num_rows: 0}} -> {:error, :not_reassignable}
