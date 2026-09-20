@@ -1,22 +1,23 @@
 # Mithril observability
 
-Mithril uses PromEx for application metrics and Fly.io's managed Prometheus-compatible metrics store and Grafana for operational dashboards.
+Mithril uses PromEx for application metrics. Fly.io scrapes those metrics into managed Prometheus. Grafana reads Fly Prometheus; Mithril does not push dashboards or talk to Grafana itself.
+
+Keep PromEx Grafana disabled in Mithril:
+
+```elixir
+grafana: :disabled
+```
 
 ## Architecture
 
 ```text
 Mithril
-  |
-  | PromEx telemetry
-  v
-private metrics server :9091/metrics
-  |
-  | Fly internal scrape every ~15s
-  v
-Fly managed Prometheus
-  |
-  v
-Fly managed Grafana
+  ↓
+PromEx :9091/metrics
+  ↓
+Fly Prometheus
+  ↓
+Grafana (fly-metrics.net, or any Grafana pointed at Fly Prometheus)
 ```
 
 The public Phoenix API remains on port 4000. Port 9091 is not declared as a public Fly service, so `/metrics` is not exposed through `api.tryinstaclean.com` or the staging API hostname.
@@ -28,6 +29,67 @@ Fly configuration:
   port = 9091
   path = "/metrics"
 ```
+
+## Grafana
+
+The Grafana instance we already have is Fly's managed Grafana at [fly-metrics.net](https://fly-metrics.net). It is preconfigured with this organization's Prometheus datasource. Sign in with the Fly account that owns the `personal` org. No Mithril Grafana token, PromEx Grafana plugin, or extra datasource is required there.
+
+Fly organization slug: `personal`
+
+Prometheus URL (org-scoped, already wired in fly-metrics.net):
+
+```text
+https://api.fly.io/prometheus/personal/
+```
+
+Fly attaches `app`, `region`, `host`, and `instance` labels. Separate environments with:
+
+```promql
+{app="instaclean-mithril"}
+```
+
+```promql
+{app="instaclean-mithril-staging"}
+```
+
+PromEx series use the `mithril_prom_ex_` prefix and only appear after a deploy that includes PromEx (`[metrics]` scrape of `:9091/metrics`). Until then, Explore still has Fly built-in series such as `fly_instance_up`, `fly_instance_cpu`, `fly_instance_memory_*`, and `fly_edge_http_responses_count`.
+
+After [PR #40](https://github.com/molayodecker/mithril/pull/40) is on staging, build a **Mithril Overview** dashboard in fly-metrics.net with API rate/latency/errors, BEAM memory, Ecto query latency, Oban failures/queue depth, Fly CPU/memory, and a staging vs production variable.
+
+Included PromEx dashboard JSON (import later if wanted; do not auto-upload from the app):
+
+- `application.json`
+- `beam.json`
+- `phoenix.json`
+- `ecto.json`
+- `oban.json`
+
+### Optional: Grafana Cloud or self-hosted Grafana
+
+Only needed if we stop using fly-metrics.net. Add a Prometheus datasource in Grafana:
+
+```text
+Name:
+Mithril - Fly Prometheus
+
+Prometheus server URL:
+https://api.fly.io/prometheus/personal/
+
+Scrape interval:
+15s
+
+Custom HTTP Header:
+Authorization
+
+Value:
+FlyV1 <token from `fly tokens create readonly -o personal`>
+```
+
+Put the token only in Grafana's secure credential field. Do not commit it, put it in `.env`, or send it in chat.
+
+Use `FlyV1` for tokens from `fly tokens create` and for current `flyctl auth token` output (`fm2_…`). `Authorization: Bearer …` against this endpoint returns `401 something went wrong resolving organization` for those tokens. Leave Grafana auth type as none / no basic auth; the custom header is the credential.
+
+Save & test should report a successful Prometheus API query. Grafana can then use the datasource for Explore, dashboards, alerting, annotations, and recording rules.
 
 ## Metrics collected
 
@@ -42,20 +104,6 @@ PromEx collects:
 Phoenix channel/socket metric groups are disabled because Mithril does not currently use them.
 
 The PromEx polling interval for BEAM and Oban is 15 seconds to align with Fly's custom metric scrape cadence and avoid unnecessary churn.
-
-## Grafana
-
-Open the Fly.io Metrics dashboard for the Mithril app, then open managed Grafana/Explore with the Fly Prometheus datasource.
-
-PromEx metric names use the `mithril_prom_ex_` prefix. The included PromEx dashboard definitions are:
-
-- `application.json`
-- `beam.json`
-- `phoenix.json`
-- `ecto.json`
-- `oban.json`
-
-They can be rendered with PromEx tooling if a standalone Grafana dashboard import is desired.
 
 ## What to watch first
 
