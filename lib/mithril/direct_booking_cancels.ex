@@ -334,19 +334,11 @@ defmodule Mithril.DirectBookingCancels do
         {:ok, %{result.payload | refundStatus: "pending"}}
 
       {:error, reason} when reason in [:provider_unavailable, :payment_not_configured] ->
-        mark_refund_manual_review(result.refund_id, reason)
+        manual_review_refund(result, reason)
 
-        {:ok,
-         %{
-           result.payload
-           | refundStatus: "manual_review",
-             successMessage:
-               DirectCancellation.success_message_for_refund(
-                 result.payload.tier,
-                 "manual_review",
-                 result.payload.successMessage
-               )
-         }}
+      {:error, {:provider, status, _message} = reason}
+      when is_integer(status) and status >= 500 and status <= 599 ->
+        manual_review_refund(result, reason)
 
       {:error, reason} ->
         mark_refund_failed(result.refund_id, reason)
@@ -363,6 +355,22 @@ defmodule Mithril.DirectBookingCancels do
                )
          }}
     end
+  end
+
+  defp manual_review_refund(result, reason) do
+    mark_refund_manual_review(result.refund_id, reason)
+
+    {:ok,
+     %{
+       result.payload
+       | refundStatus: "manual_review",
+         successMessage:
+           DirectCancellation.success_message_for_refund(
+             result.payload.tier,
+             "manual_review",
+             result.payload.successMessage
+           )
+     }}
   end
 
   defp store_paystack_reference(refund_id, refund) do
