@@ -444,7 +444,8 @@ defmodule Mithril.DirectAdminBookings do
            """,
            [bid, @default_timezone]
          ) do
-      {:ok, %{rows: [[status, service_id, current_cleaner_id, starts_at, ends_at, scheduled_date]]}}
+      {:ok,
+       %{rows: [[status, service_id, current_cleaner_id, starts_at, ends_at, scheduled_date]]}}
       when status in @reassignable ->
         {:ok,
          %{
@@ -496,7 +497,10 @@ defmodule Mithril.DirectAdminBookings do
     end
   end
 
-  defp ensure_assignment_window(%{starts_at: %DateTime{} = starts_at, ends_at: %DateTime{} = ends_at}) do
+  defp ensure_assignment_window(%{
+         starts_at: %DateTime{} = starts_at,
+         ends_at: %DateTime{} = ends_at
+       }) do
     cond do
       DateTime.compare(ends_at, starts_at) != :gt -> {:error, :invalid_timeslot}
       DateTime.compare(starts_at, DateTime.utc_now()) != :gt -> {:error, :past_schedule}
@@ -573,11 +577,17 @@ defmodule Mithril.DirectAdminBookings do
            """,
            [bid, cleaner_uid, @reassignable, same_cleaner?]
          ) do
-      {:ok, %{num_rows: 1}} -> :ok
-      {:ok, %{num_rows: 0}} -> {:error, :not_reassignable}
+      {:ok, %{num_rows: 1}} ->
+        :ok
+
+      {:ok, %{num_rows: 0}} ->
+        {:error, :not_reassignable}
+
       {:error, %Postgrex.Error{postgres: %{code: :exclusion_violation}}} ->
         {:error, :cleaner_unavailable}
-      {:error, error} -> {:error, error}
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
