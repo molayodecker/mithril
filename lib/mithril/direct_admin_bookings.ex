@@ -83,8 +83,7 @@ defmodule Mithril.DirectAdminBookings do
          {:ok, cleaner_uid} <- dump_uuid(params["cleanerId"] || params[:cleanerId]),
          :ok <- require_admin(admin_uid) do
       Repo.transaction(fn ->
-        with :ok <- lock_cleaner_schedule(cleaner_uid),
-             {:ok, booking} <- lock_assignable_booking(bid),
+        with {:ok, booking} <- lock_assignment_resources(bid, cleaner_uid),
              :ok <- ensure_cleaner_role(cleaner_uid),
              :ok <- ensure_dispatch_cleaner(cleaner_uid, booking.service_id),
              :ok <- ensure_assignment_window(booking),
@@ -406,6 +405,16 @@ defmodule Mithril.DirectAdminBookings do
       {:ok, %{rows: [[customer_id]]}} when is_binary(customer_id) -> {:ok, customer_id}
       {:ok, %{rows: []}} -> {:error, :not_found}
       {:error, error} -> database_error(error)
+    end
+  end
+
+  # Keep booking mutations on one global lock order:
+  # booking row first, then the cleaner schedule advisory lock.
+  # The booking reservation trigger follows the same order after UPDATE.
+  defp lock_assignment_resources(bid, cleaner_uid) do
+    with {:ok, booking} <- lock_assignable_booking(bid),
+         :ok <- lock_cleaner_schedule(cleaner_uid) do
+      {:ok, booking}
     end
   end
 
