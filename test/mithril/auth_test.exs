@@ -20,6 +20,7 @@ defmodule Mithril.AuthTest do
           "mithril_auth_otps",
           "mithril_auth_identities",
           "mithril_auth_accounts",
+          "cleaner_data",
           "user_roles",
           "users"
         ] do
@@ -56,6 +57,14 @@ defmodule Mithril.AuthTest do
     CREATE TABLE public.user_roles (
       user_id uuid NOT NULL REFERENCES public.users(id),
       role_id text NOT NULL
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.cleaner_data (
+      user_id uuid PRIMARY KEY REFERENCES public.users(id),
+      verified boolean NOT NULL DEFAULT false,
+      status text NOT NULL DEFAULT 'pending'
     )
     """)
 
@@ -256,6 +265,25 @@ defmodule Mithril.AuthTest do
     assert Auth.staff_uuid?(user_id)
     refute Auth.staff_uuid?("not-a-uuid")
     refute Auth.admin?(user_id)
+  end
+
+  test "me reports cleaner role and verification state" do
+    {user_id, _email} = insert_account("cleaner@tryinstaclean.com", "correct-horse")
+
+    Repo.query!(
+      "INSERT INTO public.user_roles (user_id, role_id) VALUES ($1::uuid, 'cleaner')",
+      [dump_uuid(user_id)]
+    )
+
+    Repo.query!(
+      "INSERT INTO public.cleaner_data (user_id, verified, status) VALUES ($1::uuid, true, 'active')",
+      [dump_uuid(user_id)]
+    )
+
+    assert {:ok, me} = Auth.me(user_id)
+    assert "cleaner" in me.roles
+    assert me.cleanerVerified
+    assert me.cleanerStatus == "active"
   end
 
   test "login rejects inactive accounts" do
