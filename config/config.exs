@@ -19,6 +19,16 @@ config :mithril, MithrilWeb.Endpoint,
 
 config :phoenix, :json_library, Jason
 
+config :mithril, Mithril.PromEx,
+  manual_metrics_start_delay: :no_delay,
+  drop_metrics_groups: [:phoenix_channel_event_metrics, :phoenix_socket_event_metrics],
+  grafana: :disabled,
+  metrics_server: :disabled
+
+config :mithril, :metrics_server,
+  port: 9091,
+  path: "/metrics"
+
 config :mithril, Oban,
   repo: Mithril.Repo,
   notifier: Oban.Notifiers.Postgres,

@@ -223,6 +223,42 @@ defmodule Mithril.DirectAdminOpsDesksTest do
     assert message["direction"] == "inbound"
   end
 
+  test "records replies sent to the admin WhatsApp line" do
+    previous_admin_from = Application.get_env(:mithril, :twilio_whatsapp_admin_from)
+    Application.put_env(:mithril, :twilio_whatsapp_admin_from, "+233559100642")
+
+    on_exit(fn ->
+      if is_nil(previous_admin_from) do
+        Application.delete_env(:mithril, :twilio_whatsapp_admin_from)
+      else
+        Application.put_env(:mithril, :twilio_whatsapp_admin_from, previous_admin_from)
+      end
+    end)
+
+    guest_id = insert_user!("guest@example.com", "+233500000021", "Kofi Guest")
+
+    assert :ok =
+             DirectAdminWhatsApp.record_inbound_from_webhook(%{
+               "From" => "whatsapp:+233500000021",
+               "To" => "whatsapp:+233559100642",
+               "Body" => "I need help with my booking"
+             })
+
+    assert [[direction, phone, body, stored_user_id, business_phone]] =
+             Repo.query!("""
+             SELECT direction, phone_e164, body, user_id, business_phone_e164
+             FROM public.whatsapp_inbox_messages
+             """).rows
+
+    assert direction == "inbound"
+    assert phone == "+233500000021"
+    assert body == "I need help with my booking"
+    assert stored_user_id == Ecto.UUID.dump!(guest_id)
+    assert business_phone == "+233559100642"
+    assert DirectAdminWhatsApp.admin_destination?("whatsapp:+233559100642")
+    refute DirectAdminWhatsApp.admin_destination?("whatsapp:+233246326939")
+  end
+
   defp insert_admin! do
     admin_id = insert_user!("ops@tryinstaclean.com", "+233500000099", "Ops")
 

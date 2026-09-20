@@ -14,6 +14,12 @@ config :mithril, MithrilWeb.Endpoint,
     "test-only-secret-key-base-mithril-000000000000000000000000000000000000000000000000",
   server: false
 
+config :mithril, Mithril.PromEx,
+  disabled: true,
+  metrics_server: :disabled
+
+config :mithril, :metrics_server, :disabled
+
 config :logger, level: :warning
 config :phoenix, :plug_init_mode, :runtime
 

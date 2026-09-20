@@ -6,6 +6,7 @@ defmodule Mithril.WhatsApp.Recruitment do
 
   require Logger
 
+  alias Mithril.DirectAdminWhatsApp
   alias Mithril.WhatsApp.Recruitment.Conversation
   alias Mithril.WhatsApp.Recruitment.GhanaCard
   alias Mithril.WhatsApp.TwilioSignature
@@ -25,6 +26,7 @@ defmodule Mithril.WhatsApp.Recruitment do
         {:error, :unauthorized}
 
       true ->
+        _ = maybe_record_admin_inbound(params)
         {:ok, Conversation.handle(params)}
     end
   end
@@ -50,6 +52,25 @@ defmodule Mithril.WhatsApp.Recruitment do
 
   def handle_ghana_post(params) do
     GhanaCard.handle_browser_upload(params)
+  end
+
+  defp maybe_record_admin_inbound(params) do
+    case DirectAdminWhatsApp.record_inbound_from_webhook(params) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("admin WhatsApp inbound capture failed: #{inspect(reason)}")
+        :ok
+    end
+  rescue
+    error ->
+      Logger.warning("admin WhatsApp inbound capture failed: #{Exception.message(error)}")
+      :ok
+  catch
+    kind, reason ->
+      Logger.warning("admin WhatsApp inbound capture failed: #{inspect({kind, reason})}")
+      :ok
   end
 
   defp valid_signature?(params, signature) do
