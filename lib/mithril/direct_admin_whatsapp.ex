@@ -9,6 +9,28 @@ defmodule Mithril.DirectAdminWhatsApp do
   alias Mithril.Repo
   alias Mithril.WhatsApp.Recruitment.Outbound
 
+  @admin_default ["+233559100642"]
+
+  def record_inbound_from_webhook(params) when is_map(params) do
+    case normalize_phone(params["To"] || params[:To]) do
+      {:ok, business} ->
+        if admin_line?(business) do
+          with {:ok, e164} <- normalize_phone(params["From"] || params[:From]),
+               {:ok, body} <- required_body(params["Body"] || params[:Body]),
+               {:ok, thread_user} <- resolve_user_id(e164) do
+            insert_inbound(e164, body, thread_user, business)
+          end
+        else
+          :ok
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
+  def record_inbound_from_webhook(_params), do: :ok
+
   def list_threads(user_id) do
     with {:ok, uid} <- dump_uuid(user_id),
          :ok <- require_admin(uid) do
@@ -128,6 +150,21 @@ defmodule Mithril.DirectAdminWhatsApp do
     end
   end
 
+  defp insert_inbound(e164, body, thread_user, business) do
+    case Repo.query(
+           """
+           INSERT INTO public.whatsapp_inbox_messages (
+             direction, phone_e164, body, user_id, business_phone_e164
+           ) VALUES ('inbound', $1, $2, $3, $4)
+           RETURNING id
+           """,
+           [e164, body, thread_user, digits_only(business)]
+         ) do
+      {:ok, _} -> :ok
+      {:error, error} -> database_error(error)
+    end
+  end
+
   defp insert_outbound(e164, body, thread_user, admin_uid, from) do
     case Repo.query(
            """
@@ -141,6 +178,23 @@ defmodule Mithril.DirectAdminWhatsApp do
       {:ok, _} -> {:ok, %{"ok" => true}}
       {:error, error} -> database_error(error)
     end
+  end
+
+  defp admin_line?(e164) do
+    configured =
+      (Application.get_env(:mithril, :twilio_whatsapp_admin_from) || "")
+      |> String.split(",")
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
+    list = if configured == [], do: @admin_default, else: configured
+
+    Enum.any?(list, fn phone ->
+      case normalize_phone(phone) do
+        {:ok, normalized} -> normalized == e164
+        _ -> false
+      end
+    end)
   end
 
   defp last_business(e164) do

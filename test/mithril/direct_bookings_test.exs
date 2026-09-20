@@ -197,7 +197,7 @@ defmodule Mithril.DirectBookingsTest do
              ).rows
   end
 
-  test "reschedules a paid booking to a future slot without changing the amount" do
+  test "reschedules a paid booking without changing its paid duration or amount" do
     customer_id = Ecto.UUID.generate()
     new_date = Date.add(Date.utc_today(), 5)
 
@@ -209,7 +209,8 @@ defmodule Mithril.DirectBookingsTest do
     assert {:ok, booking} =
              DirectBookings.reschedule(customer_id, booking_id, %{
                "scheduledDate" => Date.to_iso8601(new_date),
-               "scheduledTime" => "14:00"
+               "scheduledTime" => "14:00",
+               "durationHours" => 8
              })
 
     assert booking["id"] == booking_id
@@ -217,6 +218,15 @@ defmodule Mithril.DirectBookingsTest do
     assert booking["paymentStatus"] == "paid"
     assert booking["scheduledDate"] == Date.to_iso8601(new_date)
     assert booking["amountMinor"] == 19_350
+
+    assert [[duration_hours, duration_final]] =
+             Repo.query!(
+               "SELECT duration_hours, duration_final FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert Decimal.equal?(duration_hours, Decimal.new(3))
+    assert Decimal.equal?(duration_final, Decimal.new(3))
   end
 
   test "clears every reminder stamp when the visit moves" do
@@ -291,6 +301,55 @@ defmodule Mithril.DirectBookingsTest do
     assert booking["paymentStatus"] == "pending"
     assert booking["scheduledDate"] == Date.to_iso8601(new_date)
     assert booking["amountMinor"] == 19_350
+  end
+
+  test "invalidates an active checkout when unpaid rescheduling changes the price" do
+    customer_id = Ecto.UUID.generate()
+    new_date = Date.add(Date.utc_today(), 6)
+    reference = "BK-stale-reschedule"
+
+    booking_id =
+      insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[09:00:00], "pending")
+
+    Repo.query!(
+      """
+      UPDATE public.bookings
+      SET final_amount_minor = 10000,
+          total_price = 10000,
+          reference = $2
+      WHERE id = $1
+      """,
+      [Ecto.UUID.dump!(booking_id), reference]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.payment_attempts (
+        booking_id, reference, status, amount_minor, currency
+      ) VALUES ($1, $2, 'ready', 10000, 'GHS')
+      """,
+      [Ecto.UUID.dump!(booking_id), reference]
+    )
+
+    assert {:ok, booking} =
+             DirectBookings.reschedule(customer_id, booking_id, %{
+               "scheduledDate" => Date.to_iso8601(new_date),
+               "scheduledTime" => "11:30"
+             })
+
+    assert booking["amountMinor"] == 19_350
+
+    assert [[nil]] =
+             Repo.query!(
+               "SELECT reference FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert [["failed", "Booking repriced during reschedule"]] =
+             Repo.query!(
+               "SELECT status, failure_reason FROM public.payment_attempts WHERE booking_id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
   end
 
   test "rejects rescheduling to a past time" do
@@ -394,6 +453,7 @@ defmodule Mithril.DirectBookingsTest do
     end
 
     Repo.query!("DROP TABLE IF EXISTS public.booking_refunds CASCADE")
+    Repo.query!("DROP TABLE IF EXISTS public.payment_attempts CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.bookings CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.cleaner_availability_exceptions CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.service_types CASCADE")
@@ -494,6 +554,20 @@ defmodule Mithril.DirectBookingsTest do
       cancellation_tier text,
       cancellation_reason text,
       cancellation_reason_code text,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.payment_attempts (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      booking_id uuid NOT NULL REFERENCES public.bookings(id) ON DELETE CASCADE,
+      reference text NOT NULL UNIQUE,
+      status text NOT NULL DEFAULT 'initializing',
+      amount_minor bigint NOT NULL,
+      currency text NOT NULL DEFAULT 'GHS',
+      failure_reason text,
+      failed_at timestamptz,
       updated_at timestamptz NOT NULL DEFAULT now()
     )
     """)

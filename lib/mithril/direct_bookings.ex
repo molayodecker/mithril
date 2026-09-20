@@ -178,7 +178,7 @@ defmodule Mithril.DirectBookings do
       Repo.transaction(fn ->
         with {:ok, booking} <- lock_reschedule_booking(customer_id, bid),
              {:ok, path} <- reschedule_path(booking),
-             schedule <- merge_reschedule_schedule(booking, input),
+             schedule <- merge_reschedule_schedule(path, booking, input),
              :ok <- ensure_future_schedule(schedule),
              {:ok, pricing} <- reschedule_pricing(path, booking, schedule),
              :ok <- validate_timeslot(schedule, pricing),
@@ -609,13 +609,19 @@ defmodule Mithril.DirectBookings do
     end
   end
 
-  defp merge_reschedule_schedule(booking, input) do
+  defp merge_reschedule_schedule(path, booking, input) do
+    duration_hours =
+      case path do
+        :paid -> booking.duration_hours
+        :unpaid -> input.duration_hours || booking.duration_hours
+      end
+
     %{
       cleaner_id: booking.cleaner_id,
       service_id: booking.service_id,
       scheduled_date: input.scheduled_date,
       scheduled_time: input.scheduled_time,
-      duration_hours: input.duration_hours || booking.duration_hours,
+      duration_hours: duration_hours,
       timezone: input.timezone || booking.timezone
     }
   end
@@ -635,8 +641,8 @@ defmodule Mithril.DirectBookings do
     end
   end
 
-  defp reschedule_pricing(:paid, booking, schedule) do
-    {:ok, %{"durationHours" => schedule.duration_hours || booking.duration_hours}}
+  defp reschedule_pricing(:paid, booking, _schedule) do
+    {:ok, %{"durationHours" => booking.duration_hours}}
   end
 
   defp reschedule_pricing(:unpaid, _booking, schedule) do
@@ -648,8 +654,41 @@ defmodule Mithril.DirectBookings do
   end
 
   defp apply_reschedule(:unpaid, booking, schedule, pricing, customer_id) do
-    with :ok <- update_reschedule_schedule(booking, schedule, customer_id, :unpaid) do
+    with :ok <- update_reschedule_schedule(booking, schedule, customer_id, :unpaid),
+         :ok <- maybe_invalidate_repriced_checkout(booking, pricing) do
       update_unpaid_pricing(booking.id, pricing)
+    end
+  end
+
+  defp maybe_invalidate_repriced_checkout(booking, pricing) do
+    if amount_minor(booking.amount_minor) != amount_minor(pricing["finalAmountMinor"]) do
+      case Repo.query(
+             """
+             WITH retired AS (
+               UPDATE public.payment_attempts
+               SET status = 'failed',
+                   failure_reason = 'Booking repriced during reschedule',
+                   failed_at = COALESCE(failed_at, now()),
+                   updated_at = now()
+               WHERE booking_id = $1::uuid
+                 AND status IN ('initializing', 'ready')
+               RETURNING id
+             )
+             UPDATE public.bookings
+             SET reference = NULL,
+                 updated_at = now()
+             WHERE id = $1::uuid
+               AND payment_status IN ('pending', 'failed')
+             RETURNING id
+             """,
+             [booking.id]
+           ) do
+        {:ok, %{rows: [[_id]]}} -> :ok
+        {:ok, %{rows: []}} -> {:error, :not_found}
+        {:error, error} -> database_error(error)
+      end
+    else
+      :ok
     end
   end
 
@@ -908,6 +947,19 @@ defmodule Mithril.DirectBookings do
       :error -> :error
     end
   end
+
+  defp amount_minor(%Decimal{} = value), do: Decimal.to_integer(value)
+  defp amount_minor(value) when is_integer(value), do: value
+  defp amount_minor(value) when is_float(value), do: round(value)
+
+  defp amount_minor(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {integer, ""} -> integer
+      _ -> nil
+    end
+  end
+
+  defp amount_minor(_), do: nil
 
   defp decimal_hours(%Decimal{} = value), do: value
   defp decimal_hours(value) when is_integer(value), do: Decimal.new(value)

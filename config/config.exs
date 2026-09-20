@@ -28,6 +28,7 @@ config :mithril, Mithril.PromEx,
     path: "/metrics",
     protocol: :http,
     pool_size: 2,
+    cowboy_opts: [ip: {0, 0, 0, 0}],
     auth_strategy: :none
   ]
 

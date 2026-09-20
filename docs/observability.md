@@ -20,7 +20,7 @@ Fly Prometheus
 Grafana (fly-metrics.net, or any Grafana pointed at Fly Prometheus)
 ```
 
-The public Phoenix API remains on port 4000. Port 9091 is not declared as a public Fly service, so `/metrics` is not exposed through `api.tryinstaclean.com` or the staging API hostname.
+The public Phoenix API remains on port 4000. PromEx explicitly binds its standalone Cowboy listener to `0.0.0.0:9091` so Fly's internal scraper can reach it. Port 9091 is not declared as a public Fly service, so `/metrics` is not exposed through `api.tryinstaclean.com` or the staging API hostname.
 
 Fly configuration:
 
@@ -87,7 +87,7 @@ FlyV1 <token from `fly tokens create readonly -o personal`>
 
 Put the token only in Grafana's secure credential field. Do not commit it, put it in `.env`, or send it in chat.
 
-Use `FlyV1` for tokens from `fly tokens create` and for current `flyctl auth token` output (`fm2_…`). `Authorization: Bearer …` against this endpoint returns `401 something went wrong resolving organization` for those tokens. Leave Grafana auth type as none / no basic auth; the custom header is the credential.
+Use `FlyV1` for tokens created with `fly tokens create`. Use `Bearer` for the token returned by `flyctl auth token`. The authorization scheme must match the token source. Leave Grafana auth type as none / no basic auth; the custom header is the credential.
 
 Save & test should report a successful Prometheus API query. Grafana can then use the datasource for Explore, dashboards, alerting, annotations, and recording rules.
 
