@@ -265,6 +265,7 @@ defmodule MithrilWeb.DirectAdminBookingsController do
   defp error_response(:cleaner_missing), do: {422, "cleaner_missing"}
   defp error_response(:missing_contact), do: {422, "missing_contact"}
   defp error_response(:invalid_status), do: {422, "invalid_status"}
+  defp error_response(:invalid_status_transition), do: {409, "invalid_status_transition"}
   defp error_response(:invalid_request), do: {422, "invalid_request"}
   defp error_response(:invalid_timeslot), do: {422, "invalid_timeslot"}
   defp error_response(:insufficient_balance), do: {409, "insufficient_balance"}
