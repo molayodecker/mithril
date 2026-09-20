@@ -256,6 +256,7 @@ defmodule MithrilWeb.DirectAdminBookingsController do
   defp error_response(:not_found), do: {404, "not_found"}
   defp error_response(:not_cancellable), do: {409, "not_cancellable"}
   defp error_response(:cancel_conflict), do: {409, "cancel_conflict"}
+  defp error_response(:refund_request_conflict), do: {409, "refund_request_conflict"}
   defp error_response(:not_reschedulable), do: {409, "not_reschedulable"}
   defp error_response(:not_reassignable), do: {409, "not_reassignable"}
   defp error_response(:already_accepted), do: {409, "already_accepted"}
