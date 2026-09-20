@@ -95,20 +95,29 @@ defmodule Mithril.DirectBookings do
     with {:ok, customer_id} <- dump_uuid(user_id),
          {:ok, input} <- validate_create_input(params) do
       Repo.transaction(fn ->
-        with {:ok, service} <- service_details(input.service_id),
-             :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
-             {:ok, pricing} <- compute_pricing(input),
-             :ok <- validate_timeslot(input, pricing),
-             :ok <- validate_cleaner_availability(input, pricing, nil),
-             :ok <- ensure_customer_profile(customer_id),
-             {:ok, booking_id} <- insert_booking(customer_id, input, pricing, service.name) do
-          %{
-            id: booking_id,
-            status: "pending",
-            paymentStatus: "pending",
-            amountMinor: pricing["finalAmountMinor"],
-            currency: pricing["currency"] || "GHS"
-          }
+        with :ok <- lock_booking_idempotency(customer_id, input.idempotency_key),
+             {:ok, existing} <- find_idempotent_booking(customer_id, input.idempotency_key) do
+          if existing do
+            existing
+          else
+            with {:ok, service} <- service_details(input.service_id),
+                 :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
+                 {:ok, pricing} <- compute_pricing(input),
+                 :ok <- validate_timeslot(input, pricing),
+                 :ok <- validate_cleaner_availability(input, pricing, nil),
+                 :ok <- ensure_customer_profile(customer_id),
+                 {:ok, booking_id} <- insert_booking(customer_id, input, pricing, service.name) do
+              %{
+                id: booking_id,
+                status: "pending",
+                paymentStatus: "pending",
+                amountMinor: pricing["finalAmountMinor"],
+                currency: pricing["currency"] || "GHS"
+              }
+            else
+              {:error, reason} -> Repo.rollback(reason)
+            end
+          end
         else
           {:error, reason} -> Repo.rollback(reason)
         end
@@ -411,6 +420,53 @@ defmodule Mithril.DirectBookings do
     end
   end
 
+  defp lock_booking_idempotency(_customer_id, nil), do: :ok
+
+  defp lock_booking_idempotency(customer_id, idempotency_key) do
+    customer_key = Base.encode16(customer_id, case: :lower)
+    lock_key = "direct-booking:#{customer_key}:#{idempotency_key}"
+
+    case Repo.query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", [lock_key]) do
+      {:ok, _} -> :ok
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp find_idempotent_booking(_customer_id, nil), do: {:ok, nil}
+
+  defp find_idempotent_booking(customer_id, idempotency_key) do
+    case Repo.query(
+           """
+           SELECT id::text,
+                  status::text,
+                  payment_status::text,
+                  COALESCE(final_amount_minor, total_price)::bigint,
+                  COALESCE(currency, 'GHS')
+           FROM public.bookings
+           WHERE customer_id = $1
+             AND idempotency_key = $2
+           LIMIT 1
+           """,
+           [customer_id, idempotency_key]
+         ) do
+      {:ok, %{rows: [[id, status, payment_status, amount_minor, currency]]}} ->
+        {:ok,
+         %{
+           id: id,
+           status: status,
+           paymentStatus: payment_status,
+           amountMinor: amount_minor,
+           currency: currency
+         }}
+
+      {:ok, %{rows: []}} ->
+        {:ok, nil}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
   defp ensure_customer_profile(customer_id) do
     case Repo.query(
            """
@@ -459,13 +515,14 @@ defmodule Mithril.DirectBookings do
              cleaner_earnings_minor,
              status,
              payment_status,
-             timezone
+             timezone,
+             idempotency_key
            ) VALUES (
              $1, $2, $3, $4, $5::date, $6::time, $7, $7, $8,
              NULLIF($9::text, ''), $10::numeric, $11::integer, $12::integer,
              $13::integer, $14::integer, $15::integer,
              $16, $17, $18, $19, $20, 0, true, $21, $22, $23,
-             $24::integer, $25::integer, 'pending', 'pending', $26
+             $24::integer, $25::integer, 'pending', 'pending', $26, $27
            )
            RETURNING id::text
            """,
@@ -495,7 +552,8 @@ defmodule Mithril.DirectBookings do
              pricing["suppliesOption"] || "customer_provided",
              pricing["suppliesAllowanceMinor"] || 0,
              pricing["cleanerEarningsMinor"],
-             input.timezone
+             input.timezone,
+             input.idempotency_key
            ]
          ) do
       {:ok, %{rows: [[id]]}} ->
@@ -878,17 +936,33 @@ defmodule Mithril.DirectBookings do
   defp validate_create_input(params) do
     with {:ok, input} <- validate_pricing_input(params),
          {:ok, scheduled_time} <- iso_time(params["scheduledTime"]),
-         {:ok, address} <- required_text(params["address"], 3, 500) do
+         {:ok, address} <- required_text(params["address"], 3, 500),
+         {:ok, idempotency_key} <- optional_idempotency_key(params["idempotencyKey"]) do
       {:ok,
        Map.merge(input, %{
          scheduled_time: scheduled_time,
          address: address,
-         special_instructions: optional_text(params["specialInstructions"], 4_000)
+         special_instructions: optional_text(params["specialInstructions"], 4_000),
+         idempotency_key: idempotency_key
        })}
     else
       _ -> {:error, :invalid_request}
     end
   end
+
+  defp optional_idempotency_key(nil), do: {:ok, nil}
+
+  defp optional_idempotency_key(value) when is_binary(value) do
+    value = String.trim(value)
+
+    if String.length(value) >= 8 and String.length(value) <= 128 do
+      {:ok, value}
+    else
+      :error
+    end
+  end
+
+  defp optional_idempotency_key(_), do: :error
 
   defp positive_integer(value) when is_integer(value) and value > 0, do: {:ok, value}
 
