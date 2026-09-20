@@ -12,12 +12,9 @@ defmodule Mithril.PromEx do
   def plugins do
     [
       {PromEx.Plugins.Application,
-       otp_app: :mithril,
-       deps: [:phoenix, :ecto_sql, :postgrex, :oban, :prom_ex]},
+       otp_app: :mithril, deps: [:phoenix, :ecto_sql, :postgrex, :oban, :prom_ex]},
       {PromEx.Plugins.Beam, poll_rate: 15_000},
-      {PromEx.Plugins.Phoenix,
-       endpoint: MithrilWeb.Endpoint,
-       router: MithrilWeb.Router},
+      {PromEx.Plugins.Phoenix, endpoint: MithrilWeb.Endpoint, router: MithrilWeb.Router},
       {PromEx.Plugins.Ecto, repos: [Mithril.Repo]},
       {PromEx.Plugins.Oban, oban_supervisors: [Oban], poll_rate: 15_000}
     ]
