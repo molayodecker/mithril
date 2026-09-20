@@ -38,13 +38,23 @@ When price-affecting data changes, verify:
 
 ## Bookings
 
-Review supported transitions between:
+Do not infer the booking state machine from a simplified linear lifecycle.
 
-pending -> confirmed -> scheduled -> in_progress -> completed
+Before reviewing booking-status code, derive the authoritative status vocabulary and transition constraints from the current implementation, OpenAPI schemas, database functions/constraints, and tests.
 
-and cancellation paths.
+Current active status vocabulary includes at least:
 
-Do not permit unsupported backwards transitions.
+- pending
+- confirmed
+- scheduled
+- en_route
+- arrived
+- in_progress
+- completed
+
+Cancellation is handled through a separate cancelled path.
+
+The existence of a status does not prove that every transition to or from it is valid. Review the actual mutation path being changed and flag transitions that bypass required business steps or protections.
 
 Rescheduling must inspect at least:
 
