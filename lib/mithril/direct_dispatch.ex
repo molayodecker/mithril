@@ -390,7 +390,11 @@ defmodule Mithril.DirectDispatch do
            """
            SELECT b.address,
                   ((b.scheduled_date + b.scheduled_time)
-                    AT TIME ZONE COALESCE(NULLIF(b.timezone, ''), 'Africa/Accra')),
+                    AT TIME ZONE COALESCE(
+                      NULLIF(btrim(to_jsonb(b)->>'timezone_name'), ''),
+                      NULLIF(btrim(to_jsonb(b)->>'timezone'), ''),
+                      'Africa/Accra'
+                    )),
                   b.duration_hours,
                   b.status,
                   b.service_id
