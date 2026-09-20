@@ -104,12 +104,15 @@ defmodule Mithril.DirectDispatchSafety do
          {:ok, rid} <- dump_uuid(request_id),
          {:ok, worker_uid} <- dump_uuid(params["workerUserId"]) do
       Repo.transaction(fn ->
-        with :ok <- lock_worker_schedule(worker_uid),
+        with {:ok, identity} <- fetch_request_assignment_identity(rid),
+             {:ok, locked_booking} <- lock_related_booking_before_worker(identity),
+             :ok <- lock_worker_schedule(worker_uid),
              {:ok, request} <- fetch_request_window_for_update(rid),
+             :ok <- ensure_request_identity(request, identity),
              :ok <- ensure_assignable_request(request.status),
              {:ok, request} <- resolve_assignment_window(request, params, rid),
              :ok <- ensure_worker_available(worker_uid, request),
-             :ok <- reassign_related_booking(request, worker_uid),
+             :ok <- reassign_related_booking(request, worker_uid, locked_booking),
              {:ok, assigned} <-
                DirectDispatch.assign_admin_service_request(user_id, request_id, params) do
           assigned
@@ -219,6 +222,84 @@ defmodule Mithril.DirectDispatchSafety do
 
       {:error, error} ->
         {:error, error}
+    end
+  end
+
+  defp fetch_request_assignment_identity(rid) do
+    case Repo.query(
+           """
+           SELECT kind, related_booking_id, related_service_id
+           FROM public.direct_service_requests
+           WHERE id = $1
+           LIMIT 1
+           """,
+           [rid]
+         ) do
+      {:ok, %{rows: [[kind, related_booking_id, related_service_id]]}} ->
+        {:ok,
+         %{
+           kind: kind,
+           related_booking_id: related_booking_id,
+           related_service_id: related_service_id
+         }}
+
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp lock_related_booking_before_worker(%{kind: "urgent_help"}), do: {:ok, nil}
+
+  defp lock_related_booking_before_worker(%{
+         kind: "replacement",
+         related_booking_id: booking_id,
+         related_service_id: service_id
+       })
+       when not is_nil(booking_id) and not is_nil(service_id) do
+    case Repo.query(
+           """
+           SELECT cleaner_id, status, payment_status, service_id, timezone
+           FROM public.bookings
+           WHERE id = $1
+           LIMIT 1
+           FOR UPDATE
+           """,
+           [booking_id]
+         ) do
+      {:ok, %{rows: [[current_worker, status, payment_status, ^service_id, timezone]]}} ->
+        {:ok,
+         %{
+           booking_id: booking_id,
+           current_worker: current_worker,
+           status: status,
+           payment_status: payment_status,
+           service_id: service_id,
+           timezone: timezone
+         }}
+
+      {:ok, %{rows: [[_, _, _, _, _]]}} ->
+        {:error, :invalid_request}
+
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp lock_related_booking_before_worker(_identity), do: {:error, :invalid_request}
+
+  defp ensure_request_identity(request, identity) do
+    if request.kind == identity.kind and
+         request.related_booking_id == identity.related_booking_id and
+         request.related_service_id == identity.related_service_id do
+      :ok
+    else
+      {:error, :invalid_request}
     end
   end
 
@@ -394,7 +475,7 @@ defmodule Mithril.DirectDispatchSafety do
     end
   end
 
-  defp reassign_related_booking(%{kind: "urgent_help"}, _worker_uid), do: :ok
+  defp reassign_related_booking(%{kind: "urgent_help"}, _worker_uid, nil), do: :ok
 
   defp reassign_related_booking(
          request = %{
@@ -402,53 +483,40 @@ defmodule Mithril.DirectDispatchSafety do
            related_booking_id: booking_id,
            related_service_id: service_id
          },
-         worker_uid
-       )
-       when not is_nil(booking_id) and not is_nil(service_id) do
-    case Repo.query(
-           """
-           SELECT cleaner_id, status, payment_status, service_id, timezone
-           FROM public.bookings
-           WHERE id = $1
-           LIMIT 1
-           FOR UPDATE
-           """,
-           [booking_id]
-         ) do
-      {:ok, %{rows: [[current_worker, status, payment_status, ^service_id, timezone]]}} ->
-        cond do
-          String.downcase(to_string(payment_status)) != "paid" ->
-            {:error, :booking_unpaid}
+         worker_uid,
+         %{
+           booking_id: booking_id,
+           current_worker: current_worker,
+           status: status,
+           payment_status: payment_status,
+           service_id: service_id,
+           timezone: timezone
+         }
+       ) do
+    cond do
+      String.downcase(to_string(payment_status)) != "paid" ->
+        {:error, :booking_unpaid}
 
-          String.downcase(to_string(status)) not in ~w(pending confirmed scheduled) ->
-            {:error, :booking_closed}
+      String.downcase(to_string(status)) not in ~w(pending confirmed scheduled) ->
+        {:error, :booking_closed}
 
-          current_worker == worker_uid ->
-            {:error, :candidate_unavailable}
+      current_worker == worker_uid ->
+        {:error, :candidate_unavailable}
 
-          true ->
-            persist_replacement_handoff(
-              booking_id,
-              current_worker,
-              worker_uid,
-              request.requested_start_at,
-              request.duration_hours,
-              timezone
-            )
-        end
-
-      {:ok, %{rows: [[_, _, _, _, _]]}} ->
-        {:error, :invalid_request}
-
-      {:ok, %{rows: []}} ->
-        {:error, :not_found}
-
-      {:error, error} ->
-        {:error, error}
+      true ->
+        persist_replacement_handoff(
+          booking_id,
+          current_worker,
+          worker_uid,
+          request.requested_start_at,
+          request.duration_hours,
+          timezone
+        )
     end
   end
 
-  defp reassign_related_booking(_request, _worker_uid), do: {:error, :invalid_request}
+  defp reassign_related_booking(_request, _worker_uid, _locked_booking),
+    do: {:error, :invalid_request}
 
   defp persist_replacement_handoff(
          booking_id,
