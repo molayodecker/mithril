@@ -99,7 +99,7 @@ defmodule Mithril.DirectBookings do
              :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
              {:ok, pricing} <- compute_pricing(input),
              :ok <- validate_timeslot(input, pricing),
-             :ok <- validate_cleaner_availability(input, pricing),
+             :ok <- validate_cleaner_availability(input, pricing, nil),
              :ok <- ensure_customer_profile(customer_id),
              {:ok, booking_id} <- insert_booking(customer_id, input, pricing, service.name) do
           %{
@@ -169,6 +169,59 @@ defmodule Mithril.DirectBookings do
       {:error, error} when is_atom(error) -> {:error, error}
       {:error, error} -> database_error(error)
     end
+  end
+
+  def reschedule(user_id, booking_id, params) when is_map(params) do
+    with {:ok, customer_id} <- dump_uuid(user_id),
+         {:ok, bid} <- dump_uuid(booking_id),
+         {:ok, input} <- validate_reschedule_input(params) do
+      Repo.transaction(fn ->
+        with {:ok, booking} <- lock_reschedule_booking(customer_id, bid),
+             {:ok, path} <- reschedule_path(booking),
+             schedule <- merge_reschedule_schedule(booking, input),
+             :ok <- ensure_future_schedule(schedule),
+             {:ok, pricing} <- reschedule_pricing(path, booking, schedule),
+             :ok <- validate_timeslot(schedule, pricing),
+             :ok <- validate_cleaner_availability(schedule, pricing, bid),
+             :ok <- apply_reschedule(path, booking, schedule, pricing, customer_id) do
+          booking.id
+        else
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end)
+      |> normalize_transaction()
+      |> case do
+        {:ok, _id} -> get_booking(user_id, booking_id)
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      :error -> {:error, :not_found}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp booking_json_select do
+    """
+    jsonb_build_object(
+      'id', b.id,
+      'status', b.status,
+      'paymentStatus', b.payment_status,
+      'serviceId', b.service_id,
+      'serviceName', st.name,
+      'cleanerId', b.cleaner_id,
+      'cleanerName', COALESCE(
+        NULLIF(btrim(p.fullname), ''),
+        NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
+        'Instaclean professional'
+      ),
+      'scheduledDate', b.scheduled_date,
+      'scheduledTime', b.scheduled_time,
+      'durationHours', b.duration_hours,
+      'address', b.address,
+      'amountMinor', COALESCE(b.final_amount_minor, b.total_price),
+      'currency', COALESCE(b.currency, 'GHS')
+    )
+    """
   end
 
   defp compute_pricing(input) do
@@ -306,7 +359,15 @@ defmodule Mithril.DirectBookings do
     end
   end
 
-  defp validate_cleaner_availability(input, pricing) do
+  defp validate_cleaner_availability(input, pricing, exclude_booking_id) do
+    if is_nil(input.cleaner_id) do
+      :ok
+    else
+      validate_assigned_cleaner_availability(input, pricing, exclude_booking_id)
+    end
+  end
+
+  defp validate_assigned_cleaner_availability(input, pricing, exclude_booking_id) do
     duration_hours = pricing["durationHours"] || input.duration_hours
 
     case Repo.query(
@@ -323,7 +384,7 @@ defmodule Mithril.DirectBookings do
                (($2::date + $3::time) AT TIME ZONE $5::text),
                (($2::date + $3::time) AT TIME ZONE $5::text)
                  + make_interval(secs => ($4::numeric * 3600)::double precision),
-               NULL
+               $6::uuid
              )
            """,
            [
@@ -331,7 +392,8 @@ defmodule Mithril.DirectBookings do
              input.scheduled_date,
              input.scheduled_time,
              decimal_hours(duration_hours),
-             input.timezone
+             input.timezone,
+             exclude_booking_id
            ]
          ) do
       {:ok, %{rows: [[false, false]]}} ->
@@ -447,6 +509,315 @@ defmodule Mithril.DirectBookings do
     end
   end
 
+  defp lock_reschedule_booking(customer_id, booking_id) do
+    case Repo.query(
+           """
+           SELECT
+             id::text,
+             status,
+             payment_status,
+             subscription_id,
+             cleaner_id,
+             service_id,
+             scheduled_date,
+             scheduled_time,
+             duration_hours,
+             COALESCE(final_amount_minor, total_price) AS amount_minor,
+             COALESCE(
+               NULLIF(btrim(to_jsonb(b)->>'timezone_name'), ''),
+               NULLIF(btrim(to_jsonb(b)->>'timezone'), ''),
+               'Africa/Accra'
+             ) AS timezone
+           FROM public.bookings b
+           WHERE id = $1 AND customer_id = $2
+           FOR UPDATE
+           """,
+           [booking_id, customer_id]
+         ) do
+      {:ok, %{rows: [row]}} ->
+        {:ok, hydrate_reschedule_booking(row)}
+
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp hydrate_reschedule_booking([
+         id,
+         status,
+         payment_status,
+         subscription_id,
+         cleaner_id,
+         service_id,
+         scheduled_date,
+         scheduled_time,
+         duration_hours,
+         amount_minor,
+         timezone
+       ]) do
+    %{
+      id: id,
+      status: status,
+      payment_status: payment_status,
+      subscription_id: subscription_id,
+      cleaner_id: cleaner_id,
+      service_id: service_id,
+      scheduled_date: scheduled_date,
+      scheduled_time: scheduled_time,
+      duration_hours: duration_hours,
+      amount_minor: amount_minor,
+      timezone: timezone || @default_timezone
+    }
+  end
+
+  defp reschedule_path(booking) do
+    status = String.downcase(to_string(booking.status || ""))
+    payment_status = String.downcase(to_string(booking.payment_status || ""))
+
+    cond do
+      not is_nil(booking.subscription_id) ->
+        {:error,
+         {:not_reschedulable,
+          "This booking belongs to a subscription. Change the schedule from your subscription settings."}}
+
+      visit_passed?(booking) ->
+        {:error,
+         {:not_reschedulable, "This visit has already passed and can no longer be rescheduled."}}
+
+      payment_status == "paid" and status in ~w(confirmed scheduled) ->
+        {:ok, :paid}
+
+      status in ~w(pending confirmed) and payment_status in ~w(pending failed) ->
+        {:ok, :unpaid}
+
+      status in ~w(cancelled completed en_route arrived in_progress) ->
+        {:error,
+         {:not_reschedulable, "This booking can no longer be rescheduled in its current status."}}
+
+      true ->
+        {:error, {:not_reschedulable, "This booking can no longer be rescheduled."}}
+    end
+  end
+
+  defp visit_passed?(booking) do
+    case scheduled_at(booking.scheduled_date, booking.scheduled_time, booking.timezone) do
+      %DateTime{} = at -> DateTime.compare(at, DateTime.utc_now()) != :gt
+      _ -> false
+    end
+  end
+
+  defp merge_reschedule_schedule(booking, input) do
+    %{
+      cleaner_id: booking.cleaner_id,
+      service_id: booking.service_id,
+      scheduled_date: input.scheduled_date,
+      scheduled_time: input.scheduled_time,
+      duration_hours: input.duration_hours || booking.duration_hours,
+      timezone: input.timezone || booking.timezone
+    }
+  end
+
+  defp ensure_future_schedule(schedule) do
+    case scheduled_at(schedule.scheduled_date, schedule.scheduled_time, schedule.timezone) do
+      %DateTime{} = at ->
+        if DateTime.compare(at, DateTime.utc_now()) == :gt do
+          :ok
+        else
+          {:error,
+           {:past_schedule, "Cannot reschedule to a past time. Please select a future time."}}
+        end
+
+      _ ->
+        {:error, :invalid_request}
+    end
+  end
+
+  defp reschedule_pricing(:paid, booking, schedule) do
+    {:ok, %{"durationHours" => schedule.duration_hours || booking.duration_hours}}
+  end
+
+  defp reschedule_pricing(:unpaid, _booking, schedule) do
+    compute_pricing(schedule)
+  end
+
+  defp apply_reschedule(:paid, booking, schedule, _pricing, customer_id) do
+    update_reschedule_schedule(booking, schedule, customer_id, :paid)
+  end
+
+  defp apply_reschedule(:unpaid, booking, schedule, pricing, customer_id) do
+    with :ok <- update_reschedule_schedule(booking, schedule, customer_id, :unpaid) do
+      update_unpaid_pricing(booking.id, pricing)
+    end
+  end
+
+  defp update_reschedule_schedule(booking, schedule, customer_id, path) do
+    {status_filter, payment_filter} =
+      case path do
+        :paid -> {~w(confirmed scheduled), ~w(paid)}
+        :unpaid -> {~w(pending confirmed), ~w(pending failed)}
+      end
+
+    case Repo.query(
+           """
+           UPDATE public.bookings
+           SET scheduled_date = $2,
+               scheduled_time = $3,
+               duration_hours = $4,
+               duration_final = $4,
+               timezone = $5,
+               timezone_name = $5,
+               customer_reminder_sent_at = #{clear_reminder("customer_reminder_sent_at")},
+               customer_reminder_claimed_at = #{clear_reminder("customer_reminder_claimed_at")},
+               customer_reminder_7d_sent_at = #{clear_reminder("customer_reminder_7d_sent_at")},
+               customer_reminder_7d_claimed_at = #{clear_reminder("customer_reminder_7d_claimed_at")},
+               customer_reminder_48h_sent_at = #{clear_reminder("customer_reminder_48h_sent_at")},
+               customer_reminder_48h_claimed_at = #{clear_reminder("customer_reminder_48h_claimed_at")},
+               customer_reminder_morning_sent_at = #{clear_reminder("customer_reminder_morning_sent_at")},
+               customer_reminder_morning_claimed_at = #{clear_reminder("customer_reminder_morning_claimed_at")},
+               cleaner_reminder_sent_at = #{clear_reminder("cleaner_reminder_sent_at")},
+               cleaner_reminder_claimed_at = #{clear_reminder("cleaner_reminder_claimed_at")},
+               updated_at = now()
+           WHERE id = $1
+             AND customer_id = $6
+             AND status = ANY($7::text[])
+             AND payment_status = ANY($8::text[])
+             AND subscription_id IS NULL
+           RETURNING id
+           """,
+           [
+             dump!(booking.id),
+             schedule.scheduled_date,
+             schedule.scheduled_time,
+             decimal_hours(schedule.duration_hours),
+             schedule.timezone,
+             customer_id,
+             status_filter,
+             payment_filter
+           ]
+         ) do
+      {:ok, %{rows: [[_id]]}} ->
+        :ok
+
+      {:ok, %{rows: []}} ->
+        {:error, {:not_reschedulable, "This booking can no longer be rescheduled."}}
+
+      {:error, %Postgrex.Error{postgres: %{code: :exclusion_violation}}} ->
+        {:error, :cleaner_unavailable}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp update_unpaid_pricing(booking_id, pricing) do
+    case Repo.query(
+           """
+           UPDATE public.bookings
+           SET total_price = $2::numeric,
+               final_amount_minor = $3::integer,
+               core_amount_minor = $4::integer,
+               same_day_surcharge_minor = $5::integer,
+               weekend_surcharge_minor = $6::integer,
+               recurring_discount_minor = $7::integer,
+               is_same_day = $8,
+               is_weekend = $9,
+               pricing_version = $10,
+               platform_fee = $11,
+               booking_cover = $12,
+               booking_cover_amount = $12,
+               work_rate_ghs_per_hour = $13,
+               supplies_option = $14,
+               supplies_allowance_minor = $15::integer,
+               cleaner_earnings_minor = $16::integer,
+               updated_at = now()
+           WHERE id = $1
+           RETURNING id
+           """,
+           [
+             dump!(booking_id),
+             pricing["finalAmountMinor"],
+             pricing["finalAmountMinor"],
+             pricing["coreAmountMinor"],
+             pricing["sameDaySurchargeMinor"],
+             pricing["weekendSurchargeMinor"],
+             pricing["recurringDiscountMinor"],
+             pricing["isSameDay"],
+             pricing["isWeekend"],
+             pricing["pricingVersion"],
+             pricing["platformFeeMajor"],
+             pricing["bookingCoverMajor"],
+             pricing["workRateGhsPerHour"],
+             pricing["suppliesOption"] || "customer_provided",
+             pricing["suppliesAllowanceMinor"] || 0,
+             pricing["cleanerEarningsMinor"]
+           ]
+         ) do
+      {:ok, %{rows: [[_id]]}} -> :ok
+      {:ok, %{rows: []}} -> {:error, :not_found}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp scheduled_at(%Date{} = date, time, timezone) do
+    time = time || ~T[00:00:00]
+
+    case Repo.query(
+           "SELECT ($1::date + $2::time) AT TIME ZONE $3::text",
+           [date, time, timezone]
+         ) do
+      {:ok, %{rows: [[%DateTime{} = at]]}} -> at
+      {:ok, %{rows: [[%NaiveDateTime{} = at]]}} -> DateTime.from_naive!(at, "Etc/UTC")
+      _ -> nil
+    end
+  end
+
+  defp scheduled_at(_, _, _), do: nil
+
+  defp dump!(value) when is_binary(value) do
+    case Ecto.UUID.dump(value) do
+      {:ok, dumped} -> dumped
+      :error -> raise ArgumentError, "invalid uuid"
+    end
+  end
+
+  defp validate_reschedule_input(params) do
+    with {:ok, scheduled_date} <- iso_date(params["scheduledDate"]),
+         {:ok, scheduled_time} <- iso_time(params["scheduledTime"]) do
+      duration =
+        case params do
+          %{"durationHours" => value} ->
+            case positive_number(value) do
+              {:ok, hours} -> hours
+              :error -> :invalid
+            end
+
+          _ ->
+            nil
+        end
+
+      if duration == :invalid do
+        {:error, :invalid_request}
+      else
+        {:ok,
+         %{
+           scheduled_date: scheduled_date,
+           scheduled_time: scheduled_time,
+           duration_hours: duration,
+           timezone:
+             case params["timezone"] do
+               value when is_binary(value) and value != "" -> normalize_timezone(value)
+               _ -> nil
+             end
+         }}
+      end
+    else
+      _ -> {:error, :invalid_request}
+    end
+  end
+
   defp validate_pricing_input(params) do
     with {:ok, service_id} <- positive_integer(params["serviceId"]),
          {:ok, cleaner_id} <- required_uuid(params["cleanerId"]),
@@ -544,32 +915,12 @@ defmodule Mithril.DirectBookings do
 
   defp format_hhmm(%Time{} = time), do: Calendar.strftime(time, "%H:%M")
 
-  def client_bookings_enabled? do
-    Application.get_env(:mithril, :direct_client_bookings, false) == true
+  defp clear_reminder(column) do
+    "CASE WHEN scheduled_date IS DISTINCT FROM $2 OR scheduled_time IS DISTINCT FROM $3 THEN NULL ELSE #{column} END"
   end
 
-  defp booking_json_select do
-    """
-    jsonb_build_object(
-      'id', b.id,
-      'status', b.status,
-      'paymentStatus', b.payment_status,
-      'serviceId', b.service_id,
-      'serviceName', st.name,
-      'cleanerId', b.cleaner_id,
-      'cleanerName', COALESCE(
-        NULLIF(btrim(p.fullname), ''),
-        NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
-        'Instaclean professional'
-      ),
-      'scheduledDate', b.scheduled_date,
-      'scheduledTime', b.scheduled_time,
-      'durationHours', b.duration_hours,
-      'address', b.address,
-      'amountMinor', COALESCE(b.final_amount_minor, b.total_price),
-      'currency', COALESCE(b.currency, 'GHS')
-    )
-    """
+  def client_bookings_enabled? do
+    Application.get_env(:mithril, :direct_client_bookings, false) == true
   end
 
   defp dump_uuid(value) when is_binary(value), do: Ecto.UUID.dump(value)

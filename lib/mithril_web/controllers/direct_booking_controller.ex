@@ -3,11 +3,15 @@ defmodule MithrilWeb.DirectBookingController do
   use OpenApiSpex.ControllerSpecs
 
   alias Mithril.DirectBookings
+  alias Mithril.DirectBookingCancels
   alias Mithril.DirectPayments
 
   alias MithrilWeb.Schemas.DirectBooking.{
     BookingDetailResponse,
     BookingListResponse,
+    CancelBookingRequest,
+    CancelBookingResponse,
+    RescheduleBookingRequest,
     BookingPriceResponse,
     BookingPricingRequest,
     BookingServicesResponse,
@@ -107,6 +111,44 @@ defmodule MithrilWeb.DirectBookingController do
     respond(conn, DirectBookings.get_booking(user_id(conn), id))
   end
 
+  operation(:cancel,
+    operation_id: "direct.cancelBooking",
+    summary: "Cancel a signed-in customer's booking and refund per Instaclean policy",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Booking ID"
+      ]
+    ],
+    request_body: {"Cancellation", "application/json", CancelBookingRequest},
+    responses: [ok: {"Cancelled booking", "application/json", CancelBookingResponse}]
+  )
+
+  def cancel(conn, %{"id" => id} = params) do
+    respond(conn, DirectBookingCancels.cancel(user_id(conn), id, params))
+  end
+
+  operation(:reschedule,
+    operation_id: "direct.rescheduleBooking",
+    summary: "Reschedule a signed-in customer's Direct booking",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Booking ID"
+      ]
+    ],
+    request_body: {"New schedule", "application/json", RescheduleBookingRequest, required: true},
+    responses: [ok: {"Rescheduled booking", "application/json", BookingDetailResponse}]
+  )
+
+  def reschedule(conn, %{"id" => id} = params) do
+    respond(conn, DirectBookings.reschedule(user_id(conn), id, params))
+  end
+
   operation(:initialize_payment,
     operation_id: "direct.initializeBookingPayment",
     summary: "Start Paystack checkout for a pending Direct booking",
@@ -156,6 +198,14 @@ defmodule MithrilWeb.DirectBookingController do
     json(conn, mapper.(value))
   end
 
+  defp respond(conn, {:error, {reason, message}}, _mapper) when is_binary(message) do
+    {status, code} = error_response(reason)
+
+    conn
+    |> put_status(status)
+    |> json(%{error: code, message: message})
+  end
+
   defp respond(conn, {:error, reason}, _mapper) do
     {status, message} = error_response(reason)
 
@@ -176,6 +226,10 @@ defmodule MithrilWeb.DirectBookingController do
   defp error_response(:payment_not_started), do: {422, "payment_not_started"}
   defp error_response(:payment_incomplete), do: {422, "payment_incomplete"}
   defp error_response(:payment_failed), do: {422, "payment_failed"}
+  defp error_response(:not_cancellable), do: {409, "not_cancellable"}
+  defp error_response(:cancel_conflict), do: {409, "cancel_conflict"}
+  defp error_response(:not_reschedulable), do: {409, "not_reschedulable"}
+  defp error_response(:past_schedule), do: {422, "past_schedule"}
   defp error_response(:already_paid), do: {409, "already_paid"}
   defp error_response(:payment_conflict), do: {409, "payment_conflict"}
   defp error_response(:payment_not_payable), do: {409, "payment_not_payable"}

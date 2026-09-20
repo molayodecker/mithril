@@ -11,10 +11,28 @@ config :mithril,
 config :mithril, MithrilWeb.Endpoint,
   url: [host: "localhost"],
   adapter: Bandit.PhoenixAdapter,
-  render_errors: [formats: [json: MithrilWeb.ErrorJSON], layout: false],
+  render_errors: [
+    formats: [html: MithrilWeb.ErrorHTML, json: MithrilWeb.ErrorJSON],
+    layout: false
+  ],
   pubsub_server: Mithril.PubSub
 
 config :phoenix, :json_library, Jason
+
+config :mithril, Oban,
+  repo: Mithril.Repo,
+  notifier: Oban.Notifiers.Postgres,
+  peer: Oban.Peers.Database,
+  queues: [notifications: 10],
+  plugins: [
+    {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 14},
+    {Oban.Plugins.Lifeline, rescue_after: :timer.minutes(5)},
+    {Oban.Plugins.Cron,
+     timezone: "Etc/UTC",
+     crontab: [
+       {"0 * * * *", Mithril.Workers.BookingReminderSweep}
+     ]}
+  ]
 
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",

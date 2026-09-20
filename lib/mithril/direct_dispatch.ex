@@ -9,7 +9,9 @@ defmodule Mithril.DirectDispatch do
 
   require Logger
 
+  alias Mithril.Auth
   alias Mithril.DirectBookings
+  alias Mithril.Notifications
   alias Mithril.Repo
 
   @roles ~w(househelp nanny cleaner elder_caregiver cook driver gardener)
@@ -230,6 +232,14 @@ defmodule Mithril.DirectDispatch do
         }
       end)
       |> normalize_transaction()
+      |> case do
+        {:ok, result} ->
+          {:ok,
+           Map.put(result, :notificationsSent, notify_created_booking(result, input, params))}
+
+        error ->
+          error
+      end
     else
       :error -> {:error, :invalid_user}
       {:error, reason} when is_atom(reason) -> {:error, reason}
@@ -343,7 +353,6 @@ defmodule Mithril.DirectDispatch do
     else
       :error -> {:error, :invalid_request}
       {:error, reason} when is_atom(reason) -> {:error, reason}
-      {:error, error} -> database_error(error)
     end
   end
 
@@ -588,6 +597,28 @@ defmodule Mithril.DirectDispatch do
       else: {:error, :replacement_time_required}
   end
 
+  defp notify_created_booking(result, input, params) do
+    if Notifications.enabled?(params) do
+      Notifications.notify(%{
+        send_notifications: true,
+        kind: :assisted_booking,
+        customer: Notifications.load_party(input.customer_user_id),
+        worker: Notifications.load_party(params["cleanerId"]),
+        booking_id: result.id,
+        count: result.count,
+        dates: Enum.map(result.bookings, &booking_notify_date/1),
+        scheduled_time: params["scheduledTime"],
+        address: params["address"]
+      })
+    else
+      false
+    end
+  end
+
+  defp booking_notify_date(%{scheduledDate: date}) when is_binary(date), do: date
+  defp booking_notify_date(%{"scheduledDate" => date}) when is_binary(date), do: date
+  defp booking_notify_date(_), do: nil
+
   defp insert_booking_origin(booking_id, customer_uuid, admin_uid, source, admin_note) do
     case Repo.query(
            """
@@ -759,21 +790,7 @@ defmodule Mithril.DirectDispatch do
   defp optional_text(_, _max), do: ""
 
   defp require_admin(uid) do
-    case Repo.query(
-           """
-           SELECT EXISTS (
-             SELECT 1
-             FROM public.user_roles
-             WHERE user_id = $1
-               AND role_id IN ('admin', 'reviewer')
-           )
-           """,
-           [uid]
-         ) do
-      {:ok, %{rows: [[true]]}} -> :ok
-      {:ok, %{rows: [[false]]}} -> {:error, :forbidden}
-      {:error, error} -> {:error, error}
-    end
+    if Auth.staff_uuid?(uid), do: :ok, else: {:error, :forbidden}
   end
 
   defp normalize_transaction({:ok, value}), do: {:ok, value}

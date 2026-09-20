@@ -90,7 +90,8 @@ defmodule MithrilWeb.DirectDispatchController do
 
   operation(:create_admin_booking,
     operation_id: "direct.createAdminAssistedBooking",
-    summary: "Create a booking for a customer with recorded consent and source",
+    summary:
+      "Create a booking for a customer with recorded consent, source, and optional notifications",
     request_body:
       {"Admin-assisted booking", "application/json", AdminAssistedBookingRequest, required: true},
     responses: [ok: {"Created booking", "application/json", AdminAssistedBookingResponse}]

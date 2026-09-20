@@ -3,9 +3,11 @@ defmodule Mithril.Paystack do
 
   @callback initialize(map()) :: {:ok, map()} | {:error, term()}
   @callback verify(String.t()) :: {:ok, map()} | {:error, term()}
+  @callback refund(map()) :: {:ok, map()} | {:error, term()}
 
   def initialize(attrs) when is_map(attrs), do: adapter().initialize(attrs)
   def verify(reference) when is_binary(reference), do: adapter().verify(reference)
+  def refund(attrs) when is_map(attrs), do: adapter().refund(attrs)
 
   def configured? do
     adapter() != Mithril.Paystack.Disabled and adapter().configured?()
@@ -25,6 +27,9 @@ defmodule Mithril.Paystack.Disabled do
 
   @impl true
   def verify(_reference), do: {:error, :payment_not_configured}
+
+  @impl true
+  def refund(_attrs), do: {:error, :payment_not_configured}
 
   def configured?, do: false
 end
@@ -60,6 +65,22 @@ defmodule Mithril.Paystack.Test do
     end
   end
 
+  @impl true
+  def refund(attrs) do
+    case Application.get_env(:mithril, :paystack_test_refund_result, :ok) do
+      :ok ->
+        {:ok,
+         %{
+           id: "rf_#{attrs.transaction}",
+           status: "pending",
+           amount: Map.get(attrs, :amount)
+         }}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   def configured?, do: true
 
   def put_attempt(reference, record) do
@@ -77,6 +98,7 @@ defmodule Mithril.Paystack.HTTP do
   @behaviour Mithril.Paystack
 
   @initialize_url "https://api.paystack.co/transaction/initialize"
+  @refund_url "https://api.paystack.co/refund"
 
   @impl true
   def initialize(attrs) do
@@ -139,9 +161,45 @@ defmodule Mithril.Paystack.HTTP do
     end
   end
 
+  @impl true
+  def refund(attrs) do
+    with {:ok, secret} <- secret_key() do
+      body =
+        %{transaction: attrs.transaction}
+        |> maybe_put(:amount, Map.get(attrs, :amount))
+        |> maybe_put(:currency, Map.get(attrs, :currency))
+        |> maybe_put(:customer_note, Map.get(attrs, :customer_note))
+
+      case Req.post(@refund_url, json: body, auth: {:bearer, secret}) do
+        {:ok, %{status: status, body: %{"status" => true, "data" => data}}}
+        when status in 200..299 ->
+          {:ok,
+           %{
+             id: refund_id(data),
+             status: data["status"],
+             amount: data["amount"]
+           }}
+
+        {:ok, %{status: status, body: body}} ->
+          {:error, {:provider, status, provider_message(body)}}
+
+        {:error, _} ->
+          {:error, :provider_unavailable}
+      end
+    end
+  end
+
   def configured? do
     match?({:ok, _}, secret_key())
   end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, _key, ""), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp refund_id(%{"id" => id}) when is_integer(id), do: Integer.to_string(id)
+  defp refund_id(%{"id" => id}) when is_binary(id) and id != "", do: id
+  defp refund_id(_), do: nil
 
   defp secret_key do
     case Application.get_env(:mithril, :paystack_secret_key) do

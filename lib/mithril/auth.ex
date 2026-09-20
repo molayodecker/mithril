@@ -112,7 +112,14 @@ defmodule Mithril.Auth do
   def me(user_id) when is_binary(user_id) do
     case fetch_account_by_id(user_id) do
       {:ok, account} ->
-        {:ok, Map.put(session_user(account), :status, account.status)}
+        user =
+          account
+          |> session_user()
+          |> Map.put(:status, account.status)
+          |> Map.put(:admin, admin?(user_id))
+          |> Map.put(:reviewer, reviewer?(user_id))
+
+        {:ok, user}
 
       other ->
         other
@@ -126,9 +133,65 @@ defmodule Mithril.Auth do
   def staff?(user_id) when is_binary(user_id), do: admin?(user_id) or reviewer?(user_id)
 
   def staff_uuid?(uid) when is_binary(uid) do
-    case Ecto.UUID.load(uid) do
+    case Ecto.UUID.cast(uid) do
       {:ok, user_id} -> staff?(user_id)
       :error -> false
+    end
+  end
+
+  defp has_role?(user_id, role) when is_binary(user_id) and is_binary(role) do
+    case Repo.query(
+           """
+           SELECT EXISTS (
+             SELECT 1
+             FROM public.user_roles
+             WHERE user_id = $1::uuid
+               AND role_id = $2
+           )
+           """,
+           [dump_uuid(user_id), role]
+         ) do
+      {:ok, %{rows: [[true]]}} -> true
+      _other -> false
+    end
+  end
+
+  def provision_admin(email, password) when is_binary(email) and is_binary(password) do
+    provision_admin(%{email: email, password: password})
+  end
+
+  def provision_admin(_, _), do: {:error, :invalid_email}
+
+  def provision_admin(attrs) when is_map(attrs) do
+    email = blank_to_nil(Map.get(attrs, :email) || Map.get(attrs, "email"))
+    phone = blank_to_nil(Map.get(attrs, :phone) || Map.get(attrs, "phone"))
+    password = blank_to_nil(Map.get(attrs, :password) || Map.get(attrs, "password"))
+
+    with {:ok, email, phone} <- normalize_admin_identifiers(email, phone),
+         :ok <- validate_admin_credentials(email, phone, password) do
+      password_hash = if password, do: Bcrypt.hash_pwd_salt(password)
+
+      case fetch_or_link_admin_account(email, phone) do
+        {:ok, account} ->
+          with :ok <- sync_admin_contact(account.user_id, email, phone),
+               :ok <- maybe_upsert_phone_identity(account.user_id, phone) do
+            finalize_admin(account.user_id, password_hash)
+          end
+
+        {:error, :not_found} ->
+          with {:ok, user_id} <-
+                 insert_user_and_account(%{
+                   email: email,
+                   phone: phone,
+                   password_hash: password_hash
+                 }),
+               :ok <- maybe_upsert_phone_identity(user_id, phone) do
+            finalize_admin(user_id, nil)
+          end
+
+        other ->
+          other
+      end
     end
   end
 
@@ -332,7 +395,10 @@ defmodule Mithril.Auth do
            FROM public.mithril_auth_accounts a
            JOIN public.users u ON u.id = a.user_id
            WHERE u.status::text = 'active'
-             AND lower(coalesce(a.email, '')) = $1
+             AND (
+               lower(coalesce(a.email, '')) = $1
+               OR lower(coalesce(u.email, '')) = $1
+             )
            """,
            [email]
          ) do
@@ -644,15 +710,25 @@ defmodule Mithril.Auth do
         {:ok, account}
 
       {:error, :not_found} ->
-        case fetch_account_by_email(identity.email) do
+        resolve_oauth_account_by_email(identity)
+
+      other ->
+        other
+    end
+  end
+
+  defp resolve_oauth_account_by_email(identity) do
+    case fetch_account_by_email(identity.email) do
+      {:ok, account} ->
+        {:ok, account}
+
+      {:error, :not_found} ->
+        case link_existing_user_by_email(identity.email) do
           {:ok, account} ->
             {:ok, account}
 
           {:error, :not_found} ->
-            with {:ok, user_id} <- insert_user(%{email: identity.email}),
-                 :ok <- insert_account(user_id, %{email: identity.email}) do
-              fetch_account_by_id(user_id)
-            end
+            create_oauth_user(identity)
 
           other ->
             other
@@ -662,6 +738,45 @@ defmodule Mithril.Auth do
         other
     end
   end
+
+  defp create_oauth_user(identity) do
+    with {:ok, user_id} <- insert_user(%{email: identity.email}),
+         :ok <- insert_account(user_id, %{email: identity.email}) do
+      fetch_account_by_id(user_id)
+    else
+      {:error, :email_taken} ->
+        case link_existing_user_by_email(identity.email) do
+          {:ok, account} -> {:ok, account}
+          {:error, :not_found} -> {:error, :email_taken}
+          other -> other
+        end
+
+      other ->
+        other
+    end
+  end
+
+  defp link_existing_user_by_email(email) when is_binary(email) and email != "" do
+    case fetch_public_user_for_admin(email, nil) do
+      {:ok, user_id, stored_email, stored_phone, password_hash, status} ->
+        attrs = %{
+          email: stored_email || email,
+          phone: stored_phone,
+          password_hash: password_hash
+        }
+
+        case insert_account(user_id, attrs) do
+          :ok -> {:ok, account(user_id, attrs.email, stored_phone, password_hash, status)}
+          {:error, :email_taken} -> fetch_account_by_email(email)
+          other -> other
+        end
+
+      other ->
+        other
+    end
+  end
+
+  defp link_existing_user_by_email(_), do: {:error, :not_found}
 
   defp upsert_identity(user_id, identity) do
     case Repo.query(
@@ -761,6 +876,38 @@ defmodule Mithril.Auth do
     end
   end
 
+  defp finalize_admin(user_id, nil) do
+    with :ok <- grant_admin(user_id),
+         {:ok, account} <- fetch_account_by_id(user_id) do
+      {:ok, Map.put(session_user(account), :admin, true)}
+    end
+  end
+
+  defp finalize_admin(user_id, password_hash) do
+    with :ok <- update_password_and_revoke_sessions(user_id, password_hash) do
+      finalize_admin(user_id, nil)
+    end
+  end
+
+  defp grant_admin(user_id) do
+    case Repo.query(
+           """
+           INSERT INTO public.user_roles (user_id, role_id)
+           SELECT $1::uuid, 'admin'
+           WHERE NOT EXISTS (
+             SELECT 1
+             FROM public.user_roles
+             WHERE user_id = $1::uuid
+               AND role_id = 'admin'
+           )
+           """,
+           [dump_uuid(user_id)]
+         ) do
+      {:ok, _} -> :ok
+      {:error, error} -> database_error(error)
+    end
+  end
+
   defp update_password_and_revoke_sessions(user_id, password_hash) do
     Repo.transaction(fn ->
       with {:ok, _} <-
@@ -830,68 +977,211 @@ defmodule Mithril.Auth do
   defp taken_error(email) when is_binary(email), do: :email_taken
   defp taken_error(_), do: :phone_taken
 
-  defp validate_email(email) do
-    if String.contains?(email, "@") and String.length(email) >= 3 and String.length(email) <= 255 do
-      :ok
-    else
-      {:error, :invalid_email}
+  defp normalize_admin_identifiers(email, phone) do
+    email = if email, do: normalize_login(email)
+
+    with :ok <- if(email, do: validate_email(email), else: :ok),
+         {:ok, phone} <- normalize_optional_phone(phone) do
+      if email || phone do
+        {:ok, email, phone}
+      else
+        {:error, :invalid_email}
+      end
     end
   end
 
-  defp validate_password(password) do
-    if String.length(password) >= 8 do
-      :ok
-    else
-      {:error, :weak_password}
+  defp normalize_optional_phone(nil), do: {:ok, nil}
+
+  defp normalize_optional_phone(phone) do
+    case normalize_phone(phone) do
+      {:ok, value} -> {:ok, value}
+      other -> other
     end
   end
 
-  defp normalize_login(value), do: value |> String.trim() |> String.downcase()
+  defp validate_admin_credentials(email, nil, password)
+       when is_binary(email) and (not is_binary(password) or password == "") do
+    {:error, :weak_password}
+  end
 
-  defp normalize_phone(value) do
-    case Phone.normalize(value) do
-      {:ok, phone} -> {:ok, phone}
-      :error -> {:error, :invalid_phone}
+  defp validate_admin_credentials(_email, _phone, password) when is_binary(password) do
+    validate_password(password)
+  end
+
+  defp validate_admin_credentials(_email, phone, _password) when is_binary(phone), do: :ok
+  defp validate_admin_credentials(_, _, _), do: {:error, :invalid_email}
+
+  defp fetch_or_link_admin_account(email, phone) do
+    case fetch_admin_account(email, phone) do
+      {:ok, account} ->
+        {:ok, account}
+
+      {:error, :not_found} ->
+        case fetch_public_user_for_admin(email, phone) do
+          {:ok, user_id, stored_email, stored_phone, password_hash, status} ->
+            with :ok <-
+                   insert_account(user_id, %{
+                     email: email || stored_email,
+                     phone: phone || stored_phone,
+                     password_hash: password_hash
+                   }) do
+              {:ok,
+               account(
+                 user_id,
+                 email || stored_email,
+                 phone || stored_phone,
+                 password_hash,
+                 status
+               )}
+            end
+
+          other ->
+            other
+        end
+
+      other ->
+        other
     end
   end
 
-  defp normalize_request_ip(value) when is_binary(value) do
-    case String.trim(value) do
-      "" -> nil
-      ip -> ip
-    end
-  end
-
-  defp normalize_request_ip(_), do: nil
-
-  defp session_user(account) do
-    phone = account.phone || e164_if_phone(account.email)
-    email = if phone && account.email == phone, do: nil, else: account.email
-
-    %{
-      id: account.user_id,
-      email: email,
-      phone: phone,
-      admin: admin?(account.user_id),
-      reviewer: reviewer?(account.user_id)
-    }
-  end
-
-  defp has_role?(user_id, role) when is_binary(user_id) and is_binary(role) do
+  defp fetch_admin_account(email, phone) do
     case Repo.query(
            """
-           SELECT EXISTS (
-             SELECT 1
-             FROM public.user_roles
-             WHERE user_id = $1::uuid
-               AND role_id = $2
-           )
+           SELECT a.user_id::text, a.email, a.phone, a.password_hash, u.status::text
+           FROM public.mithril_auth_accounts a
+           JOIN public.users u ON u.id = a.user_id
+           WHERE u.status::text = 'active'
+             AND (
+               ($1::text IS NOT NULL AND lower(coalesce(a.email, '')) = $1)
+               OR (
+                 $2::text IS NOT NULL
+                 AND (
+                   a.phone = $2
+                   OR lower(btrim(coalesce(u.phone, ''))) = $2
+                 )
+               )
+             )
            """,
-           [dump_uuid(user_id), role]
+           [email, phone]
          ) do
-      {:ok, %{rows: [[true]]}} -> true
-      _other -> false
+      {:ok, %{num_rows: 1, rows: [[id, stored_email, stored_phone, password_hash, status]]}} ->
+        {:ok, account(id, stored_email, stored_phone, password_hash, status)}
+
+      {:ok, %{num_rows: 0}} ->
+        {:error, :not_found}
+
+      {:ok, _} ->
+        {:error, :account_conflict}
+
+      {:error, error} ->
+        database_error(error)
     end
+  end
+
+  defp fetch_public_user_for_admin(email, phone) do
+    case Repo.query(
+           """
+           SELECT u.id::text,
+                  coalesce(u.email, au.email),
+                  coalesce(u.phone, au.phone),
+                  u.password_hash,
+                  u.status::text
+           FROM public.users u
+           JOIN auth.users au ON au.id = u.id
+           WHERE u.status::text = 'active'
+             AND (
+               ($1::text IS NOT NULL AND (
+                 lower(coalesce(u.email, '')) = $1
+                 OR lower(coalesce(au.email, '')) = $1
+               ))
+               OR (
+                 $2::text IS NOT NULL
+                 AND (
+                   u.phone = $2
+                   OR au.phone = $2
+                   OR lower(btrim(coalesce(u.phone, ''))) = $2
+                   OR lower(btrim(coalesce(au.phone, ''))) = $2
+                 )
+               )
+             )
+           """,
+           [email, phone]
+         ) do
+      {:ok, %{num_rows: 1, rows: [[id, stored_email, stored_phone, password_hash, status]]}} ->
+        {:ok, id, stored_email, stored_phone, password_hash, status}
+
+      {:ok, %{num_rows: 0}} ->
+        {:error, :not_found}
+
+      {:ok, _} ->
+        {:error, :account_conflict}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp sync_admin_contact(user_id, email, phone) do
+    Repo.transaction(fn ->
+      with :ok <-
+             maybe_update_admin_column(
+               "public.mithril_auth_accounts",
+               "user_id",
+               user_id,
+               email,
+               phone
+             ),
+           :ok <- maybe_update_admin_column("public.users", "id", user_id, email, phone),
+           :ok <- maybe_update_admin_auth_user(user_id, email, phone) do
+        :ok
+      else
+        {:error, error} -> Repo.rollback(error)
+      end
+    end)
+    |> case do
+      {:ok, :ok} -> :ok
+      {:error, %{postgres: %{code: :unique_violation}}} -> {:error, taken_error(email)}
+      {:error, reason} when is_atom(reason) -> {:error, reason}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp maybe_update_admin_column(table, id_column, user_id, email, phone) do
+    case Repo.query(
+           """
+           UPDATE #{table}
+           SET email = COALESCE($2, email),
+               phone = COALESCE($3, phone),
+               updated_at = now()
+           WHERE #{id_column} = $1::uuid
+           """,
+           [dump_uuid(user_id), email, phone]
+         ) do
+      {:ok, _} -> :ok
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp maybe_update_admin_auth_user(user_id, email, phone) do
+    case Repo.query(
+           """
+           UPDATE auth.users
+           SET email = COALESCE($2, email),
+               phone = COALESCE($3, phone),
+               updated_at = now()
+           WHERE id = $1::uuid
+           """,
+           [dump_uuid(user_id), email, phone]
+         ) do
+      {:ok, _} -> :ok
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp maybe_upsert_phone_identity(_user_id, nil), do: :ok
+
+  defp maybe_upsert_phone_identity(user_id, phone) do
+    upsert_identity(user_id, %{provider: "phone", subject: phone, email: nil})
   end
 
   defp staff_role(role) when role in ~w(admin reviewer), do: {:ok, role}
@@ -976,11 +1266,52 @@ defmodule Mithril.Auth do
   defp blank_to_nil(value) when is_binary(value) do
     case String.trim(value) do
       "" -> nil
-      trimmed -> trimmed
+      value -> value
     end
   end
 
   defp blank_to_nil(_), do: nil
+
+  defp validate_email(email) do
+    if String.contains?(email, "@") and String.length(email) >= 3 and String.length(email) <= 255 do
+      :ok
+    else
+      {:error, :invalid_email}
+    end
+  end
+
+  defp validate_password(password) do
+    if String.length(password) >= 8 do
+      :ok
+    else
+      {:error, :weak_password}
+    end
+  end
+
+  defp normalize_login(value), do: value |> String.trim() |> String.downcase()
+
+  defp normalize_phone(value) do
+    case Phone.normalize(value) do
+      {:ok, phone} -> {:ok, phone}
+      :error -> {:error, :invalid_phone}
+    end
+  end
+
+  defp normalize_request_ip(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      ip -> ip
+    end
+  end
+
+  defp normalize_request_ip(_), do: nil
+
+  defp session_user(account) do
+    phone = account.phone || e164_if_phone(account.email)
+    email = if phone && account.email == phone, do: nil, else: account.email
+
+    %{id: account.user_id, email: email, phone: phone}
+  end
 
   defp e164_if_phone(value) do
     case Phone.normalize(value) do

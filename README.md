@@ -66,17 +66,35 @@ DATABASE_URL=ecto://user:password@host:5432/database mix phx.server
 
 ### Admin API access
 
-Mithril does not serve a browser admin UI. The frontend signs in through `/auth` and sends the resulting user JWT to Direct endpoints. Grant `admin` for admin-only operations, or `reviewer` for staff workflows that explicitly accept the reviewer role:
+Mithril does not serve a browser admin UI. The frontend signs in through `/auth` and calls `/direct/admin/*` with the user JWT. Grant `admin` or `reviewer` on an existing user against the database Mithril is using:
 
 ```bash
-mix mithril.staff.grant --phone +233555000000 --role reviewer
+mix mithril.staff.grant --phone +233… --role reviewer
 # or
 mix mithril.staff.grant --email you@tryinstaclean.com --role admin
 ```
 
-The user must already exist. Email/password users sign in with `POST /auth/login`. Phone users first call `POST /auth/otp` to request a code, then `POST /auth/otp/verify` to receive JWTs. `GET /auth/me` returns `"admin": true` and/or `"reviewer": true`.
+To create a new admin login instead:
 
-`reviewer` is not equivalent to `admin` across every `/direct/admin/*` route. Reviewer-enabled areas currently include concierge/dispatch and candidate-video administration; placement administration and Direct operations still require `admin`. Ghana local numbers are accepted (`0555000000` matches `+233555000000`). For local development without Twilio, put the number in `AUTH_TEST_PHONES`.
+```bash
+mix mithril.admin.create --email you@tryinstaclean.com --password 'choose-a-strong-password'
+mix mithril.admin.create --phone +233555000000
+mix mithril.admin.create --phone +233555000000 --password 'choose-a-strong-password'
+```
+
+Phone-only admins request and verify an SMS code:
+
+```bash
+curl -X POST http://localhost:4000/auth/otp \
+  -H 'content-type: application/json' \
+  -d '{"phone":"+233555000000","should_create_user":false}'
+
+curl -X POST http://localhost:4000/auth/otp/verify \
+  -H 'content-type: application/json' \
+  -d '{"phone":"+233555000000","token":"000000"}'
+```
+
+`GET /auth/me` with that access token returns `"admin": true` and/or `"reviewer": true`. Ghana local numbers are accepted (`0555000000` matches `+233555000000`). For local development without Twilio, put the number in `AUTH_TEST_PHONES`.
 
 ### Phone OTP test numbers
 
@@ -97,6 +115,18 @@ curl -X POST http://localhost:4000/auth/otp/verify \
 ```
 
 Ghana local numbers are accepted (`0555000000` matches `+233555000000`). Unlisted numbers still require Twilio. Treat the OTPs like passwords.
+
+### WhatsApp cleaner recruitment bot
+
+The `join-as-cleaner-bot` Edge Function now lives in Mithril. Twilio should POST WhatsApp inbound messages to:
+
+```text
+POST /whatsapp/join-as-cleaner-bot
+```
+
+`/functions/v1/join-as-cleaner-bot` is an alias for the previous Supabase URL. Set `TWILIO_WEBHOOK_URL` to the URL Twilio is actually configured with (signature checks use that exact string).
+
+Required env: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WEBHOOK_URL`. `APP_URL` should stay `https://tryinstaclean.com` so APPLY / WEB / SIGNUP links open the website.
 
 ### Direct Paystack checkout
 

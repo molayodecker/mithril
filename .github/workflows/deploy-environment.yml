@@ -1,0 +1,247 @@
+name: Deploy environment
+
+on:
+  workflow_call:
+    inputs:
+      environment_name:
+        required: true
+        type: string
+      fly_app:
+        required: true
+        type: string
+      fly_config:
+        required: true
+        type: string
+      ready_url:
+        required: true
+        type: string
+      openapi_url:
+        required: true
+        type: string
+      checkout_ref:
+        required: true
+        type: string
+      confirm_ci:
+        required: false
+        type: boolean
+        default: false
+      require_staging_status:
+        required: false
+        type: boolean
+        default: false
+      mark_staging_status:
+        required: false
+        type: boolean
+        default: false
+      apply_auth_schema:
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+
+concurrency:
+  group: mithril-${{ inputs.environment_name }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment_name }}
+    env:
+      FLY_APP: ${{ inputs.fly_app }}
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_MPG_CLUSTER_ID: ${{ secrets.FLY_MPG_CLUSTER_ID }}
+      TARGET_DATABASE_URL: ${{ secrets.TARGET_DATABASE_URL }}
+
+    steps:
+      - name: Check required deployment secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in FLY_API_TOKEN FLY_MPG_CLUSTER_ID TARGET_DATABASE_URL; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is not configured in the GitHub ${{ inputs.environment_name }} environment."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Validate production promotion SHA
+        if: ${{ inputs.require_staging_status }}
+        env:
+          CHECKOUT_REF: ${{ inputs.checkout_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$CHECKOUT_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::Production requires the exact 40-character commit SHA that passed staging."
+            exit 1
+          fi
+
+      - name: Check out deployment commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout_ref }}
+          fetch-depth: 0
+
+      - name: Record deployment SHA
+        shell: bash
+        run: echo "DEPLOY_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Confirm CI passed for this commit
+        if: ${{ inputs.confirm_ci }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$DEPLOY_SHA" origin/main || {
+            echo "::error::$DEPLOY_SHA is not reachable from main."
+            exit 1
+          }
+
+          echo "Requiring a successful push CI run for $DEPLOY_SHA."
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow CI --branch main --commit "$DEPLOY_SHA" \
+            --json conclusion,status,databaseId,event --limit 20 \
+            | python3 -c '
+          import json, sys
+          runs = json.load(sys.stdin)
+          if not any(
+              run.get("conclusion") == "success" and run.get("event") == "push"
+              for run in runs
+          ):
+              raise SystemExit("No successful push CI run found for this commit. Refusing to deploy.")
+          '
+
+      - name: Confirm this exact commit passed staging
+        if: ${{ inputs.require_staging_status }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/commits/$DEPLOY_SHA/status" \
+            | python3 -c '
+          import json, sys
+          payload = json.load(sys.stdin)
+          statuses = payload.get("statuses", [])
+          staging = next(
+              (status for status in statuses if status.get("context") == "mithril/staging"),
+              None,
+          )
+          if not staging or staging.get("state") != "success":
+              state = staging.get("state") if staging else "missing"
+              raise SystemExit(
+                  f"Commit has not passed staging (mithril/staging={state}). Refusing production promotion."
+              )
+          '
+
+      - name: Mark staging deployment pending
+        if: ${{ inputs.mark_staging_status }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$DEPLOY_SHA" \
+            -f state=pending \
+            -f context=mithril/staging \
+            -f description="Mithril staging deployment is running"
+
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Start Fly Managed Postgres proxy
+        shell: bash
+        run: |
+          set -euo pipefail
+          flyctl mpg proxy "$FLY_MPG_CLUSTER_ID" --local-port 16380 > /tmp/fly-mpg-proxy.log 2>&1 &
+          proxy_pid=$!
+          echo "FLY_MPG_PROXY_PID=$proxy_pid" >> "$GITHUB_ENV"
+
+          for _ in $(seq 1 30); do
+            if pg_isready -h 127.0.0.1 -p 16380 >/dev/null 2>&1; then
+              exit 0
+            fi
+            if ! kill -0 "$proxy_pid" 2>/dev/null; then
+              cat /tmp/fly-mpg-proxy.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          cat /tmp/fly-mpg-proxy.log
+          echo "::error::Fly Managed Postgres proxy did not become ready on 127.0.0.1:16380."
+          exit 1
+
+      - name: Apply auth schema
+        if: ${{ inputs.apply_auth_schema }}
+        env:
+          CONFIRM_AUTH_SCHEMA: "YES"
+        run: bash scripts/apply_auth_schema.sh
+
+      - name: Apply Direct schema phases
+        env:
+          CONFIRM_DIRECT_SCHEMA: "YES"
+        run: bash scripts/apply_direct_schema.sh
+
+      - name: Stop Fly Managed Postgres proxy
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${FLY_MPG_PROXY_PID:-}" ]]; then
+            kill "$FLY_MPG_PROXY_PID" 2>/dev/null || true
+            wait "$FLY_MPG_PROXY_PID" 2>/dev/null || true
+          fi
+
+      - name: Deploy Mithril to Fly
+        run: flyctl deploy --remote-only --wait-timeout 180 --app "$FLY_APP" --config "${{ inputs.fly_config }}"
+
+      - name: Verify readiness
+        env:
+          READY_URL: ${{ inputs.ready_url }}
+        run: |
+          curl --fail --show-error --silent --retry 12 --retry-delay 5 --retry-all-errors \
+            "$READY_URL" | tee /tmp/ready.json
+          python3 - <<'PY'
+          import json
+          with open('/tmp/ready.json') as f:
+              payload = json.load(f)
+          if payload.get('status') != 'ready' or payload.get('database') != 'ok':
+              raise SystemExit(f"Unexpected readiness response: {payload}")
+          PY
+
+      - name: Verify OpenAPI
+        env:
+          OPENAPI_URL: ${{ inputs.openapi_url }}
+        run: |
+          curl --fail --show-error --silent --retry 6 --retry-delay 3 --retry-all-errors \
+            "$OPENAPI_URL" -o /tmp/openapi.json
+          python3 - <<'PY'
+          import json, os
+          with open('/tmp/openapi.json') as f:
+              spec = json.load(f)
+          if not spec.get('paths'):
+              raise SystemExit('OpenAPI has no paths')
+          print(f"Verified {len(spec['paths'])} API paths at {os.environ['OPENAPI_URL']}")
+          PY
+
+      - name: Mark staging deployment successful
+        if: ${{ inputs.mark_staging_status }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$DEPLOY_SHA" \
+            -f state=success \
+            -f context=mithril/staging \
+            -f description="Mithril staging deployed and verified"

@@ -8,4 +8,6 @@ cover
 .DS_Store
 .env
 .env.*
+.artifacts
+.elixir_ls
 test

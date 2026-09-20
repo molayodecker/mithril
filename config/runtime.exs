@@ -28,9 +28,16 @@ pool_size = parse_positive_integer.("POOL_SIZE", "10")
 repo_opts = fn database_url ->
   socket_options =
     cond do
-      String.contains?(database_url, "flympg.net") -> [:inet6]
-      truthy_env?.("ECTO_IPV6") -> [:inet6]
-      true -> []
+      String.contains?(database_url, "flympg.net") or
+        String.contains?(database_url, ".flycast") or
+          String.contains?(database_url, ".internal") ->
+        [:inet6]
+
+      truthy_env?.("ECTO_IPV6") ->
+        [:inet6]
+
+      true ->
+        []
     end
 
   opts = [
@@ -46,10 +53,15 @@ repo_opts = fn database_url ->
       opts
     end
 
-  if String.contains?(database_url, "flympg.net") do
-    Keyword.put(opts, :ssl, true)
-  else
-    opts
+  cond do
+    truthy_env?.("FLY_DATABASE_SSL_DISABLE") ->
+      opts
+
+    String.contains?(database_url, "flympg.net") ->
+      Keyword.put(opts, :ssl, true)
+
+    true ->
+      opts
   end
 end
 
@@ -65,11 +77,11 @@ if config_env() != :test do
   end
 end
 
+config :mithril, :direct_client_bookings, truthy_env?.("DIRECT_CLIENT_BOOKINGS")
+
 if parity_token = System.get_env("MITHRIL_PARITY_TOKEN") do
   config :mithril, :parity_token, parity_token
 end
-
-config :mithril, :direct_client_bookings, truthy_env?.("DIRECT_CLIENT_BOOKINGS")
 
 if direct_gateway_token = System.get_env("MITHRIL_DIRECT_TOKEN") do
   config :mithril, :direct_gateway_token, direct_gateway_token
@@ -136,6 +148,77 @@ end
 
 if vendor_subaccount = System.get_env("PAYSTACK_VENDOR_SUBACCOUNT") do
   config :mithril, :paystack_vendor_subaccount, vendor_subaccount
+end
+
+if send_notification_url = System.get_env("SEND_NOTIFICATION_URL") do
+  config :mithril, :send_notification_url, send_notification_url
+end
+
+if send_notification_token = System.get_env("SEND_NOTIFICATION_TOKEN") do
+  config :mithril, :send_notification_token, send_notification_token
+end
+
+if direct_public_url = System.get_env("DIRECT_PUBLIC_URL") do
+  config :mithril, :direct_public_url, direct_public_url
+end
+
+if app_url = System.get_env("APP_URL") do
+  config :mithril, :app_url, String.trim_trailing(app_url, "/")
+end
+
+if twilio_webhook_url = System.get_env("TWILIO_WEBHOOK_URL") do
+  config :mithril, :twilio_webhook_url, twilio_webhook_url
+end
+
+if twilio_webhook_alias = System.get_env("TWILIO_WEBHOOK_URL_ALIAS") do
+  config :mithril, :twilio_webhook_url_alias, twilio_webhook_alias
+end
+
+if recruitment_upload_secret = System.get_env("RECRUITMENT_UPLOAD_SECRET") do
+  config :mithril, :recruitment_upload_secret, recruitment_upload_secret
+end
+
+if recruitment_sync_secret = System.get_env("RECRUITMENT_LEAD_APPLICATION_SYNC_SECRET") do
+  config :mithril, :recruitment_lead_application_sync_secret, recruitment_sync_secret
+end
+
+if supabase_url = System.get_env("SUPABASE_URL") do
+  config :mithril, :supabase_url, String.trim_trailing(supabase_url, "/")
+end
+
+if supabase_service_role_key = System.get_env("SUPABASE_SERVICE_ROLE_KEY") do
+  config :mithril, :supabase_service_role_key, supabase_service_role_key
+end
+
+# Deleted: GHANA_CARD_RECRUITMENT_BUCKET / :ghana_card_recruitment_bucket.
+# Recruitment storage uses the hardcoded cleaner-ghana-card-id bucket.
+
+if admin_from = System.get_env("TWILIO_WHATSAPP_ADMIN_FROM") do
+  config :mithril, :twilio_whatsapp_admin_from, admin_from
+end
+
+if welcome_sid = System.get_env("TWILIO_WHATSAPP_WELCOME_CONTENT_SID") do
+  config :mithril, :twilio_whatsapp_welcome_content_sid, welcome_sid
+end
+
+if yes_no_sid = System.get_env("TWILIO_WHATSAPP_YES_NO_CONTENT_SID") do
+  config :mithril, :twilio_whatsapp_yes_no_content_sid, yes_no_sid
+end
+
+if accept_sid = System.get_env("TWILIO_WHATSAPP_ACCEPT_CONTENT_SID") do
+  config :mithril, :twilio_whatsapp_accept_content_sid, accept_sid
+end
+
+if submit_sid = System.get_env("TWILIO_WHATSAPP_SUBMIT_CONTENT_SID") do
+  config :mithril, :twilio_whatsapp_submit_content_sid, submit_sid
+end
+
+if equipment_sid = System.get_env("TWILIO_WHATSAPP_EQUIPMENT_CONTENT_SID") do
+  config :mithril, :twilio_whatsapp_equipment_content_sid, equipment_sid
+end
+
+if config_env() != :prod and truthy_env?.("DISABLE_TWILIO_SIGNATURE_VALIDATION") do
+  config :mithril, :disable_twilio_signature_validation, true
 end
 
 if config_env() == :prod do

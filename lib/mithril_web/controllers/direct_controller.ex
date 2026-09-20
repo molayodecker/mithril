@@ -6,8 +6,20 @@ defmodule MithrilWeb.DirectController do
 
   alias MithrilWeb.Schemas.Direct.{
     AdminCandidatesResponse,
+    AdminCleanerApplicationDetail,
+    AdminCleanerApplicationDraftDetail,
+    AdminCleanerApplicationDraftListResponse,
+    AdminCleanerApplicationListResponse,
+    AdminCleanerHealthActionRequest,
+    AdminCleanerHealthCaseDetail,
+    AdminCleanerHealthListResponse,
+    AdminCustomerTrustActionRequest,
+    AdminCustomerTrustDetail,
+    AdminCustomerTrustListResponse,
+    AdminCustomerTrustNoteRequest,
     AdminMatchRequest,
     AdminMatchResponse,
+    AdminOpsMutationResponse,
     AdminPlacementsResponse,
     CreatePlacementRequest,
     CreatePlacementResponse,
@@ -125,6 +137,197 @@ defmodule MithrilWeb.DirectController do
     respond(conn, Direct.list_admin_candidates(user_id(conn)), fn candidates ->
       %{candidates: candidates}
     end)
+  end
+
+  operation(:list_admin_cleaner_applications,
+    operation_id: "direct.listAdminCleanerApplications",
+    summary: "List submitted cleaner applications for Direct operations",
+    responses: [
+      ok: {"Cleaner applications", "application/json", AdminCleanerApplicationListResponse}
+    ]
+  )
+
+  def list_admin_cleaner_applications(conn, _params) do
+    respond(conn, Direct.list_admin_cleaner_applications(user_id(conn)), fn applications ->
+      %{applications: applications}
+    end)
+  end
+
+  operation(:show_admin_cleaner_application,
+    operation_id: "direct.showAdminCleanerApplication",
+    summary: "Get a submitted cleaner application for Direct operations",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Cleaner application ID"
+      ]
+    ],
+    responses: [
+      ok: {"Cleaner application", "application/json", AdminCleanerApplicationDetail}
+    ]
+  )
+
+  def show_admin_cleaner_application(conn, %{"id" => id}) do
+    respond(conn, Direct.get_admin_cleaner_application(user_id(conn), id))
+  end
+
+  operation(:list_admin_cleaner_application_drafts,
+    operation_id: "direct.listAdminCleanerApplicationDrafts",
+    summary: "List in-progress cleaner application drafts for Direct operations",
+    responses: [
+      ok:
+        {"Cleaner application drafts", "application/json",
+         AdminCleanerApplicationDraftListResponse}
+    ]
+  )
+
+  def list_admin_cleaner_application_drafts(conn, _params) do
+    respond(conn, Direct.list_admin_cleaner_application_drafts(user_id(conn)), fn drafts ->
+      %{drafts: drafts}
+    end)
+  end
+
+  operation(:show_admin_cleaner_application_draft,
+    operation_id: "direct.showAdminCleanerApplicationDraft",
+    summary: "Get a cleaner application draft summary for Direct operations",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Cleaner application draft ID"
+      ]
+    ],
+    responses: [
+      ok: {"Cleaner application draft", "application/json", AdminCleanerApplicationDraftDetail}
+    ]
+  )
+
+  def show_admin_cleaner_application_draft(conn, %{"id" => id}) do
+    respond(conn, Direct.get_admin_cleaner_application_draft(user_id(conn), id))
+  end
+
+  operation(:list_admin_cleaner_health,
+    operation_id: "direct.listAdminCleanerHealth",
+    summary: "List cleaner health cases and KPI totals for Direct operations",
+    responses: [ok: {"Cleaner health desk", "application/json", AdminCleanerHealthListResponse}]
+  )
+
+  def list_admin_cleaner_health(conn, _params) do
+    respond(conn, Direct.list_admin_cleaner_health(user_id(conn)))
+  end
+
+  operation(:show_admin_cleaner_health_case,
+    operation_id: "direct.showAdminCleanerHealthCase",
+    summary: "Get a cleaner health case for Direct operations",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Cleaner health case ID"
+      ]
+    ],
+    responses: [ok: {"Cleaner health case", "application/json", AdminCleanerHealthCaseDetail}]
+  )
+
+  def show_admin_cleaner_health_case(conn, %{"id" => id}) do
+    respond(conn, Direct.get_admin_cleaner_health_case(user_id(conn), id))
+  end
+
+  operation(:record_admin_cleaner_health_action,
+    operation_id: "direct.recordAdminCleanerHealthAction",
+    summary: "Record an operations action on a cleaner health case",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Cleaner health case ID"
+      ]
+    ],
+    request_body:
+      {"Cleaner health action", "application/json", AdminCleanerHealthActionRequest,
+       required: true},
+    responses: [ok: {"Action recorded", "application/json", AdminOpsMutationResponse}]
+  )
+
+  def record_admin_cleaner_health_action(conn, %{"id" => id} = params) do
+    respond(conn, Direct.record_admin_cleaner_health_action(user_id(conn), id, params))
+  end
+
+  operation(:list_admin_customer_trust,
+    operation_id: "direct.listAdminCustomerTrust",
+    summary: "List customer trust profiles for Direct operations",
+    responses: [
+      ok: {"Customer trust profiles", "application/json", AdminCustomerTrustListResponse}
+    ]
+  )
+
+  def list_admin_customer_trust(conn, _params) do
+    respond(conn, Direct.list_admin_customer_trust(user_id(conn)), fn profiles ->
+      %{profiles: profiles}
+    end)
+  end
+
+  operation(:show_admin_customer_trust,
+    operation_id: "direct.showAdminCustomerTrust",
+    summary: "Get a customer trust profile for Direct operations",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Customer ID"
+      ]
+    ],
+    responses: [ok: {"Customer trust profile", "application/json", AdminCustomerTrustDetail}]
+  )
+
+  def show_admin_customer_trust(conn, %{"id" => id}) do
+    respond(conn, Direct.get_admin_customer_trust(user_id(conn), id))
+  end
+
+  operation(:add_admin_customer_trust_note,
+    operation_id: "direct.addAdminCustomerTrustNote",
+    summary: "Add an internal operations note to a customer trust profile",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Customer ID"
+      ]
+    ],
+    request_body:
+      {"Trust note", "application/json", AdminCustomerTrustNoteRequest, required: true},
+    responses: [ok: {"Note saved", "application/json", AdminOpsMutationResponse}]
+  )
+
+  def add_admin_customer_trust_note(conn, %{"id" => id} = params) do
+    respond(conn, Direct.add_admin_customer_trust_note(user_id(conn), id, params))
+  end
+
+  operation(:record_admin_customer_trust_action,
+    operation_id: "direct.recordAdminCustomerTrustAction",
+    summary: "Apply an operations override on a customer trust profile",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Customer ID"
+      ]
+    ],
+    request_body:
+      {"Trust action", "application/json", AdminCustomerTrustActionRequest, required: true},
+    responses: [ok: {"Action recorded", "application/json", AdminOpsMutationResponse}]
+  )
+
+  def record_admin_customer_trust_action(conn, %{"id" => id} = params) do
+    respond(conn, Direct.record_admin_customer_trust_action(user_id(conn), id, params))
   end
 
   operation(:match_admin_candidate,
