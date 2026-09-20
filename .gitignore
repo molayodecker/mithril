@@ -12,6 +12,7 @@ mithril-*.tar
 .env
 .env.*
 !.env.example
+.envrc
 
 # Editors / OS
 .DS_Store

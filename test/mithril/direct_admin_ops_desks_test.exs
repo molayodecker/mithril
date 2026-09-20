@@ -139,6 +139,69 @@ defmodule Mithril.DirectAdminOpsDesksTest do
     assert preview["capped"] == false
   end
 
+  test "broadcasts inbox rows in one insert" do
+    admin_id = insert_admin!()
+    first = insert_user!("one@example.com", "+233500000014", "One")
+    second = insert_user!("two@example.com", "+233500000015", "Two")
+
+    Repo.query!("INSERT INTO public.user_roles (user_id, role_id) VALUES ($1, 'customer')", [
+      Ecto.UUID.dump!(first)
+    ])
+
+    Repo.query!("INSERT INTO public.user_roles (user_id, role_id) VALUES ($1, 'customer')", [
+      Ecto.UUID.dump!(second)
+    ])
+
+    assert {:ok, sent} =
+             DirectAdminNotifications.send_broadcast(admin_id, %{
+               "segment" => "customers",
+               "title" => "Ops note",
+               "message" => "Please confirm tomorrow."
+             })
+
+    assert sent["attempted"] == 2
+    assert sent["inboxCreated"] == 2
+    assert sent["smsSent"] == 0
+    assert sent["whatsappSent"] == 0
+
+    [[count]] = Repo.query!("SELECT COUNT(*)::int FROM public.notifications").rows
+    assert count == 2
+  end
+
+  test "queues SMS broadcast deliveries through Oban workers" do
+    admin_id = insert_admin!()
+    first = insert_user!("one@example.com", "+233500000016", "One")
+    second = insert_user!("two@example.com", "+233500000017", "Two")
+
+    Repo.query!("INSERT INTO public.user_roles (user_id, role_id) VALUES ($1, 'customer')", [
+      Ecto.UUID.dump!(first)
+    ])
+
+    Repo.query!("INSERT INTO public.user_roles (user_id, role_id) VALUES ($1, 'customer')", [
+      Ecto.UUID.dump!(second)
+    ])
+
+    Application.put_env(:mithril, :test_sms_messages, [])
+
+    assert {:ok, sent} =
+             DirectAdminNotifications.send_broadcast(admin_id, %{
+               "segment" => "customers",
+               "title" => "Ops note",
+               "message" => "Please confirm tomorrow.",
+               "includeSms" => true
+             })
+
+    assert sent["smsSent"] == 2
+    assert sent["whatsappSent"] == 0
+
+    phones =
+      Application.get_env(:mithril, :test_sms_messages)
+      |> Enum.map(&elem(&1, 0))
+      |> Enum.sort()
+
+    assert phones == ["+233500000016", "+233500000017"]
+  end
+
   test "lists WhatsApp threads and messages" do
     admin_id = insert_admin!()
     guest_id = insert_user!("guest@example.com", "+233500000011", "Kofi Guest")

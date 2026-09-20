@@ -65,7 +65,7 @@ defmodule MithrilWeb.DirectAdminNotificationsController do
 
   operation(:create,
     operation_id: "direct.sendAdminNotification",
-    summary: "Send an in-app notification, optionally with SMS or WhatsApp",
+    summary: "Create an in-app notification and queue optional SMS or WhatsApp via Oban",
     request_body: {"Send notification", "application/json", SendRequest},
     responses: [ok: {"Sent", "application/json", SendResponse}]
   )
@@ -93,7 +93,7 @@ defmodule MithrilWeb.DirectAdminNotificationsController do
 
   operation(:broadcast,
     operation_id: "direct.sendAdminNotificationBroadcast",
-    summary: "Send a capped broadcast to a role segment",
+    summary: "Queue a capped broadcast to a role segment. SMS and WhatsApp send via Oban.",
     request_body: {"Broadcast notification", "application/json", BroadcastRequest},
     responses: [ok: {"Broadcast result", "application/json", BroadcastResponse}]
   )

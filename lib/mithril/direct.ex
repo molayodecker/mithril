@@ -1061,7 +1061,14 @@ defmodule Mithril.Direct do
 
   defp require_admin(uid) do
     case Repo.query(
-           "SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = $1 AND role_id = 'admin')",
+           """
+           SELECT EXISTS (
+             SELECT 1
+             FROM public.user_roles
+             WHERE user_id = $1
+               AND role_id IN ('admin', 'reviewer')
+           )
+           """,
            [uid]
          ) do
       {:ok, %{rows: [[true]]}} -> :ok

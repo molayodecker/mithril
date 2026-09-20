@@ -669,11 +669,16 @@ defmodule Mithril.DirectBookings do
                duration_final = $4,
                timezone = $5,
                timezone_name = $5,
-               customer_reminder_sent_at = CASE
-                 WHEN scheduled_date IS DISTINCT FROM $2
-                   OR scheduled_time IS DISTINCT FROM $3 THEN NULL
-                 ELSE customer_reminder_sent_at
-               END,
+               customer_reminder_sent_at = #{clear_reminder("customer_reminder_sent_at")},
+               customer_reminder_claimed_at = #{clear_reminder("customer_reminder_claimed_at")},
+               customer_reminder_7d_sent_at = #{clear_reminder("customer_reminder_7d_sent_at")},
+               customer_reminder_7d_claimed_at = #{clear_reminder("customer_reminder_7d_claimed_at")},
+               customer_reminder_48h_sent_at = #{clear_reminder("customer_reminder_48h_sent_at")},
+               customer_reminder_48h_claimed_at = #{clear_reminder("customer_reminder_48h_claimed_at")},
+               customer_reminder_morning_sent_at = #{clear_reminder("customer_reminder_morning_sent_at")},
+               customer_reminder_morning_claimed_at = #{clear_reminder("customer_reminder_morning_claimed_at")},
+               cleaner_reminder_sent_at = #{clear_reminder("cleaner_reminder_sent_at")},
+               cleaner_reminder_claimed_at = #{clear_reminder("cleaner_reminder_claimed_at")},
                updated_at = now()
            WHERE id = $1
              AND customer_id = $6
@@ -909,6 +914,10 @@ defmodule Mithril.DirectBookings do
   defp decimal_hours(value) when is_float(value), do: Decimal.from_float(value)
 
   defp format_hhmm(%Time{} = time), do: Calendar.strftime(time, "%H:%M")
+
+  defp clear_reminder(column) do
+    "CASE WHEN scheduled_date IS DISTINCT FROM $2 OR scheduled_time IS DISTINCT FROM $3 THEN NULL ELSE #{column} END"
+  end
 
   def client_bookings_enabled? do
     Application.get_env(:mithril, :direct_client_bookings, false) == true

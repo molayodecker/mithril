@@ -59,7 +59,7 @@ defmodule Mithril.Notifications.Reminders do
     now
     |> candidate_rows()
     |> Enum.flat_map(fn row ->
-      case scheduled_ms(row.scheduled_date, row.scheduled_time) do
+      case row_scheduled_ms(row) do
         nil ->
           []
 
@@ -176,9 +176,23 @@ defmodule Mithril.Notifications.Reminders do
              b.customer_reminder_morning_sent_at,
              b.customer_reminder_morning_claimed_at,
              b.cleaner_reminder_sent_at,
-             b.cleaner_reminder_claimed_at
+             b.cleaner_reminder_claimed_at,
+             (EXTRACT(EPOCH FROM (
+               (b.scheduled_date + COALESCE(b.scheduled_time, TIME '00:00'))
+               AT TIME ZONE tz.tz
+             )) * 1000)::bigint,
+             (now() AT TIME ZONE tz.tz)::date::text,
+             EXTRACT(HOUR FROM (now() AT TIME ZONE tz.tz))::float
+               + EXTRACT(MINUTE FROM (now() AT TIME ZONE tz.tz)) / 60.0
            FROM public.bookings b
            JOIN public.direct_booking_origins o ON o.booking_id = b.id
+           CROSS JOIN LATERAL (
+             SELECT COALESCE(
+               NULLIF(btrim(to_jsonb(b)->>'timezone_name'), ''),
+               NULLIF(btrim(to_jsonb(b)->>'timezone'), ''),
+               'Africa/Accra'
+             ) AS tz
+           ) tz
            WHERE b.status <> ALL($3::text[])
              AND b.scheduled_date BETWEEN $1::date AND $2::date
            ORDER BY b.scheduled_date, b.scheduled_time
@@ -218,9 +232,23 @@ defmodule Mithril.Notifications.Reminders do
                b.customer_reminder_morning_sent_at,
                b.customer_reminder_morning_claimed_at,
                b.cleaner_reminder_sent_at,
-               b.cleaner_reminder_claimed_at
+               b.cleaner_reminder_claimed_at,
+               (EXTRACT(EPOCH FROM (
+                 (b.scheduled_date + COALESCE(b.scheduled_time, TIME '00:00'))
+                 AT TIME ZONE tz.tz
+               )) * 1000)::bigint,
+               (now() AT TIME ZONE tz.tz)::date::text,
+               EXTRACT(HOUR FROM (now() AT TIME ZONE tz.tz))::float
+                 + EXTRACT(MINUTE FROM (now() AT TIME ZONE tz.tz)) / 60.0
              FROM public.bookings b
              JOIN public.direct_booking_origins o ON o.booking_id = b.id
+             CROSS JOIN LATERAL (
+               SELECT COALESCE(
+                 NULLIF(btrim(to_jsonb(b)->>'timezone_name'), ''),
+                 NULLIF(btrim(to_jsonb(b)->>'timezone'), ''),
+                 'Africa/Accra'
+               ) AS tz
+             ) tz
              WHERE b.id = $1
              LIMIT 1
              """,
@@ -250,7 +278,10 @@ defmodule Mithril.Notifications.Reminders do
          reminder_morning_sent,
          reminder_morning_claimed,
          cleaner_sent,
-         cleaner_claimed
+         cleaner_claimed,
+         scheduled_ms,
+         local_today,
+         local_hour
        ]) do
     %{
       id: id,
@@ -270,14 +301,21 @@ defmodule Mithril.Notifications.Reminders do
       customer_reminder_morning_sent_at: reminder_morning_sent,
       customer_reminder_morning_claimed_at: reminder_morning_claimed,
       cleaner_reminder_sent_at: cleaner_sent,
-      cleaner_reminder_claimed_at: cleaner_claimed
+      cleaner_reminder_claimed_at: cleaner_claimed,
+      scheduled_ms: to_ms(scheduled_ms),
+      local_today: present(local_today),
+      local_hour: to_hour(local_hour)
     }
   end
 
   defp eligible?(row), do: row.status not in @terminal_statuses
 
+  defp row_scheduled_ms(row) do
+    row.scheduled_ms || scheduled_ms(row.scheduled_date, row.scheduled_time)
+  end
+
   defp require_schedule(row) do
-    case scheduled_ms(row.scheduled_date, row.scheduled_time) do
+    case row_scheduled_ms(row) do
       nil -> :error
       ms -> {:ok, ms}
     end
@@ -303,7 +341,7 @@ defmodule Mithril.Notifications.Reminders do
         false
 
       stage == "customer_morning" ->
-        morning_of?(row.scheduled_date, scheduled_ms, now_ms)
+        morning_due?(row, scheduled_ms, now_ms)
 
       stage == "customer_7d" ->
         in_window?(scheduled_ms, now_ms, @hours_7d)
@@ -439,12 +477,36 @@ defmodule Mithril.Notifications.Reminders do
     |> Date.to_iso8601()
   end
 
+  defp morning_due?(row, scheduled_ms, now_ms) do
+    if is_binary(row.local_today) and is_number(row.local_hour) do
+      scheduled_ms > now_ms and row.local_today == date_string(row.scheduled_date) and
+        in_morning_hour_fraction?(row.local_hour, @morning_hour, @morning_tolerance_hours)
+    else
+      morning_of?(row.scheduled_date, scheduled_ms, now_ms)
+    end
+  end
+
   defp in_morning_hour?(now_ms, morning_hour, tolerance_hours) do
     datetime = DateTime.from_unix!(now_ms, :millisecond)
     hour_fractional = datetime.hour + datetime.minute / 60
+    in_morning_hour_fraction?(hour_fractional, morning_hour, tolerance_hours)
+  end
+
+  defp in_morning_hour_fraction?(hour_fractional, morning_hour, tolerance_hours) do
     half = max(0.25, tolerance_hours / 2)
     hour_fractional >= morning_hour - half and hour_fractional <= morning_hour + half
   end
+
+  defp to_ms(nil), do: nil
+  defp to_ms(value) when is_integer(value), do: value
+  defp to_ms(value) when is_float(value), do: round(value)
+  defp to_ms(%Decimal{} = value), do: Decimal.to_integer(Decimal.round(value, 0))
+  defp to_ms(_), do: nil
+
+  defp to_hour(nil), do: nil
+  defp to_hour(value) when is_number(value), do: value * 1.0
+  defp to_hour(%Decimal{} = value), do: Decimal.to_float(value)
+  defp to_hour(_), do: nil
 
   defp date_string(%Date{} = date), do: Date.to_iso8601(date)
   defp date_string(value) when is_binary(value), do: String.trim(value)

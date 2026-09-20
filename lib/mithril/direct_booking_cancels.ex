@@ -13,11 +13,23 @@ defmodule Mithril.DirectBookingCancels do
   alias Mithril.Paystack
   alias Mithril.Repo
 
-  def cancel(user_id, booking_id, params \\ %{}) when is_map(params) do
+  def cancel(user_id, booking_id, params \\ %{}, actor \\ :customer)
+
+  def cancel(user_id, booking_id, params, :customer) when is_map(params) do
+    do_cancel(user_id, booking_id, params, :customer)
+  end
+
+  def cancel(user_id, booking_id, params, {:admin, admin_id})
+      when is_map(params) and is_binary(admin_id) do
+    do_cancel(user_id, booking_id, params, {:admin, admin_id})
+  end
+
+  defp do_cancel(user_id, booking_id, params, actor) do
     with {:ok, customer_id} <- dump_uuid(user_id),
          {:ok, bid} <- dump_uuid(booking_id),
+         {:ok, actor} <- actor_record(actor, customer_id),
          {:ok, reason} <- cancellation_reason(params),
-         {:ok, result} <- persist_cancel(customer_id, bid, reason) do
+         {:ok, result} <- persist_cancel(customer_id, bid, reason, actor) do
       finalize_paystack_refund(result)
     else
       :error -> {:error, :not_found}
@@ -25,7 +37,7 @@ defmodule Mithril.DirectBookingCancels do
     end
   end
 
-  defp persist_cancel(customer_id, booking_id, reason) do
+  defp persist_cancel(customer_id, booking_id, reason, actor) do
     Repo.transaction(fn ->
       with {:ok, booking} <- lock_owned_booking(customer_id, booking_id),
            :ok <- ensure_cancellable_or_replay(booking),
@@ -38,7 +50,7 @@ defmodule Mithril.DirectBookingCancels do
             already_cancelled_payload(booking)
 
           true ->
-            case apply_cancel(booking, customer_id, reason) do
+            case apply_cancel(booking, customer_id, reason, actor) do
               {:error, {:replay_refund, existing}} -> replay_payload(booking, existing)
               {:error, reason} -> Repo.rollback(reason)
               result -> result
@@ -65,11 +77,11 @@ defmodule Mithril.DirectBookingCancels do
     end
   end
 
-  defp apply_cancel(booking, customer_id, reason) do
+  defp apply_cancel(booking, customer_id, reason, actor) do
     policy = DirectCancellation.evaluate(booking)
 
-    with {:ok, _} <- mark_cancelled(booking.id, customer_id, policy.tier, reason),
-         {:ok, refund} <- insert_refund(booking, customer_id, policy) do
+    with {:ok, _} <- mark_cancelled(booking.id, customer_id, actor, policy.tier, reason),
+         {:ok, refund} <- insert_refund(booking, customer_id, policy, actor) do
       payload(booking, policy, refund.status, refund.id)
     else
       {:error, :cancel_conflict} ->
@@ -195,28 +207,31 @@ defmodule Mithril.DirectBookingCancels do
     end
   end
 
-  defp mark_cancelled(booking_id, customer_id, tier, reason) do
+  defp mark_cancelled(booking_id, customer_id, actor, tier, reason) do
     case Repo.query(
            """
            UPDATE public.bookings
            SET status = 'cancelled',
                cancelled_at = now(),
                cancelled_by = $2,
-               cancelled_by_role = 'customer',
-               cancellation_tier = $3,
-               cancellation_reason = $4,
-               cancellation_reason_code = 'customer_cancelled',
+               cancelled_by_role = $3,
+               cancellation_tier = $4,
+               cancellation_reason = $5,
+               cancellation_reason_code = $6,
                updated_at = now()
            WHERE id = $1
-             AND customer_id = $2
-             AND status = ANY($5::text[])
+             AND customer_id = $7
+             AND status = ANY($8::text[])
            RETURNING id
            """,
            [
              dump!(booking_id),
-             customer_id,
+             actor.id,
+             actor.role,
              tier,
              reason,
+             actor.reason_code,
+             customer_id,
              DirectCancellation.cancellable_statuses()
            ]
          ) do
@@ -231,7 +246,7 @@ defmodule Mithril.DirectBookingCancels do
     end
   end
 
-  defp insert_refund(booking, customer_id, policy) do
+  defp insert_refund(booking, customer_id, policy, actor) do
     needs_paystack =
       policy.is_paid and policy.refund_percent > 0 and policy.refund_amount_minor > 0
 
@@ -266,7 +281,7 @@ defmodule Mithril.DirectBookingCancels do
              refund_attribution_role,
              refund_reason_code
            ) VALUES (
-             $1, $2, $3, $4, $5, $6, $7, $8, 'customer', 'customer_cancelled'
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
            )
            RETURNING id::text, status
            """,
@@ -278,7 +293,9 @@ defmodule Mithril.DirectBookingCancels do
              policy.refund_amount_minor,
              reference,
              status,
-             failure_reason
+             failure_reason,
+             actor.role,
+             actor.reason_code
            ]
          ) do
       {:ok, %{rows: [[id, stored_status]]}} ->
@@ -465,6 +482,17 @@ defmodule Mithril.DirectBookingCancels do
 
   defp dump_uuid(value) when is_binary(value), do: Ecto.UUID.dump(value)
   defp dump_uuid(_), do: :error
+
+  defp actor_record(:customer, customer_id) do
+    {:ok, %{id: customer_id, role: "customer", reason_code: "customer_cancelled"}}
+  end
+
+  defp actor_record({:admin, admin_id}, _customer_id) do
+    case dump_uuid(admin_id) do
+      {:ok, uid} -> {:ok, %{id: uid, role: "admin", reason_code: "admin_cancelled"}}
+      :error -> {:error, :invalid_request}
+    end
+  end
 
   defp dump!(value) when is_binary(value) do
     case Ecto.UUID.dump(value) do

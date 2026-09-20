@@ -77,8 +77,16 @@ defmodule Mithril.DirectAdminWhatsApp do
 
   def send_message(user_id, params) when is_map(params) do
     with {:ok, admin_uid} <- dump_uuid(user_id),
-         :ok <- require_admin(admin_uid),
-         {:ok, e164} <- normalize_phone(params["phoneE164"] || params[:phoneE164]),
+         :ok <- require_admin(admin_uid) do
+      deliver_as_staff(admin_uid, params)
+    else
+      :error -> {:error, :invalid_request}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def deliver_as_staff(admin_uid, params) when is_map(params) and is_binary(admin_uid) do
+    with {:ok, e164} <- normalize_phone(params["phoneE164"] || params[:phoneE164]),
          {:ok, body} <- required_body(params["body"] || params[:body]),
          {:ok, from} <-
            admin_from(
@@ -151,7 +159,13 @@ defmodule Mithril.DirectAdminWhatsApp do
     end
   end
 
-  defp admin_from(nil), do: admin_from(Application.get_env(:mithril, :twilio_whatsapp_admin_from))
+  defp admin_from(nil) do
+    case Application.get_env(:mithril, :twilio_whatsapp_admin_from) do
+      value when is_binary(value) and value != "" -> admin_from(value)
+      _ -> {:error, :twilio_not_configured}
+    end
+  end
+
   defp admin_from(""), do: admin_from(nil)
 
   defp admin_from(value) when is_binary(value) do

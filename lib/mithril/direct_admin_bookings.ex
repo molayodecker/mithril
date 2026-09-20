@@ -137,7 +137,7 @@ defmodule Mithril.DirectAdminBookings do
          {:ok, bid} <- dump_uuid(booking_id),
          :ok <- require_admin(admin_uid),
          {:ok, customer_id} <- booking_customer_id(bid) do
-      DirectBookingCancels.cancel(customer_id, booking_id, params)
+      DirectBookingCancels.cancel(customer_id, booking_id, params, {:admin, user_id})
     else
       :error -> {:error, :invalid_request}
       {:error, reason} -> {:error, reason}

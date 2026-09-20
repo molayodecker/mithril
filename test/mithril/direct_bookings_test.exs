@@ -72,6 +72,39 @@ defmodule Mithril.DirectBookingsTest do
              ).rows
   end
 
+  test "records staff as the actor when ops cancel a customer booking" do
+    customer_id = Ecto.UUID.generate()
+    admin_id = Ecto.UUID.generate()
+
+    booking_id =
+      insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "pending")
+
+    assert {:ok, result} =
+             DirectBookingCancels.cancel(customer_id, booking_id, %{}, {:admin, admin_id})
+
+    assert result.status == "cancelled"
+
+    assert [["admin", "admin_cancelled", dumped_admin]] =
+             Repo.query!(
+               """
+               SELECT cancelled_by_role, cancellation_reason_code, cancelled_by
+               FROM public.bookings WHERE id = $1
+               """,
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert dumped_admin == Ecto.UUID.dump!(admin_id)
+
+    assert [["admin", "admin_cancelled"]] =
+             Repo.query!(
+               """
+               SELECT refund_attribution_role, refund_reason_code
+               FROM public.booking_refunds WHERE booking_id = $1
+               """,
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+  end
+
   test "queues a full Paystack refund for a paid booking more than 24 hours away" do
     customer_id = Ecto.UUID.generate()
 
@@ -184,6 +217,62 @@ defmodule Mithril.DirectBookingsTest do
     assert booking["paymentStatus"] == "paid"
     assert booking["scheduledDate"] == Date.to_iso8601(new_date)
     assert booking["amountMinor"] == 19_350
+  end
+
+  test "clears every reminder stamp when the visit moves" do
+    customer_id = Ecto.UUID.generate()
+    new_date = Date.add(Date.utc_today(), 5)
+
+    booking_id =
+      insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "scheduled",
+        payment_status: "paid"
+      )
+
+    Repo.query!(
+      """
+      UPDATE public.bookings SET
+        customer_reminder_sent_at = now(),
+        customer_reminder_claimed_at = now(),
+        customer_reminder_7d_sent_at = now(),
+        customer_reminder_7d_claimed_at = now(),
+        customer_reminder_48h_sent_at = now(),
+        customer_reminder_48h_claimed_at = now(),
+        customer_reminder_morning_sent_at = now(),
+        customer_reminder_morning_claimed_at = now(),
+        cleaner_reminder_sent_at = now(),
+        cleaner_reminder_claimed_at = now()
+      WHERE id = $1
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:ok, _} =
+             DirectBookings.reschedule(customer_id, booking_id, %{
+               "scheduledDate" => Date.to_iso8601(new_date),
+               "scheduledTime" => "14:00"
+             })
+
+    [[stamps]] =
+      Repo.query!(
+        """
+        SELECT ARRAY[
+          customer_reminder_sent_at,
+          customer_reminder_claimed_at,
+          customer_reminder_7d_sent_at,
+          customer_reminder_7d_claimed_at,
+          customer_reminder_48h_sent_at,
+          customer_reminder_48h_claimed_at,
+          customer_reminder_morning_sent_at,
+          customer_reminder_morning_claimed_at,
+          cleaner_reminder_sent_at,
+          cleaner_reminder_claimed_at
+        ]
+        FROM public.bookings WHERE id = $1
+        """,
+        [Ecto.UUID.dump!(booking_id)]
+      ).rows
+
+    assert Enum.all?(stamps, &is_nil/1)
   end
 
   test "reprices an unpaid pending booking when the schedule changes" do
@@ -375,6 +464,15 @@ defmodule Mithril.DirectBookingsTest do
       timezone_name text,
       subscription_id uuid,
       customer_reminder_sent_at timestamptz,
+      customer_reminder_claimed_at timestamptz,
+      customer_reminder_7d_sent_at timestamptz,
+      customer_reminder_7d_claimed_at timestamptz,
+      customer_reminder_48h_sent_at timestamptz,
+      customer_reminder_48h_claimed_at timestamptz,
+      customer_reminder_morning_sent_at timestamptz,
+      customer_reminder_morning_claimed_at timestamptz,
+      cleaner_reminder_sent_at timestamptz,
+      cleaner_reminder_claimed_at timestamptz,
       core_amount_minor integer,
       same_day_surcharge_minor integer,
       weekend_surcharge_minor integer,

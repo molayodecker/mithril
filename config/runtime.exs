@@ -190,9 +190,8 @@ if supabase_service_role_key = System.get_env("SUPABASE_SERVICE_ROLE_KEY") do
   config :mithril, :supabase_service_role_key, supabase_service_role_key
 end
 
-if ghana_bucket = System.get_env("GHANA_CARD_RECRUITMENT_BUCKET") do
-  config :mithril, :ghana_card_recruitment_bucket, ghana_bucket
-end
+# Deleted: GHANA_CARD_RECRUITMENT_BUCKET / :ghana_card_recruitment_bucket.
+# Recruitment storage uses the hardcoded cleaner-ghana-card-id bucket.
 
 if admin_from = System.get_env("TWILIO_WHATSAPP_ADMIN_FROM") do
   config :mithril, :twilio_whatsapp_admin_from, admin_from

@@ -4,9 +4,8 @@ defmodule Mithril.DirectAdminNotifications do
   require Logger
 
   alias Mithril.Auth
-  alias Mithril.Auth.SMS
-  alias Mithril.DirectAdminWhatsApp
   alias Mithril.Repo
+  alias Mithril.Workers.AdminNotificationDelivery
 
   @types ~w(
     admin_message
@@ -91,16 +90,14 @@ defmodule Mithril.DirectAdminNotifications do
          :ok <- require_admin(uid),
          {:ok, input} <- validate_send(params),
          {:ok, target_uid} <- dump_uuid(input.target_user_id),
-         :ok <- insert_inbox(target_uid, input) do
-      sms_sent = maybe_sms(input)
-      whatsapp_sent = maybe_whatsapp(user_id, input)
-
+         :ok <- insert_inbox(target_uid, input),
+         {:ok, queued} <- enqueue_recipient_channels(user_id, input, input[:phone]) do
       {:ok,
        %{
          "ok" => true,
          "inboxCreated" => true,
-         "smsSent" => sms_sent,
-         "whatsappSent" => whatsapp_sent
+         "smsSent" => queued.sms > 0,
+         "whatsappSent" => queued.whatsapp > 0
        }}
     else
       :error -> {:error, :invalid_request}
@@ -140,54 +137,21 @@ defmodule Mithril.DirectAdminNotifications do
     with {:ok, uid} <- dump_uuid(user_id),
          :ok <- require_admin(uid),
          {:ok, input} <- validate_broadcast(params),
-         {:ok, recipients} <- list_audience(input.segment, @broadcast_max) do
-      counts =
-        Enum.reduce(recipients, %{inbox: 0, sms: 0, whatsapp: 0}, fn recipient, acc ->
-          send_broadcast_recipient(user_id, input, recipient, acc)
-        end)
-
+         {:ok, recipients} <- list_audience(input.segment, @broadcast_max),
+         {:ok, inbox} <- insert_inbox_batch(recipients, input),
+         {:ok, queued} <- enqueue_broadcast_channels(user_id, input, recipients) do
       {:ok,
        %{
          "ok" => true,
          "attempted" => length(recipients),
-         "inboxCreated" => counts.inbox,
-         "smsSent" => counts.sms,
-         "whatsappSent" => counts.whatsapp,
+         "inboxCreated" => inbox,
+         "smsSent" => queued.sms,
+         "whatsappSent" => queued.whatsapp,
          "capped" => length(recipients) == @broadcast_max
        }}
     else
       :error -> {:error, :invalid_request}
       {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp send_broadcast_recipient(admin_user_id, input, recipient, acc) do
-    target_id = recipient["id"]
-
-    case dump_uuid(target_id) do
-      {:ok, target_uid} ->
-        payload =
-          input
-          |> Map.put(:target_user_id, target_id)
-          |> Map.put(:phone, recipient["phone"])
-
-        inbox =
-          case insert_inbox(target_uid, payload) do
-            :ok -> 1
-            {:error, _} -> 0
-          end
-
-        sms = if maybe_sms(payload), do: 1, else: 0
-        whatsapp = if maybe_whatsapp(admin_user_id, payload), do: 1, else: 0
-
-        %{
-          inbox: acc.inbox + inbox,
-          sms: acc.sms + sms,
-          whatsapp: acc.whatsapp + whatsapp
-        }
-
-      _ ->
-        acc
     end
   end
 
@@ -270,7 +234,7 @@ defmodule Mithril.DirectAdminNotifications do
   end
 
   defp insert_inbox(target_uid, input) do
-    data = if input.screen, do: Jason.encode!(%{"screen" => input.screen}), else: "{}"
+    data = inbox_data(input)
 
     case Repo.query(
            """
@@ -284,46 +248,152 @@ defmodule Mithril.DirectAdminNotifications do
     end
   end
 
-  defp maybe_sms(%{include_sms: true} = input) do
-    case phone_for(input) do
-      {:ok, phone} ->
-        case SMS.send_message(phone, channel_body(input)) do
-          :ok ->
-            true
+  defp insert_inbox_batch(recipients, input) do
+    ids =
+      recipients
+      |> Enum.map(&dump_uuid(&1["id"]))
+      |> Enum.flat_map(fn
+        {:ok, uid} -> [uid]
+        _ -> []
+      end)
 
-          {:error, reason} ->
-            Logger.warning("admin notification sms failed: #{inspect(reason)}")
-            false
+    case ids do
+      [] ->
+        {:ok, 0}
+
+      ids ->
+        data = inbox_data(input)
+
+        case Repo.query(
+               """
+               INSERT INTO public.notifications (user_id, title, message, type, read, data)
+               SELECT x, $2, $3, $4, false, $5::jsonb
+               FROM UNNEST($1::uuid[]) AS x
+               """,
+               [ids, input.title, input.message, input.type, data]
+             ) do
+          {:ok, %{num_rows: count}} -> {:ok, count}
+          {:error, error} -> database_error(error)
         end
-
-      _ ->
-        false
     end
   end
 
-  defp maybe_sms(_), do: false
+  defp inbox_data(%{screen: screen}) when is_binary(screen),
+    do: Jason.encode!(%{"screen" => screen})
 
-  defp maybe_whatsapp(admin_user_id, %{include_whatsapp: true} = input) do
-    case phone_for(input) do
-      {:ok, phone} ->
-        case DirectAdminWhatsApp.send_message(admin_user_id, %{
-               "phoneE164" => phone,
-               "body" => channel_body(input)
-             }) do
-          {:ok, _} ->
-            true
+  defp inbox_data(_), do: "{}"
 
-          {:error, reason} ->
-            Logger.warning("admin notification whatsapp failed: #{inspect(reason)}")
-            false
-        end
+  defp enqueue_broadcast_channels(admin_user_id, input, recipients) do
+    if input.include_sms or input.include_whatsapp do
+      batch_id = Ecto.UUID.generate()
 
-      _ ->
-        false
+      jobs =
+        Enum.flat_map(recipients, fn recipient ->
+          channel_jobs(admin_user_id, batch_id, input, recipient["phone"])
+        end)
+
+      insert_jobs(jobs)
+    else
+      {:ok, %{sms: 0, whatsapp: 0}}
     end
   end
 
-  defp maybe_whatsapp(_, _), do: false
+  defp enqueue_recipient_channels(admin_user_id, input, phone) do
+    insert_jobs(channel_jobs(admin_user_id, Ecto.UUID.generate(), input, phone))
+  end
+
+  defp channel_jobs(_admin_user_id, _batch_id, input, _phone)
+       when input.include_sms != true and input.include_whatsapp != true do
+    []
+  end
+
+  defp channel_jobs(admin_user_id, batch_id, input, phone) do
+    case present_phone(phone) || phone_for(input) do
+      {:ok, e164} ->
+        body = channel_body(input)
+        from = Application.get_env(:mithril, :twilio_whatsapp_admin_from)
+
+        []
+        |> maybe_job(input.include_sms, fn ->
+          AdminNotificationDelivery.new(%{
+            "batch_id" => batch_id,
+            "channel" => "sms",
+            "phone" => e164,
+            "body" => body
+          })
+        end)
+        |> maybe_job(input.include_whatsapp, fn ->
+          AdminNotificationDelivery.new(%{
+            "batch_id" => batch_id,
+            "channel" => "whatsapp",
+            "admin_user_id" => admin_user_id,
+            "phone" => e164,
+            "body" => body,
+            "from" => from
+          })
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp maybe_job(jobs, true, builder), do: [builder.() | jobs]
+  defp maybe_job(jobs, _, _), do: jobs
+
+  defp insert_jobs(jobs) do
+    case do_insert_jobs(jobs) do
+      :ok ->
+        {:ok,
+         %{
+           sms: Enum.count(jobs, &job_channel?(&1, "sms")),
+           whatsapp: Enum.count(jobs, &job_channel?(&1, "whatsapp"))
+         }}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp do_insert_jobs([]), do: :ok
+
+  defp do_insert_jobs(jobs) do
+    inserter = Application.get_env(:mithril, :oban_insert, &default_insert_jobs/1)
+
+    case inserter.(jobs) do
+      :ok -> :ok
+      {:ok, _} -> :ok
+      list when is_list(list) -> :ok
+      {:error, reason} -> {:error, reason}
+      other when is_atom(other) -> {:error, other}
+    end
+  end
+
+  defp default_insert_jobs(jobs) do
+    if Application.get_env(:mithril, :start_oban, true) do
+      Oban.insert_all(jobs)
+    else
+      Enum.each(jobs, &run_job_inline/1)
+      :ok
+    end
+  end
+
+  defp run_job_inline(%Ecto.Changeset{} = changeset) do
+    args = Ecto.Changeset.get_field(changeset, :args) || Map.get(changeset.changes, :args, %{})
+    AdminNotificationDelivery.perform(%Oban.Job{args: args})
+  end
+
+  defp job_channel?(%Ecto.Changeset{} = changeset, channel) do
+    args = Ecto.Changeset.get_field(changeset, :args) || Map.get(changeset.changes, :args, %{})
+    args["channel"] == channel
+  end
+
+  defp present_phone(phone) when is_binary(phone) do
+    phone = String.trim(phone)
+    if phone == "", do: nil, else: {:ok, phone}
+  end
+
+  defp present_phone(_), do: nil
 
   defp phone_for(input) do
     phone = input[:phone]

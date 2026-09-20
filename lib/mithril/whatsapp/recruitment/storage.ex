@@ -93,8 +93,7 @@ defmodule Mithril.WhatsApp.Recruitment.Storage do
     url = Application.get_env(:mithril, :supabase_url)
     key = Application.get_env(:mithril, :supabase_service_role_key)
 
-    bucket =
-      Application.get_env(:mithril, :ghana_card_recruitment_bucket, "cleaner-ghana-card-id")
+    bucket = "cleaner-ghana-card-id"
 
     if is_binary(url) and url != "" and is_binary(key) and key != "" do
       {:ok, %{base: String.trim_trailing(url, "/"), service_key: key, bucket: bucket}}
