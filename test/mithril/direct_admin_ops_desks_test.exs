@@ -245,12 +245,10 @@ defmodule Mithril.DirectAdminOpsDesksTest do
              })
 
     assert [[direction, phone, body, stored_user_id, business_phone]] =
-             Repo.query!(
-               """
-               SELECT direction, phone_e164, body, user_id, business_phone_e164
-               FROM public.whatsapp_inbox_messages
-               """
-             ).rows
+             Repo.query!("""
+             SELECT direction, phone_e164, body, user_id, business_phone_e164
+             FROM public.whatsapp_inbox_messages
+             """).rows
 
     assert direction == "inbound"
     assert phone == "+233500000021"
