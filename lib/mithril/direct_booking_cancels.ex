@@ -41,6 +41,7 @@ defmodule Mithril.DirectBookingCancels do
     Repo.transaction(fn ->
       with {:ok, booking} <- lock_owned_booking(customer_id, booking_id),
            :ok <- ensure_cancellable_or_replay(booking),
+           :ok <- ensure_no_actionable_direct_refund_request(booking_id),
            {:ok, existing} <- existing_refund(booking_id, customer_id) do
         cond do
           existing ->
@@ -176,6 +177,30 @@ defmodule Mithril.DirectBookingCancels do
     case Repo.query("SELECT (now() AT TIME ZONE $1::text)::date", [timezone]) do
       {:ok, %{rows: [[%Date{} = today]]}} -> today
       _ -> Date.utc_today()
+    end
+  end
+
+  defp ensure_no_actionable_direct_refund_request(booking_id) do
+    case Repo.query(
+           """
+           SELECT 1
+           FROM public.direct_refund_requests
+           WHERE booking_id = $1
+             AND status IN ('requested', 'reviewing', 'approved', 'processing')
+           LIMIT 1
+           """,
+           [booking_id]
+         ) do
+      {:ok, %{rows: []}} ->
+        :ok
+
+      {:ok, %{rows: [[1]]}} ->
+        {:error,
+         {:refund_request_conflict,
+          "This booking already has a refund request in progress. Resolve it before cancelling."}}
+
+      {:error, error} ->
+        database_error(error)
     end
   end
 
