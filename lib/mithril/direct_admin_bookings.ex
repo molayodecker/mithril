@@ -458,8 +458,8 @@ defmodule Mithril.DirectAdminBookings do
                  + make_interval(secs => (duration_hours * 3600)::double precision)
              ) AS ends_at,
              scheduled_date
-           FROM public.bookings
-           WHERE id = $1
+           FROM public.bookings b
+           WHERE b.id = $1
            FOR UPDATE
            """,
            [bid, @default_timezone]
