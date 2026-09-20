@@ -34,6 +34,59 @@ defmodule Mithril.DirectBookingsTest do
     assert {:error, :invalid_user} = DirectBookings.create_customer_booking("not-a-uuid", %{})
   end
 
+  test "client booking create is idempotent for the same customer and intent key" do
+    previous = Application.get_env(:mithril, :direct_client_bookings, false)
+    Application.put_env(:mithril, :direct_client_bookings, true)
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :direct_client_bookings, previous)
+    end)
+
+    customer_id = Ecto.UUID.generate()
+    cleaner_id = Ecto.UUID.generate()
+    idempotency_key = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.users (id, email, status)
+      VALUES ($1, 'customer@example.com', 'active'),
+             ($2, 'cleaner@example.com', 'active')
+      """,
+      [Ecto.UUID.dump!(customer_id), Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_data (
+        user_id, verified, status, hourly_rate, specialties
+      ) VALUES ($1, true, 'active', 50, ARRAY['regular_cleaning'])
+      """,
+      [Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    params = %{
+      "serviceId" => 1,
+      "cleanerId" => cleaner_id,
+      "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 3)),
+      "scheduledTime" => "10:00",
+      "durationHours" => 3,
+      "address" => "Labone, Accra",
+      "timezone" => "Africa/Accra",
+      "idempotencyKey" => idempotency_key
+    }
+
+    assert {:ok, first} = DirectBookings.create_customer_booking(customer_id, params)
+    assert {:ok, second} = DirectBookings.create_customer_booking(customer_id, params)
+    assert first.id == second.id
+    assert first.amountMinor == second.amountMinor
+
+    assert [[1]] =
+             Repo.query!(
+               "SELECT count(*) FROM public.bookings WHERE customer_id = $1 AND idempotency_key = $2",
+               [Ecto.UUID.dump!(customer_id), idempotency_key]
+             ).rows
+  end
+
   test "lists only the signed-in customer's bookings, newest first" do
     customer_id = Ecto.UUID.generate()
     other_id = Ecto.UUID.generate()
@@ -456,6 +509,7 @@ defmodule Mithril.DirectBookingsTest do
     Repo.query!("DROP TABLE IF EXISTS public.payment_attempts CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.bookings CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.cleaner_availability_exceptions CASCADE")
+    Repo.query!("DROP TABLE IF EXISTS public.cleaner_data CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.service_types CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.profiles CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.users CASCADE")
@@ -482,6 +536,7 @@ defmodule Mithril.DirectBookingsTest do
     Repo.query!("""
     CREATE TABLE public.profiles (
       id uuid PRIMARY KEY,
+      user_id uuid,
       fullname text,
       firstname text,
       lastname text,
@@ -504,11 +559,24 @@ defmodule Mithril.DirectBookingsTest do
     )
 
     Repo.query!("""
+    CREATE TABLE public.cleaner_data (
+      user_id uuid PRIMARY KEY,
+      verified boolean NOT NULL DEFAULT false,
+      status text NOT NULL DEFAULT 'pending',
+      hourly_rate numeric,
+      specialties text[],
+      rating numeric,
+      completed_jobs integer
+    )
+    """)
+
+    Repo.query!("""
     CREATE TABLE public.bookings (
-      id uuid PRIMARY KEY,
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       customer_id uuid NOT NULL,
       cleaner_id uuid,
       service_id integer NOT NULL,
+      title text,
       status text NOT NULL DEFAULT 'pending',
       payment_status text NOT NULL DEFAULT 'pending',
       reference text,
@@ -517,6 +585,7 @@ defmodule Mithril.DirectBookingsTest do
       duration_hours numeric,
       duration_final numeric,
       address text,
+      special_instructions text,
       final_amount_minor bigint,
       total_price numeric,
       currency text NOT NULL DEFAULT 'GHS',
@@ -541,12 +610,14 @@ defmodule Mithril.DirectBookingsTest do
       is_weekend boolean,
       pricing_version text,
       platform_fee numeric,
-      booking_cover numeric,
+      tax_amount numeric,
+      booking_cover boolean,
       booking_cover_amount numeric,
       work_rate_ghs_per_hour numeric,
       supplies_option text,
       supplies_allowance_minor integer,
       cleaner_earnings_minor integer,
+      idempotency_key text,
       created_at timestamptz NOT NULL DEFAULT now(),
       cancelled_at timestamptz,
       cancelled_by uuid,
@@ -556,6 +627,12 @@ defmodule Mithril.DirectBookingsTest do
       cancellation_reason_code text,
       updated_at timestamptz NOT NULL DEFAULT now()
     )
+    """)
+
+    Repo.query!("""
+    CREATE UNIQUE INDEX bookings_customer_idempotency_key_uidx
+    ON public.bookings (customer_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL
     """)
 
     Repo.query!("""
