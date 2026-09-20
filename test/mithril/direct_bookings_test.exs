@@ -133,6 +133,41 @@ defmodule Mithril.DirectBookingsTest do
              ).rows
   end
 
+  test "rejects automatic cancellation while a direct refund request is actionable" do
+    customer_id = Ecto.UUID.generate()
+
+    booking_id =
+      insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "scheduled",
+        payment_status: "paid",
+        reference: "T_direct_queued_request"
+      )
+
+    Repo.query!(
+      """
+      INSERT INTO public.direct_refund_requests (booking_id, status)
+      VALUES ($1, 'requested')
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:error, {:refund_request_conflict, message}} =
+             DirectBookingCancels.cancel(customer_id, booking_id, %{})
+
+    assert message =~ "refund request in progress"
+
+    assert [["scheduled"]] =
+             Repo.query!(
+               "SELECT status FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert [[0]] =
+             Repo.query!(
+               "SELECT count(*) FROM public.booking_refunds WHERE booking_id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+  end
+
   test "is idempotent once a refund row exists" do
     customer_id = Ecto.UUID.generate()
 
@@ -511,6 +546,7 @@ defmodule Mithril.DirectBookingsTest do
       raise "Refusing to recreate booking fixtures; expected mithril_test, got #{inspect(database)}"
     end
 
+    Repo.query!("DROP TABLE IF EXISTS public.direct_refund_requests CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.booking_refunds CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.payment_attempts CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.bookings CASCADE")
@@ -724,6 +760,15 @@ defmodule Mithril.DirectBookingsTest do
       refund_reason_code text,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.direct_refund_requests (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      booking_id uuid NOT NULL REFERENCES public.bookings(id) ON DELETE CASCADE,
+      status text NOT NULL DEFAULT 'requested',
+      created_at timestamptz NOT NULL DEFAULT now()
     )
     """)
   end
