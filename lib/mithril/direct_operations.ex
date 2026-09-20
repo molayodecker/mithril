@@ -67,6 +67,7 @@ defmodule Mithril.DirectOperations do
             Repo.rollback(:payment_not_refundable)
 
           true ->
+            :ok = ensure_no_actionable_booking_refund!(booking.uuid)
             policy = cancellation_payload(booking)
 
             ensure_refund_request!(
@@ -552,6 +553,28 @@ defmodule Mithril.DirectOperations do
          ) do
       {:ok, %{rows: [[tier]]}} -> tier
       _ -> "no_refund"
+    end
+  end
+
+  defp ensure_no_actionable_booking_refund!(booking_id) do
+    case Repo.query(
+           """
+           SELECT status
+           FROM public.booking_refunds
+           WHERE booking_id = $1
+             AND status IN ('pending', 'manual_review')
+           LIMIT 1
+           """,
+           [booking_id]
+         ) do
+      {:ok, %{rows: []}} ->
+        :ok
+
+      {:ok, %{rows: [[_status]]}} ->
+        Repo.rollback(:refund_request_conflict)
+
+      {:error, error} ->
+        Repo.rollback({:database, error})
     end
   end
 
