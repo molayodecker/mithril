@@ -241,8 +241,8 @@ defmodule Mithril.DirectAdminBookingsTest do
                [Ecto.UUID.dump!(booking_id)]
              ).rows
 
-    assert starts_at == ~U[2030-09-13 08:00:00Z]
-    assert ends_at == ~U[2030-09-13 12:00:00Z]
+    assert DateTime.compare(starts_at, ~U[2030-09-13 08:00:00Z]) == :eq
+    assert DateTime.compare(ends_at, ~U[2030-09-13 12:00:00Z]) == :eq
 
     overlapping_booking_id = insert_booking!(other_customer_id, nil, "pending")
 
