@@ -199,6 +199,36 @@ defmodule Mithril.DirectBookingsTest do
     assert reason =~ "verify provider state before retrying"
   end
 
+  test "holds Paystack 5xx refund responses for manual review" do
+    Application.put_env(
+      :mithril,
+      :paystack_test_refund_result,
+      {:error, {:provider, 503, "provider unavailable"}}
+    )
+
+    customer_id = Ecto.UUID.generate()
+
+    booking_id =
+      insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "scheduled",
+        payment_status: "paid",
+        reference: "T_direct_5xx_refund"
+      )
+
+    assert {:ok, result} = DirectBookingCancels.cancel(customer_id, booking_id, %{})
+    assert result.status == "cancelled"
+    assert result.refundStatus == "manual_review"
+    assert result.successMessage =~ "process your refund manually"
+
+    assert [["manual_review", reason]] =
+             Repo.query!(
+               "SELECT status, failure_reason FROM public.booking_refunds WHERE booking_id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert reason =~ "verify provider state before retrying"
+    assert reason =~ "provider unavailable"
+  end
+
   test "records a definite Paystack refund rejection as failed" do
     Application.put_env(
       :mithril,
