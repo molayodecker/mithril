@@ -141,6 +141,43 @@ defmodule Mithril.DirectOperationsTest do
     assert amount == 5_000
   end
 
+  test "refund policy falls back from blank timezone_name to booking timezone" do
+    customer_id = insert_user!("customer-blank-timezone@example.com")
+    booking_id = insert_booking!(customer_id, "paid", 10_000)
+
+    Repo.query!(
+      """
+      UPDATE public.bookings
+      SET timezone_name = '   ',
+          timezone = 'Africa/Accra'
+      WHERE id = $1
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:ok, policy} = DirectOperations.cancellation_policy(customer_id, booking_id)
+    assert policy.refundTier == "full_refund"
+    assert policy.refundPercent == 100
+    assert policy.refundAmountMinor == 10_000
+
+    assert {:ok, request} =
+             DirectOperations.request_refund(customer_id, booking_id, %{
+               "reason" => "Please refund this eligible booking"
+             })
+
+    assert request.status == "requested"
+
+    assert [["full_refund", 100, 10_000]] =
+             Repo.query!(
+               """
+               SELECT policy_tier, proposed_refund_percent, proposed_refund_amount_minor
+               FROM public.direct_refund_requests
+               WHERE booking_id = $1
+               """,
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+  end
+
   test "blocks a second refund request while a cancellation refund is pending or under manual review" do
     customer_id = insert_user!("customer-in-flight@example.com")
 
