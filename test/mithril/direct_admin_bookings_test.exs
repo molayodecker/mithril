@@ -117,7 +117,7 @@ defmodule Mithril.DirectAdminBookingsTest do
     RETURNS boolean
     LANGUAGE sql
     STABLE
-    AS $
+    AS $$
       SELECT EXISTS (
         SELECT 1
         FROM public.bookings b
@@ -127,7 +127,7 @@ defmodule Mithril.DirectAdminBookingsTest do
           AND b.booking_period IS NOT NULL
           AND b.booking_period && tstzrange(p_booking_start, p_booking_end, '[)')
       )
-    $;
+    $$;
     """)
 
     Repo.query!("""
