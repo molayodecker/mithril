@@ -209,6 +209,41 @@ defmodule Mithril.DirectAdminBookingsTest do
     assert updated["canReassignCleaner"] == true
   end
 
+  test "persists a derived booking period when assigning a legacy booking" do
+    admin_id = insert_admin!()
+    customer_id = insert_user!("legacy@example.com", "+233500000040")
+    other_customer_id = insert_user!("legacy2@example.com", "+233500000041")
+    cleaner_id = insert_user!("legacy-cleaner@example.com", "+233500000042", "Legacy Cleaner")
+    activate_cleaner!(cleaner_id)
+
+    booking_id = insert_booking!(customer_id, nil, "pending")
+
+    Repo.query!(
+      "UPDATE public.bookings SET booking_period = NULL WHERE id = $1",
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:ok, _assigned} =
+             DirectAdminBookings.assign_cleaner(admin_id, booking_id, %{
+               "cleanerId" => cleaner_id
+             })
+
+    assert [[%DateTime{} = starts_at, %DateTime{} = ends_at]] =
+             Repo.query!(
+               "SELECT lower(booking_period), upper(booking_period) FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert DateTime.compare(ends_at, starts_at) == :gt
+
+    overlapping_booking_id = insert_booking!(other_customer_id, nil, "pending")
+
+    assert {:error, :cleaner_unavailable} =
+             DirectAdminBookings.assign_cleaner(admin_id, overlapping_booking_id, %{
+               "cleanerId" => cleaner_id
+             })
+  end
+
   test "rejects cleaner assignment when the cleaner is unavailable on the booking date" do
     admin_id = insert_admin!()
     customer_id = insert_user!("customer2@example.com", "+233500000014")
