@@ -41,7 +41,6 @@ defmodule Mithril.DirectBookingCancels do
     Repo.transaction(fn ->
       with {:ok, booking} <- lock_owned_booking(customer_id, booking_id),
            :ok <- ensure_cancellable_or_replay(booking),
-           :ok <- ensure_no_actionable_direct_refund_request(booking_id),
            {:ok, existing} <- existing_refund(booking_id, customer_id) do
         cond do
           existing ->
@@ -51,10 +50,16 @@ defmodule Mithril.DirectBookingCancels do
             already_cancelled_payload(booking)
 
           true ->
-            case apply_cancel(booking, customer_id, reason, actor) do
-              {:error, {:replay_refund, existing}} -> replay_payload(booking, existing)
+            policy = DirectCancellation.evaluate(booking)
+
+            with :ok <- ensure_no_actionable_direct_refund_request(booking_id, policy) do
+              case apply_cancel(booking, customer_id, reason, actor, policy) do
+                {:error, {:replay_refund, existing}} -> replay_payload(booking, existing)
+                {:error, reason} -> Repo.rollback(reason)
+                result -> result
+              end
+            else
               {:error, reason} -> Repo.rollback(reason)
-              result -> result
             end
         end
       else
@@ -78,9 +83,7 @@ defmodule Mithril.DirectBookingCancels do
     end
   end
 
-  defp apply_cancel(booking, customer_id, reason, actor) do
-    policy = DirectCancellation.evaluate(booking)
-
+  defp apply_cancel(booking, customer_id, reason, actor, policy) do
     with {:ok, _} <- mark_cancelled(booking.id, customer_id, actor, policy.tier, reason),
          {:ok, refund} <- insert_refund(booking, customer_id, policy, actor) do
       payload(booking, policy, refund.status, refund.id)
@@ -180,7 +183,11 @@ defmodule Mithril.DirectBookingCancels do
     end
   end
 
-  defp ensure_no_actionable_direct_refund_request(booking_id) do
+  defp ensure_no_actionable_direct_refund_request(_booking_id, %{refund_amount_minor: amount})
+       when not is_integer(amount) or amount <= 0,
+       do: :ok
+
+  defp ensure_no_actionable_direct_refund_request(booking_id, _policy) do
     case Repo.query(
            """
            SELECT 1
