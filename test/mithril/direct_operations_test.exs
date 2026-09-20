@@ -141,6 +141,33 @@ defmodule Mithril.DirectOperationsTest do
     assert amount == 5_000
   end
 
+  test "blocks a second refund request while a cancellation refund is pending or under manual review" do
+    customer_id = insert_user!("customer-in-flight@example.com")
+
+    for status <- ["pending", "manual_review"] do
+      booking_id = insert_booking!(customer_id, "paid", 10_000)
+
+      Repo.query!(
+        """
+        INSERT INTO public.booking_refunds (booking_id, refund_amount_minor, status)
+        VALUES ($1, 10000, $2)
+        """,
+        [Ecto.UUID.dump!(booking_id), status]
+      )
+
+      assert {:error, :refund_request_conflict} =
+               DirectOperations.request_refund(customer_id, booking_id, %{
+                 "reason" => "Please refund this booking"
+               })
+
+      assert [[0]] =
+               Repo.query!(
+                 "SELECT count(*) FROM public.direct_refund_requests WHERE booking_id = $1",
+                 [Ecto.UUID.dump!(booking_id)]
+               ).rows
+    end
+  end
+
   test "partial refund already satisfying the policy does not queue another cancellation refund" do
     customer_id = insert_user!("customer@example.com")
     booking_id = insert_booking!(customer_id, "partially_refunded", 10_000, 1)
