@@ -239,6 +239,36 @@ defmodule Mithril.DirectAdminBookingsTest do
              DirectAdminBookings.assign_cleaner(admin_id, booking_id, %{"cleanerId" => cleaner_id})
   end
 
+  test "retrying the same cleaner assignment preserves accepted dispatch state" do
+    admin_id = insert_admin!()
+    customer_id = insert_user!("customer-retry@example.com", "+233500000027")
+    cleaner_id = insert_user!("retry@example.com", "+233500000028", "Retry Cleaner")
+    activate_cleaner!(cleaner_id)
+    booking_id = insert_booking!(customer_id, cleaner_id, "confirmed")
+
+    Repo.query!(
+      """
+      UPDATE public.bookings
+      SET direct_assigned_cleaner_id = $2,
+          cleaner_assigned_at = now() - interval '5 minutes',
+          cleaner_accepted_at = now(),
+          assignment_phase = 'accepted',
+          assignment_hold_until = now() + interval '10 minutes'
+      WHERE id = $1
+      """,
+      [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    assert {:ok, assigned} =
+             DirectAdminBookings.assign_cleaner(admin_id, booking_id, %{"cleanerId" => cleaner_id})
+
+    assert assigned["cleanerId"] == cleaner_id
+    assert assigned["directAssignedCleanerId"] == cleaner_id
+    assert assigned["assignmentPhase"] == "accepted"
+    assert assigned["cleanerAcceptedAt"]
+    assert assigned["assignmentHoldUntil"]
+  end
+
   test "reassignment clears stale cleaner acceptance state" do
     admin_id = insert_admin!()
     customer_id = insert_user!("customer5@example.com", "+233500000034")
