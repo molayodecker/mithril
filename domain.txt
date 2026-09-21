@@ -1,0 +1,30 @@
+# Instaclean Mithril API domains
+
+## Production
+API:                 https://api.tryinstaclean.com
+Fly fallback:        https://instaclean-mithril.fly.dev
+Paystack webhook:    https://api.tryinstaclean.com/webhooks/paystack
+Sumsub webhook:      https://api.tryinstaclean.com/webhooks/sumsub
+WhatsApp webhook:    https://api.tryinstaclean.com/whatsapp/join-as-cleaner-bot
+WhatsApp alias:      https://api.tryinstaclean.com/functions/v1/join-as-cleaner-bot
+Health:              https://api.tryinstaclean.com/health
+Ready:               https://api.tryinstaclean.com/ready
+OpenAPI:             https://api.tryinstaclean.com/openapi.json
+
+## Staging
+API:                 https://dev.tryinstaclean.com
+Fly fallback:        https://instaclean-mithril-staging.fly.dev
+Paystack webhook:    https://dev.tryinstaclean.com/webhooks/paystack
+Sumsub webhook:      https://dev.tryinstaclean.com/webhooks/sumsub
+WhatsApp webhook:    https://dev.tryinstaclean.com/whatsapp/join-as-cleaner-bot
+WhatsApp alias:      https://dev.tryinstaclean.com/functions/v1/join-as-cleaner-bot
+Health:              https://dev.tryinstaclean.com/health
+Ready:               https://dev.tryinstaclean.com/ready
+OpenAPI:             https://dev.tryinstaclean.com/openapi.json
+
+## Preview
+API:                 https://instaclean-mithril-preview.fly.dev
+
+## Related sites
+Website:             https://tryinstaclean.com
+Direct:              https://direct.tryinstaclean.com

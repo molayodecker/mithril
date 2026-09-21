@@ -142,6 +142,10 @@ if paystack_secret = System.get_env("PAYSTACK_SECRET_KEY") do
   config :mithril, :paystack_adapter, Mithril.Paystack.HTTP
 end
 
+if sumsub_webhook_secret = System.get_env("SUMSUB_WEBHOOK_SECRET") do
+  config :mithril, :sumsub_webhook_secret, sumsub_webhook_secret
+end
+
 if tax_subaccount = System.get_env("PAYSTACK_TAX_SUBACCOUNT") do
   config :mithril, :paystack_tax_subaccount, tax_subaccount
 end
