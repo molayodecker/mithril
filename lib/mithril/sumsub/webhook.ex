@@ -155,7 +155,7 @@ defmodule Mithril.Sumsub.Webhook do
 
         true ->
           event = %{event | level_name: expected_worker_level_name()}
-          latest = fetch_latest_worker_kyc_for_user(event.user_id)
+          latest = fetch_latest_kyc_for_user_level(event.user_id)
           apply_event(existing, latest, event, false)
       end
     end)
@@ -231,7 +231,7 @@ defmodule Mithril.Sumsub.Webhook do
 
       :insert_race when retried? == false ->
         existing = fetch_kyc_for_update(event.applicant_id)
-        latest = fetch_latest_worker_kyc_for_user(event.user_id)
+        latest = fetch_latest_kyc_for_user_level(event.user_id)
         apply_event(existing, latest, event, true)
 
       :insert_race ->
@@ -326,11 +326,8 @@ defmodule Mithril.Sumsub.Webhook do
   defp write_kyc_profile(ctx) do
     payload_json = Jason.encode!(ctx.event.payload)
     document_types = ctx.event.document_types
-    subject_type = (ctx.existing && ctx.existing.subject_type) || "worker"
-
     params = [
       ctx.event.user_id,
-      subject_type,
       ctx.event.applicant_id,
       ctx.event.external_user_id,
       ctx.worker_application_id,
@@ -359,14 +356,14 @@ defmodule Mithril.Sumsub.Webhook do
     case Repo.query(
            """
            INSERT INTO public.kyc_profiles (
-             user_id, subject_type, sumsub_applicant_id, sumsub_external_user_id,
+             user_id, sumsub_applicant_id, sumsub_external_user_id,
              cleaner_application_id, kyc_status, review_answer, review_reason,
              level_name, country_code, document_types, last_event_type,
              last_event_created_at_ms, last_webhook_payload, submitted_at,
              reviewed_at, completed_at, updated_at
            ) VALUES (
-             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb,
-             $15, $16, $17, now()
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb,
+             $14, $15, $16, now()
            )
            ON CONFLICT (sumsub_applicant_id) DO NOTHING
            RETURNING id
@@ -384,24 +381,23 @@ defmodule Mithril.Sumsub.Webhook do
            """
            UPDATE public.kyc_profiles SET
              user_id = $1,
-             subject_type = $2,
-             sumsub_applicant_id = $3,
-             sumsub_external_user_id = $4,
-             cleaner_application_id = $5,
-             kyc_status = $6,
-             review_answer = $7,
-             review_reason = $8,
-             level_name = $9,
-             country_code = $10,
-             document_types = $11,
-             last_event_type = $12,
-             last_event_created_at_ms = $13,
-             last_webhook_payload = $14::jsonb,
-             submitted_at = $15,
-             reviewed_at = $16,
-             completed_at = $17,
+             sumsub_applicant_id = $2,
+             sumsub_external_user_id = $3,
+             cleaner_application_id = $4,
+             kyc_status = $5,
+             review_answer = $6,
+             review_reason = $7,
+             level_name = $8,
+             country_code = $9,
+             document_types = $10,
+             last_event_type = $11,
+             last_event_created_at_ms = $12,
+             last_webhook_payload = $13::jsonb,
+             submitted_at = $14,
+             reviewed_at = $15,
+             completed_at = $16,
              updated_at = now()
-           WHERE id = $18
+           WHERE id = $17
            """,
            params ++ [id]
          ) do
@@ -507,7 +503,7 @@ defmodule Mithril.Sumsub.Webhook do
   defp fetch_kyc_for_update(applicant_id) do
     case Repo.query(
            """
-           SELECT id, user_id, subject_type, level_name, cleaner_application_id, submitted_at,
+           SELECT id, user_id, level_name, cleaner_application_id, submitted_at,
                   reviewed_at, completed_at, kyc_status, review_answer, review_reason,
                   last_event_created_at_ms, sumsub_applicant_id, last_event_type, last_webhook_payload
            FROM public.kyc_profiles
@@ -527,15 +523,14 @@ defmodule Mithril.Sumsub.Webhook do
     end
   end
 
-  defp fetch_latest_worker_kyc_for_user(user_id) do
+  defp fetch_latest_kyc_for_user_level(user_id) do
     case Repo.query(
            """
-           SELECT id, user_id, subject_type, level_name, cleaner_application_id, submitted_at,
+           SELECT id, user_id, level_name, cleaner_application_id, submitted_at,
                   reviewed_at, completed_at, kyc_status, review_answer, review_reason,
                   last_event_created_at_ms, sumsub_applicant_id, last_event_type, last_webhook_payload
            FROM public.kyc_profiles
            WHERE user_id = $1
-             AND subject_type = 'worker'
              AND lower(trim(COALESCE(level_name, ''))) = $2
            ORDER BY last_event_created_at_ms DESC NULLS LAST, updated_at DESC, created_at DESC
            LIMIT 1
@@ -552,7 +547,6 @@ defmodule Mithril.Sumsub.Webhook do
   defp kyc_row([
          id,
          user_id,
-         subject_type,
          level_name,
          worker_application_id,
          submitted_at,
@@ -569,7 +563,6 @@ defmodule Mithril.Sumsub.Webhook do
     %{
       id: id,
       user_id: user_id,
-      subject_type: subject_type,
       level_name: level_name,
       worker_application_id: worker_application_id,
       submitted_at: submitted_at,
