@@ -477,6 +477,54 @@ defmodule Mithril.Sumsub.WebhookTest do
     assert applicant_id == "appl-relink"
   end
 
+  test "revokes user verification when the linked worker application is gone" do
+    user_id = Ecto.UUID.generate()
+    application_id = Ecto.UUID.generate()
+    insert_user!(user_id, "orphaned@example.com", "+233555000111")
+    insert_application!(application_id, user_id, "orphaned@example.com", "+233555000111")
+
+    green = Jason.encode!(reviewed_payload(user_id, "appl-orphaned", "GREEN", 100))
+    assert {:ok, _} = Webhook.handle(green, sign(green))
+
+    assert [["verified"]] =
+             Repo.query!(
+               "SELECT status FROM public.cleaner_verifications WHERE id = $1",
+               [Ecto.UUID.dump!(user_id)]
+             ).rows
+
+    Repo.query!(
+      "DELETE FROM public.cleaner_applications WHERE id = $1",
+      [Ecto.UUID.dump!(application_id)]
+    )
+
+    red = Jason.encode!(reviewed_payload(user_id, "appl-orphaned", "RED", 200))
+    assert {:ok, result} = Webhook.handle(red, sign(red))
+    refute result.worker_mirrored
+    assert is_nil(result.worker_application_id)
+
+    assert [["rejected"]] =
+             Repo.query!(
+               "SELECT status FROM public.cleaner_verifications WHERE id = $1",
+               [Ecto.UUID.dump!(user_id)]
+             ).rows
+
+    reset =
+      Jason.encode!(%{
+        "type" => "applicantReset",
+        "applicantId" => "appl-orphaned",
+        "externalUserId" => user_id,
+        "createdAtMs" => 300
+      })
+
+    assert {:ok, _} = Webhook.handle(reset, sign(reset))
+
+    assert [["unverified"]] =
+             Repo.query!(
+               "SELECT status FROM public.cleaner_verifications WHERE id = $1",
+               [Ecto.UUID.dump!(user_id)]
+             ).rows
+  end
+
   test "clears completion metadata when a completed review is revoked" do
     user_id = Ecto.UUID.generate()
     application_id = Ecto.UUID.generate()
