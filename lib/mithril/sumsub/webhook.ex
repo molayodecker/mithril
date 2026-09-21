@@ -154,6 +154,7 @@ defmodule Mithril.Sumsub.Webhook do
           ignored_level_result(event)
 
         true ->
+          event = %{event | level_name: expected_worker_level_name()}
           latest = fetch_latest_worker_kyc_for_user(event.user_id)
           apply_event(existing, latest, event, false)
       end
