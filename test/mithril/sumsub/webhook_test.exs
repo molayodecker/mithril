@@ -812,6 +812,12 @@ defmodule Mithril.Sumsub.WebhookTest do
 
       assert [["started"]] =
                Repo.query!(
+                 "SELECT kyc_status FROM public.kyc_profiles WHERE sumsub_applicant_id = $1",
+                 [applicant_id]
+               ).rows
+
+      assert [["not_started"]] =
+               Repo.query!(
                  "SELECT kyc_status FROM public.cleaner_applications WHERE id = $1",
                  [Ecto.UUID.dump!(application_id)]
                ).rows
