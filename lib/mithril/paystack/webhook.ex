@@ -363,7 +363,7 @@ defmodule Mithril.Paystack.Webhook do
            FROM public.booking_refunds br
            JOIN public.bookings b ON b.id = br.booking_id
            WHERE #{where}
-           ORDER BY created_at DESC NULLS LAST
+           ORDER BY br.created_at DESC NULLS LAST
            LIMIT 1
            FOR UPDATE
            """,
