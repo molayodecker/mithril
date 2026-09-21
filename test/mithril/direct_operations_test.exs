@@ -178,6 +178,33 @@ defmodule Mithril.DirectOperationsTest do
              ).rows
   end
 
+  test "blocks another refund while a processed direct refund is ahead of the canonical ledger" do
+    customer_id = insert_user!("customer-reconciliation@example.com")
+    booking_id = insert_booking!(customer_id, "paid", 10_000)
+
+    Repo.query!(
+      """
+      INSERT INTO public.direct_refund_requests (
+        booking_id, customer_id, requested_by_user_id, status, reason,
+        policy_tier, proposed_refund_percent, proposed_refund_amount_minor
+      ) VALUES ($1, $2, $2, 'processed', 'Already paid externally',
+                'full_refund', 100, 10000)
+      """,
+      [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(customer_id)]
+    )
+
+    assert {:error, :refund_reconciliation_pending} =
+             DirectOperations.request_refund(customer_id, booking_id, %{
+               "reason" => "Please refund this booking again"
+             })
+
+    assert [[1]] =
+             Repo.query!(
+               "SELECT count(*) FROM public.direct_refund_requests WHERE booking_id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+  end
+
   test "blocks a second refund request while a cancellation refund is pending or under manual review" do
     customer_id = insert_user!("customer-in-flight@example.com")
 
