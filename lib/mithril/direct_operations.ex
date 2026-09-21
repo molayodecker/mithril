@@ -68,6 +68,7 @@ defmodule Mithril.DirectOperations do
 
           true ->
             :ok = ensure_no_actionable_booking_refund!(booking.uuid)
+            :ok = ensure_processed_refunds_reconciled!(booking.uuid)
             policy = cancellation_payload(booking)
 
             ensure_refund_request!(
@@ -580,6 +581,37 @@ defmodule Mithril.DirectOperations do
 
       {:ok, %{rows: [[_status]]}} ->
         Repo.rollback(:refund_request_conflict)
+
+      {:error, error} ->
+        Repo.rollback({:database, error})
+    end
+  end
+
+  defp ensure_processed_refunds_reconciled!(booking_id) do
+    case Repo.query(
+           """
+           SELECT
+             COALESCE((
+               SELECT SUM(COALESCE(drr.proposed_refund_amount_minor, 0))::bigint
+               FROM public.direct_refund_requests drr
+               WHERE drr.booking_id = $1
+                 AND drr.status = 'processed'
+             ), 0)::bigint,
+             COALESCE((
+               SELECT SUM(br.refund_amount_minor)::bigint
+               FROM public.booking_refunds br
+               WHERE br.booking_id = $1
+                 AND br.status = 'processed'
+             ), 0)::bigint
+           """,
+           [booking_id]
+         ) do
+      {:ok, %{rows: [[direct_processed, canonical_processed]]}}
+      when direct_processed <= canonical_processed ->
+        :ok
+
+      {:ok, %{rows: [[_direct_processed, _canonical_processed]]}} ->
+        Repo.rollback(:refund_reconciliation_pending)
 
       {:error, error} ->
         Repo.rollback({:database, error})
