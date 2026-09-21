@@ -637,17 +637,18 @@ defmodule Mithril.Sumsub.Webhook do
            """
            SELECT id, user_id
            FROM public.cleaner_applications
-           WHERE sumsub_applicant_id = $2
-             AND (user_id = $1 OR user_id IS NULL)
+           WHERE sumsub_applicant_id = $1
            ORDER BY created_at DESC NULLS LAST
-           LIMIT 1
+           LIMIT 2
            FOR UPDATE
            """,
-           [user_id, applicant_id]
+           [applicant_id]
          ) do
       {:ok, %{rows: [[id, ^user_id]]}} -> id
       {:ok, %{rows: [[id, nil]]}} -> claim_worker_application(id, user_id)
+      {:ok, %{rows: [[_id, _other_user_id]]}} -> Repo.rollback(:conflict)
       {:ok, %{rows: []}} -> nil
+      {:ok, %{rows: [_first, _second]}} -> Repo.rollback(:conflict)
       {:error, %Postgrex.Error{postgres: %{code: :undefined_table}}} -> nil
       {:error, error} -> Repo.rollback(error)
     end
