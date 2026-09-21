@@ -88,6 +88,7 @@ defmodule Mithril.DirectOperationsTest do
       policy_tier text,
       proposed_refund_percent integer,
       proposed_refund_amount_minor bigint,
+      canonical_refunded_amount_minor_at_request bigint,
       source text NOT NULL DEFAULT 'mcp',
       created_at timestamptz NOT NULL DEFAULT now()
     )
@@ -178,31 +179,46 @@ defmodule Mithril.DirectOperationsTest do
              ).rows
   end
 
-  test "blocks another refund while a processed direct refund is ahead of the canonical ledger" do
+  test "blocks another refund when a prior canonical refund masks a newer processed direct payout" do
     customer_id = insert_user!("customer-reconciliation@example.com")
-    booking_id = insert_booking!(customer_id, "paid", 10_000)
+    booking_id = insert_booking!(customer_id, "partially_refunded", 10_000)
+
+    Repo.query!(
+      """
+      INSERT INTO public.booking_refunds (booking_id, refund_amount_minor, status)
+      VALUES ($1, 5000, 'processed')
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
 
     Repo.query!(
       """
       INSERT INTO public.direct_refund_requests (
         booking_id, customer_id, requested_by_user_id, status, reason,
-        policy_tier, proposed_refund_percent, proposed_refund_amount_minor
-      ) VALUES ($1, $2, $2, 'processed', 'Already paid externally',
-                'full_refund', 100, 10000)
+        policy_tier, proposed_refund_percent, proposed_refund_amount_minor,
+        canonical_refunded_amount_minor_at_request
+      ) VALUES ($1, $2, $2, 'processed', 'Remaining refund paid externally',
+                'full_refund', 100, 5000, 5000)
       """,
       [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(customer_id)]
     )
 
     assert {:error, :refund_reconciliation_pending} =
              DirectOperations.request_refund(customer_id, booking_id, %{
-               "reason" => "Please refund this booking again"
+               "reason" => "Please refund the remaining eligible balance again"
              })
 
-    assert [[1]] =
-             Repo.query!(
-               "SELECT count(*) FROM public.direct_refund_requests WHERE booking_id = $1",
-               [Ecto.UUID.dump!(booking_id)]
-             ).rows
+    Repo.query!(
+      """
+      UPDATE public.booking_refunds
+      SET refund_amount_minor = 10000
+      WHERE booking_id = $1
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:ok, policy} = DirectOperations.cancellation_policy(customer_id, booking_id)
+    assert policy.refundAmountMinor == 0
   end
 
   test "blocks a second refund request while a cancellation refund is pending or under manual review" do
