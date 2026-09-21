@@ -571,6 +571,7 @@ defmodule Mithril.Sumsub.WebhookTest do
     application_id = Ecto.UUID.generate()
     insert_user!(owner_id, "linked-owner@tryinstaclean.com", "+233555000222")
     insert_user!(webhook_user_id, "linked-webhook@tryinstaclean.com", "+233555000111")
+
     insert_application!(
       application_id,
       owner_id,
