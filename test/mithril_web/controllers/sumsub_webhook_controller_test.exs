@@ -155,6 +155,7 @@ defmodule MithrilWeb.SumsubWebhookControllerTest do
       updated_at timestamptz NOT NULL DEFAULT now(),
       last_event_type text,
       last_event_created_at_ms bigint,
+      last_state_event_created_at_ms bigint,
       last_webhook_payload jsonb
     )
     """)
