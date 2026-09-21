@@ -88,11 +88,26 @@ defmodule Mithril.DirectPaymentsTest do
         "callbackUrl" => "http://localhost:3000/bookings/#{booking_id}"
       })
 
+    Repo.query!("UPDATE public.bookings SET status = 'confirmed' WHERE id = $1", [
+      Ecto.UUID.dump!(booking_id)
+    ])
+
     assert {:ok, paid} =
              DirectPayments.verify(customer_id, booking_id, %{"reference" => checkout.reference})
 
+    assert paid.status == "confirmed"
     assert paid.paymentStatus == "paid"
     assert paid.amountMinor == 19_350
+
+    Repo.query!("UPDATE public.bookings SET status = 'scheduled' WHERE id = $1", [
+      Ecto.UUID.dump!(booking_id)
+    ])
+
+    assert {:ok, retried} =
+             DirectPayments.verify(customer_id, booking_id, %{"reference" => checkout.reference})
+
+    assert retried.status == "scheduled"
+    assert retried.paymentStatus == "paid"
 
     [[payment_status, payment_method]] =
       Repo.query!(
