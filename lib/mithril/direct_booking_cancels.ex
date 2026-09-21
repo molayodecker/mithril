@@ -52,7 +52,8 @@ defmodule Mithril.DirectBookingCancels do
           true ->
             policy = DirectCancellation.evaluate(booking)
 
-            with :ok <- ensure_no_actionable_direct_refund_request(booking_id, policy) do
+            with :ok <- ensure_processed_refunds_reconciled(booking_id, policy),
+                 :ok <- ensure_no_actionable_direct_refund_request(booking_id, policy) do
               case apply_cancel(booking, customer_id, reason, actor, policy) do
                 {:error, {:replay_refund, existing}} -> replay_payload(booking, existing)
                 {:error, reason} -> Repo.rollback(reason)
@@ -180,6 +181,43 @@ defmodule Mithril.DirectBookingCancels do
     case Repo.query("SELECT (now() AT TIME ZONE $1::text)::date", [timezone]) do
       {:ok, %{rows: [[%Date{} = today]]}} -> today
       _ -> Date.utc_today()
+    end
+  end
+
+  defp ensure_processed_refunds_reconciled(_booking_id, %{refund_amount_minor: amount})
+       when not is_integer(amount) or amount <= 0,
+       do: :ok
+
+  defp ensure_processed_refunds_reconciled(booking_id, _policy) do
+    case Repo.query(
+           """
+           SELECT
+             COALESCE((
+               SELECT SUM(COALESCE(drr.proposed_refund_amount_minor, 0))::bigint
+               FROM public.direct_refund_requests drr
+               WHERE drr.booking_id = $1
+                 AND drr.status = 'processed'
+             ), 0)::bigint,
+             COALESCE((
+               SELECT SUM(br.refund_amount_minor)::bigint
+               FROM public.booking_refunds br
+               WHERE br.booking_id = $1
+                 AND br.status = 'processed'
+             ), 0)::bigint
+           """,
+           [booking_id]
+         ) do
+      {:ok, %{rows: [[direct_processed, canonical_processed]]}}
+      when direct_processed <= canonical_processed ->
+        :ok
+
+      {:ok, %{rows: [[_direct_processed, _canonical_processed]]}} ->
+        {:error,
+         {:refund_reconciliation_pending,
+          "A processed refund is still being reconciled. Try again after reconciliation completes."}}
+
+      {:error, error} ->
+        database_error(error)
     end
   end
 
