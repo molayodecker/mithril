@@ -43,7 +43,7 @@ defmodule Mithril.DirectBookingCancels do
            :ok <- ensure_cancellable_or_replay(booking),
            {:ok, existing} <- existing_refund(booking_id, customer_id) do
         cond do
-          existing ->
+          booking.status == "cancelled" and existing ->
             replay_payload(booking, existing)
 
           booking.status == "cancelled" ->
@@ -54,10 +54,28 @@ defmodule Mithril.DirectBookingCancels do
 
             with :ok <- ensure_processed_refunds_reconciled(booking_id, policy),
                  :ok <- ensure_no_actionable_direct_refund_request(booking_id, policy) do
-              case apply_cancel(booking, customer_id, reason, actor, policy) do
-                {:error, {:replay_refund, existing}} -> replay_payload(booking, existing)
-                {:error, reason} -> Repo.rollback(reason)
-                result -> result
+              if existing do
+                case mark_cancelled(
+                       booking.id,
+                       customer_id,
+                       actor,
+                       policy.tier,
+                       reason
+                     ) do
+                  {:ok, _} -> replay_payload(%{booking | status: "cancelled"}, existing)
+                  {:error, reason} -> Repo.rollback(reason)
+                end
+              else
+                case apply_cancel(booking, customer_id, reason, actor, policy) do
+                  {:error, {:replay_refund, existing}} ->
+                    replay_payload(%{booking | status: "cancelled"}, existing)
+
+                  {:error, reason} ->
+                    Repo.rollback(reason)
+
+                  result ->
+                    result
+                end
               end
             else
               {:error, reason} -> Repo.rollback(reason)
