@@ -683,7 +683,8 @@ defmodule Mithril.Sumsub.Webhook do
     review_result = map_field(payload, "reviewResult")
 
     with true <- type != "" and applicant_id != "" and external_user_id != "",
-         {:ok, user_id} <- dump_uuid(external_user_id) do
+         {:ok, user_id} <- dump_uuid(external_user_id),
+         {:ok, created_at_ms} <- event_created_at_ms(payload, "createdAtMs") do
       review_answer = string_field(review_result, "reviewAnswer")
       review_answer = if review_answer == "", do: nil, else: review_answer
       review_reason = string_field(review_result, "reviewRejectType")
@@ -705,7 +706,7 @@ defmodule Mithril.Sumsub.Webhook do
          level_name: level_name,
          country_code: country_code,
          document_types: document_types(payload["documentTypes"]),
-         created_at_ms: integer_field(payload, "createdAtMs"),
+         created_at_ms: created_at_ms,
          review_status: review_status,
          review_answer: review_answer,
          review_reason: review_reason,
@@ -830,10 +831,38 @@ defmodule Mithril.Sumsub.Webhook do
     end
   end
 
-  defp integer_field(map, key) when is_map(map) do
+  defp event_created_at_ms(map, key) when is_map(map) do
     case map[key] do
-      value when is_integer(value) -> value
-      _ -> nil
+      value when is_integer(value) ->
+        {:ok, value}
+
+      value when is_binary(value) ->
+        parse_sumsub_timestamp(value)
+
+      _ ->
+        :error
+    end
+  end
+
+  defp parse_sumsub_timestamp(value) do
+    iso8601 =
+      value
+      |> String.trim()
+      |> String.replace(" ", "T", global: false)
+
+    case DateTime.from_iso8601(iso8601) do
+      {:ok, datetime, _offset} ->
+        {:ok, DateTime.to_unix(datetime, :millisecond)}
+
+      {:error, _reason} ->
+        case NaiveDateTime.from_iso8601(iso8601) do
+          {:ok, naive_datetime} ->
+            datetime = DateTime.from_naive!(naive_datetime, "Etc/UTC")
+            {:ok, DateTime.to_unix(datetime, :millisecond)}
+
+          {:error, _reason} ->
+            :error
+        end
     end
   end
 
