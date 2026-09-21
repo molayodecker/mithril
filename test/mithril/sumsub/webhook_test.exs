@@ -730,15 +730,16 @@ defmodule Mithril.Sumsub.WebhookTest do
     assert {:ok, result} = Webhook.handle(raw, sign(raw))
     assert result.worker_application_id == Ecto.UUID.dump!(matching_application_id)
 
-    assert [[nil], [owner]] =
+    assert [[nil]] =
              Repo.query!(
-               """
-               SELECT user_id
-               FROM public.cleaner_applications
-               WHERE id = ANY($1::uuid[])
-               ORDER BY id
-               """,
-               [[Ecto.UUID.dump!(other_application_id), Ecto.UUID.dump!(matching_application_id)]]
+               "SELECT user_id FROM public.cleaner_applications WHERE id = $1",
+               [Ecto.UUID.dump!(other_application_id)]
+             ).rows
+
+    assert [[owner]] =
+             Repo.query!(
+               "SELECT user_id FROM public.cleaner_applications WHERE id = $1",
+               [Ecto.UUID.dump!(matching_application_id)]
              ).rows
 
     assert owner == Ecto.UUID.dump!(user_id)
