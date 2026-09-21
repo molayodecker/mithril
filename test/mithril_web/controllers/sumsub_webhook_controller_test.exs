@@ -24,6 +24,7 @@ defmodule MithrilWeb.SumsubWebhookControllerTest do
       "type" => "applicantReviewed",
       "applicantId" => "appl-http-1",
       "externalUserId" => user_id,
+      "levelName" => "id-and-liveness",
       "reviewResult" => %{"reviewAnswer" => "GREEN"},
       "createdAtMs" => "2021-05-14 16:00:25.032"
     }
