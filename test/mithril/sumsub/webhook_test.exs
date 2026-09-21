@@ -50,13 +50,12 @@ defmodule Mithril.Sumsub.WebhookTest do
     assert result.worker_mirrored
     assert result.worker_application_id == Ecto.UUID.dump!(application_id)
 
-    [[subject_type, kyc_status, review_answer]] =
+    [[kyc_status, review_answer]] =
       Repo.query!(
-        "SELECT subject_type, kyc_status, review_answer FROM public.kyc_profiles WHERE sumsub_applicant_id = $1",
+        "SELECT kyc_status, review_answer FROM public.kyc_profiles WHERE sumsub_applicant_id = $1",
         ["appl-1"]
       ).rows
 
-    assert subject_type == "worker"
     assert kyc_status == "completed"
     assert review_answer == "GREEN"
 
@@ -431,8 +430,8 @@ defmodule Mithril.Sumsub.WebhookTest do
     Repo.query!(
       """
       INSERT INTO public.kyc_profiles (
-        user_id, subject_type, sumsub_applicant_id, sumsub_external_user_id, kyc_status
-      ) VALUES ($1, 'customer', 'appl-stale-app', $2, 'started')
+        user_id, sumsub_applicant_id, sumsub_external_user_id, kyc_status
+      ) VALUES ($1, 'appl-stale-app', $2, 'started')
       """,
       [Ecto.UUID.dump!(user_id), user_id]
     )
@@ -521,7 +520,7 @@ defmodule Mithril.Sumsub.WebhookTest do
     assert verification_status == "rejected"
   end
 
-  test "cross-applicant ordering ignores customer and unrelated worker levels" do
+  test "cross-applicant ordering is shared by all KYC at the same level" do
     user_id = Ecto.UUID.generate()
     application_id = Ecto.UUID.generate()
     insert_user!(user_id, "scoped-ordering@tryinstaclean.com", "+233555000111")
@@ -533,29 +532,29 @@ defmodule Mithril.Sumsub.WebhookTest do
       "+233555000111"
     )
 
-    old_worker = Jason.encode!(reviewed_payload(user_id, "appl-worker-old", "GREEN", 100))
-    assert {:ok, _} = Webhook.handle(old_worker, sign(old_worker))
+    old_green = Jason.encode!(reviewed_payload(user_id, "appl-old", "GREEN", 100))
+    assert {:ok, _} = Webhook.handle(old_green, sign(old_green))
 
     Repo.query!(
       """
       INSERT INTO public.kyc_profiles (
-        user_id, subject_type, sumsub_applicant_id, sumsub_external_user_id,
-        kyc_status, level_name, last_event_type, last_event_created_at_ms
+        user_id, sumsub_applicant_id, sumsub_external_user_id,
+        kyc_status, review_answer, level_name, last_event_type, last_event_created_at_ms
       ) VALUES
-        ($1, 'customer', 'appl-customer-newer', $2, 'completed', 'id-and-liveness',
+        ($1, 'appl-same-level-newer', $2, 'completed', 'GREEN', 'id-and-liveness',
          'applicantReviewed', 400),
-        ($1, 'worker', 'appl-other-level-newer', $2, 'completed', 'basic-kyc',
-         'applicantReviewed', 300)
+        ($1, 'appl-other-level-newer', $2, 'completed', 'GREEN', 'basic-kyc',
+         'applicantReviewed', 500)
       """,
       [Ecto.UUID.dump!(user_id), user_id]
     )
 
-    new_worker = Jason.encode!(reviewed_payload(user_id, "appl-worker-new", "RED", 200))
-    assert {:ok, result} = Webhook.handle(new_worker, sign(new_worker))
-    refute result.skipped_stale
-    assert result.kyc_status == "rejected"
+    delayed_red = Jason.encode!(reviewed_payload(user_id, "appl-delayed", "RED", 200))
+    assert {:ok, result} = Webhook.handle(delayed_red, sign(delayed_red))
+    assert result.skipped_stale
+    assert result.kyc_status == "completed"
 
-    assert [["appl-worker-new", "rejected", "RED"]] =
+    assert [["appl-old", "completed", "GREEN"]] =
              Repo.query!(
                """
                SELECT sumsub_applicant_id, kyc_status, kyc_review_answer
@@ -565,7 +564,7 @@ defmodule Mithril.Sumsub.WebhookTest do
                [Ecto.UUID.dump!(application_id)]
              ).rows
 
-    assert [["rejected"]] =
+    assert [["verified"]] =
              Repo.query!(
                "SELECT status FROM public.cleaner_verifications WHERE id = $1",
                [Ecto.UUID.dump!(user_id)]
@@ -836,7 +835,6 @@ defmodule Mithril.Sumsub.WebhookTest do
     CREATE TABLE public.kyc_profiles (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id uuid NOT NULL,
-      subject_type text NOT NULL,
       cleaner_application_id uuid,
       sumsub_applicant_id text NOT NULL UNIQUE,
       sumsub_external_user_id text NOT NULL,
