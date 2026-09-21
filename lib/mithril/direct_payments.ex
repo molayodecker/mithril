@@ -38,11 +38,11 @@ defmodule Mithril.DirectPayments do
          {:ok, attempt} <- verifiable_attempt(booking, params),
          {:ok, receipt} <- Paystack.verify(attempt.reference),
          :ok <- verify_receipt(attempt, receipt),
-         :ok <- mark_paid(bid, attempt) do
+         {:ok, booking_status} <- mark_paid(bid, attempt) do
       {:ok,
        %{
          id: booking_id,
-         status: "pending",
+         status: booking_status,
          paymentStatus: "paid",
          amountMinor: attempt.amount_minor,
          currency: attempt.currency,
@@ -62,7 +62,7 @@ defmodule Mithril.DirectPayments do
       {:ok,
        %{
          id: booking_id,
-         status: "pending",
+         status: booking.status,
          paymentStatus: booking.payment_status,
          amountMinor: booking.amount_minor,
          currency: booking.currency,
@@ -152,7 +152,7 @@ defmodule Mithril.DirectPayments do
           "success" ->
             case assert_successful_payment(attempt, receipt) do
               :ok ->
-                with :ok <- mark_paid(booking.uuid, attempt) do
+                with {:ok, _booking_status} <- mark_paid(booking.uuid, attempt) do
                   {:error, :already_paid}
                 end
 
@@ -519,7 +519,7 @@ defmodule Mithril.DirectPayments do
   defp fetch_owned_booking(customer_id, booking_id) do
     case Repo.query(
            """
-           SELECT id, payment_status, COALESCE(final_amount_minor, total_price),
+           SELECT id, status::text, payment_status, COALESCE(final_amount_minor, total_price),
                   COALESCE(currency, 'GHS'), reference
            FROM public.bookings
            WHERE id = $1 AND customer_id = $2
@@ -527,11 +527,12 @@ defmodule Mithril.DirectPayments do
            """,
            [booking_id, customer_id]
          ) do
-      {:ok, %{rows: [[id, payment_status, amount_minor, currency, reference]]}} ->
+      {:ok, %{rows: [[id, status, payment_status, amount_minor, currency, reference]]}} ->
         {:ok,
          %{
            id: Ecto.UUID.load!(id),
            uuid: id,
+           status: status,
            payment_status: payment_status,
            amount_minor: amount_to_integer(amount_minor),
            currency: normalize_currency(currency),
@@ -667,9 +668,9 @@ defmodule Mithril.DirectPayments do
 
   defp mark_paid(booking_id, attempt) do
     Repo.transaction(fn ->
-      with {:ok, %{rows: [[payment_status, booking_reference]]}} <-
+      with {:ok, %{rows: [[booking_status, payment_status, booking_reference]]}} <-
              Repo.query(
-               "SELECT payment_status, reference FROM public.bookings WHERE id = $1 FOR UPDATE",
+               "SELECT status::text, payment_status, reference FROM public.bookings WHERE id = $1 FOR UPDATE",
                [booking_id]
              ),
            :ok <- assert_booking_reference(payment_status, booking_reference, attempt.reference),
@@ -700,7 +701,7 @@ defmodule Mithril.DirectPayments do
                """,
                [booking_id, attempt.reference]
              ) do
-        :ok
+        booking_status
       else
         {:ok, %{rows: []}} -> Repo.rollback(:payment_reference_mismatch)
         {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
@@ -708,7 +709,7 @@ defmodule Mithril.DirectPayments do
       end
     end)
     |> case do
-      {:ok, :ok} -> :ok
+      {:ok, booking_status} when is_binary(booking_status) -> {:ok, booking_status}
       {:error, reason} when is_atom(reason) -> {:error, reason}
       {:error, error} -> database_error(error)
     end
