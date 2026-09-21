@@ -304,6 +304,7 @@ defmodule Mithril.Sumsub.Webhook do
       ctx.reviewed_at,
       ctx.completed_at
     ]
+
     if ctx.existing do
       update_kyc_profile(params, ctx.existing.id)
     else
@@ -603,6 +604,7 @@ defmodule Mithril.Sumsub.Webhook do
         Repo.rollback(error)
     end
   end
+
   defp find_worker_application_by_phone(phone, user_id) when is_binary(phone) and phone != "" do
     variants = phone_variants(phone)
 
