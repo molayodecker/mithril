@@ -91,7 +91,8 @@ defmodule Mithril.Sumsub.WebhookTest do
       "type" => "applicantOnHold",
       "applicantId" => "appl-2",
       "externalUserId" => user_id,
-      "reviewStatus" => "onHold"
+      "reviewStatus" => "onHold",
+      "createdAtMs" => 1_700_000_000_100
     }
 
     raw = Jason.encode!(on_hold)
@@ -206,6 +207,61 @@ defmodule Mithril.Sumsub.WebhookTest do
     assert kyc_status == "rejected"
     assert review_answer == "RED"
     assert last_ms == 200
+  end
+
+  test "orders provider timestamp strings before stale-event checks" do
+    user_id = Ecto.UUID.generate()
+    insert_user!(user_id, "provider-time@tryinstaclean.com", "+233555000111")
+
+    newer =
+      reviewed_payload(
+        user_id,
+        "appl-provider-time",
+        "RED",
+        "2021-05-14 16:00:25.032"
+      )
+      |> Jason.encode!()
+
+    assert {:ok, _} = Webhook.handle(newer, sign(newer))
+
+    delayed =
+      reviewed_payload(
+        user_id,
+        "appl-provider-time",
+        "GREEN",
+        "2021-05-14 16:00:24.999"
+      )
+      |> Jason.encode!()
+
+    assert {:ok, result} = Webhook.handle(delayed, sign(delayed))
+    assert result.skipped_stale
+    assert result.kyc_status == "rejected"
+
+    [[kyc_status, review_answer, last_ms]] =
+      Repo.query!(
+        """
+        SELECT kyc_status, review_answer, last_event_created_at_ms
+        FROM public.kyc_profiles
+        WHERE sumsub_applicant_id = $1
+        """,
+        ["appl-provider-time"]
+      ).rows
+
+    assert kyc_status == "rejected"
+    assert review_answer == "RED"
+    assert last_ms == 1_621_008_025_032
+  end
+
+  test "rejects a signed payload without a provider timestamp" do
+    user_id = Ecto.UUID.generate()
+    insert_user!(user_id, "missing-time@tryinstaclean.com", "+233555000111")
+
+    raw =
+      reviewed_payload(user_id, "appl-missing-time", "GREEN")
+      |> Map.delete("createdAtMs")
+      |> Jason.encode!()
+
+    assert {:error, :invalid_payload} = Webhook.handle(raw, sign(raw))
   end
 
   test "applies a newer RED after GREEN" do
@@ -539,7 +595,8 @@ defmodule Mithril.Sumsub.WebhookTest do
       sumsub_applicant_id text NOT NULL UNIQUE,
       sumsub_external_user_id text NOT NULL,
       kyc_status text NOT NULL DEFAULT 'not_started',
-      review_answer text,      review_reason text,
+      review_answer text,
+      review_reason text,
       level_name text,
       country_code text,
       document_types text[],
