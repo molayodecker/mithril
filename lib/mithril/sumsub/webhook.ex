@@ -891,7 +891,9 @@ defmodule Mithril.Sumsub.Webhook do
 
   defp normalize_type(_), do: ""
 
-  defp normalize_optional(value) when is_binary(value), do: value |> String.trim() |> String.upcase()
+  defp normalize_optional(value) when is_binary(value),
+    do: value |> String.trim() |> String.upcase()
+
   defp normalize_optional(_), do: nil
 
   defp string_field(nil, _key), do: ""
