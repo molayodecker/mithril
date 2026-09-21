@@ -651,9 +651,14 @@ defmodule Mithril.Sumsub.Webhook do
          ) do
       {:ok, %{rows: [[user_id, applicant_id]]}} ->
         %{user_id: user_id, applicant_id: applicant_id}
-      {:ok, %{rows: []}} -> nil
-      {:error, %Postgrex.Error{postgres: %{code: :undefined_table}}} -> nil
-      {:error, error} -> Repo.rollback(error)
+      {:ok, %{rows: []}} ->
+        nil
+
+      {:error, %Postgrex.Error{postgres: %{code: :undefined_table}}} ->
+        nil
+
+      {:error, error} ->
+        Repo.rollback(error)
     end
   end
 
