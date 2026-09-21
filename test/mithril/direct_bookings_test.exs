@@ -182,8 +182,9 @@ defmodule Mithril.DirectBookingsTest do
     Repo.query!(
       """
       INSERT INTO public.direct_refund_requests (
-        booking_id, status, proposed_refund_amount_minor
-      ) VALUES ($1, 'processed', 19350)
+        booking_id, status, proposed_refund_amount_minor,
+        canonical_refunded_amount_minor_at_request
+      ) VALUES ($1, 'processed', 19350, 0)
       """,
       [Ecto.UUID.dump!(booking_id)]
     )
@@ -864,6 +865,7 @@ defmodule Mithril.DirectBookingsTest do
       booking_id uuid NOT NULL REFERENCES public.bookings(id) ON DELETE CASCADE,
       status text NOT NULL DEFAULT 'requested',
       proposed_refund_amount_minor bigint,
+      canonical_refunded_amount_minor_at_request bigint,
       created_at timestamptz NOT NULL DEFAULT now()
     )
     """)
