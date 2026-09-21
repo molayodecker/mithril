@@ -32,6 +32,9 @@ defmodule Mithril.Sumsub.WebhookTest do
     assert Webhook.preserve_final_review?(existing, "applicantActionOnHold", nil)
     refute Webhook.preserve_final_review?(existing, "applicantActionReviewed", "RED")
     refute Webhook.preserve_final_review?(existing, "applicantReset", nil)
+    refute Webhook.preserve_final_review?(existing, "applicantDeactivated", nil)
+    refute Webhook.preserve_final_review?(existing, "applicantDeleted", nil)
+    refute Webhook.preserve_final_review?(existing, "applicantPersonalDataDeleted", nil)
     refute Webhook.preserve_final_review?(nil, "applicantOnHold", nil)
   end
 
@@ -520,6 +523,85 @@ defmodule Mithril.Sumsub.WebhookTest do
     assert verification_status == "rejected"
   end
 
+  test "matches an incoming applicant to its linked application when a user has several" do
+    user_id = Ecto.UUID.generate()
+    older_application_id = Ecto.UUID.generate()
+    newer_application_id = Ecto.UUID.generate()
+    insert_user!(user_id, "multi-app@tryinstaclean.com", "+233555000111")
+
+    insert_application!(
+      older_application_id,
+      user_id,
+      "multi-app@tryinstaclean.com",
+      "+233555000111"
+    )
+
+    insert_application!(
+      newer_application_id,
+      user_id,
+      "multi-app@tryinstaclean.com",
+      "+233555000111"
+    )
+
+    Repo.query!(
+      "UPDATE public.cleaner_applications SET sumsub_applicant_id = $2 WHERE id = $1",
+      [Ecto.UUID.dump!(older_application_id), "appl-linked-older"]
+    )
+
+    raw = Jason.encode!(reviewed_payload(user_id, "appl-linked-older", "GREEN", 100))
+    assert {:ok, result} = Webhook.handle(raw, sign(raw))
+    assert result.worker_application_id == Ecto.UUID.dump!(older_application_id)
+
+    assert [["completed", "appl-linked-older"]] =
+             Repo.query!(
+               "SELECT kyc_status, sumsub_applicant_id FROM public.cleaner_applications WHERE id = $1",
+               [Ecto.UUID.dump!(older_application_id)]
+             ).rows
+
+    assert [[nil, nil]] =
+             Repo.query!(
+               "SELECT kyc_status, sumsub_applicant_id FROM public.cleaner_applications WHERE id = $1",
+               [Ecto.UUID.dump!(newer_application_id)]
+             ).rows
+  end
+
+  test "does not guess between multiple applications when no applicant link exists" do
+    user_id = Ecto.UUID.generate()
+    first_application_id = Ecto.UUID.generate()
+    second_application_id = Ecto.UUID.generate()
+    insert_user!(user_id, "ambiguous-app@tryinstaclean.com", "+233555000111")
+
+    insert_application!(
+      first_application_id,
+      user_id,
+      "ambiguous-app@tryinstaclean.com",
+      "+233555000111"
+    )
+
+    insert_application!(
+      second_application_id,
+      user_id,
+      "ambiguous-app@tryinstaclean.com",
+      "+233555000111"
+    )
+
+    raw = Jason.encode!(reviewed_payload(user_id, "appl-unlinked", "GREEN", 100))
+    assert {:ok, result} = Webhook.handle(raw, sign(raw))
+    refute result.worker_mirrored
+    assert is_nil(result.worker_application_id)
+
+    assert [[nil], [nil]] =
+             Repo.query!(
+               """
+               SELECT sumsub_applicant_id
+               FROM public.cleaner_applications
+               WHERE user_id = $1
+               ORDER BY id
+               """,
+               [Ecto.UUID.dump!(user_id)]
+             ).rows
+  end
+
   test "cross-applicant ordering is shared by all KYC at the same level" do
     user_id = Ecto.UUID.generate()
     application_id = Ecto.UUID.generate()
@@ -668,6 +750,47 @@ defmodule Mithril.Sumsub.WebhookTest do
                "SELECT status FROM public.cleaner_verifications WHERE id = $1",
                [Ecto.UUID.dump!(user_id)]
              ).rows
+  end
+
+  test "deactivation and deletion revoke a completed verification" do
+    for {event_type, suffix} <- [
+          {"applicantDeactivated", "deactivated"},
+          {"applicantDeleted", "deleted"}
+        ] do
+      user_id = Ecto.UUID.generate()
+      application_id = Ecto.UUID.generate()
+      applicant_id = "appl-" <> suffix
+      email = suffix <> "@tryinstaclean.com"
+      insert_user!(user_id, email, "+233555000111")
+      insert_application!(application_id, user_id, email, "+233555000111")
+
+      green = Jason.encode!(reviewed_payload(user_id, applicant_id, "GREEN", 100))
+      assert {:ok, _} = Webhook.handle(green, sign(green))
+
+      revocation =
+        Jason.encode!(%{
+          "type" => event_type,
+          "applicantId" => applicant_id,
+          "externalUserId" => user_id,
+          "levelName" => "id-and-liveness",
+          "createdAtMs" => 200
+        })
+
+      assert {:ok, result} = Webhook.handle(revocation, sign(revocation))
+      assert result.kyc_status == "started"
+
+      assert [["started"]] =
+               Repo.query!(
+                 "SELECT kyc_status FROM public.cleaner_applications WHERE id = $1",
+                 [Ecto.UUID.dump!(application_id)]
+               ).rows
+
+      assert [["unverified"]] =
+               Repo.query!(
+                 "SELECT status FROM public.cleaner_verifications WHERE id = $1",
+                 [Ecto.UUID.dump!(user_id)]
+               ).rows
+    end
   end
 
   test "clears completion metadata when a completed review is revoked" do
