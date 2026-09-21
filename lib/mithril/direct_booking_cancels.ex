@@ -43,17 +43,42 @@ defmodule Mithril.DirectBookingCancels do
            :ok <- ensure_cancellable_or_replay(booking),
            {:ok, existing} <- existing_refund(booking_id, customer_id) do
         cond do
-          existing ->
+          booking.status == "cancelled" and existing ->
             replay_payload(booking, existing)
 
           booking.status == "cancelled" ->
             already_cancelled_payload(booking)
 
           true ->
-            case apply_cancel(booking, customer_id, reason, actor) do
-              {:error, {:replay_refund, existing}} -> replay_payload(booking, existing)
+            policy = DirectCancellation.evaluate(booking)
+
+            with :ok <- ensure_processed_refunds_reconciled(booking_id, policy),
+                 :ok <- ensure_no_actionable_direct_refund_request(booking_id, policy) do
+              if existing do
+                case mark_cancelled(
+                       booking.id,
+                       customer_id,
+                       actor,
+                       policy.tier,
+                       reason
+                     ) do
+                  {:ok, _} -> replay_payload(%{booking | status: "cancelled"}, existing)
+                  {:error, reason} -> Repo.rollback(reason)
+                end
+              else
+                case apply_cancel(booking, customer_id, reason, actor, policy) do
+                  {:error, {:replay_refund, existing}} ->
+                    replay_payload(%{booking | status: "cancelled"}, existing)
+
+                  {:error, reason} ->
+                    Repo.rollback(reason)
+
+                  result ->
+                    result
+                end
+              end
+            else
               {:error, reason} -> Repo.rollback(reason)
-              result -> result
             end
         end
       else
@@ -77,9 +102,7 @@ defmodule Mithril.DirectBookingCancels do
     end
   end
 
-  defp apply_cancel(booking, customer_id, reason, actor) do
-    policy = DirectCancellation.evaluate(booking)
-
+  defp apply_cancel(booking, customer_id, reason, actor, policy) do
     with {:ok, _} <- mark_cancelled(booking.id, customer_id, actor, policy.tier, reason),
          {:ok, refund} <- insert_refund(booking, customer_id, policy, actor) do
       payload(booking, policy, refund.status, refund.id)
@@ -176,6 +199,73 @@ defmodule Mithril.DirectBookingCancels do
     case Repo.query("SELECT (now() AT TIME ZONE $1::text)::date", [timezone]) do
       {:ok, %{rows: [[%Date{} = today]]}} -> today
       _ -> Date.utc_today()
+    end
+  end
+
+  defp ensure_processed_refunds_reconciled(_booking_id, %{refund_amount_minor: amount})
+       when not is_integer(amount) or amount <= 0,
+       do: :ok
+
+  defp ensure_processed_refunds_reconciled(booking_id, _policy) do
+    case Repo.query(
+           """
+           SELECT 1
+           FROM public.direct_refund_requests drr
+           WHERE drr.booking_id = $1
+             AND drr.status = 'processed'
+             AND (
+               drr.canonical_refunded_amount_minor_at_request IS NULL
+               OR COALESCE((
+                    SELECT SUM(br.refund_amount_minor)::bigint
+                    FROM public.booking_refunds br
+                    WHERE br.booking_id = drr.booking_id
+                      AND br.status = 'processed'
+                  ), 0)::bigint
+                  < drr.canonical_refunded_amount_minor_at_request
+                    + COALESCE(drr.proposed_refund_amount_minor, 0)
+             )
+           LIMIT 1
+           """,
+           [booking_id]
+         ) do
+      {:ok, %{rows: []}} ->
+        :ok
+
+      {:ok, %{rows: [[1]]}} ->
+        {:error,
+         {:refund_reconciliation_pending,
+          "A processed refund is still being reconciled. Try again after reconciliation completes."}}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp ensure_no_actionable_direct_refund_request(_booking_id, %{refund_amount_minor: amount})
+       when not is_integer(amount) or amount <= 0,
+       do: :ok
+
+  defp ensure_no_actionable_direct_refund_request(booking_id, _policy) do
+    case Repo.query(
+           """
+           SELECT 1
+           FROM public.direct_refund_requests
+           WHERE booking_id = $1
+             AND status IN ('requested', 'reviewing', 'approved', 'processing')
+           LIMIT 1
+           """,
+           [booking_id]
+         ) do
+      {:ok, %{rows: []}} ->
+        :ok
+
+      {:ok, %{rows: [[1]]}} ->
+        {:error,
+         {:refund_request_conflict,
+          "This booking already has a refund request in progress. Resolve it before cancelling."}}
+
+      {:error, error} ->
+        database_error(error)
     end
   end
 
@@ -333,6 +423,13 @@ defmodule Mithril.DirectBookingCancels do
         store_paystack_reference(result.refund_id, refund)
         {:ok, %{result.payload | refundStatus: "pending"}}
 
+      {:error, reason} when reason in [:provider_unavailable, :payment_not_configured] ->
+        manual_review_refund(result, reason)
+
+      {:error, {:provider, status, _message} = reason}
+      when is_integer(status) and status >= 500 and status <= 599 ->
+        manual_review_refund(result, reason)
+
       {:error, reason} ->
         mark_refund_failed(result.refund_id, reason)
 
@@ -350,6 +447,22 @@ defmodule Mithril.DirectBookingCancels do
     end
   end
 
+  defp manual_review_refund(result, reason) do
+    mark_refund_manual_review(result.refund_id, reason)
+
+    {:ok,
+     %{
+       result.payload
+       | refundStatus: "manual_review",
+         successMessage:
+           DirectCancellation.success_message_for_refund(
+             result.payload.tier,
+             "manual_review",
+             result.payload.successMessage
+           )
+     }}
+  end
+
   defp store_paystack_reference(refund_id, refund) do
     reference = paystack_refund_reference(refund)
 
@@ -362,6 +475,22 @@ defmodule Mithril.DirectBookingCancels do
       WHERE id = $1 AND status = 'pending'
       """,
       [dump!(refund_id), reference]
+    )
+  end
+
+  defp mark_refund_manual_review(refund_id, reason) do
+    Repo.query(
+      """
+      UPDATE public.booking_refunds
+      SET status = 'manual_review',
+          failure_reason = $2,
+          updated_at = now()
+      WHERE id = $1 AND status = 'pending'
+      """,
+      [
+        dump!(refund_id),
+        "Paystack refund outcome is unknown; verify provider state before retrying: #{failure_reason(reason)}"
+      ]
     )
   end
 

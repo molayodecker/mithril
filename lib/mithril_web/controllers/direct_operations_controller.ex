@@ -181,6 +181,7 @@ defmodule MithrilWeb.DirectOperationsController do
     do: {409, "recurring_booking_requires_manual_review"}
 
   defp error_response(:refund_request_conflict), do: {409, "refund_request_conflict"}
+  defp error_response(:refund_reconciliation_pending), do: {409, "refund_reconciliation_pending"}
   defp error_response(:cleaner_unavailable), do: {409, "cleaner_unavailable"}
   defp error_response(:invalid_timeslot), do: {422, "invalid_timeslot"}
   defp error_response(:invalid_request), do: {422, "invalid_request"}

@@ -104,51 +104,55 @@ defmodule Mithril.DirectDispatch do
   def request_replacement(user_id, booking_id, params) when is_map(params) do
     with {:ok, uid} <- dump_uuid(user_id),
          {:ok, bid} <- dump_uuid(booking_id),
-         {:ok, input} <- validate_replacement_request(params),
-         {:ok, booking} <- fetch_replaceable_booking(uid, bid),
-         {:ok, requested_start_at} <- replacement_requested_start(input, booking),
-         {:ok, result} <-
-           Repo.query(
-             """
-             INSERT INTO public.direct_service_requests (
-               customer_id, kind, status, priority, role, requested_start_at,
-               duration_hours, household_address_snapshot, related_booking_id,
-               related_service_id, requirements, notes, created_by_user_id
-             ) VALUES (
-               $1, 'replacement', 'submitted', $2, NULL, $3, $4, $5, $6,
-               $7, $8::text::jsonb, NULLIF($9::text, ''), $1
-             )
-             RETURNING id::text, status
-             """,
-             [
-               uid,
-               input.priority,
-               requested_start_at,
-               booking.duration_hours,
-               booking.address,
-               bid,
-               booking.service_id,
-               Jason.encode!(input.requirements),
-               input.notes
-             ]
-           ) do
-      [[id, status]] = result.rows
-      {:ok, %{id: id, status: status, kind: "replacement", relatedBookingId: booking_id}}
+         {:ok, input} <- validate_replacement_request(params) do
+      Repo.transaction(fn ->
+        with {:ok, booking} <- fetch_replaceable_booking(uid, bid),
+             {:ok, requested_start_at} <- replacement_requested_start(input, booking),
+             {:ok, result} <-
+               Repo.query(
+                 """
+                 INSERT INTO public.direct_service_requests (
+                   customer_id, kind, status, priority, role, requested_start_at,
+                   duration_hours, household_address_snapshot, related_booking_id,
+                   related_service_id, requirements, notes, created_by_user_id
+                 ) VALUES (
+                   $1, 'replacement', 'submitted', $2, NULL, $3, $4, $5, $6,
+                   $7, $8::text::jsonb, NULLIF($9::text, ''), $1
+                 )
+                 RETURNING id::text, status
+                 """,
+                 [
+                   uid,
+                   input.priority,
+                   requested_start_at,
+                   booking.duration_hours,
+                   booking.address,
+                   bid,
+                   booking.service_id,
+                   Jason.encode!(input.requirements),
+                   input.notes
+                 ]
+               ) do
+          [[id, status]] = result.rows
+          %{id: id, status: status, kind: "replacement", relatedBookingId: booking_id}
+        else
+          {:error,
+           %Postgrex.Error{
+             postgres: %{constraint: "direct_service_requests_active_replacement_uniq"}
+           }} ->
+            Repo.rollback(:replacement_already_requested)
+
+          {:error, reason} when is_atom(reason) ->
+            Repo.rollback(reason)
+
+          {:error, error} ->
+            Repo.rollback({:database, error})
+        end
+      end)
+      |> normalize_transaction()
     else
-      :error ->
-        {:error, :not_found}
-
-      {:error,
-       %Postgrex.Error{
-         postgres: %{constraint: "direct_service_requests_active_replacement_uniq"}
-       }} ->
-        {:error, :replacement_already_requested}
-
-      {:error, reason} when is_atom(reason) ->
-        {:error, reason}
-
-      {:error, error} ->
-        database_error(error)
+      :error -> {:error, :not_found}
+      {:error, reason} when is_atom(reason) -> {:error, reason}
     end
   end
 
@@ -390,27 +394,41 @@ defmodule Mithril.DirectDispatch do
            """
            SELECT b.address,
                   ((b.scheduled_date + b.scheduled_time)
-                    AT TIME ZONE COALESCE(NULLIF(b.timezone, ''), 'Africa/Accra')),
+                    AT TIME ZONE COALESCE(
+                      NULLIF(btrim(to_jsonb(b)->>'timezone_name'), ''),
+                      NULLIF(btrim(to_jsonb(b)->>'timezone'), ''),
+                      'Africa/Accra'
+                    )),
                   b.duration_hours,
                   b.status,
+                  b.payment_status,
                   b.service_id
            FROM public.bookings b
            WHERE b.id = $1 AND b.customer_id = $2
            LIMIT 1
+           FOR UPDATE
            """,
            [bid, uid]
          ) do
-      {:ok, %{rows: [[address, requested_start_at, duration_hours, status, service_id]]}} ->
-        if String.downcase(to_string(status)) not in ~w(pending confirmed scheduled) do
-          {:error, :booking_closed}
-        else
-          {:ok,
-           %{
-             address: address,
-             requested_start_at: requested_start_at,
-             duration_hours: duration_hours,
-             service_id: service_id
-           }}
+      {:ok,
+       %{
+         rows: [[address, requested_start_at, duration_hours, status, payment_status, service_id]]
+       }} ->
+        cond do
+          String.downcase(to_string(payment_status)) != "paid" ->
+            {:error, :booking_unpaid}
+
+          String.downcase(to_string(status)) not in ~w(pending confirmed scheduled) ->
+            {:error, :booking_closed}
+
+          true ->
+            {:ok,
+             %{
+               address: address,
+               requested_start_at: requested_start_at,
+               duration_hours: duration_hours,
+               service_id: service_id
+             }}
         end
 
       {:ok, %{rows: []}} ->

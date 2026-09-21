@@ -133,6 +133,128 @@ defmodule Mithril.DirectBookingsTest do
              ).rows
   end
 
+  test "rejects automatic cancellation while a direct refund request is actionable" do
+    customer_id = Ecto.UUID.generate()
+
+    for status <- ["requested", "reviewing", "approved", "processing"] do
+      booking_id =
+        insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "scheduled",
+          payment_status: "paid",
+          reference: "T_direct_queued_request_#{status}"
+        )
+
+      Repo.query!(
+        """
+        INSERT INTO public.direct_refund_requests (booking_id, status)
+        VALUES ($1, $2)
+        """,
+        [Ecto.UUID.dump!(booking_id), status]
+      )
+
+      assert {:error, {:refund_request_conflict, message}} =
+               DirectBookingCancels.cancel(customer_id, booking_id, %{})
+
+      assert message =~ "refund request in progress"
+
+      assert [["scheduled"]] =
+               Repo.query!(
+                 "SELECT status FROM public.bookings WHERE id = $1",
+                 [Ecto.UUID.dump!(booking_id)]
+               ).rows
+
+      assert [[0]] =
+               Repo.query!(
+                 "SELECT count(*) FROM public.booking_refunds WHERE booking_id = $1",
+                 [Ecto.UUID.dump!(booking_id)]
+               ).rows
+    end
+  end
+
+  test "blocks automatic cancellation while a processed direct refund is unreconciled" do
+    customer_id = Ecto.UUID.generate()
+
+    booking_id =
+      insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "scheduled",
+        payment_status: "paid",
+        reference: "T_direct_unreconciled_processed"
+      )
+
+    Repo.query!(
+      """
+      INSERT INTO public.direct_refund_requests (
+        booking_id, status, proposed_refund_amount_minor,
+        canonical_refunded_amount_minor_at_request
+      ) VALUES ($1, 'processed', 19350, 0)
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:error, {:refund_reconciliation_pending, message}} =
+             DirectBookingCancels.cancel(customer_id, booking_id, %{})
+
+    assert message =~ "still being reconciled"
+
+    assert [["scheduled"]] =
+             Repo.query!(
+               "SELECT status FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert [[0]] =
+             Repo.query!(
+               "SELECT count(*) FROM public.booking_refunds WHERE booking_id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+  end
+
+  test "allows same-day cancellation when an actionable refund request has zero value" do
+    customer_id = Ecto.UUID.generate()
+    [[local_today]] = Repo.query!("SELECT (now() AT TIME ZONE 'Africa/Accra')::date").rows
+
+    booking_id =
+      insert_booking!(customer_id, local_today, ~T[23:59:00], "scheduled",
+        payment_status: "paid",
+        reference: "T_direct_zero_value_request"
+      )
+
+    Repo.query!(
+      """
+      INSERT INTO public.direct_refund_requests (booking_id, status)
+      VALUES ($1, 'requested')
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:ok, result} = DirectBookingCancels.cancel(customer_id, booking_id, %{})
+    assert result.status == "cancelled"
+    assert result.tier == "no_refund"
+    assert result.refundAmountMinor == 0
+    assert result.refundStatus == "skipped"
+
+    assert [["cancelled"]] =
+             Repo.query!(
+               "SELECT status FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert [["skipped", 0]] =
+             Repo.query!(
+               "SELECT status, refund_amount_minor FROM public.booking_refunds WHERE booking_id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert [[1]] =
+             Repo.query!(
+               """
+               SELECT count(*)
+               FROM public.direct_refund_requests
+               WHERE booking_id = $1
+                 AND status = 'requested'
+               """,
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+  end
+
   test "is idempotent once a refund row exists" do
     customer_id = Ecto.UUID.generate()
 
@@ -143,6 +265,15 @@ defmodule Mithril.DirectBookingsTest do
       )
 
     assert {:ok, first} = DirectBookingCancels.cancel(customer_id, booking_id, %{})
+
+    Repo.query!(
+      """
+      INSERT INTO public.direct_refund_requests (booking_id, status)
+      VALUES ($1, 'requested')
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
     assert {:ok, second} = DirectBookingCancels.cancel(customer_id, booking_id, %{})
     assert second.refundStatus == first.refundStatus
     assert second.refundAmountMinor == first.refundAmountMinor
@@ -174,7 +305,7 @@ defmodule Mithril.DirectBookingsTest do
     assert {:error, :not_found} = DirectBookingCancels.cancel(other_id, booking_id, %{})
   end
 
-  test "records a failed Paystack refund without rolling back the cancel" do
+  test "holds an ambiguous Paystack refund for manual review without rolling back the cancel" do
     Application.put_env(:mithril, :paystack_test_refund_result, {:error, :provider_unavailable})
 
     customer_id = Ecto.UUID.generate()
@@ -182,7 +313,66 @@ defmodule Mithril.DirectBookingsTest do
     booking_id =
       insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "scheduled",
         payment_status: "paid",
-        reference: "T_direct_fail"
+        reference: "T_direct_unknown_refund"
+      )
+
+    assert {:ok, result} = DirectBookingCancels.cancel(customer_id, booking_id, %{})
+    assert result.status == "cancelled"
+    assert result.refundStatus == "manual_review"
+    assert result.successMessage =~ "process your refund manually"
+
+    assert [["manual_review", reason]] =
+             Repo.query!(
+               "SELECT status, failure_reason FROM public.booking_refunds WHERE booking_id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert reason =~ "verify provider state before retrying"
+  end
+
+  test "holds Paystack 5xx refund responses for manual review" do
+    Application.put_env(
+      :mithril,
+      :paystack_test_refund_result,
+      {:error, {:provider, 503, "provider unavailable"}}
+    )
+
+    customer_id = Ecto.UUID.generate()
+
+    booking_id =
+      insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "scheduled",
+        payment_status: "paid",
+        reference: "T_direct_5xx_refund"
+      )
+
+    assert {:ok, result} = DirectBookingCancels.cancel(customer_id, booking_id, %{})
+    assert result.status == "cancelled"
+    assert result.refundStatus == "manual_review"
+    assert result.successMessage =~ "process your refund manually"
+
+    assert [["manual_review", reason]] =
+             Repo.query!(
+               "SELECT status, failure_reason FROM public.booking_refunds WHERE booking_id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert reason =~ "verify provider state before retrying"
+    assert reason =~ "provider unavailable"
+  end
+
+  test "records a definite Paystack refund rejection as failed" do
+    Application.put_env(
+      :mithril,
+      :paystack_test_refund_result,
+      {:error, {:provider, 400, "refund rejected"}}
+    )
+
+    customer_id = Ecto.UUID.generate()
+
+    booking_id =
+      insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "scheduled",
+        payment_status: "paid",
+        reference: "T_direct_rejected_refund"
       )
 
     assert {:ok, result} = DirectBookingCancels.cancel(customer_id, booking_id, %{})
@@ -452,6 +642,7 @@ defmodule Mithril.DirectBookingsTest do
       raise "Refusing to recreate booking fixtures; expected mithril_test, got #{inspect(database)}"
     end
 
+    Repo.query!("DROP TABLE IF EXISTS public.direct_refund_requests CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.booking_refunds CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.payment_attempts CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.bookings CASCADE")
@@ -665,6 +856,17 @@ defmodule Mithril.DirectBookingsTest do
       refund_reason_code text,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.direct_refund_requests (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      booking_id uuid NOT NULL REFERENCES public.bookings(id) ON DELETE CASCADE,
+      status text NOT NULL DEFAULT 'requested',
+      proposed_refund_amount_minor bigint,
+      canonical_refunded_amount_minor_at_request bigint,
+      created_at timestamptz NOT NULL DEFAULT now()
     )
     """)
   end

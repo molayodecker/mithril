@@ -15,6 +15,7 @@ defmodule Mithril.DirectAdminBookings do
   @reassignable ~w(pending confirmed scheduled)
   @assignable_statuses ~w(pending confirmed scheduled en_route arrived in_progress completed)
   @assignable_hold_statuses ~w(pending confirmed scheduled)
+  @default_timezone "Africa/Accra"
 
   def list_bookings(user_id, params \\ %{}) do
     with {:ok, uid} <- dump_uuid(user_id),
@@ -80,27 +81,38 @@ defmodule Mithril.DirectAdminBookings do
     with {:ok, admin_uid} <- dump_uuid(user_id),
          {:ok, bid} <- dump_uuid(booking_id),
          {:ok, cleaner_uid} <- dump_uuid(params["cleanerId"] || params[:cleanerId]),
-         :ok <- require_admin(admin_uid),
-         :ok <- ensure_cleaner_role(cleaner_uid) do
-      case Repo.query(
-             """
-             UPDATE public.bookings
-             SET cleaner_id = $2,
-                 status = CASE
-                   WHEN status::text = 'pending' THEN 'confirmed'
-                   ELSE status::text
-                 END,
-                 cleaner_assigned_at = COALESCE(cleaner_assigned_at, now()),
-                 updated_at = now()
-             WHERE id = $1
-               AND status::text = ANY($3::text[])
-             RETURNING id
-             """,
-             [bid, cleaner_uid, @reassignable]
-           ) do
-        {:ok, %{num_rows: 1}} -> fetch_booking(bid)
-        {:ok, %{num_rows: 0}} -> {:error, :not_reassignable}
-        {:error, error} -> database_error(error)
+         :ok <- require_admin(admin_uid) do
+      Repo.transaction(fn ->
+        with {:ok, booking} <- lock_booking_for_assignment(bid) do
+          if booking.current_cleaner_id == cleaner_uid do
+            case repair_same_cleaner_reservation(cleaner_uid, booking) do
+              :ok -> :ok
+              {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
+              {:error, error} -> Repo.rollback({:database, error})
+            end
+          else
+            with :ok <- ensure_reassignable(booking),
+                 :ok <- lock_cleaner_schedule(cleaner_uid),
+                 :ok <- ensure_cleaner_role(cleaner_uid),
+                 :ok <- ensure_dispatch_cleaner(cleaner_uid, booking.service_id),
+                 :ok <- ensure_assignment_window(booking),
+                 :ok <- ensure_cleaner_available(cleaner_uid, booking),
+                 :ok <- persist_cleaner_assignment(bid, cleaner_uid, booking) do
+              :ok
+            else
+              {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
+              {:error, error} -> Repo.rollback({:database, error})
+            end
+          end
+        else
+          {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
+          {:error, error} -> Repo.rollback({:database, error})
+        end
+      end)
+      |> normalize_transaction()
+      |> case do
+        {:ok, :ok} -> fetch_booking(bid)
+        {:error, reason} -> {:error, reason}
       end
     else
       :error -> {:error, :invalid_request}
@@ -410,6 +422,262 @@ defmodule Mithril.DirectAdminBookings do
     end
   end
 
+  # Assignment mutations use one global lock order: booking row first,
+  # then the target cleaner schedule advisory lock. Same-cleaner retries skip
+  # mutable worker validation, but may still repair a missing legacy period.
+  defp lock_cleaner_schedule(cleaner_uid) do
+    case Repo.query(
+           "SELECT pg_advisory_xact_lock(hashtextextended($1::uuid::text, 0))",
+           [cleaner_uid]
+         ) do
+      {:ok, _} -> :ok
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp lock_booking_for_assignment(bid) do
+    case Repo.query(
+           """
+           SELECT
+             status::text,
+             service_id,
+             cleaner_id,
+             booking_period IS NULL AS missing_booking_period,
+             COALESCE(
+               lower(booking_period),
+               (scheduled_date + scheduled_time)
+                 AT TIME ZONE COALESCE(
+                   NULLIF(btrim(to_jsonb(b)->>'timezone_name'), ''),
+                   NULLIF(btrim(to_jsonb(b)->>'timezone'), ''),
+                   $2::text
+                 )
+             ) AS starts_at,
+             COALESCE(
+               upper(booking_period),
+               ((scheduled_date + scheduled_time)
+                 AT TIME ZONE COALESCE(
+                   NULLIF(btrim(to_jsonb(b)->>'timezone_name'), ''),
+                   NULLIF(btrim(to_jsonb(b)->>'timezone'), ''),
+                   $2::text
+                 ))
+                 + make_interval(secs => (duration_hours * 3600)::double precision)
+             ) AS ends_at,
+             scheduled_date
+           FROM public.bookings b
+           WHERE b.id = $1
+           FOR UPDATE
+           """,
+           [bid, @default_timezone]
+         ) do
+      {:ok,
+       %{
+         rows: [
+           [
+             status,
+             service_id,
+             current_cleaner_id,
+             missing_booking_period,
+             starts_at,
+             ends_at,
+             scheduled_date
+           ]
+         ]
+       }} ->
+        {:ok,
+         %{
+           status: status,
+           service_id: service_id,
+           current_cleaner_id: current_cleaner_id,
+           missing_booking_period: missing_booking_period,
+           starts_at: starts_at,
+           ends_at: ends_at,
+           scheduled_date: scheduled_date,
+           booking_id: bid
+         }}
+
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp repair_same_cleaner_reservation(_cleaner_uid, %{missing_booking_period: false}), do: :ok
+
+  defp repair_same_cleaner_reservation(cleaner_uid, booking) do
+    with :ok <- ensure_reservation_window(booking),
+         :ok <- lock_cleaner_schedule(cleaner_uid) do
+      persist_legacy_booking_period(booking)
+    end
+  end
+
+  defp ensure_reservation_window(%{
+         starts_at: %DateTime{} = starts_at,
+         ends_at: %DateTime{} = ends_at
+       }) do
+    if DateTime.compare(ends_at, starts_at) == :gt, do: :ok, else: {:error, :invalid_timeslot}
+  end
+
+  defp ensure_reservation_window(_booking), do: {:error, :invalid_timeslot}
+
+  defp persist_legacy_booking_period(booking) do
+    case Repo.query(
+           """
+           UPDATE public.bookings
+           SET booking_period = tstzrange($2::timestamptz, $3::timestamptz, '[)'),
+               updated_at = now()
+           WHERE id = $1
+             AND booking_period IS NULL
+           RETURNING id
+           """,
+           [booking.booking_id, booking.starts_at, booking.ends_at]
+         ) do
+      {:ok, %{num_rows: 1}} ->
+        :ok
+
+      {:ok, %{num_rows: 0}} ->
+        :ok
+
+      {:error, %Postgrex.Error{postgres: %{code: :exclusion_violation}}} ->
+        {:error, :cleaner_unavailable}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp ensure_reassignable(%{status: status}) when status in @reassignable, do: :ok
+  defp ensure_reassignable(_booking), do: {:error, :not_reassignable}
+
+  defp ensure_dispatch_cleaner(cleaner_uid, service_id) do
+    case Repo.query(
+           """
+           SELECT EXISTS(
+             SELECT 1
+             FROM public.cleaner_data cd
+             JOIN public.service_types st ON st.id = $2
+             WHERE cd.user_id = $1
+               AND cd.verified = true
+               AND cd.status = 'active'
+               AND cd.hourly_rate IS NOT NULL
+               AND cd.hourly_rate > 0
+               AND st.specialty_slug = ANY(COALESCE(cd.specialties, ARRAY[]::text[]))
+           )
+           """,
+           [cleaner_uid, service_id]
+         ) do
+      {:ok, %{rows: [[true]]}} -> :ok
+      {:ok, %{rows: [[false]]}} -> {:error, :cleaner_unavailable}
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp ensure_assignment_window(%{
+         starts_at: %DateTime{} = starts_at,
+         ends_at: %DateTime{} = ends_at
+       }) do
+    cond do
+      DateTime.compare(ends_at, starts_at) != :gt -> {:error, :invalid_timeslot}
+      DateTime.compare(starts_at, DateTime.utc_now()) != :gt -> {:error, :past_schedule}
+      true -> :ok
+    end
+  end
+
+  defp ensure_assignment_window(_), do: {:error, :invalid_timeslot}
+
+  defp ensure_cleaner_available(cleaner_uid, booking) do
+    case Repo.query(
+           """
+           SELECT
+             EXISTS(
+               SELECT 1
+               FROM public.cleaner_availability_exceptions cae
+               WHERE cae.cleaner_id = $1
+                 AND cae.exception_date = $4::date
+             ),
+             public.cleaner_has_booking_conflict(
+               $1,
+               $2::timestamptz,
+               $3::timestamptz,
+               $5::uuid
+             )
+           """,
+           [
+             cleaner_uid,
+             booking.starts_at,
+             booking.ends_at,
+             booking.scheduled_date,
+             booking.booking_id
+           ]
+         ) do
+      {:ok, %{rows: [[false, false]]}} -> :ok
+      {:ok, %{rows: [[true, _]]}} -> {:error, :cleaner_unavailable}
+      {:ok, %{rows: [[_, true]]}} -> {:error, :cleaner_unavailable}
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp persist_cleaner_assignment(bid, cleaner_uid, booking) do
+    same_cleaner? = booking.current_cleaner_id == cleaner_uid
+
+    case Repo.query(
+           """
+           UPDATE public.bookings
+           SET cleaner_id = $2,
+               direct_assigned_cleaner_id = $2,
+               booking_period = COALESCE(
+                 booking_period,
+                 tstzrange($5::timestamptz, $6::timestamptz, '[)')
+               ),
+               status = CASE
+                 WHEN status::text = 'pending' THEN 'confirmed'
+                 ELSE status::text
+               END,
+               cleaner_assigned_at = CASE
+                 WHEN $4::boolean THEN COALESCE(cleaner_assigned_at, now())
+                 ELSE now()
+               END,
+               cleaner_accepted_at = CASE
+                 WHEN $4::boolean THEN cleaner_accepted_at
+                 ELSE NULL
+               END,
+               assignment_phase = CASE
+                 WHEN $4::boolean THEN assignment_phase
+                 ELSE NULL
+               END,
+               assignment_hold_until = CASE
+                 WHEN $4::boolean THEN assignment_hold_until
+                 ELSE NULL
+               END,
+               updated_at = now()
+           WHERE id = $1
+             AND status::text = ANY($3::text[])
+           RETURNING id
+           """,
+           [
+             bid,
+             cleaner_uid,
+             @reassignable,
+             same_cleaner?,
+             booking.starts_at,
+             booking.ends_at
+           ]
+         ) do
+      {:ok, %{num_rows: 1}} ->
+        :ok
+
+      {:ok, %{num_rows: 0}} ->
+        {:error, :not_reassignable}
+
+      {:error, %Postgrex.Error{postgres: %{code: :exclusion_violation}}} ->
+        {:error, :cleaner_unavailable}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
   defp ensure_cleaner_role(cleaner_uid) do
     case Repo.query(
            """
@@ -570,6 +838,10 @@ defmodule Mithril.DirectAdminBookings do
   end
 
   defp map_rpc_error(error), do: database_error(error)
+
+  defp normalize_transaction({:ok, value}), do: {:ok, value}
+  defp normalize_transaction({:error, {:database, error}}), do: database_error(error)
+  defp normalize_transaction({:error, reason}), do: {:error, reason}
 
   defp require_admin(uid) do
     if Auth.staff_uuid?(uid), do: :ok, else: {:error, :forbidden}

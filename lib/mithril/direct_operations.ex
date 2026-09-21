@@ -67,6 +67,8 @@ defmodule Mithril.DirectOperations do
             Repo.rollback(:payment_not_refundable)
 
           true ->
+            :ok = ensure_no_actionable_booking_refund!(booking.uuid)
+            :ok = ensure_processed_refunds_reconciled!(booking.uuid)
             policy = cancellation_payload(booking)
 
             ensure_refund_request!(
@@ -535,7 +537,7 @@ defmodule Mithril.DirectOperations do
        do: tier
 
   defp cancellation_tier(booking) do
-    timezone = booking.timezone_name || booking.timezone || @default_timezone
+    timezone = booking_timezone(booking)
 
     case Repo.query(
            """
@@ -552,6 +554,69 @@ defmodule Mithril.DirectOperations do
          ) do
       {:ok, %{rows: [[tier]]}} -> tier
       _ -> "no_refund"
+    end
+  end
+
+  defp booking_timezone(booking) do
+    [booking.timezone_name, booking.timezone, @default_timezone]
+    |> Enum.find(@default_timezone, fn value ->
+      is_binary(value) and String.trim(value) != ""
+    end)
+    |> String.trim()
+  end
+
+  defp ensure_no_actionable_booking_refund!(booking_id) do
+    case Repo.query(
+           """
+           SELECT status
+           FROM public.booking_refunds
+           WHERE booking_id = $1
+             AND status IN ('pending', 'manual_review')
+           LIMIT 1
+           """,
+           [booking_id]
+         ) do
+      {:ok, %{rows: []}} ->
+        :ok
+
+      {:ok, %{rows: [[_status]]}} ->
+        Repo.rollback(:refund_request_conflict)
+
+      {:error, error} ->
+        Repo.rollback({:database, error})
+    end
+  end
+
+  defp ensure_processed_refunds_reconciled!(booking_id) do
+    case Repo.query(
+           """
+           SELECT 1
+           FROM public.direct_refund_requests drr
+           WHERE drr.booking_id = $1
+             AND drr.status = 'processed'
+             AND (
+               drr.canonical_refunded_amount_minor_at_request IS NULL
+               OR COALESCE((
+                    SELECT SUM(br.refund_amount_minor)::bigint
+                    FROM public.booking_refunds br
+                    WHERE br.booking_id = drr.booking_id
+                      AND br.status = 'processed'
+                  ), 0)::bigint
+                  < drr.canonical_refunded_amount_minor_at_request
+                    + COALESCE(drr.proposed_refund_amount_minor, 0)
+             )
+           LIMIT 1
+           """,
+           [booking_id]
+         ) do
+      {:ok, %{rows: []}} ->
+        :ok
+
+      {:ok, %{rows: [[1]]}} ->
+        Repo.rollback(:refund_reconciliation_pending)
+
+      {:error, error} ->
+        Repo.rollback({:database, error})
     end
   end
 
@@ -583,13 +648,23 @@ defmodule Mithril.DirectOperations do
            """
            INSERT INTO public.direct_refund_requests (
              booking_id, customer_id, requested_by_user_id, status, reason,
-             policy_tier, proposed_refund_percent, proposed_refund_amount_minor, source
+             policy_tier, proposed_refund_percent, proposed_refund_amount_minor,
+             canonical_refunded_amount_minor_at_request, source
            ) VALUES (
-             $1, $2::text::uuid, $3, 'requested', $4, $5, $6, $7, 'mcp'
+             $1, $2::text::uuid, $3, 'requested', $4, $5, $6, $7, $8, 'mcp'
            )
            RETURNING id::text, status
            """,
-           [booking.uuid, booking.customer_id, actor_uid, reason, tier, percent, amount_minor]
+           [
+             booking.uuid,
+             booking.customer_id,
+             actor_uid,
+             reason,
+             tier,
+             percent,
+             amount_minor,
+             booking.refunded_amount_minor
+           ]
          ) do
       {:ok, %{rows: [[id, status]]}} ->
         %{id: id, status: status, existing: false}

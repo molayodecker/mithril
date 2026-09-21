@@ -8,7 +8,8 @@ ADMIN_URL="${DIRECT_RESERVATION_TEST_ADMIN_URL:-${PSQL_DATABASE_URL%/*}/postgres
 TEST_DB="mithril_direct_reservation_test"
 TEST_URL="${ADMIN_URL%/*}/$TEST_DB"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MIGRATION="$ROOT_DIR/priv/repo/sql/direct/20260907160000_direct_worker_schedule_reservations.sql"
+RESERVATION_MIGRATION="$ROOT_DIR/priv/repo/sql/direct/20260907160000_direct_worker_schedule_reservations.sql"
+ADVISORY_LOCK_MIGRATION="$ROOT_DIR/priv/repo/sql/direct/20260907170000_worker_reservation_advisory_lock.sql"
 
 cleanup() {
   psql "$ADMIN_URL" -X -q -v ON_ERROR_STOP=1 \
@@ -50,7 +51,19 @@ STABLE
 AS $$ SELECT 45 $$;
 SQL
 
-psql "$TEST_URL" -X -v ON_ERROR_STOP=1 -f "$MIGRATION" >/dev/null
+psql "$TEST_URL" -X -v ON_ERROR_STOP=1 -f "$RESERVATION_MIGRATION" >/dev/null
+psql "$TEST_URL" -X -v ON_ERROR_STOP=1 -f "$ADVISORY_LOCK_MIGRATION" >/dev/null
+
+advisory_lock_count="$(psql "$TEST_URL" -X -Atqc "
+  SELECT count(*)
+  FROM pg_proc
+  WHERE oid = 'public.upsert_worker_schedule_reservation(text,uuid,uuid,timestamptz,timestamptz)'::regprocedure
+    AND pg_get_functiondef(oid) LIKE '%pg_advisory_xact_lock%';
+")"
+[[ "$advisory_lock_count" == "1" ]] || {
+  echo "Expected worker reservation upsert to acquire the cleaner advisory lock." >&2
+  exit 1
+}
 
 psql "$TEST_URL" -X -q -v ON_ERROR_STOP=1 <<'SQL'
 INSERT INTO public.users(id)

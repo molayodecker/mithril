@@ -78,7 +78,8 @@ defmodule Mithril.DirectDispatchTest do
       scheduled_time time NOT NULL,
       duration_hours numeric NOT NULL,
       timezone text,
-      status text NOT NULL DEFAULT 'pending'
+      status text NOT NULL DEFAULT 'pending',
+      payment_status text NOT NULL DEFAULT 'paid'
     )
     """)
 

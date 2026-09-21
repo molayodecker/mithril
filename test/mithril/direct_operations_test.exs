@@ -88,6 +88,7 @@ defmodule Mithril.DirectOperationsTest do
       policy_tier text,
       proposed_refund_percent integer,
       proposed_refund_amount_minor bigint,
+      canonical_refunded_amount_minor_at_request bigint,
       source text NOT NULL DEFAULT 'mcp',
       created_at timestamptz NOT NULL DEFAULT now()
     )
@@ -139,6 +140,112 @@ defmodule Mithril.DirectOperationsTest do
 
     assert percent == 100
     assert amount == 5_000
+  end
+
+  test "refund policy falls back from blank timezone_name to booking timezone" do
+    customer_id = insert_user!("customer-blank-timezone@example.com")
+    booking_id = insert_booking!(customer_id, "paid", 10_000)
+
+    Repo.query!(
+      """
+      UPDATE public.bookings
+      SET timezone_name = '   ',
+          timezone = 'Africa/Accra'
+      WHERE id = $1
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:ok, policy} = DirectOperations.cancellation_policy(customer_id, booking_id)
+    assert policy.refundTier == "full_refund"
+    assert policy.refundPercent == 100
+    assert policy.refundAmountMinor == 10_000
+
+    assert {:ok, request} =
+             DirectOperations.request_refund(customer_id, booking_id, %{
+               "reason" => "Please refund this eligible booking"
+             })
+
+    assert request.status == "requested"
+
+    assert [["full_refund", 100, 10_000]] =
+             Repo.query!(
+               """
+               SELECT policy_tier, proposed_refund_percent, proposed_refund_amount_minor
+               FROM public.direct_refund_requests
+               WHERE booking_id = $1
+               """,
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+  end
+
+  test "blocks another refund when a prior canonical refund masks a newer processed direct payout" do
+    customer_id = insert_user!("customer-reconciliation@example.com")
+    booking_id = insert_booking!(customer_id, "partially_refunded", 10_000)
+
+    Repo.query!(
+      """
+      INSERT INTO public.booking_refunds (booking_id, refund_amount_minor, status)
+      VALUES ($1, 5000, 'processed')
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.direct_refund_requests (
+        booking_id, customer_id, requested_by_user_id, status, reason,
+        policy_tier, proposed_refund_percent, proposed_refund_amount_minor,
+        canonical_refunded_amount_minor_at_request
+      ) VALUES ($1, $2, $2, 'processed', 'Remaining refund paid externally',
+                'full_refund', 100, 5000, 5000)
+      """,
+      [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(customer_id)]
+    )
+
+    assert {:error, :refund_reconciliation_pending} =
+             DirectOperations.request_refund(customer_id, booking_id, %{
+               "reason" => "Please refund the remaining eligible balance again"
+             })
+
+    Repo.query!(
+      """
+      UPDATE public.booking_refunds
+      SET refund_amount_minor = 10000
+      WHERE booking_id = $1
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:ok, policy} = DirectOperations.cancellation_policy(customer_id, booking_id)
+    assert policy.refundAmountMinor == 0
+  end
+
+  test "blocks a second refund request while a cancellation refund is pending or under manual review" do
+    customer_id = insert_user!("customer-in-flight@example.com")
+
+    for status <- ["pending", "manual_review"] do
+      booking_id = insert_booking!(customer_id, "paid", 10_000)
+
+      Repo.query!(
+        """
+        INSERT INTO public.booking_refunds (booking_id, refund_amount_minor, status)
+        VALUES ($1, 10000, $2)
+        """,
+        [Ecto.UUID.dump!(booking_id), status]
+      )
+
+      assert {:error, :refund_request_conflict} =
+               DirectOperations.request_refund(customer_id, booking_id, %{
+                 "reason" => "Please refund this booking"
+               })
+
+      assert [[0]] =
+               Repo.query!(
+                 "SELECT count(*) FROM public.direct_refund_requests WHERE booking_id = $1",
+                 [Ecto.UUID.dump!(booking_id)]
+               ).rows
+    end
   end
 
   test "partial refund already satisfying the policy does not queue another cancellation refund" do
