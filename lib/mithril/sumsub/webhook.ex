@@ -189,13 +189,13 @@ defmodule Mithril.Sumsub.Webhook do
         )
 
       true ->
-        persist_locked(existing, event, retried?)
+        persist_locked(existing, latest, event, retried?)
     end
   end
 
-  defp persist_locked(existing, event, retried?) do
+  defp persist_locked(existing, latest, event, retried?) do
     {worker_application_id, sync_worker_verification?} =
-      resolve_worker_application(existing, event)
+      resolve_worker_application(existing, latest, event)
 
     preserve = preserve_final_review?(existing, event.type, event.review_answer)
     kyc_status = effective_kyc_status(existing, event, preserve)
@@ -608,17 +608,17 @@ defmodule Mithril.Sumsub.Webhook do
     }
   end
 
-  defp resolve_worker_application(existing, event) do
+  defp resolve_worker_application(existing, latest, event) do
     user_id = event.user_id
 
     case existing && existing.worker_application_id do
       nil ->
-        {find_worker_application_id(user_id, event.applicant_id), true}
+        {find_worker_application_id(user_id, event, latest), true}
 
       application_id ->
         case lock_worker_application(application_id) do
           nil ->
-            {find_worker_application_id(user_id, event.applicant_id), true}
+            {find_worker_application_id(user_id, event, latest), true}
 
           %{user_id: ^user_id, applicant_id: applicant_id}
           when is_nil(applicant_id) or applicant_id == event.applicant_id ->
@@ -664,9 +664,10 @@ defmodule Mithril.Sumsub.Webhook do
     end
   end
 
-  defp find_worker_application_id(user_id, applicant_id) do
-    find_worker_application_by_applicant_id(user_id, applicant_id) ||
-      find_unique_worker_application_for_user(user_id, applicant_id) ||
+  defp find_worker_application_id(user_id, event, latest) do
+    find_worker_application_by_applicant_id(user_id, event.applicant_id) ||
+      find_unique_worker_application_for_user(user_id, event.applicant_id) ||
+      find_replaceable_worker_application_for_user(user_id, event, latest) ||
       find_worker_application_by_contact(user_id)
   end
 
@@ -709,6 +710,62 @@ defmodule Mithril.Sumsub.Webhook do
       {:ok, %{rows: []}} -> nil
       {:ok, %{rows: [_first, _second]}} -> nil
       {:error, %Postgrex.Error{postgres: %{code: :undefined_table}}} -> nil
+      {:error, error} -> Repo.rollback(error)
+    end
+  end
+
+  defp find_replaceable_worker_application_for_user(user_id, event, latest) do
+    previous_applicant_id = latest && latest.applicant_id
+
+    if state_changing_event?(event) and is_binary(previous_applicant_id) and
+         previous_applicant_id != event.applicant_id do
+      case Repo.query(
+             """
+             SELECT id
+             FROM public.cleaner_applications
+             WHERE user_id = $1
+               AND sumsub_applicant_id = $2
+             ORDER BY created_at DESC NULLS LAST
+             LIMIT 2
+             FOR UPDATE
+             """,
+             [user_id, previous_applicant_id]
+           ) do
+        {:ok, %{rows: [[id]]}} ->
+          relink_worker_application(id, user_id, previous_applicant_id, event.applicant_id)
+
+        {:ok, %{rows: []}} ->
+          nil
+
+        {:ok, %{rows: [_first, _second]}} ->
+          nil
+
+        {:error, %Postgrex.Error{postgres: %{code: :undefined_table}}} ->
+          nil
+
+        {:error, error} ->
+          Repo.rollback(error)
+      end
+    else
+      nil
+    end
+  end
+
+  defp relink_worker_application(application_id, user_id, previous_applicant_id, applicant_id) do
+    case Repo.query(
+           """
+           UPDATE public.cleaner_applications
+           SET sumsub_applicant_id = $4,
+               updated_at = now()
+           WHERE id = $1
+             AND user_id = $2
+             AND sumsub_applicant_id = $3
+           RETURNING id
+           """,
+           [application_id, user_id, previous_applicant_id, applicant_id]
+         ) do
+      {:ok, %{rows: [[id]]}} -> id
+      {:ok, %{rows: []}} -> nil
       {:error, error} -> Repo.rollback(error)
     end
   end
