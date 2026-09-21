@@ -542,6 +542,11 @@ defmodule Mithril.Sumsub.WebhookTest do
     old_green = Jason.encode!(reviewed_payload(user_id, "appl-old", "GREEN", 100))
     assert {:ok, _} = Webhook.handle(old_green, sign(old_green))
 
+    Repo.query!(
+      "UPDATE public.cleaner_applications SET sumsub_applicant_id = $2 WHERE id = $1",
+      [Ecto.UUID.dump!(application_id), "appl-new"]
+    )
+
     new_red = Jason.encode!(reviewed_payload(user_id, "appl-new", "RED", 200))
     assert {:ok, _} = Webhook.handle(new_red, sign(new_red))
 
