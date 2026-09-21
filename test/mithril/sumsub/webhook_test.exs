@@ -358,6 +358,56 @@ defmodule Mithril.Sumsub.WebhookTest do
     assert last_ms == 200
   end
 
+  test "non-state callbacks do not advance the review watermark" do
+    user_id = Ecto.UUID.generate()
+    application_id = Ecto.UUID.generate()
+    insert_user!(user_id, "review-watermark@tryinstaclean.com", "+233555000111")
+
+    insert_application!(
+      application_id,
+      user_id,
+      "review-watermark@tryinstaclean.com",
+      "+233555000111"
+    )
+
+    green = Jason.encode!(reviewed_payload(user_id, "appl-watermark", "GREEN", 100))
+    assert {:ok, _} = Webhook.handle(green, sign(green))
+
+    tags =
+      Jason.encode!(%{
+        "type" => "applicantTagsChanged",
+        "applicantId" => "appl-watermark",
+        "externalUserId" => user_id,
+        "levelName" => "id-and-liveness",
+        "createdAtMs" => 300
+      })
+
+    assert {:ok, preserved} = Webhook.handle(tags, sign(tags))
+    assert preserved.kyc_status == "completed"
+
+    red = Jason.encode!(reviewed_payload(user_id, "appl-watermark", "RED", 200))
+    assert {:ok, result} = Webhook.handle(red, sign(red))
+    refute result.skipped_stale
+    assert result.kyc_status == "rejected"
+
+    assert [["rejected", "RED", 300, 200, "applicantTagsChanged"]] =
+             Repo.query!(
+               """
+               SELECT kyc_status, review_answer, last_event_created_at_ms,
+                      last_state_event_created_at_ms, last_event_type
+               FROM public.kyc_profiles
+               WHERE sumsub_applicant_id = $1
+               """,
+               ["appl-watermark"]
+             ).rows
+
+    assert [["rejected", "appl-watermark"]] =
+             Repo.query!(
+               "SELECT kyc_status, sumsub_applicant_id FROM public.cleaner_applications WHERE id = $1",
+               [Ecto.UUID.dump!(application_id)]
+             ).rows
+  end
+
   test "orders provider timestamp strings before stale-event checks" do
     user_id = Ecto.UUID.generate()
     insert_user!(user_id, "provider-time@tryinstaclean.com", "+233555000111")
@@ -565,6 +615,67 @@ defmodule Mithril.Sumsub.WebhookTest do
              ).rows
   end
 
+  test "superseded applicant callbacks do not reclaim the current cleaner application" do
+    user_id = Ecto.UUID.generate()
+    application_id = Ecto.UUID.generate()
+    insert_user!(user_id, "superseded@tryinstaclean.com", "+233555000111")
+
+    insert_application!(
+      application_id,
+      user_id,
+      "superseded@tryinstaclean.com",
+      "+233555000111"
+    )
+
+    old_green = Jason.encode!(reviewed_payload(user_id, "appl-old-link", "GREEN", 100))
+    assert {:ok, _} = Webhook.handle(old_green, sign(old_green))
+
+    Repo.query!(
+      """
+      UPDATE public.cleaner_applications
+      SET sumsub_applicant_id = 'appl-current-link',
+          kyc_status = 'completed',
+          kyc_review_answer = 'GREEN'
+      WHERE id = $1
+      """,
+      [Ecto.UUID.dump!(application_id)]
+    )
+
+    current_green =
+      Jason.encode!(reviewed_payload(user_id, "appl-current-link", "GREEN", 200))
+
+    assert {:ok, _} = Webhook.handle(current_green, sign(current_green))
+
+    old_deactivated =
+      Jason.encode!(%{
+        "type" => "applicantDeactivated",
+        "applicantId" => "appl-old-link",
+        "externalUserId" => user_id,
+        "levelName" => "id-and-liveness",
+        "createdAtMs" => 300
+      })
+
+    assert {:ok, result} = Webhook.handle(old_deactivated, sign(old_deactivated))
+    refute result.worker_mirrored
+    assert is_nil(result.worker_application_id)
+
+    assert [["appl-current-link", "completed", "GREEN"]] =
+             Repo.query!(
+               """
+               SELECT sumsub_applicant_id, kyc_status, kyc_review_answer
+               FROM public.cleaner_applications
+               WHERE id = $1
+               """,
+               [Ecto.UUID.dump!(application_id)]
+             ).rows
+
+    assert [["verified"]] =
+             Repo.query!(
+               "SELECT status FROM public.cleaner_verifications WHERE id = $1",
+               [Ecto.UUID.dump!(user_id)]
+             ).rows
+  end
+
   test "rejects an applicant id already linked to another user's application" do
     owner_id = Ecto.UUID.generate()
     webhook_user_id = Ecto.UUID.generate()
@@ -594,6 +705,70 @@ defmodule Mithril.Sumsub.WebhookTest do
              ).rows
 
     assert owner == Ecto.UUID.dump!(owner_id)
+  end
+
+  test "contact fallback corroborates phone and email before claiming an application" do
+    user_id = Ecto.UUID.generate()
+    matching_application_id = Ecto.UUID.generate()
+    other_application_id = Ecto.UUID.generate()
+    shared_phone = "+233555009999"
+    insert_user!(user_id, "right-person@tryinstaclean.com", shared_phone)
+
+    insert_unclaimed_application!(
+      other_application_id,
+      "someone-else@tryinstaclean.com",
+      shared_phone
+    )
+
+    insert_unclaimed_application!(
+      matching_application_id,
+      "right-person@tryinstaclean.com",
+      shared_phone
+    )
+
+    raw = Jason.encode!(reviewed_payload(user_id, "appl-contact-corroborated", "GREEN", 100))
+    assert {:ok, result} = Webhook.handle(raw, sign(raw))
+    assert result.worker_application_id == Ecto.UUID.dump!(matching_application_id)
+
+    assert [[nil], [owner]] =
+             Repo.query!(
+               """
+               SELECT user_id
+               FROM public.cleaner_applications
+               WHERE id = ANY($1::uuid[])
+               ORDER BY id
+               """,
+               [[Ecto.UUID.dump!(other_application_id), Ecto.UUID.dump!(matching_application_id)]]
+             ).rows
+
+    assert owner == Ecto.UUID.dump!(user_id)
+  end
+
+  test "contact fallback rejects multiple corroborated unclaimed applications" do
+    user_id = Ecto.UUID.generate()
+    first_application_id = Ecto.UUID.generate()
+    second_application_id = Ecto.UUID.generate()
+    email = "ambiguous-contact@tryinstaclean.com"
+    phone = "+233555008888"
+    insert_user!(user_id, email, phone)
+    insert_unclaimed_application!(first_application_id, email, phone)
+    insert_unclaimed_application!(second_application_id, email, phone)
+
+    raw = Jason.encode!(reviewed_payload(user_id, "appl-contact-ambiguous", "GREEN", 100))
+    assert {:ok, result} = Webhook.handle(raw, sign(raw))
+    refute result.worker_mirrored
+    assert is_nil(result.worker_application_id)
+
+    assert [[nil], [nil]] =
+             Repo.query!(
+               """
+               SELECT user_id
+               FROM public.cleaner_applications
+               WHERE id = ANY($1::uuid[])
+               ORDER BY id
+               """,
+               [[Ecto.UUID.dump!(first_application_id), Ecto.UUID.dump!(second_application_id)]]
+             ).rows
   end
 
   test "does not guess between multiple applications when no applicant link exists" do
@@ -652,12 +827,13 @@ defmodule Mithril.Sumsub.WebhookTest do
       """
       INSERT INTO public.kyc_profiles (
         user_id, sumsub_applicant_id, sumsub_external_user_id,
-        kyc_status, review_answer, level_name, last_event_type, last_event_created_at_ms
+        kyc_status, review_answer, level_name, last_event_type, last_event_created_at_ms,
+        last_state_event_created_at_ms
       ) VALUES
         ($1, 'appl-same-level-newer', $2, 'completed', 'GREEN', 'id-and-liveness',
-         'applicantReviewed', 400),
+         'applicantReviewed', 400, 400),
         ($1, 'appl-other-level-newer', $2, 'completed', 'GREEN', 'basic-kyc',
-         'applicantReviewed', 500)
+         'applicantReviewed', 500, 500)
       """,
       [Ecto.UUID.dump!(user_id), user_id]
     )
@@ -944,6 +1120,16 @@ defmodule Mithril.Sumsub.WebhookTest do
     )
   end
 
+  defp insert_unclaimed_application!(id, email, phone) do
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_applications (id, user_id, email, phone, name, bio, hourly_rate)
+      VALUES ($1, NULL, $2, $3, 'Ama', 'bio', 0)
+      """,
+      [Ecto.UUID.dump!(id), email, phone]
+    )
+  end
+
   defp recreate_tables do
     [[database]] = Repo.query!("SELECT current_database()").rows
 
@@ -1011,6 +1197,7 @@ defmodule Mithril.Sumsub.WebhookTest do
       updated_at timestamptz NOT NULL DEFAULT now(),
       last_event_type text,
       last_event_created_at_ms bigint,
+      last_state_event_created_at_ms bigint,
       last_webhook_payload jsonb
     )
     """)
