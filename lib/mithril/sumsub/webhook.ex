@@ -258,12 +258,23 @@ defmodule Mithril.Sumsub.Webhook do
   end
 
   defp duplicate_event?(
-         %{last_event_created_at_ms: stored_ms, last_webhook_payload: stored_payload},
-         %{created_at_ms: incoming_ms, payload: incoming_payload}
+         %{
+           last_event_created_at_ms: stored_ms,
+           last_event_type: stored_type,
+           review_answer: stored_answer,
+           review_reason: stored_reason
+         },
+         %{
+           created_at_ms: incoming_ms,
+           type: incoming_type,
+           review_answer: incoming_answer,
+           review_reason: incoming_reason
+         }
        )
-       when is_integer(stored_ms) and is_integer(incoming_ms) and is_map(stored_payload) and
-              is_map(incoming_payload) do
-    stored_ms == incoming_ms and stored_payload == incoming_payload
+       when is_integer(stored_ms) and is_integer(incoming_ms) do
+    stored_ms == incoming_ms and normalize_type(stored_type) == normalize_type(incoming_type) and
+      normalize_optional(stored_answer) == normalize_optional(incoming_answer) and
+      normalize_optional(stored_reason) == normalize_optional(incoming_reason)
   end
 
   defp duplicate_event?(_existing, _event), do: false
@@ -491,7 +502,7 @@ defmodule Mithril.Sumsub.Webhook do
            """
            SELECT id, user_id, subject_type, cleaner_application_id, submitted_at,
                   reviewed_at, completed_at, kyc_status, review_answer, review_reason,
-                  last_event_created_at_ms, sumsub_applicant_id, last_webhook_payload
+                  last_event_created_at_ms, sumsub_applicant_id, last_event_type, last_webhook_payload
            FROM public.kyc_profiles
            WHERE sumsub_applicant_id = $1
            FOR UPDATE
@@ -514,7 +525,7 @@ defmodule Mithril.Sumsub.Webhook do
            """
            SELECT id, user_id, subject_type, cleaner_application_id, submitted_at,
                   reviewed_at, completed_at, kyc_status, review_answer, review_reason,
-                  last_event_created_at_ms, sumsub_applicant_id, last_webhook_payload
+                  last_event_created_at_ms, sumsub_applicant_id, last_event_type, last_webhook_payload
            FROM public.kyc_profiles
            WHERE user_id = $1
            ORDER BY last_event_created_at_ms DESC NULLS LAST, updated_at DESC, created_at DESC
@@ -542,6 +553,7 @@ defmodule Mithril.Sumsub.Webhook do
          review_reason,
          last_event_created_at_ms,
          applicant_id,
+         last_event_type,
          last_webhook_payload
        ]) do
     %{
@@ -557,6 +569,7 @@ defmodule Mithril.Sumsub.Webhook do
       review_reason: review_reason,
       last_event_created_at_ms: last_event_created_at_ms,
       applicant_id: applicant_id,
+      last_event_type: last_event_type,
       last_webhook_payload: last_webhook_payload
     }
   end
@@ -877,6 +890,9 @@ defmodule Mithril.Sumsub.Webhook do
   end
 
   defp normalize_type(_), do: ""
+
+  defp normalize_optional(value) when is_binary(value), do: value |> String.trim() |> String.upcase()
+  defp normalize_optional(_), do: nil
 
   defp string_field(nil, _key), do: ""
 
