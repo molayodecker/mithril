@@ -565,6 +565,31 @@ defmodule Mithril.Sumsub.WebhookTest do
              ).rows
   end
 
+  test "rejects an applicant id already linked to another user's application" do
+    owner_id = Ecto.UUID.generate()
+    webhook_user_id = Ecto.UUID.generate()
+    application_id = Ecto.UUID.generate()
+    insert_user!(owner_id, "linked-owner@tryinstaclean.com", "+233555000222")
+    insert_user!(webhook_user_id, "linked-webhook@tryinstaclean.com", "+233555000111")
+    insert_application!(application_id, owner_id, "linked-owner@tryinstaclean.com", "+233555000222")
+
+    Repo.query!(
+      "UPDATE public.cleaner_applications SET sumsub_applicant_id = $2 WHERE id = $1",
+      [Ecto.UUID.dump!(application_id), "appl-owned-by-other"]
+    )
+
+    raw = Jason.encode!(reviewed_payload(webhook_user_id, "appl-owned-by-other", "GREEN", 100))
+    assert {:error, :conflict} = Webhook.handle(raw, sign(raw))
+
+    assert [[owner, nil]] =
+             Repo.query!(
+               "SELECT user_id, kyc_status FROM public.cleaner_applications WHERE id = $1",
+               [Ecto.UUID.dump!(application_id)]
+             ).rows
+
+    assert owner == Ecto.UUID.dump!(owner_id)
+  end
+
   test "does not guess between multiple applications when no applicant link exists" do
     user_id = Ecto.UUID.generate()
     first_application_id = Ecto.UUID.generate()
