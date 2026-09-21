@@ -22,6 +22,7 @@ defmodule Mithril.Paystack.Webhook do
           | :amount_mismatch
           | :payment_incomplete
           | :payment_reference_mismatch
+          | :payment_not_payable
           | :database_unavailable
 
   @spec handle(binary(), String.t() | nil) :: {:ok, map()} | {:error, error()}
@@ -52,7 +53,12 @@ defmodule Mithril.Paystack.Webhook do
         error
 
       {:error, reason} = error
-      when reason in [:amount_mismatch, :payment_incomplete, :payment_reference_mismatch] ->
+      when reason in [
+             :amount_mismatch,
+             :payment_incomplete,
+             :payment_reference_mismatch,
+             :payment_not_payable
+           ] ->
         Logger.warning(
           "paystack webhook rejected request_id=#{request_id} error=#{inspect(reason)}"
         )
@@ -124,13 +130,16 @@ defmodule Mithril.Paystack.Webhook do
       paid?(attempt.payment_status) and attempt.booking_reference == attempt.reference ->
         %{already_paid: true, reference: attempt.reference, booking_id: attempt.booking_id}
 
+      attempt.booking_status == "cancelled" and not paid?(attempt.payment_status) ->
+        Repo.rollback(:payment_not_payable)
+
       event.status not in [nil, "success"] ->
         Repo.rollback(:payment_incomplete)
 
-      event.amount_minor not in [nil, attempt.amount_minor] ->
+      event.amount_minor != attempt.amount_minor ->
         Repo.rollback(:amount_mismatch)
 
-      event.currency && event.currency != attempt.currency ->
+      event.currency != attempt.currency ->
         Repo.rollback(:amount_mismatch)
 
       attempt.booking_reference != attempt.reference ->
@@ -224,6 +233,10 @@ defmodule Mithril.Paystack.Webhook do
     refund_reference = event.refund_reference
 
     cond do
+      event.type == "refund.processed" and
+          (event.amount_minor != refund.refund_amount_minor or event.currency != refund.currency) ->
+        Repo.rollback(:amount_mismatch)
+
       refund.status == "processed" and event.type == "refund.processed" ->
         heal_booking_payment_status(refund.booking_uuid, payment_status)
         maybe_store_refund_reference(refund.id, refund_reference)
@@ -285,7 +298,7 @@ defmodule Mithril.Paystack.Webhook do
     case Repo.query(
            """
            SELECT pa.id, pa.booking_id, pa.reference, pa.status, pa.amount_minor, pa.currency,
-                  b.payment_status, b.reference
+                  b.status::text, b.payment_status, b.reference
            FROM public.payment_attempts pa
            JOIN public.bookings b ON b.id = pa.booking_id
            WHERE pa.reference = $1
@@ -301,6 +314,7 @@ defmodule Mithril.Paystack.Webhook do
           status,
           amount_minor,
           currency,
+          booking_status,
           payment_status,
           booking_reference
         ] = row
@@ -313,6 +327,7 @@ defmodule Mithril.Paystack.Webhook do
           state: status,
           amount_minor: amount_to_integer(amount_minor),
           currency: normalize_currency(currency),
+          booking_status: booking_status,
           payment_status: payment_status,
           booking_reference: booking_reference
         }
@@ -320,23 +335,22 @@ defmodule Mithril.Paystack.Webhook do
       {:ok, %{rows: []}} ->
         nil
 
-      {:error, %Postgrex.Error{postgres: %{code: :undefined_table}}} ->
-        nil
-
       {:error, error} ->
         Repo.rollback(error)
     end
   end
 
-  defp lock_refund(event) do
-    lock_refund_by(
-      "paystack_refund_reference = $1",
-      event.refund_reference
-    ) ||
+  defp lock_refund(%{refund_reference: refund_reference} = event)
+       when is_binary(refund_reference) do
+    lock_refund_by("br.paystack_refund_reference = $1", refund_reference) ||
       lock_refund_by(
-        "paystack_transaction_reference = $1",
+        "br.paystack_refund_reference IS NULL AND br.paystack_transaction_reference = $1",
         event.transaction_reference
       )
+  end
+
+  defp lock_refund(event) do
+    lock_refund_by("br.paystack_transaction_reference = $1", event.transaction_reference)
   end
 
   defp lock_refund_by(_sql, nil), do: nil
@@ -344,8 +358,10 @@ defmodule Mithril.Paystack.Webhook do
   defp lock_refund_by(where, value) do
     case Repo.query(
            """
-           SELECT id, booking_id, refund_percent, status
-           FROM public.booking_refunds
+           SELECT br.id, br.booking_id, br.refund_percent, br.refund_amount_minor, br.status,
+                  COALESCE(b.currency, 'GHS')
+           FROM public.booking_refunds br
+           JOIN public.bookings b ON b.id = br.booking_id
            WHERE #{where}
            ORDER BY created_at DESC NULLS LAST
            LIMIT 1
@@ -353,18 +369,17 @@ defmodule Mithril.Paystack.Webhook do
            """,
            [value]
          ) do
-      {:ok, %{rows: [[id, booking_uuid, percent, status]]}} ->
+      {:ok, %{rows: [[id, booking_uuid, percent, amount_minor, status, currency]]}} ->
         %{
           id: id,
           booking_uuid: booking_uuid,
           refund_percent: percent,
+          refund_amount_minor: amount_to_integer(amount_minor),
+          currency: normalize_currency(currency),
           status: status
         }
 
       {:ok, %{rows: []}} ->
-        nil
-
-      {:error, %Postgrex.Error{postgres: %{code: :undefined_table}}} ->
         nil
 
       {:error, error} ->
