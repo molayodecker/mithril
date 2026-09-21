@@ -333,6 +333,7 @@ defmodule Mithril.Sumsub.Webhook do
   defp write_kyc_profile(ctx) do
     payload_json = Jason.encode!(ctx.event.payload)
     document_types = ctx.event.document_types
+
     params = [
       ctx.event.user_id,
       ctx.event.applicant_id,
