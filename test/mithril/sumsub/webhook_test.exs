@@ -201,18 +201,41 @@ defmodule Mithril.Sumsub.WebhookTest do
     raw = Jason.encode!(reviewed_payload(user_id, "appl-dup", "GREEN", 100))
 
     assert {:ok, first} = Webhook.handle(raw, sign(raw))
-    assert {:ok, second} = Webhook.handle(raw, sign(raw))
     assert first.kyc_status == "completed"
-    assert second.kyc_status == "completed"
-    refute second.skipped_stale
 
-    [[count]] =
+    [[reviewed_at, completed_at, updated_at]] =
       Repo.query!(
-        "SELECT count(*)::int FROM public.kyc_profiles WHERE sumsub_applicant_id = $1",
+        """
+        SELECT reviewed_at, completed_at, updated_at
+        FROM public.kyc_profiles
+        WHERE sumsub_applicant_id = $1
+        """,
         ["appl-dup"]
       ).rows
 
-    assert count == 1
+    assert {:ok, second} = Webhook.handle(raw, sign(raw))
+    assert second.kyc_status == "completed"
+    assert second.skipped_stale
+
+    [[retry_reviewed_at, retry_completed_at, retry_updated_at]] =
+      Repo.query!(
+        """
+        SELECT reviewed_at, completed_at, updated_at
+        FROM public.kyc_profiles
+        WHERE sumsub_applicant_id = $1
+        """,
+        ["appl-dup"]
+      ).rows
+
+    assert retry_reviewed_at == reviewed_at
+    assert retry_completed_at == completed_at
+    assert retry_updated_at == updated_at
+
+    assert [[1]] =
+             Repo.query!(
+               "SELECT count(*)::int FROM public.kyc_profiles WHERE sumsub_applicant_id = $1",
+               ["appl-dup"]
+             ).rows
   end
 
   test "ignores an older applicantReviewed that would overwrite a newer RED" do
