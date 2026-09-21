@@ -177,8 +177,7 @@ defmodule Mithril.Sumsub.WebhookTest do
     refute second.skipped_stale
 
     [[count]] =
-      Repo.query!(
-        "SELECT count(*)::int FROM public.kyc_profiles WHERE sumsub_applicant_id = $1",
+      Repo.query!(        "SELECT count(*)::int FROM public.kyc_profiles WHERE sumsub_applicant_id = $1",
         ["appl-dup"]
       ).rows
 
@@ -251,6 +250,182 @@ defmodule Mithril.Sumsub.WebhookTest do
       ).rows
 
     assert kyc_status == "completed"
+  end
+
+  test "contact fallback never takes an application owned by another user" do
+    owner_id = Ecto.UUID.generate()
+    webhook_user_id = Ecto.UUID.generate()
+    application_id = Ecto.UUID.generate()
+    shared_phone = "+233555000111"
+    shared_email = "shared@tryinstaclean.com"
+
+    insert_user!(owner_id, "owner@tryinstaclean.com", "+233555000222")
+    insert_user!(webhook_user_id, shared_email, shared_phone)
+    insert_application!(application_id, owner_id, shared_email, shared_phone)
+
+    raw = Jason.encode!(reviewed_payload(webhook_user_id, "appl-contact-owner", "GREEN", 100))
+    assert {:ok, result} = Webhook.handle(raw, sign(raw))
+    refute result.worker_mirrored
+
+    [[stored_owner, applicant_id]] =
+      Repo.query!(
+        "SELECT user_id, sumsub_applicant_id FROM public.cleaner_applications WHERE id = $1",
+        [Ecto.UUID.dump!(application_id)]
+      ).rows
+
+    assert stored_owner == Ecto.UUID.dump!(owner_id)
+    assert is_nil(applicant_id)
+  end
+
+  test "orders stale events across replacement applicant ids" do
+    user_id = Ecto.UUID.generate()
+    application_id = Ecto.UUID.generate()
+    insert_user!(user_id, "replace@tryinstaclean.com", "+233555000111")
+    insert_application!(application_id, user_id, "replace@tryinstaclean.com", "+233555000111")
+
+    old_green = Jason.encode!(reviewed_payload(user_id, "appl-old", "GREEN", 100))
+    assert {:ok, _} = Webhook.handle(old_green, sign(old_green))
+
+    new_red = Jason.encode!(reviewed_payload(user_id, "appl-new", "RED", 200))
+    assert {:ok, _} = Webhook.handle(new_red, sign(new_red))
+
+    delayed_old = Jason.encode!(reviewed_payload(user_id, "appl-old", "GREEN", 150))
+    assert {:ok, result} = Webhook.handle(delayed_old, sign(delayed_old))
+    assert result.skipped_stale
+    assert result.kyc_status == "rejected"
+
+    [[applicant_id, status, answer]] =
+      Repo.query!(
+        """
+        SELECT sumsub_applicant_id, kyc_status, kyc_review_answer
+        FROM public.cleaner_applications
+        WHERE id = $1
+        """,
+        [Ecto.UUID.dump!(application_id)]
+      ).rows
+
+    assert applicant_id == "appl-new"
+    assert status == "rejected"
+    assert answer == "RED"
+
+    [[verification_status]] =
+      Repo.query!(
+        "SELECT status FROM public.cleaner_verifications WHERE id = $1",
+        [Ecto.UUID.dump!(user_id)]
+      ).rows
+
+    assert verification_status == "rejected"
+  end
+
+  test "re-resolves a replacement worker application when the stored reference is gone" do
+    user_id = Ecto.UUID.generate()
+    old_application_id = Ecto.UUID.generate()
+    replacement_application_id = Ecto.UUID.generate()
+    insert_user!(user_id, "replacement@tryinstaclean.com", "+233555000111")
+    insert_application!(old_application_id, user_id, "replacement@tryinstaclean.com", "+233555000111")
+
+    first = Jason.encode!(reviewed_payload(user_id, "appl-relink", "GREEN", 100))
+    assert {:ok, _} = Webhook.handle(first, sign(first))
+
+    Repo.query!(
+      "DELETE FROM public.cleaner_applications WHERE id = $1",
+      [Ecto.UUID.dump!(old_application_id)]
+    )
+
+    insert_application!(
+      replacement_application_id,
+      user_id,
+      "replacement@tryinstaclean.com",
+      "+233555000111"
+    )
+
+    red = Jason.encode!(reviewed_payload(user_id, "appl-relink", "RED", 200))
+    assert {:ok, result} = Webhook.handle(red, sign(red))
+    assert result.worker_mirrored
+    assert result.worker_application_id == Ecto.UUID.dump!(replacement_application_id)
+
+    [[profile_application_id]] =
+      Repo.query!(
+        "SELECT cleaner_application_id FROM public.kyc_profiles WHERE sumsub_applicant_id = $1",
+        ["appl-relink"]
+      ).rows
+
+    assert profile_application_id == Ecto.UUID.dump!(replacement_application_id)
+
+    [[status, applicant_id]] =
+      Repo.query!(
+        "SELECT kyc_status, sumsub_applicant_id FROM public.cleaner_applications WHERE id = $1",
+        [Ecto.UUID.dump!(replacement_application_id)]
+      ).rows
+
+    assert status == "rejected"
+    assert applicant_id == "appl-relink"
+  end
+
+  test "clears completion metadata when a completed review is revoked" do
+    user_id = Ecto.UUID.generate()
+    application_id = Ecto.UUID.generate()
+    insert_user!(user_id, "timestamps@tryinstaclean.com", "+233555000111")
+    insert_application!(application_id, user_id, "timestamps@tryinstaclean.com", "+233555000111")
+
+    green = Jason.encode!(reviewed_payload(user_id, "appl-timestamps", "GREEN", 100))
+    assert {:ok, _} = Webhook.handle(green, sign(green))
+
+    [[profile_completed_at, app_completed_at]] =
+      Repo.query!(
+        """
+        SELECT k.completed_at, a.kyc_completed_at
+        FROM public.kyc_profiles k
+        JOIN public.cleaner_applications a ON a.id = k.cleaner_application_id
+        WHERE k.sumsub_applicant_id = $1
+        """,
+        ["appl-timestamps"]
+      ).rows
+
+    refute is_nil(profile_completed_at)
+    refute is_nil(app_completed_at)
+
+    red = Jason.encode!(reviewed_payload(user_id, "appl-timestamps", "RED", 200))
+    assert {:ok, _} = Webhook.handle(red, sign(red))
+
+    [[profile_completed_at, app_completed_at, reviewed_at]] =
+      Repo.query!(
+        """
+        SELECT k.completed_at, a.kyc_completed_at, k.reviewed_at
+        FROM public.kyc_profiles k
+        JOIN public.cleaner_applications a ON a.id = k.cleaner_application_id
+        WHERE k.sumsub_applicant_id = $1
+        """,
+        ["appl-timestamps"]
+      ).rows
+
+    assert is_nil(profile_completed_at)
+    assert is_nil(app_completed_at)
+    refute is_nil(reviewed_at)
+
+    reset =
+      Jason.encode!(%{
+        "type" => "applicantReset",
+        "applicantId" => "appl-timestamps",
+        "externalUserId" => user_id,
+        "createdAtMs" => 300
+      })
+
+    assert {:ok, _} = Webhook.handle(reset, sign(reset))
+
+    [[submitted_at, reviewed_at, completed_at]] =
+      Repo.query!(
+        """
+        SELECT submitted_at, reviewed_at, completed_at
+        FROM public.kyc_profiles
+        WHERE sumsub_applicant_id = $1
+        """,
+        ["appl-timestamps"]
+      ).rows
+
+    assert is_nil(submitted_at)
+    assert is_nil(reviewed_at)
+    assert is_nil(completed_at)
   end
 
   test "rejects an applicant id reused for a different user" do
@@ -357,8 +532,7 @@ defmodule Mithril.Sumsub.WebhookTest do
       sumsub_applicant_id text NOT NULL UNIQUE,
       sumsub_external_user_id text NOT NULL,
       kyc_status text NOT NULL DEFAULT 'not_started',
-      review_answer text,
-      review_reason text,
+      review_answer text,      review_reason text,
       level_name text,
       country_code text,
       document_types text[],
