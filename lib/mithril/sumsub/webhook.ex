@@ -6,7 +6,7 @@ defmodule Mithril.Sumsub.Webhook do
   alias Mithril.Auth.Phone
   alias Mithril.Repo
 
-  @default_worker_level_name "id-and-liveness"
+  @default_level_name "id-and-liveness"
 
   def handle(raw_body, digest_header) when is_binary(raw_body) do
     request_id = Ecto.UUID.generate()
@@ -153,15 +153,15 @@ defmodule Mithril.Sumsub.Webhook do
         existing && existing.user_id != event.user_id ->
           Repo.rollback(:conflict)
 
-        unexpected_worker_level?(event, existing) ->
+        unexpected_level?(event, existing) ->
           Logger.warning(
-            "sumsub webhook ignored worker event for unexpected level applicant=#{event.applicant_id} level=#{inspect(event.level_name)}"
+            "sumsub webhook ignored KYC event for unexpected level applicant=#{event.applicant_id} level=#{inspect(event.level_name)}"
           )
 
           ignored_level_result(event)
 
         true ->
-          event = %{event | level_name: expected_worker_level_name()}
+          event = %{event | level_name: expected_level_name()}
           latest = fetch_latest_kyc_for_user_level(event.user_id)
           apply_event(existing, latest, event, false)
       end
@@ -543,7 +543,7 @@ defmodule Mithril.Sumsub.Webhook do
            LIMIT 1
            FOR UPDATE
            """,
-           [user_id, expected_worker_level_name()]
+           [user_id, expected_level_name()]
          ) do
       {:ok, %{rows: [row]}} -> kyc_row(row)
       {:ok, %{rows: []}} -> nil
@@ -800,8 +800,8 @@ defmodule Mithril.Sumsub.Webhook do
     end
   end
 
-  defp unexpected_worker_level?(event, existing) do
-    expected = expected_worker_level_name()
+  defp unexpected_level?(event, existing) do
+    expected = expected_level_name()
     event_level = normalize_level_name(event.level_name)
 
     cond do
@@ -816,9 +816,9 @@ defmodule Mithril.Sumsub.Webhook do
     end
   end
 
-  defp expected_worker_level_name do
+  defp expected_level_name do
     :mithril
-    |> Application.get_env(:sumsub_worker_level_name, @default_worker_level_name)
+    |> Application.get_env(:sumsub_level_name, @default_level_name)
     |> normalize_level_name()
   end
 
