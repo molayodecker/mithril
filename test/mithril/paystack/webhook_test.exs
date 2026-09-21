@@ -426,6 +426,7 @@ defmodule Mithril.Paystack.WebhookTest do
       reference text,
       final_amount_minor bigint NOT NULL,
       currency text NOT NULL DEFAULT 'GHS',
+      created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     )
     """)
