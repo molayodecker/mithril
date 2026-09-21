@@ -167,6 +167,7 @@ defmodule Mithril.Sumsub.WebhookTest do
         "type" => "applicantActionReviewed",
         "applicantId" => "appl-action",
         "externalUserId" => user_id,
+        "levelName" => "id-and-liveness",
         "reviewResult" => %{"reviewAnswer" => "GREEN"},
         "createdAtMs" => 100
       })
