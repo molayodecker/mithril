@@ -139,7 +139,6 @@ defmodule MithrilWeb.SumsubWebhookControllerTest do
     CREATE TABLE public.kyc_profiles (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id uuid NOT NULL,
-      subject_type text NOT NULL,
       cleaner_application_id uuid,
       sumsub_applicant_id text NOT NULL UNIQUE,
       sumsub_external_user_id text NOT NULL,
