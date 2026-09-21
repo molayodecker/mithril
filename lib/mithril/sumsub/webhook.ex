@@ -194,7 +194,8 @@ defmodule Mithril.Sumsub.Webhook do
   end
 
   defp persist_locked(existing, event, retried?) do
-    worker_application_id = resolve_worker_application_id(existing, event)
+    {worker_application_id, sync_worker_verification?} =
+      resolve_worker_application(existing, event)
 
     preserve = preserve_final_review?(existing, event.type, event.review_answer)
     kyc_status = effective_kyc_status(existing, event, preserve)
@@ -230,7 +231,10 @@ defmodule Mithril.Sumsub.Webhook do
               now
             )
           else
-            sync_orphaned_worker_verification(event.user_id, kyc_status, now)
+            if sync_worker_verification? do
+              sync_orphaned_worker_verification(event.user_id, kyc_status, now)
+            end
+
             nil
           end
 
@@ -295,33 +299,32 @@ defmodule Mithril.Sumsub.Webhook do
 
   defp stale_for_same_applicant?(nil, _event), do: false
 
-  defp stale_for_same_applicant?(
-         %{last_event_created_at_ms: stored},
-         %{created_at_ms: incoming}
-       )
-       when is_integer(stored) and is_integer(incoming) do
-    incoming < stored
+  defp stale_for_same_applicant?(existing, event) do
+    stored =
+      if state_changing_event?(event) do
+        existing && existing.last_state_event_created_at_ms
+      else
+        existing && existing.last_event_created_at_ms
+      end
+
+    incoming = event.created_at_ms
+    is_integer(stored) and is_integer(incoming) and incoming < stored
   end
 
-  defp stale_for_same_applicant?(_existing, _event), do: false
+  defp stale_across_applicants?(latest, event) do
+    if latest && latest.applicant_id != event.applicant_id && state_changing_event?(event) do
+      stored = latest.last_state_event_created_at_ms
+      incoming = event.created_at_ms
 
-  defp stale_across_applicants?(
-         %{applicant_id: applicant_id, last_event_created_at_ms: stored},
-         %{applicant_id: incoming_applicant_id, created_at_ms: incoming}
-       )
-       when applicant_id != incoming_applicant_id and is_integer(stored) and is_integer(incoming) do
-    incoming <= stored
+      cond do
+        is_integer(stored) and is_integer(incoming) -> incoming <= stored
+        is_integer(stored) and is_nil(incoming) -> true
+        true -> false
+      end
+    else
+      false
+    end
   end
-
-  defp stale_across_applicants?(
-         %{applicant_id: applicant_id, last_event_created_at_ms: stored},
-         %{applicant_id: incoming_applicant_id, created_at_ms: nil}
-       )
-       when applicant_id != incoming_applicant_id and is_integer(stored) do
-    true
-  end
-
-  defp stale_across_applicants?(_latest, _event), do: false
 
   defp lock_user!(external_user_id) do
     case Repo.query("SELECT pg_advisory_xact_lock(hashtext($1))", [external_user_id]) do
@@ -348,6 +351,7 @@ defmodule Mithril.Sumsub.Webhook do
       ctx.event.type,
       ctx.event.created_at_ms,
       payload_json,
+      state_changing_event?(ctx.event),
       ctx.submitted_at,
       ctx.reviewed_at,
       ctx.completed_at
@@ -367,11 +371,11 @@ defmodule Mithril.Sumsub.Webhook do
              user_id, sumsub_applicant_id, sumsub_external_user_id,
              cleaner_application_id, kyc_status, review_answer, review_reason,
              level_name, country_code, document_types, last_event_type,
-             last_event_created_at_ms, last_webhook_payload, submitted_at,
-             reviewed_at, completed_at, updated_at
+             last_event_created_at_ms, last_webhook_payload, last_state_event_created_at_ms,
+             submitted_at, reviewed_at, completed_at, updated_at
            ) VALUES (
              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb,
-             $14, $15, $16, now()
+             CASE WHEN $14 THEN $12 ELSE NULL END, $15, $16, $17, now()
            )
            ON CONFLICT (sumsub_applicant_id) DO NOTHING
            RETURNING id
@@ -398,14 +402,24 @@ defmodule Mithril.Sumsub.Webhook do
              level_name = $8,
              country_code = $9,
              document_types = $10,
-             last_event_type = $11,
-             last_event_created_at_ms = $12,
-             last_webhook_payload = $13::jsonb,
-             submitted_at = $14,
-             reviewed_at = $15,
-             completed_at = $16,
+             last_event_type = CASE
+               WHEN last_event_created_at_ms IS NULL OR $12 >= last_event_created_at_ms THEN $11
+               ELSE last_event_type
+             END,
+             last_event_created_at_ms = GREATEST(last_event_created_at_ms, $12),
+             last_webhook_payload = CASE
+               WHEN last_event_created_at_ms IS NULL OR $12 >= last_event_created_at_ms THEN $13::jsonb
+               ELSE last_webhook_payload
+             END,
+             last_state_event_created_at_ms = CASE
+               WHEN $14 THEN GREATEST(last_state_event_created_at_ms, $12)
+               ELSE last_state_event_created_at_ms
+             END,
+             submitted_at = $15,
+             reviewed_at = $16,
+             completed_at = $17,
              updated_at = now()
-           WHERE id = $17
+           WHERE id = $18
            """,
            params ++ [id]
          ) do
@@ -443,6 +457,7 @@ defmodule Mithril.Sumsub.Webhook do
           updated_at = $9
         WHERE id = $1
           AND user_id = $2
+          AND (sumsub_applicant_id IS NULL OR sumsub_applicant_id = $3)
         RETURNING id
         """,
         [
@@ -513,7 +528,8 @@ defmodule Mithril.Sumsub.Webhook do
            """
            SELECT id, user_id, level_name, cleaner_application_id, submitted_at,
                   reviewed_at, completed_at, kyc_status, review_answer, review_reason,
-                  last_event_created_at_ms, sumsub_applicant_id, last_event_type, last_webhook_payload
+                  last_event_created_at_ms, last_state_event_created_at_ms,
+                  sumsub_applicant_id, last_event_type, last_webhook_payload
            FROM public.kyc_profiles
            WHERE sumsub_applicant_id = $1
            FOR UPDATE
@@ -536,11 +552,15 @@ defmodule Mithril.Sumsub.Webhook do
            """
            SELECT id, user_id, level_name, cleaner_application_id, submitted_at,
                   reviewed_at, completed_at, kyc_status, review_answer, review_reason,
-                  last_event_created_at_ms, sumsub_applicant_id, last_event_type, last_webhook_payload
+                  last_event_created_at_ms, last_state_event_created_at_ms,
+                  sumsub_applicant_id, last_event_type, last_webhook_payload
            FROM public.kyc_profiles
            WHERE user_id = $1
              AND lower(trim(COALESCE(level_name, ''))) = $2
-           ORDER BY last_event_created_at_ms DESC NULLS LAST, updated_at DESC, created_at DESC
+           ORDER BY last_state_event_created_at_ms DESC NULLS LAST,
+                    last_event_created_at_ms DESC NULLS LAST,
+                    updated_at DESC,
+                    created_at DESC
            LIMIT 1
            FOR UPDATE
            """,
@@ -564,6 +584,7 @@ defmodule Mithril.Sumsub.Webhook do
          review_answer,
          review_reason,
          last_event_created_at_ms,
+         last_state_event_created_at_ms,
          applicant_id,
          last_event_type,
          last_webhook_payload
@@ -580,32 +601,41 @@ defmodule Mithril.Sumsub.Webhook do
       review_answer: review_answer,
       review_reason: review_reason,
       last_event_created_at_ms: last_event_created_at_ms,
+      last_state_event_created_at_ms: last_state_event_created_at_ms,
       applicant_id: applicant_id,
       last_event_type: last_event_type,
       last_webhook_payload: last_webhook_payload
     }
   end
 
-  defp resolve_worker_application_id(existing, event) do
+  defp resolve_worker_application(existing, event) do
     user_id = event.user_id
 
     case existing && existing.worker_application_id do
       nil ->
-        find_worker_application_id(user_id, event.applicant_id)
+        {find_worker_application_id(user_id, event.applicant_id), true}
 
       application_id ->
         case lock_worker_application(application_id) do
           nil ->
-            find_worker_application_id(user_id, event.applicant_id)
+            {find_worker_application_id(user_id, event.applicant_id), true}
+
+          %{user_id: ^user_id, applicant_id: applicant_id}
+          when is_nil(applicant_id) or applicant_id == event.applicant_id ->
+            {application_id, true}
 
           %{user_id: ^user_id} ->
-            application_id
+            {nil, false}
+
+          %{user_id: nil, applicant_id: applicant_id}
+          when is_nil(applicant_id) or applicant_id == event.applicant_id ->
+            {claim_worker_application(application_id, user_id), true}
 
           %{user_id: nil} ->
-            claim_worker_application(application_id, user_id)
+            {nil, false}
 
           _owned_by_another_user ->
-            find_worker_application_id(user_id, event.applicant_id)
+            {nil, false}
         end
     end
   end
@@ -613,14 +643,15 @@ defmodule Mithril.Sumsub.Webhook do
   defp lock_worker_application(application_id) do
     case Repo.query(
            """
-           SELECT user_id
+           SELECT user_id, sumsub_applicant_id
            FROM public.cleaner_applications
            WHERE id = $1
            FOR UPDATE
            """,
            [application_id]
          ) do
-      {:ok, %{rows: [[user_id]]}} -> %{user_id: user_id}
+      {:ok, %{rows: [[user_id, applicant_id]]}} ->
+        %{user_id: user_id, applicant_id: applicant_id}
       {:ok, %{rows: []}} -> nil
       {:error, %Postgrex.Error{postgres: %{code: :undefined_table}}} -> nil
       {:error, error} -> Repo.rollback(error)
@@ -678,8 +709,7 @@ defmodule Mithril.Sumsub.Webhook do
   defp find_worker_application_by_contact(user_id) do
     case Repo.query("SELECT phone, email FROM public.users WHERE id = $1 LIMIT 1", [user_id]) do
       {:ok, %{rows: [[phone, email]]}} ->
-        find_worker_application_by_phone(phone, user_id) ||
-          find_worker_application_by_email(email, user_id)
+        find_unclaimed_application_by_contact(user_id, phone, email)
 
       {:ok, %{rows: []}} ->
         nil
@@ -689,59 +719,47 @@ defmodule Mithril.Sumsub.Webhook do
     end
   end
 
-  defp find_worker_application_by_phone(phone, user_id) when is_binary(phone) and phone != "" do
-    variants = phone_variants(phone)
+  defp find_unclaimed_application_by_contact(user_id, phone, email) do
+    variants = if is_binary(phone), do: phone_variants(phone), else: []
+    email = if is_binary(email), do: String.trim(email) |> String.downcase(), else: ""
 
-    if variants == [] do
-      nil
-    else
+    {where_sql, params} =
+      cond do
+        variants != [] and email != "" ->
+          {"phone = ANY($1::text[]) AND lower(email) = $2", [variants, email]}
+
+        variants != [] ->
+          {"phone = ANY($1::text[])", [variants]}
+
+        email != "" ->
+          {"lower(email) = $1", [email]}
+
+        true ->
+          {nil, []}
+      end
+
+    if where_sql do
       case Repo.query(
              """
              SELECT id
              FROM public.cleaner_applications
              WHERE user_id IS NULL
-               AND phone = ANY($1::text[])
+               AND #{where_sql}
              ORDER BY created_at DESC NULLS LAST
-             LIMIT 1
+             LIMIT 2
              FOR UPDATE
              """,
-             [variants]
+             params
            ) do
         {:ok, %{rows: [[id]]}} -> claim_worker_application(id, user_id)
         {:ok, %{rows: []}} -> nil
+        {:ok, %{rows: [_first, _second]}} -> nil
         {:error, error} -> Repo.rollback(error)
       end
-    end
-  end
-
-  defp find_worker_application_by_phone(_, _user_id), do: nil
-
-  defp find_worker_application_by_email(email, user_id) when is_binary(email) do
-    email = String.trim(email) |> String.downcase()
-
-    if email == "" do
-      nil
     else
-      case Repo.query(
-             """
-             SELECT id
-             FROM public.cleaner_applications
-             WHERE user_id IS NULL
-               AND lower(email) = $1
-             ORDER BY created_at DESC NULLS LAST
-             LIMIT 1
-             FOR UPDATE
-             """,
-             [email]
-           ) do
-        {:ok, %{rows: [[id]]}} -> claim_worker_application(id, user_id)
-        {:ok, %{rows: []}} -> nil
-        {:error, error} -> Repo.rollback(error)
-      end
+      nil
     end
   end
-
-  defp find_worker_application_by_email(_, _user_id), do: nil
 
   defp claim_worker_application(application_id, user_id) do
     case Repo.query(
@@ -799,6 +817,15 @@ defmodule Mithril.Sumsub.Webhook do
     else
       _ -> {:error, :invalid_payload}
     end
+  end
+
+  defp state_changing_event?(event) do
+    normalized_type = normalize_type(event.type)
+
+    normalized_type in @final_review_types or
+      normalized_type in @in_progress_types or
+      normalized_type in @revoking_types or
+      normalized_type in ["applicantcreated", "applicantactivated"]
   end
 
   defp unexpected_level?(event, existing) do
