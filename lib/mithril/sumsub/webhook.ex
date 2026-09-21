@@ -95,6 +95,13 @@ defmodule Mithril.Sumsub.Webhook do
     applicanttagschanged
   )
 
+  @revoking_types ~w(
+    applicantdeactivated
+    applicantdeleted
+    applicantreset
+    applicantpersonaldatadeleted
+  )
+
   def map_kyc_status(event_type, review_answer) do
     normalized_type = normalize_type(event_type)
     answer = review_answer && String.upcase(review_answer)
@@ -125,7 +132,7 @@ defmodule Mithril.Sumsub.Webhook do
       normalized_type in @final_review_types and answer in ["GREEN", "RED"] ->
         false
 
-      normalized_type == "applicantreset" ->
+      normalized_type in @revoking_types ->
         false
 
       true ->
@@ -187,7 +194,7 @@ defmodule Mithril.Sumsub.Webhook do
   end
 
   defp persist_locked(existing, event, retried?) do
-    worker_application_id = resolve_worker_application_id(existing, event.user_id)
+    worker_application_id = resolve_worker_application_id(existing, event)
 
     preserve = preserve_final_review?(existing, event.type, event.review_answer)
     kyc_status = effective_kyc_status(existing, event, preserve)
@@ -578,15 +585,17 @@ defmodule Mithril.Sumsub.Webhook do
     }
   end
 
-  defp resolve_worker_application_id(existing, user_id) do
+  defp resolve_worker_application_id(existing, event) do
+    user_id = event.user_id
+
     case existing && existing.worker_application_id do
       nil ->
-        find_worker_application_id(user_id)
+        find_worker_application_id(user_id, event.applicant_id)
 
       application_id ->
         case lock_worker_application(application_id) do
           nil ->
-            find_worker_application_id(user_id)
+            find_worker_application_id(user_id, event.applicant_id)
 
           %{user_id: ^user_id} ->
             application_id
@@ -595,7 +604,7 @@ defmodule Mithril.Sumsub.Webhook do
             claim_worker_application(application_id, user_id)
 
           _owned_by_another_user ->
-            find_worker_application_id(user_id)
+            find_worker_application_id(user_id, event.applicant_id)
         end
     end
   end
@@ -617,29 +626,50 @@ defmodule Mithril.Sumsub.Webhook do
     end
   end
 
-  defp find_worker_application_id(user_id) do
+  defp find_worker_application_id(user_id, applicant_id) do
+    find_worker_application_by_applicant_id(user_id, applicant_id) ||
+      find_unique_worker_application_for_user(user_id) ||
+      find_worker_application_by_contact(user_id)
+  end
+
+  defp find_worker_application_by_applicant_id(user_id, applicant_id) do
+    case Repo.query(
+           """
+           SELECT id, user_id
+           FROM public.cleaner_applications
+           WHERE sumsub_applicant_id = $2
+             AND (user_id = $1 OR user_id IS NULL)
+           ORDER BY created_at DESC NULLS LAST
+           LIMIT 1
+           FOR UPDATE
+           """,
+           [user_id, applicant_id]
+         ) do
+      {:ok, %{rows: [[id, ^user_id]]}} -> id
+      {:ok, %{rows: [[id, nil]]}} -> claim_worker_application(id, user_id)
+      {:ok, %{rows: []}} -> nil
+      {:error, %Postgrex.Error{postgres: %{code: :undefined_table}}} -> nil
+      {:error, error} -> Repo.rollback(error)
+    end
+  end
+
+  defp find_unique_worker_application_for_user(user_id) do
     case Repo.query(
            """
            SELECT id
            FROM public.cleaner_applications
            WHERE user_id = $1
            ORDER BY created_at DESC NULLS LAST
-           LIMIT 1
+           LIMIT 2
            FOR UPDATE
            """,
            [user_id]
          ) do
-      {:ok, %{rows: [[id]]}} ->
-        id
-
-      {:ok, %{rows: []}} ->
-        find_worker_application_by_contact(user_id)
-
-      {:error, %Postgrex.Error{postgres: %{code: :undefined_table}}} ->
-        nil
-
-      {:error, error} ->
-        Repo.rollback(error)
+      {:ok, %{rows: [[id]]}} -> id
+      {:ok, %{rows: []}} -> nil
+      {:ok, %{rows: [_first, _second]}} -> nil
+      {:error, %Postgrex.Error{postgres: %{code: :undefined_table}}} -> nil
+      {:error, error} -> Repo.rollback(error)
     end
   end
 
