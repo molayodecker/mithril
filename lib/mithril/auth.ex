@@ -110,19 +110,20 @@ defmodule Mithril.Auth do
   def logout(_), do: :ok
 
   def me(user_id) when is_binary(user_id) do
-    case fetch_account_by_id(user_id) do
-      {:ok, account} ->
-        user =
-          account
-          |> session_user()
-          |> Map.put(:status, account.status)
-          |> Map.put(:admin, admin?(user_id))
-          |> Map.put(:reviewer, reviewer?(user_id))
+    with {:ok, account} <- fetch_account_by_id(user_id),
+         {:ok, roles} <- fetch_roles(user_id),
+         {:ok, cleaner_state} <- fetch_cleaner_state(user_id) do
+      user =
+        account
+        |> session_user()
+        |> Map.put(:status, account.status)
+        |> Map.put(:admin, "admin" in roles)
+        |> Map.put(:reviewer, "reviewer" in roles)
+        |> Map.put(:roles, roles)
+        |> Map.put(:cleanerVerified, cleaner_state.verified)
+        |> Map.put(:cleanerStatus, cleaner_state.status)
 
-        {:ok, user}
-
-      other ->
-        other
+      {:ok, user}
     end
   end
 
@@ -153,6 +154,37 @@ defmodule Mithril.Auth do
          ) do
       {:ok, %{rows: [[true]]}} -> true
       _other -> false
+    end
+  end
+
+  defp fetch_roles(user_id) do
+    case Repo.query(
+           """
+           SELECT role_id::text
+           FROM public.user_roles
+           WHERE user_id = $1::uuid
+           ORDER BY role_id
+           """,
+           [dump_uuid(user_id)]
+         ) do
+      {:ok, %{rows: rows}} -> {:ok, Enum.map(rows, &hd/1)}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp fetch_cleaner_state(user_id) do
+    case Repo.query(
+           """
+           SELECT COALESCE(verified, false), status::text
+           FROM public.cleaner_data
+           WHERE user_id = $1::uuid
+           LIMIT 1
+           """,
+           [dump_uuid(user_id)]
+         ) do
+      {:ok, %{rows: [[verified, status]]}} -> {:ok, %{verified: verified == true, status: status}}
+      {:ok, %{rows: []}} -> {:ok, %{verified: false, status: nil}}
+      {:error, error} -> database_error(error)
     end
   end
 
