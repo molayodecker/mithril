@@ -58,6 +58,11 @@ defmodule MithrilWeb.PaystackWebhookController do
         |> put_status(:conflict)
         |> json(%{error: "Payment reference mismatch"})
 
+      {:error, :payment_not_payable} ->
+        conn
+        |> put_status(:conflict)
+        |> json(%{error: "Booking is no longer payable"})
+
       {:error, :database_unavailable} ->
         conn
         |> put_status(:internal_server_error)
