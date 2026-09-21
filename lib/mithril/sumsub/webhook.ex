@@ -651,6 +651,7 @@ defmodule Mithril.Sumsub.Webhook do
          ) do
       {:ok, %{rows: [[user_id, applicant_id]]}} ->
         %{user_id: user_id, applicant_id: applicant_id}
+
       {:ok, %{rows: []}} ->
         nil
 
