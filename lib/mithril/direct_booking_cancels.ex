@@ -191,27 +191,29 @@ defmodule Mithril.DirectBookingCancels do
   defp ensure_processed_refunds_reconciled(booking_id, _policy) do
     case Repo.query(
            """
-           SELECT
-             COALESCE((
-               SELECT SUM(COALESCE(drr.proposed_refund_amount_minor, 0))::bigint
-               FROM public.direct_refund_requests drr
-               WHERE drr.booking_id = $1
-                 AND drr.status = 'processed'
-             ), 0)::bigint,
-             COALESCE((
-               SELECT SUM(br.refund_amount_minor)::bigint
-               FROM public.booking_refunds br
-               WHERE br.booking_id = $1
-                 AND br.status = 'processed'
-             ), 0)::bigint
+           SELECT 1
+           FROM public.direct_refund_requests drr
+           WHERE drr.booking_id = $1
+             AND drr.status = 'processed'
+             AND (
+               drr.canonical_refunded_amount_minor_at_request IS NULL
+               OR COALESCE((
+                    SELECT SUM(br.refund_amount_minor)::bigint
+                    FROM public.booking_refunds br
+                    WHERE br.booking_id = drr.booking_id
+                      AND br.status = 'processed'
+                  ), 0)::bigint
+                  < drr.canonical_refunded_amount_minor_at_request
+                    + COALESCE(drr.proposed_refund_amount_minor, 0)
+             )
+           LIMIT 1
            """,
            [booking_id]
          ) do
-      {:ok, %{rows: [[direct_processed, canonical_processed]]}}
-      when direct_processed <= canonical_processed ->
+      {:ok, %{rows: []}} ->
         :ok
 
-      {:ok, %{rows: [[_direct_processed, _canonical_processed]]}} ->
+      {:ok, %{rows: [[1]]}} ->
         {:error,
          {:refund_reconciliation_pending,
           "A processed refund is still being reconciled. Try again after reconciliation completes."}}
