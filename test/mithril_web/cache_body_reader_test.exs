@@ -12,7 +12,7 @@ defmodule MithrilWeb.CacheBodyReaderTest do
     assert {:error, :timeout} = CacheBodyReader.read_body(conn, [])
   end
 
-  test "caches the raw body for Paystack webhook paths" do
+  test "only caches raw bodies for signed webhook paths" do
     body = ~s({"ok":true})
 
     paystack = %Plug.Conn{
@@ -20,10 +20,18 @@ defmodule MithrilWeb.CacheBodyReaderTest do
       path_info: ["webhooks", "paystack"]
     }
 
+    sumsub = %Plug.Conn{
+      adapter: {__MODULE__.OkAdapter, body},
+      path_info: ["webhooks", "sumsub"]
+    }
+
     other = %Plug.Conn{adapter: {__MODULE__.OkAdapter, body}, path_info: ["health"]}
 
-    assert {:ok, ^body, cached} = CacheBodyReader.read_body(paystack, [])
-    assert CacheBodyReader.body(cached) == body
+    assert {:ok, ^body, cached_paystack} = CacheBodyReader.read_body(paystack, [])
+    assert CacheBodyReader.body(cached_paystack) == body
+
+    assert {:ok, ^body, cached_sumsub} = CacheBodyReader.read_body(sumsub, [])
+    assert CacheBodyReader.body(cached_sumsub) == body
 
     assert {:ok, ^body, uncached} = CacheBodyReader.read_body(other, [])
     assert CacheBodyReader.body(uncached) == ""

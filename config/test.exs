@@ -41,6 +41,7 @@ config :mithril,
   twilio_auth_token: "test-twilio-auth-token",
   twilio_webhook_url: "https://api.tryinstaclean.com/whatsapp/join-as-cleaner-bot",
   twilio_webhook_url_alias: "https://api.tryinstaclean.com/functions/v1/join-as-cleaner-bot",
+  sumsub_webhook_secret: "test-sumsub-webhook-secret",
   recruitment_upload_secret: "test-recruitment-upload-secret",
   whatsapp_recruitment_store: Mithril.WhatsApp.Recruitment.Leads.Memory,
   twilio_http: :noop
