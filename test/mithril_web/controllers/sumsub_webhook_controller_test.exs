@@ -24,7 +24,8 @@ defmodule MithrilWeb.SumsubWebhookControllerTest do
       "type" => "applicantReviewed",
       "applicantId" => "appl-http-1",
       "externalUserId" => user_id,
-      "reviewResult" => %{"reviewAnswer" => "GREEN"}
+      "reviewResult" => %{"reviewAnswer" => "GREEN"},
+      "createdAtMs" => "2021-05-14 16:00:25.032"
     }
 
     raw = Jason.encode!(payload)
