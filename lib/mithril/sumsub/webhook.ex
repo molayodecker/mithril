@@ -275,27 +275,26 @@ defmodule Mithril.Sumsub.Webhook do
       stale_across_applicants?(latest, event)
   end
 
-  defp duplicate_event?(
-         %{
-           last_event_created_at_ms: stored_ms,
-           last_event_type: stored_type,
-           review_answer: stored_answer,
-           review_reason: stored_reason
-         },
-         %{
-           created_at_ms: incoming_ms,
-           type: incoming_type,
-           review_answer: incoming_answer,
-           review_reason: incoming_reason
-         }
-       )
-       when is_integer(stored_ms) and is_integer(incoming_ms) do
-    stored_ms == incoming_ms and normalize_type(stored_type) == normalize_type(incoming_type) and
-      normalize_optional(stored_answer) == normalize_optional(incoming_answer) and
-      normalize_optional(stored_reason) == normalize_optional(incoming_reason)
-  end
+  defp duplicate_event?(nil, _event), do: false
 
-  defp duplicate_event?(_existing, _event), do: false
+  defp duplicate_event?(existing, event) do
+    exact_callback? =
+      is_integer(existing.last_event_created_at_ms) and
+        is_integer(event.created_at_ms) and
+        existing.last_event_created_at_ms == event.created_at_ms and
+        normalize_type(existing.last_event_type) == normalize_type(event.type) and
+        normalize_optional(existing.review_answer) == normalize_optional(event.review_answer) and
+        normalize_optional(existing.review_reason) == normalize_optional(event.review_reason)
+
+    duplicate_state? =
+      state_changing_event?(event) and
+        is_integer(existing.last_state_event_created_at_ms) and
+        existing.last_state_event_created_at_ms == event.created_at_ms and
+        existing.kyc_status == map_kyc_status(event.type, event.review_answer) and
+        normalize_optional(existing.review_answer) == normalize_optional(event.review_answer)
+
+    exact_callback? or duplicate_state?
+  end
 
   defp stale_for_same_applicant?(nil, _event), do: false
 
@@ -660,7 +659,7 @@ defmodule Mithril.Sumsub.Webhook do
 
   defp find_worker_application_id(user_id, applicant_id) do
     find_worker_application_by_applicant_id(user_id, applicant_id) ||
-      find_unique_worker_application_for_user(user_id) ||
+      find_unique_worker_application_for_user(user_id, applicant_id) ||
       find_worker_application_by_contact(user_id)
   end
 
@@ -686,17 +685,18 @@ defmodule Mithril.Sumsub.Webhook do
     end
   end
 
-  defp find_unique_worker_application_for_user(user_id) do
+  defp find_unique_worker_application_for_user(user_id, applicant_id) do
     case Repo.query(
            """
            SELECT id
            FROM public.cleaner_applications
            WHERE user_id = $1
+             AND (sumsub_applicant_id IS NULL OR sumsub_applicant_id = $2)
            ORDER BY created_at DESC NULLS LAST
            LIMIT 2
            FOR UPDATE
            """,
-           [user_id]
+           [user_id, applicant_id]
          ) do
       {:ok, %{rows: [[id]]}} -> id
       {:ok, %{rows: []}} -> nil
@@ -744,6 +744,7 @@ defmodule Mithril.Sumsub.Webhook do
              SELECT id
              FROM public.cleaner_applications
              WHERE user_id IS NULL
+               AND sumsub_applicant_id IS NULL
                AND #{where_sql}
              ORDER BY created_at DESC NULLS LAST
              LIMIT 2
