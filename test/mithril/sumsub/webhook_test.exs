@@ -77,6 +77,35 @@ defmodule Mithril.Sumsub.WebhookTest do
     assert verification_status == "verified"
   end
 
+  test "ignores a final review from a non-worker Sumsub level" do
+    user_id = Ecto.UUID.generate()
+    application_id = Ecto.UUID.generate()
+    insert_user!(user_id, "wrong-level@example.com", "+233555000111")
+    insert_application!(application_id, user_id, "wrong-level@example.com", "+233555000111")
+
+    raw =
+      reviewed_payload(user_id, "appl-wrong-level", "GREEN", 100)
+      |> Map.put("levelName", "basic-kyc")
+      |> Jason.encode!()
+
+    assert {:ok, result} = Webhook.handle(raw, sign(raw))
+    assert result.ignored_level
+    refute result.worker_mirrored
+    assert is_nil(result.kyc_status)
+
+    assert [[0]] =
+             Repo.query!(
+               "SELECT count(*)::int FROM public.kyc_profiles WHERE sumsub_applicant_id = $1",
+               ["appl-wrong-level"]
+             ).rows
+
+    assert [[nil, nil]] =
+             Repo.query!(
+               "SELECT kyc_status, sumsub_applicant_id FROM public.cleaner_applications WHERE id = $1",
+               [Ecto.UUID.dump!(application_id)]
+             ).rows
+  end
+
   test "keeps GREEN when a later intermediate webhook arrives" do
     user_id = Ecto.UUID.generate()
     insert_user!(user_id, "cleaner@tryinstaclean.com", "+233555000111")
