@@ -50,12 +50,13 @@ defmodule Mithril.Sumsub.WebhookTest do
     assert result.worker_mirrored
     assert result.worker_application_id == Ecto.UUID.dump!(application_id)
 
-    [[kyc_status, review_answer]] =
+    [[subject_type, kyc_status, review_answer]] =
       Repo.query!(
-        "SELECT kyc_status, review_answer FROM public.kyc_profiles WHERE sumsub_applicant_id = $1",
+        "SELECT subject_type, kyc_status, review_answer FROM public.kyc_profiles WHERE sumsub_applicant_id = $1",
         ["appl-1"]
       ).rows
 
+    assert subject_type == "worker"
     assert kyc_status == "completed"
     assert review_answer == "GREEN"
 
@@ -103,6 +104,81 @@ defmodule Mithril.Sumsub.WebhookTest do
              Repo.query!(
                "SELECT kyc_status, sumsub_applicant_id FROM public.cleaner_applications WHERE id = $1",
                [Ecto.UUID.dump!(application_id)]
+             ).rows
+  end
+
+  test "ignores unrelated-level state events without poisoning worker ordering" do
+    user_id = Ecto.UUID.generate()
+    application_id = Ecto.UUID.generate()
+    insert_user!(user_id, "wrong-state-level@example.com", "+233555000111")
+
+    insert_application!(
+      application_id,
+      user_id,
+      "wrong-state-level@example.com",
+      "+233555000111"
+    )
+
+    green = Jason.encode!(reviewed_payload(user_id, "appl-level-state", "GREEN", 100))
+    assert {:ok, _} = Webhook.handle(green, sign(green))
+
+    wrong_level_reset =
+      Jason.encode!(%{
+        "type" => "applicantReset",
+        "applicantId" => "appl-level-state",
+        "externalUserId" => user_id,
+        "levelName" => "basic-kyc",
+        "createdAtMs" => 300
+      })
+
+    assert {:ok, ignored} = Webhook.handle(wrong_level_reset, sign(wrong_level_reset))
+    assert ignored.ignored_level
+    assert ignored.skipped_stale
+    refute ignored.worker_mirrored
+
+    assert [["completed", 100]] =
+             Repo.query!(
+               """
+               SELECT kyc_status, last_event_created_at_ms
+               FROM public.kyc_profiles
+               WHERE sumsub_applicant_id = $1
+               """,
+               ["appl-level-state"]
+             ).rows
+
+    assert [["completed", "appl-level-state"]] =
+             Repo.query!(
+               "SELECT kyc_status, sumsub_applicant_id FROM public.cleaner_applications WHERE id = $1",
+               [Ecto.UUID.dump!(application_id)]
+             ).rows
+
+    assert [["verified"]] =
+             Repo.query!(
+               "SELECT status FROM public.cleaner_verifications WHERE id = $1",
+               [Ecto.UUID.dump!(user_id)]
+             ).rows
+
+    valid_reset =
+      Jason.encode!(%{
+        "type" => "applicantReset",
+        "applicantId" => "appl-level-state",
+        "externalUserId" => user_id,
+        "levelName" => "id-and-liveness",
+        "createdAtMs" => 200
+      })
+
+    assert {:ok, applied} = Webhook.handle(valid_reset, sign(valid_reset))
+    refute applied.skipped_stale
+    assert applied.kyc_status == "started"
+
+    assert [["started", 200]] =
+             Repo.query!(
+               """
+               SELECT kyc_status, last_event_created_at_ms
+               FROM public.kyc_profiles
+               WHERE sumsub_applicant_id = $1
+               """,
+               ["appl-level-state"]
              ).rows
   end
 
@@ -425,6 +501,57 @@ defmodule Mithril.Sumsub.WebhookTest do
       ).rows
 
     assert verification_status == "rejected"
+  end
+
+  test "cross-applicant ordering ignores customer and unrelated worker levels" do
+    user_id = Ecto.UUID.generate()
+    application_id = Ecto.UUID.generate()
+    insert_user!(user_id, "scoped-ordering@tryinstaclean.com", "+233555000111")
+
+    insert_application!(
+      application_id,
+      user_id,
+      "scoped-ordering@tryinstaclean.com",
+      "+233555000111"
+    )
+
+    old_worker = Jason.encode!(reviewed_payload(user_id, "appl-worker-old", "GREEN", 100))
+    assert {:ok, _} = Webhook.handle(old_worker, sign(old_worker))
+
+    Repo.query!(
+      """
+      INSERT INTO public.kyc_profiles (
+        user_id, subject_type, sumsub_applicant_id, sumsub_external_user_id,
+        kyc_status, level_name, last_event_type, last_event_created_at_ms
+      ) VALUES
+        ($1, 'customer', 'appl-customer-newer', $2, 'completed', 'id-and-liveness',
+         'applicantReviewed', 400),
+        ($1, 'worker', 'appl-other-level-newer', $2, 'completed', 'basic-kyc',
+         'applicantReviewed', 300)
+      """,
+      [Ecto.UUID.dump!(user_id), user_id]
+    )
+
+    new_worker = Jason.encode!(reviewed_payload(user_id, "appl-worker-new", "RED", 200))
+    assert {:ok, result} = Webhook.handle(new_worker, sign(new_worker))
+    refute result.skipped_stale
+    assert result.kyc_status == "rejected"
+
+    assert [["appl-worker-new", "rejected", "RED"]] =
+             Repo.query!(
+               """
+               SELECT sumsub_applicant_id, kyc_status, kyc_review_answer
+               FROM public.cleaner_applications
+               WHERE id = $1
+               """,
+               [Ecto.UUID.dump!(application_id)]
+             ).rows
+
+    assert [["rejected"]] =
+             Repo.query!(
+               "SELECT status FROM public.cleaner_verifications WHERE id = $1",
+               [Ecto.UUID.dump!(user_id)]
+             ).rows
   end
 
   test "re-resolves a replacement worker application when the stored reference is gone" do
