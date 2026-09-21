@@ -635,7 +635,6 @@ defmodule Mithril.Direct do
         ELSE 'Allowed because customer is not in manual review and payment/dispatch gates are clear.'
       END,
       'kycStatus', kyc.kyc_status,
-      'kycSubjectType', kyc.subject_type,
       'kycReviewAnswer', kyc.review_answer,
       'kycUpdatedAt', kyc.updated_at,
       'riskEvents', COALESCE((
@@ -709,7 +708,7 @@ defmodule Mithril.Direct do
     LEFT JOIN public.users u ON u.id = t.customer_id
     LEFT JOIN public.profiles p ON p.id = t.customer_id
     LEFT JOIN LATERAL (
-      SELECT kp.kyc_status, kp.subject_type, kp.review_answer, kp.updated_at
+      SELECT kp.kyc_status, kp.review_answer, kp.updated_at
       FROM public.kyc_profiles kp
       WHERE kp.user_id = t.customer_id
       ORDER BY kp.updated_at DESC NULLS LAST

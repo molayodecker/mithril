@@ -27,6 +27,7 @@ defmodule MithrilWeb.Router do
 
     get "/health", HealthController, :show
     get "/ready", ReadyController, :show
+    post "/webhooks/sumsub", SumsubWebhookController, :create
   end
 
   scope "/", MithrilWeb do
