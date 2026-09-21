@@ -249,6 +249,7 @@ defmodule Mithril.Sumsub.WebhookTest do
         "SELECT kyc_status FROM public.kyc_profiles WHERE sumsub_applicant_id = $1",
         ["appl-stale-app"]
       ).rows
+
     assert kyc_status == "completed"
   end
 
@@ -322,6 +323,7 @@ defmodule Mithril.Sumsub.WebhookTest do
     old_application_id = Ecto.UUID.generate()
     replacement_application_id = Ecto.UUID.generate()
     insert_user!(user_id, "replacement@tryinstaclean.com", "+233555000111")
+
     insert_application!(
       old_application_id,
       user_id,
