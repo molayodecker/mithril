@@ -6,6 +6,8 @@ defmodule Mithril.Sumsub.Webhook do
   alias Mithril.Auth.Phone
   alias Mithril.Repo
 
+  @default_worker_level_name "id-and-liveness"
+
   def handle(raw_body, digest_header) when is_binary(raw_body) do
     request_id = Ecto.UUID.generate()
 
@@ -136,13 +138,21 @@ defmodule Mithril.Sumsub.Webhook do
   end
 
   defp persist(event) do
-    Repo.transaction(fn ->
-      lock_user!(event.external_user_id)
-      existing = fetch_kyc_for_update(event.applicant_id)
-      latest = fetch_latest_kyc_for_user(event.user_id)
-      apply_event(existing, latest, event, false)
-    end)
-    |> normalize_transaction()
+    if unexpected_worker_level?(event) do
+      Logger.warning(
+        "sumsub webhook ignored final review for unexpected level applicant=#{event.applicant_id} level=#{inspect(event.level_name)}"
+      )
+
+      {:ok, ignored_level_result(event)}
+    else
+      Repo.transaction(fn ->
+        lock_user!(event.external_user_id)
+        existing = fetch_kyc_for_update(event.applicant_id)
+        latest = fetch_latest_kyc_for_user(event.user_id)
+        apply_event(existing, latest, event, false)
+      end)
+      |> normalize_transaction()
+    end
   end
 
   defp apply_event(existing, latest, event, retried?) do
@@ -205,6 +215,9 @@ defmodule Mithril.Sumsub.Webhook do
               preserve,
               now
             )
+          else
+            sync_orphaned_worker_verification(event.user_id, kyc_status, now)
+            nil
           end
 
         success_result(%{kyc_status: kyc_status}, event, mirrored_id, false)
@@ -240,8 +253,20 @@ defmodule Mithril.Sumsub.Webhook do
   end
 
   defp stale_event?(existing, latest, event) do
-    stale_for_same_applicant?(existing, event) or stale_across_applicants?(latest, event)
+    duplicate_event?(existing, event) or stale_for_same_applicant?(existing, event) or
+      stale_across_applicants?(latest, event)
   end
+
+  defp duplicate_event?(
+         %{last_event_created_at_ms: stored_ms, last_webhook_payload: stored_payload},
+         %{created_at_ms: incoming_ms, payload: incoming_payload}
+       )
+       when is_integer(stored_ms) and is_integer(incoming_ms) and is_map(stored_payload) and
+              is_map(incoming_payload) do
+    stored_ms == incoming_ms and stored_payload == incoming_payload
+  end
+
+  defp duplicate_event?(_existing, _event), do: false
 
   defp stale_for_same_applicant?(nil, _event), do: false
 
@@ -430,6 +455,14 @@ defmodule Mithril.Sumsub.Webhook do
     end
   end
 
+  defp sync_orphaned_worker_verification(_user_id, kyc_status, _now)
+       when kyc_status in ["completed", "approved"],
+       do: :ok
+
+  defp sync_orphaned_worker_verification(user_id, kyc_status, now) do
+    upsert_worker_verification(user_id, map_worker_verification_status(kyc_status), now)
+  end
+
   defp upsert_worker_verification(user_id, status, now) do
     case Repo.query(
            """
@@ -458,7 +491,7 @@ defmodule Mithril.Sumsub.Webhook do
            """
            SELECT id, user_id, subject_type, cleaner_application_id, submitted_at,
                   reviewed_at, completed_at, kyc_status, review_answer, review_reason,
-                  last_event_created_at_ms, sumsub_applicant_id
+                  last_event_created_at_ms, sumsub_applicant_id, last_webhook_payload
            FROM public.kyc_profiles
            WHERE sumsub_applicant_id = $1
            FOR UPDATE
@@ -481,7 +514,7 @@ defmodule Mithril.Sumsub.Webhook do
            """
            SELECT id, user_id, subject_type, cleaner_application_id, submitted_at,
                   reviewed_at, completed_at, kyc_status, review_answer, review_reason,
-                  last_event_created_at_ms, sumsub_applicant_id
+                  last_event_created_at_ms, sumsub_applicant_id, last_webhook_payload
            FROM public.kyc_profiles
            WHERE user_id = $1
            ORDER BY last_event_created_at_ms DESC NULLS LAST, updated_at DESC, created_at DESC
@@ -508,7 +541,8 @@ defmodule Mithril.Sumsub.Webhook do
          review_answer,
          review_reason,
          last_event_created_at_ms,
-         applicant_id
+         applicant_id,
+         last_webhook_payload
        ]) do
     %{
       id: id,
@@ -522,7 +556,8 @@ defmodule Mithril.Sumsub.Webhook do
       review_answer: review_answer,
       review_reason: review_reason,
       last_event_created_at_ms: last_event_created_at_ms,
-      applicant_id: applicant_id
+      applicant_id: applicant_id,
+      last_webhook_payload: last_webhook_payload
     }
   end
 
@@ -715,6 +750,40 @@ defmodule Mithril.Sumsub.Webhook do
     else
       _ -> {:error, :invalid_payload}
     end
+  end
+
+  defp unexpected_worker_level?(event) do
+    final_review =
+      normalize_type(event.type) in @final_review_types and
+        event.review_answer && String.upcase(event.review_answer) in ["GREEN", "RED"]
+
+    final_review and normalize_level_name(event.level_name) != expected_worker_level_name()
+  end
+
+  defp expected_worker_level_name do
+    :mithril
+    |> Application.get_env(:sumsub_worker_level_name, @default_worker_level_name)
+    |> normalize_level_name()
+  end
+
+  defp normalize_level_name(value) when is_binary(value) do
+    value |> String.trim() |> String.downcase()
+  end
+
+  defp normalize_level_name(_), do: ""
+
+  defp ignored_level_result(event) do
+    %{
+      applicant_id: event.applicant_id,
+      external_user_id: event.external_user_id,
+      kyc_status: nil,
+      worker_mirrored: false,
+      worker_application_id: nil,
+      worker_application_kyc_status: nil,
+      worker_verification_status: nil,
+      skipped_stale: true,
+      ignored_level: true
+    }
   end
 
   defp decode_payload(raw_body) do
