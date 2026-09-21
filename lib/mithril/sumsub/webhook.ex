@@ -373,8 +373,9 @@ defmodule Mithril.Sumsub.Webhook do
              last_event_created_at_ms, last_webhook_payload, last_state_event_created_at_ms,
              submitted_at, reviewed_at, completed_at, updated_at
            ) VALUES (
-             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb,
-             CASE WHEN $14 THEN $12 ELSE NULL END, $15, $16, $17, now()
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::bigint, $13::jsonb,
+             CASE WHEN $14::boolean THEN $12::bigint ELSE NULL::bigint END,
+             $15, $16, $17, now()
            )
            ON CONFLICT (sumsub_applicant_id) DO NOTHING
            RETURNING id
@@ -402,16 +403,16 @@ defmodule Mithril.Sumsub.Webhook do
              country_code = $9,
              document_types = $10,
              last_event_type = CASE
-               WHEN last_event_created_at_ms IS NULL OR $12 >= last_event_created_at_ms THEN $11
+               WHEN last_event_created_at_ms IS NULL OR $12::bigint >= last_event_created_at_ms THEN $11
                ELSE last_event_type
              END,
-             last_event_created_at_ms = GREATEST(last_event_created_at_ms, $12),
+             last_event_created_at_ms = GREATEST(last_event_created_at_ms, $12::bigint),
              last_webhook_payload = CASE
-               WHEN last_event_created_at_ms IS NULL OR $12 >= last_event_created_at_ms THEN $13::jsonb
+               WHEN last_event_created_at_ms IS NULL OR $12::bigint >= last_event_created_at_ms THEN $13::jsonb
                ELSE last_webhook_payload
              END,
              last_state_event_created_at_ms = CASE
-               WHEN $14 THEN GREATEST(last_state_event_created_at_ms, $12)
+               WHEN $14::boolean THEN GREATEST(last_state_event_created_at_ms, $12::bigint)
                ELSE last_state_event_created_at_ms
              END,
              submitted_at = $15,
