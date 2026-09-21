@@ -138,21 +138,27 @@ defmodule Mithril.Sumsub.Webhook do
   end
 
   defp persist(event) do
-    if unexpected_worker_level?(event) do
-      Logger.warning(
-        "sumsub webhook ignored final review for unexpected level applicant=#{event.applicant_id} level=#{inspect(event.level_name)}"
-      )
+    Repo.transaction(fn ->
+      lock_user!(event.external_user_id)
+      existing = fetch_kyc_for_update(event.applicant_id)
 
-      {:ok, ignored_level_result(event)}
-    else
-      Repo.transaction(fn ->
-        lock_user!(event.external_user_id)
-        existing = fetch_kyc_for_update(event.applicant_id)
-        latest = fetch_latest_kyc_for_user(event.user_id)
-        apply_event(existing, latest, event, false)
-      end)
-      |> normalize_transaction()
-    end
+      cond do
+        existing && existing.user_id != event.user_id ->
+          Repo.rollback(:conflict)
+
+        unexpected_worker_level?(event, existing) ->
+          Logger.warning(
+            "sumsub webhook ignored worker event for unexpected level applicant=#{event.applicant_id} level=#{inspect(event.level_name)}"
+          )
+
+          ignored_level_result(event)
+
+        true ->
+          latest = fetch_latest_worker_kyc_for_user(event.user_id)
+          apply_event(existing, latest, event, false)
+      end
+    end)
+    |> normalize_transaction()
   end
 
   defp apply_event(existing, latest, event, retried?) do
@@ -224,7 +230,7 @@ defmodule Mithril.Sumsub.Webhook do
 
       :insert_race when retried? == false ->
         existing = fetch_kyc_for_update(event.applicant_id)
-        latest = fetch_latest_kyc_for_user(event.user_id)
+        latest = fetch_latest_worker_kyc_for_user(event.user_id)
         apply_event(existing, latest, event, true)
 
       :insert_race ->
@@ -319,7 +325,7 @@ defmodule Mithril.Sumsub.Webhook do
   defp write_kyc_profile(ctx) do
     payload_json = Jason.encode!(ctx.event.payload)
     document_types = ctx.event.document_types
-    subject_type = (ctx.existing && ctx.existing.subject_type) || "customer"
+    subject_type = (ctx.existing && ctx.existing.subject_type) || "worker"
 
     params = [
       ctx.event.user_id,
@@ -500,7 +506,7 @@ defmodule Mithril.Sumsub.Webhook do
   defp fetch_kyc_for_update(applicant_id) do
     case Repo.query(
            """
-           SELECT id, user_id, subject_type, cleaner_application_id, submitted_at,
+           SELECT id, user_id, subject_type, level_name, cleaner_application_id, submitted_at,
                   reviewed_at, completed_at, kyc_status, review_answer, review_reason,
                   last_event_created_at_ms, sumsub_applicant_id, last_event_type, last_webhook_payload
            FROM public.kyc_profiles
@@ -520,19 +526,21 @@ defmodule Mithril.Sumsub.Webhook do
     end
   end
 
-  defp fetch_latest_kyc_for_user(user_id) do
+  defp fetch_latest_worker_kyc_for_user(user_id) do
     case Repo.query(
            """
-           SELECT id, user_id, subject_type, cleaner_application_id, submitted_at,
+           SELECT id, user_id, subject_type, level_name, cleaner_application_id, submitted_at,
                   reviewed_at, completed_at, kyc_status, review_answer, review_reason,
                   last_event_created_at_ms, sumsub_applicant_id, last_event_type, last_webhook_payload
            FROM public.kyc_profiles
            WHERE user_id = $1
+             AND subject_type = 'worker'
+             AND lower(trim(COALESCE(level_name, ''))) = $2
            ORDER BY last_event_created_at_ms DESC NULLS LAST, updated_at DESC, created_at DESC
            LIMIT 1
            FOR UPDATE
            """,
-           [user_id]
+           [user_id, expected_worker_level_name()]
          ) do
       {:ok, %{rows: [row]}} -> kyc_row(row)
       {:ok, %{rows: []}} -> nil
@@ -544,6 +552,7 @@ defmodule Mithril.Sumsub.Webhook do
          id,
          user_id,
          subject_type,
+         level_name,
          worker_application_id,
          submitted_at,
          reviewed_at,
@@ -560,6 +569,7 @@ defmodule Mithril.Sumsub.Webhook do
       id: id,
       user_id: user_id,
       subject_type: subject_type,
+      level_name: level_name,
       worker_application_id: worker_application_id,
       submitted_at: submitted_at,
       reviewed_at: reviewed_at,
@@ -765,13 +775,20 @@ defmodule Mithril.Sumsub.Webhook do
     end
   end
 
-  defp unexpected_worker_level?(event) do
-    answer = event.review_answer && String.upcase(event.review_answer)
+  defp unexpected_worker_level?(event, existing) do
+    expected = expected_worker_level_name()
+    event_level = normalize_level_name(event.level_name)
 
-    final_review =
-      normalize_type(event.type) in @final_review_types and answer in ["GREEN", "RED"]
+    cond do
+      event_level != "" ->
+        event_level != expected
 
-    final_review and normalize_level_name(event.level_name) != expected_worker_level_name()
+      existing ->
+        normalize_level_name(existing.level_name) != expected
+
+      true ->
+        true
+    end
   end
 
   defp expected_worker_level_name do
