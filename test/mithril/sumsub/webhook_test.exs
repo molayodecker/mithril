@@ -204,15 +204,33 @@ defmodule Mithril.Sumsub.WebhookTest do
     assert {:ok, result} = Webhook.handle(raw, sign(raw))
     assert result.kyc_status == "completed"
 
-    [[kyc_status, review_answer, last_event]] =
+    [[kyc_status, review_answer, last_event, level_name]] =
       Repo.query!(
-        "SELECT kyc_status, review_answer, last_event_type FROM public.kyc_profiles WHERE sumsub_applicant_id = $1",
+        "SELECT kyc_status, review_answer, last_event_type, level_name FROM public.kyc_profiles WHERE sumsub_applicant_id = $1",
         ["appl-2"]
       ).rows
 
     assert kyc_status == "completed"
     assert review_answer == "GREEN"
     assert last_event == "applicantOnHold"
+    assert level_name == "id-and-liveness"
+
+    awaiting_user =
+      Jason.encode!(%{
+        "type" => "applicantAwaitingUser",
+        "applicantId" => "appl-2",
+        "externalUserId" => user_id,
+        "createdAtMs" => 1_700_000_000_200
+      })
+
+    assert {:ok, result} = Webhook.handle(awaiting_user, sign(awaiting_user))
+    assert result.kyc_status == "completed"
+
+    assert [["applicantAwaitingUser", "id-and-liveness"]] =
+             Repo.query!(
+               "SELECT last_event_type, level_name FROM public.kyc_profiles WHERE sumsub_applicant_id = $1",
+               ["appl-2"]
+             ).rows
   end
 
   test "keeps GREEN when applicantAwaitingUser arrives later" do
