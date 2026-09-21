@@ -79,6 +79,61 @@ defmodule Mithril.Paystack.WebhookTest do
     assert {:error, :amount_mismatch} = Webhook.handle(raw, sign(raw))
   end
 
+  test "does not settle a successful charge after the booking was cancelled" do
+    {booking_id, reference} = insert_pending_booking!(20_000)
+
+    Repo.query!(
+      "UPDATE public.bookings SET status = 'cancelled' WHERE id = $1",
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    raw = charge_success(reference, 20_000)
+
+    assert {:error, :payment_not_payable} = Webhook.handle(raw, sign(raw))
+
+    assert [["cancelled", "pending"]] =
+             Repo.query!(
+               "SELECT status, payment_status FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert [["ready"]] =
+             Repo.query!(
+               "SELECT status FROM public.payment_attempts WHERE reference = $1",
+               [reference]
+             ).rows
+  end
+
+  test "rejects charge.success when amount or currency is missing" do
+    {_booking_id, reference} = insert_pending_booking!(20_000)
+
+    missing_amount =
+      Jason.encode!(%{
+        "event" => "charge.success",
+        "data" => %{"reference" => reference, "status" => "success", "currency" => "GHS"}
+      })
+
+    assert {:error, :amount_mismatch} = Webhook.handle(missing_amount, sign(missing_amount))
+
+    missing_currency =
+      Jason.encode!(%{
+        "event" => "charge.success",
+        "data" => %{"reference" => reference, "status" => "success", "amount" => 20_000}
+      })
+
+    assert {:error, :amount_mismatch} =
+             Webhook.handle(missing_currency, sign(missing_currency))
+  end
+
+  test "returns database_unavailable when charge settlement tables are missing" do
+    {_booking_id, reference} = insert_pending_booking!(20_000)
+    Repo.query!("DROP TABLE public.payment_attempts")
+
+    raw = charge_success(reference, 20_000)
+
+    assert {:error, :database_unavailable} = Webhook.handle(raw, sign(raw))
+  end
+
   test "marks charge.failed on an initializing attempt" do
     {_booking_id, reference} = insert_pending_booking!(10_000)
 
@@ -114,7 +169,9 @@ defmodule Mithril.Paystack.WebhookTest do
         "data" => %{
           "transaction_reference" => reference,
           "refund_reference" => "rfd_1",
-          "status" => "processed"
+          "status" => "processed",
+          "amount" => 20_000,
+          "currency" => "GHS"
         }
       })
 
@@ -138,6 +195,92 @@ defmodule Mithril.Paystack.WebhookTest do
 
     assert status == "processed"
     assert refund_ref == "rfd_1"
+  end
+
+  test "rejects refund.processed when amount or currency does not match" do
+    {booking_id, reference} = insert_paid_booking!(20_000)
+    insert_refund!(booking_id, reference, 100, 20_000)
+
+    wrong_amount =
+      Jason.encode!(%{
+        "event" => "refund.processed",
+        "data" => %{
+          "transaction_reference" => reference,
+          "refund_reference" => "rfd_amount",
+          "status" => "processed",
+          "amount" => 1,
+          "currency" => "GHS"
+        }
+      })
+
+    assert {:error, :amount_mismatch} = Webhook.handle(wrong_amount, sign(wrong_amount))
+
+    wrong_currency =
+      Jason.encode!(%{
+        "event" => "refund.processed",
+        "data" => %{
+          "transaction_reference" => reference,
+          "refund_reference" => "rfd_currency",
+          "status" => "processed",
+          "amount" => 20_000,
+          "currency" => "USD"
+        }
+      })
+
+    assert {:error, :amount_mismatch} =
+             Webhook.handle(wrong_currency, sign(wrong_currency))
+
+    assert [["pending"]] =
+             Repo.query!(
+               "SELECT status FROM public.booking_refunds WHERE booking_id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert [["paid"]] =
+             Repo.query!(
+               "SELECT payment_status FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+  end
+
+  test "does not fall back to transaction reference when refund reference conflicts" do
+    {booking_id, reference} = insert_paid_booking!(20_000)
+    insert_refund!(booking_id, reference, 100, 20_000)
+
+    Repo.query!(
+      """
+      UPDATE public.booking_refunds
+      SET paystack_refund_reference = 'rfd_expected'
+      WHERE booking_id = $1
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    raw =
+      Jason.encode!(%{
+        "event" => "refund.processed",
+        "data" => %{
+          "transaction_reference" => reference,
+          "refund_reference" => "rfd_other",
+          "status" => "processed",
+          "amount" => 20_000,
+          "currency" => "GHS"
+        }
+      })
+
+    assert {:ok, result} = Webhook.handle(raw, sign(raw))
+    assert result.ignored
+    assert result.reason == "unknown_refund"
+
+    assert [["pending", "rfd_expected"]] =
+             Repo.query!(
+               """
+               SELECT status, paystack_refund_reference
+               FROM public.booking_refunds
+               WHERE booking_id = $1
+               """,
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
   end
 
   test "does not reopen a processed refund on a later pending event" do
