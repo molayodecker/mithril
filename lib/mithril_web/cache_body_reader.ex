@@ -21,7 +21,8 @@ defmodule MithrilWeb.CacheBodyReader do
     |> IO.iodata_to_binary()
   end
 
-  defp maybe_cache(%Plug.Conn{path_info: ["webhooks", "sumsub"]} = conn, body) do
+  defp maybe_cache(%Plug.Conn{path_info: ["webhooks", name]} = conn, body)
+       when name in ["paystack", "sumsub"] do
     update_in(conn.assigns[:raw_body], &[body | &1 || []])
   end
 
