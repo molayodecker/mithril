@@ -164,7 +164,7 @@ defmodule Mithril.Sumsub.Webhook do
         source = latest || existing
 
         Logger.info(
-          "sumsub webhook skipped stale event applicant=#{event.applicant_id} incoming_ms=#{inspect(event.created_at_ms)} stored_ms=#{inspect(source && source.last_event_created_at_ms)}"
+          "sumsub webhook skipped stale/duplicate event applicant=#{event.applicant_id} incoming_ms=#{inspect(event.created_at_ms)} stored_ms=#{inspect(source && source.last_event_created_at_ms)}"
         )
 
         success_result(
@@ -753,9 +753,10 @@ defmodule Mithril.Sumsub.Webhook do
   end
 
   defp unexpected_worker_level?(event) do
+    answer = event.review_answer && String.upcase(event.review_answer)
+
     final_review =
-      normalize_type(event.type) in @final_review_types and
-        event.review_answer && String.upcase(event.review_answer) in ["GREEN", "RED"]
+      normalize_type(event.type) in @final_review_types and answer in ["GREEN", "RED"]
 
     final_review and normalize_level_name(event.level_name) != expected_worker_level_name()
   end
