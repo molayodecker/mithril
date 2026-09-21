@@ -157,7 +157,12 @@ defmodule Mithril.Sumsub.Webhook do
           "sumsub webhook skipped stale event applicant=#{event.applicant_id} incoming_ms=#{inspect(event.created_at_ms)} stored_ms=#{inspect(source && source.last_event_created_at_ms)}"
         )
 
-        success_result(source || %{kyc_status: map_kyc_status(event.type, event.review_answer)}, event, source && source.worker_application_id, true)
+        success_result(
+          source || %{kyc_status: map_kyc_status(event.type, event.review_answer)},
+          event,
+          source && source.worker_application_id,
+          true
+        )
 
       true ->
         persist_locked(existing, event, retried?)
@@ -288,7 +293,8 @@ defmodule Mithril.Sumsub.Webhook do
       ctx.worker_application_id,
       ctx.kyc_status,
       ctx.review_answer,
-      ctx.review_reason,      ctx.event.level_name,
+      ctx.review_reason,
+      ctx.event.level_name,
       ctx.event.country_code,
       document_types,
       ctx.event.type,
@@ -298,7 +304,6 @@ defmodule Mithril.Sumsub.Webhook do
       ctx.reviewed_at,
       ctx.completed_at
     ]
-
     if ctx.existing do
       update_kyc_profile(params, ctx.existing.id)
     else
@@ -598,7 +603,6 @@ defmodule Mithril.Sumsub.Webhook do
         Repo.rollback(error)
     end
   end
-
   defp find_worker_application_by_phone(phone, user_id) when is_binary(phone) and phone != "" do
     variants = phone_variants(phone)
 
