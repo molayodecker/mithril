@@ -137,22 +137,27 @@ defmodule Mithril.Sumsub.Webhook do
 
   defp persist(event) do
     Repo.transaction(fn ->
-      apply_event(fetch_kyc_for_update(event.applicant_id), event, false)
+      lock_user!(event.external_user_id)
+      existing = fetch_kyc_for_update(event.applicant_id)
+      latest = fetch_latest_kyc_for_user(event.user_id)
+      apply_event(existing, latest, event, false)
     end)
     |> normalize_transaction()
   end
 
-  defp apply_event(existing, event, retried?) do
+  defp apply_event(existing, latest, event, retried?) do
     cond do
       existing && existing.user_id != event.user_id ->
         Repo.rollback(:conflict)
 
-      stale_event?(existing, event) ->
+      stale_event?(existing, latest, event) ->
+        source = latest || existing
+
         Logger.info(
-          "sumsub webhook skipped stale event applicant=#{event.applicant_id} incoming_ms=#{inspect(event.created_at_ms)} stored_ms=#{inspect(existing.last_event_created_at_ms)}"
+          "sumsub webhook skipped stale event applicant=#{event.applicant_id} incoming_ms=#{inspect(event.created_at_ms)} stored_ms=#{inspect(source && source.last_event_created_at_ms)}"
         )
 
-        success_result(existing, event, existing.worker_application_id, true)
+        success_result(source || %{kyc_status: map_kyc_status(event.type, event.review_answer)}, event, source && source.worker_application_id, true)
 
       true ->
         persist_locked(existing, event, retried?)
@@ -160,14 +165,16 @@ defmodule Mithril.Sumsub.Webhook do
   end
 
   defp persist_locked(existing, event, retried?) do
-    worker_application_id =
-      (existing && existing.worker_application_id) || find_worker_application_id(event.user_id)
+    worker_application_id = resolve_worker_application_id(existing, event.user_id)
 
     preserve = preserve_final_review?(existing, event.type, event.review_answer)
     kyc_status = effective_kyc_status(existing, event, preserve)
     review_answer = if preserve, do: existing.review_answer, else: event.review_answer
     review_reason = if preserve, do: existing.review_reason, else: event.review_reason
     now = DateTime.utc_now()
+
+    {submitted_at, reviewed_at, completed_at} =
+      lifecycle_timestamps(existing, event, kyc_status, preserve, now)
 
     ctx = %{
       existing: existing,
@@ -176,9 +183,9 @@ defmodule Mithril.Sumsub.Webhook do
       kyc_status: kyc_status,
       review_answer: review_answer,
       review_reason: review_reason,
-      submitted_at: (existing && existing.submitted_at) || submitted_at(kyc_status, now),
-      reviewed_at: (existing && existing.reviewed_at) || reviewed_at(event.type, now),
-      completed_at: (existing && existing.completed_at) || completed_at(kyc_status, now)
+      submitted_at: submitted_at,
+      reviewed_at: reviewed_at,
+      completed_at: completed_at
     }
 
     case write_kyc_profile(ctx) do
@@ -198,7 +205,9 @@ defmodule Mithril.Sumsub.Webhook do
         success_result(%{kyc_status: kyc_status}, event, mirrored_id, false)
 
       :insert_race when retried? == false ->
-        apply_event(fetch_kyc_for_update(event.applicant_id), event, true)
+        existing = fetch_kyc_for_update(event.applicant_id)
+        latest = fetch_latest_kyc_for_user(event.user_id)
+        apply_event(existing, latest, event, true)
 
       :insert_race ->
         Repo.rollback(:conflict)
@@ -225,14 +234,46 @@ defmodule Mithril.Sumsub.Webhook do
     }
   end
 
-  defp stale_event?(nil, _event), do: false
+  defp stale_event?(existing, latest, event) do
+    stale_for_same_applicant?(existing, event) or stale_across_applicants?(latest, event)
+  end
 
-  defp stale_event?(%{last_event_created_at_ms: stored}, %{created_at_ms: incoming})
+  defp stale_for_same_applicant?(nil, _event), do: false
+
+  defp stale_for_same_applicant?(
+         %{last_event_created_at_ms: stored},
+         %{created_at_ms: incoming}
+       )
        when is_integer(stored) and is_integer(incoming) do
     incoming < stored
   end
 
-  defp stale_event?(_existing, _event), do: false
+  defp stale_for_same_applicant?(_existing, _event), do: false
+
+  defp stale_across_applicants?(
+         %{applicant_id: applicant_id, last_event_created_at_ms: stored},
+         %{applicant_id: incoming_applicant_id, created_at_ms: incoming}
+       )
+       when applicant_id != incoming_applicant_id and is_integer(stored) and is_integer(incoming) do
+    incoming <= stored
+  end
+
+  defp stale_across_applicants?(
+         %{applicant_id: applicant_id, last_event_created_at_ms: stored},
+         %{applicant_id: incoming_applicant_id, created_at_ms: nil}
+       )
+       when applicant_id != incoming_applicant_id and is_integer(stored) do
+    true
+  end
+
+  defp stale_across_applicants?(_latest, _event), do: false
+
+  defp lock_user!(external_user_id) do
+    case Repo.query("SELECT pg_advisory_xact_lock(hashtext($1))", [external_user_id]) do
+      {:ok, _} -> :ok
+      {:error, error} -> Repo.rollback(error)
+    end
+  end
 
   defp write_kyc_profile(ctx) do
     payload_json = Jason.encode!(ctx.event.payload)
@@ -247,8 +288,7 @@ defmodule Mithril.Sumsub.Webhook do
       ctx.worker_application_id,
       ctx.kyc_status,
       ctx.review_answer,
-      ctx.review_reason,
-      ctx.event.level_name,
+      ctx.review_reason,      ctx.event.level_name,
       ctx.event.country_code,
       document_types,
       ctx.event.type,
@@ -332,13 +372,12 @@ defmodule Mithril.Sumsub.Webhook do
     app_status = map_worker_application_status(kyc_status)
     verification_status = map_worker_verification_status(kyc_status)
     review_status = if preserve, do: "completed", else: event.review_status
-    completed_at = if not preserve and kyc_status == "completed", do: now, else: nil
+    completed_at = if kyc_status == "completed", do: now, else: nil
 
     app_result =
       Repo.query(
         """
         UPDATE public.cleaner_applications SET
-          user_id = $2,
           kyc_provider = 'sumsub',
           sumsub_applicant_id = $3,
           sumsub_level_name = $4,
@@ -347,9 +386,10 @@ defmodule Mithril.Sumsub.Webhook do
           kyc_review_status = $7,
           kyc_provider_event = $8,
           kyc_last_event_at = $9,
-          kyc_completed_at = COALESCE($10, kyc_completed_at),
+          kyc_completed_at = CASE WHEN $11 THEN kyc_completed_at ELSE $10 END,
           updated_at = $9
         WHERE id = $1
+          AND user_id = $2
         RETURNING id
         """,
         [
@@ -362,14 +402,15 @@ defmodule Mithril.Sumsub.Webhook do
           review_status,
           event.type,
           now,
-          completed_at
+          completed_at,
+          preserve
         ]
       )
 
     case app_result do
       {:ok, %{num_rows: 0}} ->
         Logger.warning(
-          "sumsub webhook worker application missing applicant=#{event.applicant_id}"
+          "sumsub webhook worker application missing or ownership changed applicant=#{event.applicant_id}"
         )
 
         nil
@@ -411,7 +452,7 @@ defmodule Mithril.Sumsub.Webhook do
            """
            SELECT id, user_id, subject_type, cleaner_application_id, submitted_at,
                   reviewed_at, completed_at, kyc_status, review_answer, review_reason,
-                  last_event_created_at_ms
+                  last_event_created_at_ms, sumsub_applicant_id
            FROM public.kyc_profiles
            WHERE sumsub_applicant_id = $1
            FOR UPDATE
@@ -419,39 +460,102 @@ defmodule Mithril.Sumsub.Webhook do
            [applicant_id]
          ) do
       {:ok, %{rows: [row]}} ->
-        [
-          id,
-          user_id,
-          subject_type,
-          worker_application_id,
-          submitted_at,
-          reviewed_at,
-          completed_at,
-          kyc_status,
-          review_answer,
-          review_reason,
-          last_event_created_at_ms
-        ] = row
-
-        %{
-          id: id,
-          user_id: user_id,
-          subject_type: subject_type,
-          worker_application_id: worker_application_id,
-          submitted_at: submitted_at,
-          reviewed_at: reviewed_at,
-          completed_at: completed_at,
-          kyc_status: kyc_status,
-          review_answer: review_answer,
-          review_reason: review_reason,
-          last_event_created_at_ms: last_event_created_at_ms
-        }
+        kyc_row(row)
 
       {:ok, %{rows: []}} ->
         nil
 
       {:error, error} ->
         Repo.rollback(error)
+    end
+  end
+
+  defp fetch_latest_kyc_for_user(user_id) do
+    case Repo.query(
+           """
+           SELECT id, user_id, subject_type, cleaner_application_id, submitted_at,
+                  reviewed_at, completed_at, kyc_status, review_answer, review_reason,
+                  last_event_created_at_ms, sumsub_applicant_id
+           FROM public.kyc_profiles
+           WHERE user_id = $1
+           ORDER BY last_event_created_at_ms DESC NULLS LAST, updated_at DESC, created_at DESC
+           LIMIT 1
+           FOR UPDATE
+           """,
+           [user_id]
+         ) do
+      {:ok, %{rows: [row]}} -> kyc_row(row)
+      {:ok, %{rows: []}} -> nil
+      {:error, error} -> Repo.rollback(error)
+    end
+  end
+
+  defp kyc_row([
+         id,
+         user_id,
+         subject_type,
+         worker_application_id,
+         submitted_at,
+         reviewed_at,
+         completed_at,
+         kyc_status,
+         review_answer,
+         review_reason,
+         last_event_created_at_ms,
+         applicant_id
+       ]) do
+    %{
+      id: id,
+      user_id: user_id,
+      subject_type: subject_type,
+      worker_application_id: worker_application_id,
+      submitted_at: submitted_at,
+      reviewed_at: reviewed_at,
+      completed_at: completed_at,
+      kyc_status: kyc_status,
+      review_answer: review_answer,
+      review_reason: review_reason,
+      last_event_created_at_ms: last_event_created_at_ms,
+      applicant_id: applicant_id
+    }
+  end
+
+  defp resolve_worker_application_id(existing, user_id) do
+    case existing && existing.worker_application_id do
+      nil ->
+        find_worker_application_id(user_id)
+
+      application_id ->
+        case lock_worker_application(application_id) do
+          nil ->
+            find_worker_application_id(user_id)
+
+          %{user_id: ^user_id} ->
+            application_id
+
+          %{user_id: nil} ->
+            claim_worker_application(application_id, user_id)
+
+          _owned_by_another_user ->
+            find_worker_application_id(user_id)
+        end
+    end
+  end
+
+  defp lock_worker_application(application_id) do
+    case Repo.query(
+           """
+           SELECT user_id
+           FROM public.cleaner_applications
+           WHERE id = $1
+           FOR UPDATE
+           """,
+           [application_id]
+         ) do
+      {:ok, %{rows: [[user_id]]}} -> %{user_id: user_id}
+      {:ok, %{rows: []}} -> nil
+      {:error, %Postgrex.Error{postgres: %{code: :undefined_table}}} -> nil
+      {:error, error} -> Repo.rollback(error)
     end
   end
 
@@ -463,6 +567,7 @@ defmodule Mithril.Sumsub.Webhook do
            WHERE user_id = $1
            ORDER BY created_at DESC NULLS LAST
            LIMIT 1
+           FOR UPDATE
            """,
            [user_id]
          ) do
@@ -483,7 +588,8 @@ defmodule Mithril.Sumsub.Webhook do
   defp find_worker_application_by_contact(user_id) do
     case Repo.query("SELECT phone, email FROM public.users WHERE id = $1 LIMIT 1", [user_id]) do
       {:ok, %{rows: [[phone, email]]}} ->
-        find_worker_application_by_phone(phone) || find_worker_application_by_email(email)
+        find_worker_application_by_phone(phone, user_id) ||
+          find_worker_application_by_email(email, user_id)
 
       {:ok, %{rows: []}} ->
         nil
@@ -493,7 +599,7 @@ defmodule Mithril.Sumsub.Webhook do
     end
   end
 
-  defp find_worker_application_by_phone(phone) when is_binary(phone) and phone != "" do
+  defp find_worker_application_by_phone(phone, user_id) when is_binary(phone) and phone != "" do
     variants = phone_variants(phone)
 
     if variants == [] do
@@ -503,22 +609,24 @@ defmodule Mithril.Sumsub.Webhook do
              """
              SELECT id
              FROM public.cleaner_applications
-             WHERE phone = ANY($1::text[])
+             WHERE user_id IS NULL
+               AND phone = ANY($1::text[])
              ORDER BY created_at DESC NULLS LAST
              LIMIT 1
+             FOR UPDATE
              """,
              [variants]
            ) do
-        {:ok, %{rows: [[id]]}} -> id
+        {:ok, %{rows: [[id]]}} -> claim_worker_application(id, user_id)
         {:ok, %{rows: []}} -> nil
         {:error, error} -> Repo.rollback(error)
       end
     end
   end
 
-  defp find_worker_application_by_phone(_), do: nil
+  defp find_worker_application_by_phone(_, _user_id), do: nil
 
-  defp find_worker_application_by_email(email) when is_binary(email) do
+  defp find_worker_application_by_email(email, user_id) when is_binary(email) do
     email = String.trim(email) |> String.downcase()
 
     if email == "" do
@@ -528,20 +636,39 @@ defmodule Mithril.Sumsub.Webhook do
              """
              SELECT id
              FROM public.cleaner_applications
-             WHERE lower(email) = $1
+             WHERE user_id IS NULL
+               AND lower(email) = $1
              ORDER BY created_at DESC NULLS LAST
              LIMIT 1
+             FOR UPDATE
              """,
              [email]
            ) do
-        {:ok, %{rows: [[id]]}} -> id
+        {:ok, %{rows: [[id]]}} -> claim_worker_application(id, user_id)
         {:ok, %{rows: []}} -> nil
         {:error, error} -> Repo.rollback(error)
       end
     end
   end
 
-  defp find_worker_application_by_email(_), do: nil
+  defp find_worker_application_by_email(_, _user_id), do: nil
+
+  defp claim_worker_application(application_id, user_id) do
+    case Repo.query(
+           """
+           UPDATE public.cleaner_applications
+           SET user_id = $2, updated_at = now()
+           WHERE id = $1
+             AND user_id IS NULL
+           RETURNING id
+           """,
+           [application_id, user_id]
+         ) do
+      {:ok, %{rows: [[id]]}} -> id
+      {:ok, %{rows: []}} -> nil
+      {:error, error} -> Repo.rollback(error)
+    end
+  end
 
   defp parse_event(payload) when is_map(payload) do
     type = string_field(payload, "type")
@@ -620,15 +747,37 @@ defmodule Mithril.Sumsub.Webhook do
     map_kyc_status(event.type, event.review_answer)
   end
 
-  defp submitted_at(status, now) when status in ["submitted", "completed", "rejected"], do: now
-  defp submitted_at(_status, _now), do: nil
-
-  defp reviewed_at(type, now) do
-    if normalize_type(type) in @final_review_types, do: now, else: nil
+  defp lifecycle_timestamps(existing, _event, _status, true, _now) do
+    {
+      existing && existing.submitted_at,
+      existing && existing.reviewed_at,
+      existing && existing.completed_at
+    }
   end
 
-  defp completed_at("completed", now), do: now
-  defp completed_at(_status, _now), do: nil
+  defp lifecycle_timestamps(existing, event, status, false, now) do
+    submitted_at =
+      if status in ["submitted", "completed", "rejected"] do
+        (existing && existing.submitted_at) || now
+      end
+
+    reviewed_at =
+      if normalize_type(event.type) in @final_review_types do
+        now
+      end
+
+    completed_at =
+      if status == "completed" do
+        if existing && existing.kyc_status in ["completed", "approved"] &&
+             existing.review_answer && String.upcase(existing.review_answer) == "GREEN" do
+          existing.completed_at || now
+        else
+          now
+        end
+      end
+
+    {submitted_at, reviewed_at, completed_at}
+  end
 
   defp map_worker_application_status(status) when status in ["completed", "approved"],
     do: "completed"
