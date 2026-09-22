@@ -122,7 +122,17 @@ defmodule Mithril.DirectAdminLiveJobs do
 
     """
     CASE
-      WHEN #{value} ~ '^[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?
+      WHEN #{value} ~ '^[+-]?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$' THEN
+        CASE
+          WHEN (#{value})::double precision BETWEEN #{min} AND #{max}
+          THEN (#{value})::double precision
+          ELSE NULL::double precision
+        END
+      ELSE NULL::double precision
+    END
+    """
+  end
+
   defp milestones_expr(true) do
     """
     COALESCE((
@@ -210,110 +220,6 @@ defmodule Mithril.DirectAdminLiveJobs do
   defp coordinate_kind(type) when type in ["geometry", "geography"], do: :spatial
   defp coordinate_kind("point"), do: :point
   defp coordinate_kind(_), do: :none
-
-  defp truthy?(value) when value in [true, 1, "t", "true"], do: true
-  defp truthy?(_), do: false
-
-  defp sql_list(values) do
-    Enum.map_join(values, ", ", &("'#{&1}'"))
-  end
-
-  defp require_admin(uid) do
-    if Auth.staff_uuid?(uid), do: :ok, else: {:error, :forbidden}
-  end
-
-  defp dump_uuid(value) when is_binary(value), do: Ecto.UUID.dump(value)
-  defp dump_uuid(_), do: :error
-
-  defp database_error(%Postgrex.Error{postgres: %{code: :undefined_table}}) do
-    {:error, :missing_table}
-  end
-
-  defp database_error(error) do
-    Logger.error("Direct admin live jobs database error: #{inspect(error)}")
-    {:error, :database_unavailable}
-  end
-end
- THEN
-        CASE
-          WHEN (#{value})::double precision BETWEEN #{min} AND #{max}
-          THEN (#{value})::double precision
-          ELSE NULL::double precision
-        END
-      ELSE NULL::double precision
-    END
-    """
-  end
-
-  defp milestones_expr(true) do
-    """
-    COALESCE((
-      SELECT jsonb_agg(
-        jsonb_build_object('stage', tl.stage::text, 'changedAt', tl.changed_at)
-        ORDER BY tl.changed_at ASC NULLS LAST
-      )
-      FROM public.booking_timeline tl
-      WHERE tl.booking_id = b.id
-    ), '[]'::jsonb)
-    """
-  end
-
-  defp milestones_expr(false), do: "'[]'::jsonb"
-
-  defp tracking_expr(true) do
-    """
-    (
-      SELECT jsonb_build_object(
-        'latitude', ct.latitude,
-        'longitude', ct.longitude,
-        'heading', ct.heading,
-        'accuracy', ct.accuracy,
-        'updatedAt', ct.created_at
-      )
-      FROM public.cleaner_tracking ct
-      WHERE ct.booking_id = b.id
-      ORDER BY ct.created_at DESC
-      LIMIT 1
-    )
-    """
-  end
-
-  defp tracking_expr(false), do: "NULL::jsonb"
-
-  defp photos_expr(true) do
-    """
-    COALESCE((
-      SELECT jsonb_build_object(
-        'before', COUNT(*) FILTER (WHERE p.photo_type = 'before'),
-        'during', COUNT(*) FILTER (WHERE p.photo_type = 'during'),
-        'after', COUNT(*) FILTER (WHERE p.photo_type = 'after'),
-        'issue', COUNT(*) FILTER (WHERE p.photo_type = 'issue'),
-        'total', COUNT(*)
-      )
-      FROM public.booking_job_photos p
-      WHERE p.booking_id = b.id
-    ), jsonb_build_object('before', 0, 'during', 0, 'after', 0, 'issue', 0, 'total', 0))
-    """
-  end
-
-  defp photos_expr(false) do
-    "jsonb_build_object('before', 0, 'during', 0, 'after', 0, 'issue', 0, 'total', 0)"
-  end
-
-  defp progress_tables do
-    case Repo.query("""
-         SELECT
-           to_regclass('public.booking_timeline') IS NOT NULL,
-           to_regclass('public.cleaner_tracking') IS NOT NULL,
-           to_regclass('public.booking_job_photos') IS NOT NULL
-         """) do
-      {:ok, %{rows: [[timeline, tracking, photos]]}} ->
-        %{timeline: truthy?(timeline), tracking: truthy?(tracking), photos: truthy?(photos)}
-
-      _ ->
-        %{timeline: false, tracking: false, photos: false}
-    end
-  end
 
   defp truthy?(value) when value in [true, 1, "t", "true"], do: true
   defp truthy?(_), do: false
