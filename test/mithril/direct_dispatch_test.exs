@@ -3,6 +3,7 @@ defmodule Mithril.DirectDispatchTest do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Mithril.DirectDispatch
+  alias Mithril.DirectDispatchRequestSafety
   alias Mithril.Repo
 
   setup do
@@ -104,6 +105,7 @@ defmodule Mithril.DirectDispatchTest do
       assigned_by_user_id uuid,
       assigned_at timestamptz,
       idempotency_key text,
+      intent_fingerprint text,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     )
@@ -191,6 +193,75 @@ defmodule Mithril.DirectDispatchTest do
       ).rows
 
     assert count == 1
+  end
+
+  test "urgent-help replay succeeds after the original neededBy is already past" do
+    customer_id = insert_user!("late-retry@example.com", "+233500000098")
+    key = "urgent-6f65fa62-4d7c-4e21"
+    needed_by = DateTime.utc_now() |> DateTime.add(-300, :second) |> DateTime.to_iso8601()
+
+    params = %{
+      "role" => "cleaner",
+      "priority" => "urgent",
+      "neededBy" => needed_by,
+      "durationHours" => 2,
+      "householdAddress" => "Cantonments, Accra",
+      "requirements" => %{"supplies" => false},
+      "notes" => "Retry after a lost response",
+      "idempotencyKey" => key
+    }
+
+    assert {:ok, fingerprint} = DirectDispatch.urgent_request_fingerprint_for_params(params)
+    request_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.direct_service_requests (
+        id, customer_id, kind, status, priority, role, requested_start_at,
+        duration_hours, household_address_snapshot, requirements, notes,
+        created_by_user_id, idempotency_key, intent_fingerprint
+      ) VALUES (
+        $1, $2, 'urgent_help', 'submitted', 'urgent', 'cleaner', $3, 2,
+        'Cantonments, Accra', '{"supplies":false}'::jsonb,
+        'Retry after a lost response', $2, $4, $5
+      )
+      """,
+      [
+        Ecto.UUID.dump!(request_id),
+        Ecto.UUID.dump!(customer_id),
+        DateTime.from_iso8601(needed_by) |> elem(1),
+        key,
+        fingerprint
+      ]
+    )
+
+    assert {:ok, replay} = DirectDispatchRequestSafety.create_urgent_request(customer_id, params)
+    assert replay.id == request_id
+  end
+
+  test "urgent-help idempotency keys cannot be reused for a different request" do
+    customer_id = insert_user!("conflict@example.com", "+233500000097")
+    key = "urgent-9e5dd90e-6baf-49aa"
+    needed_by = DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.to_iso8601()
+
+    original = %{
+      "role" => "cleaner",
+      "priority" => "urgent",
+      "neededBy" => needed_by,
+      "durationHours" => 2,
+      "householdAddress" => "Labone, Accra",
+      "requirements" => %{},
+      "notes" => "Original intent",
+      "idempotencyKey" => key
+    }
+
+    assert {:ok, _created} = DirectDispatchRequestSafety.create_urgent_request(customer_id, original)
+
+    assert {:error, :idempotency_conflict} =
+             DirectDispatchRequestSafety.create_urgent_request(
+               customer_id,
+               Map.put(original, "householdAddress", "Airport Residential, Accra")
+             )
   end
 
   test "prevents duplicate active replacement requests for one booking" do
