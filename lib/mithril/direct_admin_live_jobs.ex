@@ -21,7 +21,8 @@ defmodule Mithril.DirectAdminLiveJobs do
         {:ok, jobs} ->
           {:ok,
            %{
-             "generatedAt" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
+             "generatedAt" =>
+               DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
              "jobs" => jobs
            }}
 
@@ -225,7 +226,7 @@ defmodule Mithril.DirectAdminLiveJobs do
   defp truthy?(_), do: false
 
   defp sql_list(values) do
-    Enum.map_join(values, ", ", &("'#{&1}'"))
+    Enum.map_join(values, ", ", &"'#{&1}'")
   end
 
   defp require_admin(uid) do
