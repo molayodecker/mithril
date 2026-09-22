@@ -197,6 +197,14 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
         },
         source: %Schema{type: :string, enum: ~w(admin phone whatsapp), default: "admin"},
         consentConfirmed: %Schema{type: :boolean},
+        idempotencyKey: %Schema{
+          type: :string,
+          minLength: 8,
+          maxLength: 128,
+          nullable: true,
+          description:
+            "Stable per-intent key. Retries with the same key return the same booking or booking series."
+        },
         sendNotifications: %Schema{
           type: :boolean,
           default: true,
