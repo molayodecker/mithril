@@ -1042,7 +1042,19 @@ defmodule Mithril.DirectBookings do
   defp format_hhmm(%Time{} = time), do: Calendar.strftime(time, "%H:%M")
 
   defp clear_reminder(column) do
-    "CASE WHEN scheduled_date IS DISTINCT FROM $2 OR scheduled_time IS DISTINCT FROM $3 THEN NULL ELSE #{column} END"
+    """
+    CASE
+      WHEN scheduled_date IS DISTINCT FROM $2
+        OR scheduled_time IS DISTINCT FROM $3
+        OR COALESCE(
+          NULLIF(btrim(timezone_name), ''),
+          NULLIF(btrim(timezone), ''),
+          '#{@default_timezone}'
+        ) IS DISTINCT FROM $5::text
+      THEN NULL
+      ELSE #{column}
+    END
+    """
   end
 
   def client_bookings_enabled? do
