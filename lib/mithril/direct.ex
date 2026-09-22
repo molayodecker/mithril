@@ -126,7 +126,6 @@ defmodule Mithril.Direct do
     else
       :error -> {:error, :invalid_user}
       {:error, error} when is_atom(error) -> {:error, error}
-      {:error, error} -> database_error(error)
     end
   end
 
