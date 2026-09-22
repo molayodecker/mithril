@@ -255,7 +255,8 @@ defmodule Mithril.DirectDispatchTest do
       "idempotencyKey" => key
     }
 
-    assert {:ok, _created} = DirectDispatchRequestSafety.create_urgent_request(customer_id, original)
+    assert {:ok, _created} =
+             DirectDispatchRequestSafety.create_urgent_request(customer_id, original)
 
     assert {:error, :idempotency_conflict} =
              DirectDispatchRequestSafety.create_urgent_request(
