@@ -363,6 +363,26 @@ defmodule Mithril.AuthTest do
     assert {:error, :invalid_profile} = Auth.check_availability(%{})
   end
 
+  test "check_availability treats inactive accounts as taken" do
+    {user_id, email} = insert_account("inactive-available@tryinstaclean.com", "correct-horse")
+
+    Repo.query!("UPDATE public.users SET status = 'inactive' WHERE id = $1::uuid", [
+      dump_uuid(user_id)
+    ])
+
+    assert {:ok, %{exists: true}} = Auth.check_availability(%{"email" => email})
+    assert {:error, :email_taken} = Auth.register(email, "another-password")
+  end
+
+  test "check_availability treats a legacy public.users email as taken" do
+    email = "legacy-available@tryinstaclean.com"
+    insert_legacy_user(email, phone: "+233200000088")
+
+    assert {:ok, %{exists: true}} = Auth.check_availability(%{"email" => String.upcase(email)})
+    assert {:ok, %{exists: true}} = Auth.check_availability(%{"phone" => "0200000088"})
+    assert {:error, :email_taken} = Auth.register(email, "another-password")
+  end
+
   test "update_profile upserts profiles, phone, and onboarding roles" do
     {user_id, email} = insert_account("profile@tryinstaclean.com", "correct-horse")
 
@@ -856,6 +876,25 @@ defmodule Mithril.AuthTest do
              google: true,
              facebook: true
            }
+  end
+
+  defp insert_legacy_user(email, opts) do
+    user_id = Ecto.UUID.generate()
+    {:ok, user_uuid} = Ecto.UUID.dump(user_id)
+    hash = Bcrypt.hash_pwd_salt("legacy-password")
+    phone = Keyword.get(opts, :phone)
+
+    Repo.query!(
+      "INSERT INTO auth.users (id, email, phone, encrypted_password) VALUES ($1, $2, $3, $4)",
+      [user_uuid, email, phone, hash]
+    )
+
+    Repo.query!(
+      "UPDATE public.users SET email = $2, phone = $3, password_hash = $4 WHERE id = $1",
+      [user_uuid, email, phone, hash]
+    )
+
+    {user_id, email}
   end
 
   defp insert_catalog_role(role_id) do

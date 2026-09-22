@@ -1506,19 +1506,26 @@ defmodule Mithril.Auth do
   defp email_taken?(nil, _exclude_user_id), do: {:ok, false}
 
   defp email_taken?(email, exclude_user_id) do
-    case fetch_account_by_email(String.downcase(email)) do
-      {:ok, account} -> {:ok, account.user_id != exclude_user_id}
-      {:error, :not_found} -> {:ok, false}
-      {:error, reason} -> {:error, reason}
-    end
+    identifier_occupied?(
+      email_occupied_sql(true),
+      email_occupied_sql(false),
+      [normalize_login(email), dump_exclude_uuid(exclude_user_id)]
+    )
   end
 
   defp phone_taken?(nil, _exclude_user_id), do: {:ok, false}
 
   defp phone_taken?(phone, exclude_user_id) do
     case Phone.normalize(phone) do
-      {:ok, e164} -> phone_identifier_taken?(phone_lookup_variants(e164), exclude_user_id)
-      :error -> {:ok, false}
+      {:ok, e164} ->
+        identifier_occupied?(
+          phone_occupied_sql(true),
+          phone_occupied_sql(false),
+          [phone_lookup_variants(e164), dump_exclude_uuid(exclude_user_id)]
+        )
+
+      :error ->
+        {:ok, false}
     end
   end
 
@@ -1537,27 +1544,85 @@ defmodule Mithril.Auth do
     Enum.uniq(variants)
   end
 
-  defp phone_identifier_taken?(variants, exclude_user_id) do
-    case Repo.query(
-           """
-           SELECT a.user_id::text
-           FROM public.mithril_auth_accounts a
-           JOIN public.users u ON u.id = a.user_id
-           WHERE u.status::text = 'active'
-             AND (
-               a.phone = ANY($1::text[])
-               OR u.phone = ANY($1::text[])
-             )
-             AND ($2::uuid IS NULL OR a.user_id <> $2::uuid)
-           LIMIT 1
-           """,
-           [variants, dump_exclude_uuid(exclude_user_id)]
-         ) do
-      {:ok, %{num_rows: 1}} -> {:ok, true}
-      {:ok, _} -> {:ok, false}
-      {:error, error} -> database_error(error)
+  defp email_occupied_sql(include_auth_users?) do
+    """
+    SELECT (
+      EXISTS (
+        SELECT 1
+        FROM public.mithril_auth_accounts a
+        WHERE lower(btrim(coalesce(a.email, ''))) = $1
+          AND ($2::uuid IS NULL OR a.user_id <> $2::uuid)
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM public.users u
+        WHERE lower(btrim(coalesce(u.email, ''))) = $1
+          AND ($2::uuid IS NULL OR u.id <> $2::uuid)
+      )
+      #{auth_users_occupied_sql(include_auth_users?, "lower(btrim(coalesce(au.email, ''))) = $1")}
+    )
+    """
+  end
+
+  defp phone_occupied_sql(include_auth_users?) do
+    """
+    SELECT (
+      EXISTS (
+        SELECT 1
+        FROM public.mithril_auth_accounts a
+        WHERE a.phone = ANY($1::text[])
+          AND ($2::uuid IS NULL OR a.user_id <> $2::uuid)
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM public.users u
+        WHERE u.phone = ANY($1::text[])
+          AND ($2::uuid IS NULL OR u.id <> $2::uuid)
+      )
+      #{auth_users_occupied_sql(include_auth_users?, "au.phone = ANY($1::text[])")}
+    )
+    """
+  end
+
+  defp auth_users_occupied_sql(true, predicate) do
+    """
+    OR EXISTS (
+      SELECT 1
+      FROM auth.users au
+      WHERE #{predicate}
+        AND ($2::uuid IS NULL OR au.id <> $2::uuid)
+    )
+    """
+  end
+
+  defp auth_users_occupied_sql(false, _predicate), do: ""
+
+  defp identifier_occupied?(sql_with_auth, sql_without_auth, params) do
+    case Repo.query(sql_with_auth, params) do
+      {:ok, %{rows: [[true]]}} ->
+        {:ok, true}
+
+      {:ok, _} ->
+        {:ok, false}
+
+      {:error, error} ->
+        if missing_auth_users?(error) do
+          case Repo.query(sql_without_auth, params) do
+            {:ok, %{rows: [[true]]}} -> {:ok, true}
+            {:ok, _} -> {:ok, false}
+            {:error, retry_error} -> database_error(retry_error)
+          end
+        else
+          database_error(error)
+        end
     end
   end
+
+  defp missing_auth_users?(%Postgrex.Error{postgres: %{code: code}})
+       when code in [:undefined_table, :invalid_schema_name],
+       do: true
+
+  defp missing_auth_users?(_), do: false
 
   defp dump_exclude_uuid(user_id) when is_binary(user_id) do
     case Ecto.UUID.cast(user_id) do
