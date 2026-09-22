@@ -22,6 +22,7 @@ defmodule Mithril.AuthTest do
           "mithril_auth_accounts",
           "cleaner_data",
           "user_roles",
+          "profiles",
           "users"
         ] do
       Repo.query!("DROP TABLE IF EXISTS public.#{table} CASCADE")
@@ -45,11 +46,24 @@ defmodule Mithril.AuthTest do
     CREATE TABLE public.users (
       id uuid PRIMARY KEY REFERENCES auth.users(id),
       email text UNIQUE,
-      phone text,
+      phone text UNIQUE,
       password_hash text NOT NULL,
       status text DEFAULT 'active',
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now()
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.profiles (
+      id uuid PRIMARY KEY REFERENCES public.users(id),
+      user_id uuid REFERENCES public.users(id),
+      firstname text,
+      lastname text,
+      fullname text,
+      avatar_url text,
+      address text,
+      location_wkt text
     )
     """)
 
@@ -286,6 +300,66 @@ defmodule Mithril.AuthTest do
     assert me.cleanerStatus == "active"
   end
 
+  test "update_profile upserts profiles, phone, and onboarding roles" do
+    {user_id, email} = insert_account("profile@tryinstaclean.com", "correct-horse")
+
+    assert {:ok, me} =
+             Auth.update_profile(user_id, %{
+               "first_name" => "Arthur",
+               "last_name" => "Decker",
+               "phone" => "+233200000001",
+               "email" => email,
+               "address" => "East Legon",
+               "location_wkt" => "POINT(-0.205 5.56)",
+               "roles" => ["customer", "cleaner", "admin"]
+             })
+
+    assert me.phone == "+233200000001"
+    assert me.name == "Arthur Decker"
+    assert "customer" in me.roles
+    assert "cleaner" in me.roles
+    refute "admin" in me.roles
+
+    [[firstname, lastname, fullname, address, location_wkt]] =
+      Repo.query!(
+        """
+        SELECT firstname, lastname, fullname, address, location_wkt
+        FROM public.profiles
+        WHERE id = $1::uuid
+        """,
+        [dump_uuid(user_id)]
+      ).rows
+
+    assert firstname == "Arthur"
+    assert lastname == "Decker"
+    assert fullname == "Arthur Decker"
+    assert address == "East Legon"
+    assert location_wkt == "POINT(-0.205 5.56)"
+  end
+
+  test "update_profile rejects an invalid phone" do
+    {user_id, _email} = insert_account("invalid-phone@tryinstaclean.com", "correct-horse")
+
+    assert {:error, :invalid_phone} =
+             Auth.update_profile(user_id, %{
+               "first_name" => "Ama",
+               "phone" => "not-a-phone"
+             })
+  end
+
+  test "update_profile rejects a phone already used by another account" do
+    {_first_id, _first_email} =
+      insert_account("first-profile@tryinstaclean.com", "correct-horse", phone: "+233200000002")
+
+    {user_id, _email} = insert_account("second-profile@tryinstaclean.com", "correct-horse")
+
+    assert {:error, :phone_taken} =
+             Auth.update_profile(user_id, %{
+               "first_name" => "Ama",
+               "phone" => "+233200000002"
+             })
+  end
+
   test "login rejects inactive accounts" do
     {user_id, email} = insert_account("inactive@example.com", "correct-horse")
 
@@ -466,6 +540,17 @@ defmodule Mithril.AuthTest do
   test "google oauth issues a session and links later logins" do
     assert {:ok, first} = Auth.oauth("google", "google-id-token")
     assert first.user.email == "google@example.com"
+    assert first.user.name == "Google User"
+
+    [[firstname, lastname, fullname]] =
+      Repo.query!(
+        "SELECT firstname, lastname, fullname FROM public.profiles WHERE id = $1::uuid",
+        [dump_uuid(first.user.id)]
+      ).rows
+
+    assert firstname == "Google"
+    assert lastname == "User"
+    assert fullname == "Google User"
 
     assert {:ok, second} = Auth.oauth("google", "google-id-token")
     assert second.user.id == first.user.id

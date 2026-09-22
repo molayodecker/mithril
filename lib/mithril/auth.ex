@@ -127,6 +127,18 @@ defmodule Mithril.Auth do
     end
   end
 
+  @profile_roles MapSet.new(["customer", "cleaner"])
+
+  def update_profile(user_id, attrs) when is_binary(user_id) and is_map(attrs) do
+    with {:ok, _account} <- fetch_account_by_id(user_id),
+         {:ok, fields} <- normalize_profile_attrs(attrs),
+         :ok <- persist_profile(user_id, fields) do
+      me(user_id)
+    end
+  end
+
+  def update_profile(_, _), do: {:error, :invalid_profile}
+
   def admin?(user_id) when is_binary(user_id), do: has_role?(user_id, "admin")
 
   def reviewer?(user_id) when is_binary(user_id), do: has_role?(user_id, "reviewer")
@@ -718,7 +730,8 @@ defmodule Mithril.Auth do
     Repo.transaction(fn ->
       with :ok <- lock_transaction_keys(lock_keys),
            {:ok, account} <- resolve_oauth_account(identity),
-           :ok <- upsert_identity(account.user_id, identity) do
+           :ok <- upsert_identity(account.user_id, identity),
+           :ok <- seed_oauth_profile(account.user_id, identity) do
         account
       else
         {:error, reason} -> Repo.rollback(reason)
@@ -1342,7 +1355,78 @@ defmodule Mithril.Auth do
     phone = account.phone || e164_if_phone(account.email)
     email = if phone && account.email == phone, do: nil, else: account.email
 
-    %{id: account.user_id, email: email, phone: phone}
+    %{
+      id: account.user_id,
+      email: email,
+      phone: phone,
+      name: profile_display_name(account.user_id)
+    }
+  end
+
+  defp profile_display_name(user_id) do
+    case Repo.query(
+           """
+           SELECT COALESCE(
+             NULLIF(btrim(fullname), ''),
+             NULLIF(btrim(concat_ws(' ', firstname, lastname)), '')
+           )
+           FROM public.profiles
+           WHERE id = $1::uuid
+           LIMIT 1
+           """,
+           [dump_uuid(user_id)]
+         ) do
+      {:ok, %{rows: [[name]]}} when is_binary(name) and name != "" -> name
+      _other -> nil
+    end
+  end
+
+  defp seed_oauth_profile(user_id, identity) do
+    {first_name, last_name, fullname} = oauth_name_parts(identity)
+    avatar_url = blank_to_nil(identity[:picture])
+
+    if is_nil(first_name) and is_nil(avatar_url) do
+      :ok
+    else
+      case Repo.query(
+             """
+             INSERT INTO public.profiles (
+               id, user_id, firstname, lastname, fullname, avatar_url
+             )
+             VALUES ($1::uuid, $1::uuid, $2, $3, $4, $5)
+             ON CONFLICT (id) DO UPDATE
+             SET firstname = COALESCE(NULLIF(btrim(public.profiles.firstname), ''), EXCLUDED.firstname),
+                 lastname = COALESCE(NULLIF(btrim(public.profiles.lastname), ''), EXCLUDED.lastname),
+                 fullname = COALESCE(NULLIF(btrim(public.profiles.fullname), ''), EXCLUDED.fullname),
+                 avatar_url = COALESCE(NULLIF(btrim(public.profiles.avatar_url), ''), EXCLUDED.avatar_url)
+             """,
+             [dump_uuid(user_id), first_name, last_name, fullname, avatar_url]
+           ) do
+        {:ok, _} -> :ok
+        {:error, error} -> unique_or_database_error(error)
+      end
+    end
+  end
+
+  defp oauth_name_parts(identity) do
+    given = blank_to_nil(identity[:given_name])
+    family = blank_to_nil(identity[:family_name]) || ""
+    full = blank_to_nil(identity[:name])
+
+    cond do
+      is_binary(given) ->
+        {given, family, Enum.join(Enum.reject([given, family], &(&1 == "")), " ")}
+
+      is_binary(full) ->
+        case String.split(full, ~r/\s+/, parts: 2) do
+          [first, last] -> {first, last, full}
+          [first] -> {first, "", full}
+          _ -> {nil, nil, nil}
+        end
+
+      true ->
+        {nil, nil, nil}
+    end
   end
 
   defp e164_if_phone(value) do
@@ -1354,6 +1438,277 @@ defmodule Mithril.Auth do
 
   defp account(user_id, email, phone, password_hash, status) do
     %{user_id: user_id, email: email, phone: phone, password_hash: password_hash, status: status}
+  end
+
+  defp normalize_profile_attrs(attrs) do
+    first_name = profile_string(attrs, ["first_name", "firstname", :first_name, :firstname])
+    last_name = profile_string(attrs, ["last_name", "lastname", :last_name, :lastname])
+    phone = profile_string(attrs, ["phone", :phone])
+    email = profile_optional_string(attrs, ["email", :email])
+    avatar_url = profile_optional_string(attrs, ["avatar_url", :avatar_url])
+    address = profile_optional_string(attrs, ["address", :address])
+    location_wkt = profile_optional_string(attrs, ["location_wkt", :location_wkt])
+    write_email? = profile_has_key?(attrs, ["email", :email])
+    roles = profile_roles(attrs)
+
+    cond do
+      is_nil(first_name) ->
+        {:error, :invalid_profile}
+
+      true ->
+        with {:ok, phone} <- normalize_phone(phone || "") do
+          {:ok,
+           %{
+             first_name: first_name,
+             last_name: last_name || "",
+             phone: phone,
+             email: email,
+             write_email?: write_email?,
+             avatar_url: avatar_url,
+             address: address,
+             location_wkt: location_wkt,
+             roles: roles
+           }}
+        end
+    end
+  end
+
+  defp persist_profile(user_id, fields) do
+    Repo.transaction(fn ->
+      with :ok <- update_public_user_profile(user_id, fields),
+           :ok <- update_auth_account_profile(user_id, fields),
+           :ok <- update_auth_user_profile(user_id, fields),
+           :ok <- upsert_public_profile(user_id, fields),
+           :ok <- ensure_profile_roles(user_id, fields.roles) do
+        :ok
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, :ok} -> :ok
+      {:error, reason} when is_atom(reason) -> {:error, reason}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp update_public_user_profile(user_id, fields) do
+    sql =
+      if fields.write_email? do
+        """
+        UPDATE public.users
+        SET phone = $2,
+            email = $3,
+            updated_at = now()
+        WHERE id = $1::uuid
+        """
+      else
+        """
+        UPDATE public.users
+        SET phone = $2,
+            updated_at = now()
+        WHERE id = $1::uuid
+        """
+      end
+
+    params =
+      if fields.write_email? do
+        [dump_uuid(user_id), fields.phone, fields.email]
+      else
+        [dump_uuid(user_id), fields.phone]
+      end
+
+    case Repo.query(sql, params) do
+      {:ok, %{num_rows: 1}} -> :ok
+      {:ok, %{num_rows: 0}} -> {:error, :user_not_found}
+      {:error, error} -> unique_or_database_error(error)
+    end
+  end
+
+  defp update_auth_account_profile(user_id, fields) do
+    sql =
+      if fields.write_email? do
+        """
+        UPDATE public.mithril_auth_accounts
+        SET phone = $2,
+            email = $3,
+            updated_at = now()
+        WHERE user_id = $1::uuid
+        """
+      else
+        """
+        UPDATE public.mithril_auth_accounts
+        SET phone = $2,
+            updated_at = now()
+        WHERE user_id = $1::uuid
+        """
+      end
+
+    params =
+      if fields.write_email? do
+        [dump_uuid(user_id), fields.phone, fields.email]
+      else
+        [dump_uuid(user_id), fields.phone]
+      end
+
+    case Repo.query(sql, params) do
+      {:ok, %{num_rows: rows}} when rows in [0, 1] -> :ok
+      {:error, error} -> unique_or_database_error(error)
+    end
+  end
+
+  defp update_auth_user_profile(user_id, fields) do
+    sql =
+      if fields.write_email? do
+        """
+        UPDATE auth.users
+        SET phone = $2,
+            email = COALESCE($3, email),
+            updated_at = now()
+        WHERE id = $1::uuid
+        """
+      else
+        """
+        UPDATE auth.users
+        SET phone = $2,
+            updated_at = now()
+        WHERE id = $1::uuid
+        """
+      end
+
+    params =
+      if fields.write_email? do
+        [dump_uuid(user_id), fields.phone, fields.email]
+      else
+        [dump_uuid(user_id), fields.phone]
+      end
+
+    case Repo.query(sql, params) do
+      {:ok, _} -> :ok
+      {:error, %Postgrex.Error{postgres: %{code: :undefined_table}}} -> :ok
+      {:error, error} -> unique_or_database_error(error)
+    end
+  end
+
+  defp upsert_public_profile(user_id, fields) do
+    fullname =
+      [fields.first_name, fields.last_name]
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.join(" ")
+      |> case do
+        "" -> fields.first_name
+        name -> name
+      end
+
+    case Repo.query(
+           """
+           INSERT INTO public.profiles (
+             id, user_id, firstname, lastname, fullname, avatar_url, address, location_wkt
+           )
+           VALUES ($1::uuid, $1::uuid, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (id) DO UPDATE
+           SET firstname = EXCLUDED.firstname,
+               lastname = EXCLUDED.lastname,
+               fullname = EXCLUDED.fullname,
+               avatar_url = EXCLUDED.avatar_url,
+               address = EXCLUDED.address,
+               location_wkt = EXCLUDED.location_wkt
+           """,
+           [
+             dump_uuid(user_id),
+             fields.first_name,
+             fields.last_name,
+             fullname,
+             fields.avatar_url,
+             fields.address,
+             fields.location_wkt
+           ]
+         ) do
+      {:ok, _} -> :ok
+      {:error, error} -> unique_or_database_error(error)
+    end
+  end
+
+  defp ensure_profile_roles(_user_id, []), do: :ok
+
+  defp ensure_profile_roles(user_id, roles) do
+    Enum.reduce_while(roles, :ok, fn role, :ok ->
+      case Repo.query(
+             """
+             INSERT INTO public.user_roles (user_id, role_id)
+             SELECT $1::uuid, $2
+             WHERE NOT EXISTS (
+               SELECT 1
+               FROM public.user_roles
+               WHERE user_id = $1::uuid
+                 AND role_id = $2
+             )
+             """,
+             [dump_uuid(user_id), role]
+           ) do
+        {:ok, _} -> {:cont, :ok}
+        {:error, error} -> {:halt, unique_or_database_error(error)}
+      end
+    end)
+  end
+
+  defp unique_or_database_error(error) do
+    postgres = Map.get(error, :postgres) || %{}
+    constraint = postgres[:constraint] || ""
+    message = postgres[:message] || Exception.message(error)
+    haystack = String.downcase("#{constraint} #{message}")
+
+    cond do
+      postgres[:code] != :unique_violation ->
+        database_error(error)
+
+      String.contains?(haystack, "email") ->
+        {:error, :email_taken}
+
+      String.contains?(haystack, "phone") ->
+        {:error, :phone_taken}
+
+      true ->
+        {:error, :email_taken}
+    end
+  end
+
+  defp profile_string(attrs, keys) do
+    case profile_optional_string(attrs, keys) do
+      nil -> nil
+      value -> value
+    end
+  end
+
+  defp profile_optional_string(attrs, keys) do
+    keys
+    |> Enum.find_value(&Map.get(attrs, &1))
+    |> case do
+      value when is_binary(value) ->
+        case String.trim(value) do
+          "" -> nil
+          trimmed -> trimmed
+        end
+
+      _other ->
+        nil
+    end
+  end
+
+  defp profile_has_key?(attrs, keys) do
+    Enum.any?(keys, &Map.has_key?(attrs, &1))
+  end
+
+  defp profile_roles(attrs) do
+    raw = Map.get(attrs, "roles") || Map.get(attrs, :roles) || []
+
+    raw
+    |> List.wrap()
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.filter(&MapSet.member?(@profile_roles, &1))
+    |> Enum.uniq()
   end
 
   defp dump_uuid(user_id) do

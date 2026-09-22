@@ -51,6 +51,12 @@ defmodule MithrilWeb.AuthController do
     respond(conn, Auth.me(conn.assigns.instaclean_user_id), fn user -> %{user: user} end)
   end
 
+  def update_me(conn, params) do
+    respond(conn, Auth.update_profile(conn.assigns.instaclean_user_id, params), fn user ->
+      %{user: user}
+    end)
+  end
+
   def set_password(conn, params) do
     result =
       Auth.set_password(
@@ -106,6 +112,7 @@ defmodule MithrilWeb.AuthController do
   defp error_response(:current_password_required), do: {401, "current_password_required"}
   defp error_response(:not_found), do: {404, "not_found"}
   defp error_response(:user_not_found), do: {404, "user_not_found"}
+  defp error_response(:invalid_profile), do: {422, "invalid_profile"}
   defp error_response(:email_taken), do: {409, "email_taken"}
   defp error_response(:phone_taken), do: {409, "phone_taken"}
   defp error_response(:invalid_email), do: {422, "invalid_email"}
