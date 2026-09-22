@@ -320,9 +320,11 @@ defmodule Mithril.DirectDispatchTest do
 
     first = DirectDispatch.admin_booking_idempotency_key(key, "2026-10-01", 0)
     retry = DirectDispatch.admin_booking_idempotency_key(key, "2026-10-01", 0)
+    edited_same_visit = DirectDispatch.admin_booking_idempotency_key(key, "2026-11-01", 0)
     second = DirectDispatch.admin_booking_idempotency_key(key, "2026-10-08", 1)
 
     assert first == retry
+    assert first == edited_same_visit
     refute first == second
     assert String.starts_with?(first, "admin:")
     assert String.length(first) <= 128
