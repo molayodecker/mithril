@@ -114,7 +114,6 @@ defmodule Mithril.DirectDispatch do
     else
       :error -> {:error, :invalid_user}
       {:error, reason} when is_atom(reason) -> {:error, reason}
-      {:error, error} -> database_error(error)
     end
   end
 
