@@ -12,6 +12,7 @@ kill_timeout = 30
   POOL_SIZE = "5"
   DATABASE_BACKEND = "fly"
   FLY_DATABASE_SSL_DISABLE = "true"
+  SUMSUB_WORKER_LEVEL_NAME = "id-and-liveness"
 
 [http_service]
   internal_port = 4000
