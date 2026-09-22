@@ -53,6 +53,7 @@ defmodule Mithril.Auth.OAuthTest do
     assert identity.provider == "google"
     assert identity.subject == "google-sub-1"
     assert identity.email == "google@example.com"
+    assert identity.name == "Google User"
   end
 
   test "accepts tokeninfo string true for Google email verification" do

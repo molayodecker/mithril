@@ -17,7 +17,10 @@ defmodule Mithril.Auth.OAuth do
            provider: "google",
            subject: sub,
            email: verified_google_email(body),
-           name: optional_string(body["name"])
+           name: optional_string(body["name"]),
+           given_name: optional_string(body["given_name"]),
+           family_name: optional_string(body["family_name"]),
+           picture: optional_string(body["picture"])
          }}
       else
         {:error, :oauth_not_configured} -> {:error, :oauth_not_configured}

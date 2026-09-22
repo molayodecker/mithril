@@ -22,6 +22,8 @@ defmodule Mithril.AuthTest do
           "mithril_auth_accounts",
           "cleaner_data",
           "user_roles",
+          "roles",
+          "profiles",
           "users"
         ] do
       Repo.query!("DROP TABLE IF EXISTS public.#{table} CASCADE")
@@ -45,7 +47,7 @@ defmodule Mithril.AuthTest do
     CREATE TABLE public.users (
       id uuid PRIMARY KEY REFERENCES auth.users(id),
       email text UNIQUE,
-      phone text,
+      phone text UNIQUE,
       password_hash text NOT NULL,
       status text DEFAULT 'active',
       created_at timestamptz DEFAULT now(),
@@ -54,9 +56,40 @@ defmodule Mithril.AuthTest do
     """)
 
     Repo.query!("""
+    CREATE TABLE public.profiles (
+      id uuid PRIMARY KEY REFERENCES public.users(id),
+      user_id uuid REFERENCES public.users(id),
+      firstname text,
+      lastname text,
+      fullname text,
+      avatar_url text,
+      address text,
+      location_wkt text
+    )
+    """)
+
+    Repo.query!("""
+    CREATE OR REPLACE FUNCTION public.st_geogfromtext(wkt text)
+    RETURNS text
+    LANGUAGE sql
+    IMMUTABLE
+    AS $$
+      SELECT wkt
+    $$
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.roles (
+      id text PRIMARY KEY,
+      description text
+    )
+    """)
+
+    Repo.query!("""
     CREATE TABLE public.user_roles (
       user_id uuid NOT NULL REFERENCES public.users(id),
-      role_id text NOT NULL
+      role_id text NOT NULL REFERENCES public.roles(id),
+      PRIMARY KEY (user_id, role_id)
     )
     """)
 
@@ -250,6 +283,8 @@ defmodule Mithril.AuthTest do
   test "me reports reviewer and staff from user_roles" do
     {user_id, _email} = insert_account("reviewer@tryinstaclean.com", "correct-horse")
 
+    insert_catalog_role("reviewer")
+
     Repo.query!(
       "INSERT INTO public.user_roles (user_id, role_id) VALUES ($1::uuid, 'reviewer')",
       [
@@ -270,6 +305,8 @@ defmodule Mithril.AuthTest do
   test "me reports cleaner role and verification state" do
     {user_id, _email} = insert_account("cleaner@tryinstaclean.com", "correct-horse")
 
+    insert_catalog_role("cleaner")
+
     Repo.query!(
       "INSERT INTO public.user_roles (user_id, role_id) VALUES ($1::uuid, 'cleaner')",
       [dump_uuid(user_id)]
@@ -284,6 +321,255 @@ defmodule Mithril.AuthTest do
     assert "cleaner" in me.roles
     assert me.cleanerVerified
     assert me.cleanerStatus == "active"
+  end
+
+  test "update_profile upserts profiles, phone, and onboarding roles" do
+    {user_id, email} = insert_account("profile@tryinstaclean.com", "correct-horse")
+
+    assert {:ok, me} =
+             Auth.update_profile(user_id, %{
+               "first_name" => "Arthur",
+               "last_name" => "Decker",
+               "phone" => "+233200000001",
+               "email" => email,
+               "address" => "East Legon",
+               "location_wkt" => "POINT(-0.205 5.56)",
+               "roles" => ["customer", "cleaner", "admin"]
+             })
+
+    assert me.phone == "+233200000001"
+    assert me.name == "Arthur Decker"
+    assert "customer" in me.roles
+    assert "cleaner" in me.roles
+    refute "admin" in me.roles
+
+    [[firstname, lastname, fullname, address, location_wkt]] =
+      Repo.query!(
+        """
+        SELECT firstname, lastname, fullname, address, location_wkt
+        FROM public.profiles
+        WHERE id = $1::uuid
+        """,
+        [dump_uuid(user_id)]
+      ).rows
+
+    assert firstname == "Arthur"
+    assert lastname == "Decker"
+    assert fullname == "Arthur Decker"
+    assert address == "East Legon"
+    assert location_wkt == "POINT(-0.205 5.56)"
+
+    catalog_ids =
+      Repo.query!("SELECT id FROM public.roles ORDER BY id").rows
+      |> Enum.map(&hd/1)
+
+    assert "customer" in catalog_ids
+    assert "cleaner" in catalog_ids
+    refute "admin" in catalog_ids
+
+    assert {:ok, _} =
+             Auth.update_profile(user_id, %{
+               "first_name" => "Arthur",
+               "last_name" => "Decker",
+               "phone" => "+233200000001",
+               "roles" => ["customer", "cleaner"]
+             })
+
+    [[role_count]] =
+      Repo.query!(
+        "SELECT count(*) FROM public.user_roles WHERE user_id = $1::uuid AND role_id IN ('customer', 'cleaner')",
+        [dump_uuid(user_id)]
+      ).rows
+
+    assert role_count == 2
+  end
+
+  test "update_profile preserves optional profile fields when omitted" do
+    {user_id, email} = insert_account("profile-preserve@tryinstaclean.com", "correct-horse")
+
+    assert {:ok, _} =
+             Auth.update_profile(user_id, %{
+               "first_name" => "Ama",
+               "last_name" => "Mensah",
+               "phone" => "+233200000010",
+               "email" => email,
+               "avatar_url" => "https://example.com/avatar.png",
+               "address" => "Airport Residential",
+               "location_wkt" => "POINT(-0.18 5.60)"
+             })
+
+    assert {:ok, _} =
+             Auth.update_profile(user_id, %{
+               "first_name" => "Ama",
+               "last_name" => "Boateng",
+               "phone" => "+233200000010"
+             })
+
+    [[avatar_url, address, location_wkt]] =
+      Repo.query!(
+        "SELECT avatar_url, address, location_wkt FROM public.profiles WHERE id = $1::uuid",
+        [dump_uuid(user_id)]
+      ).rows
+
+    assert avatar_url == "https://example.com/avatar.png"
+    assert address == "Airport Residential"
+    assert location_wkt == "POINT(-0.18 5.60)"
+
+    [[public_email]] =
+      Repo.query!("SELECT email FROM public.users WHERE id = $1::uuid", [dump_uuid(user_id)]).rows
+
+    [[account_email]] =
+      Repo.query!("SELECT email FROM public.mithril_auth_accounts WHERE user_id = $1::uuid", [
+        dump_uuid(user_id)
+      ]).rows
+
+    [[auth_email]] =
+      Repo.query!("SELECT email FROM auth.users WHERE id = $1::uuid", [dump_uuid(user_id)]).rows
+
+    assert public_email == email
+    assert account_email == email
+    assert auth_email == email
+  end
+
+  test "update_profile keeps phone identity synchronized with the profile phone" do
+    {user_id, _email} =
+      insert_account(
+        "phone-identity@tryinstaclean.com",
+        "correct-horse",
+        phone: "+233200000020"
+      )
+
+    Repo.query!(
+      """
+      INSERT INTO public.mithril_auth_identities (user_id, provider, provider_subject)
+      VALUES ($1::uuid, 'phone', $2)
+      """,
+      [dump_uuid(user_id), "+233200000020"]
+    )
+
+    assert {:ok, _} =
+             Auth.update_profile(user_id, %{
+               "first_name" => "Kojo",
+               "phone" => "+233200000021"
+             })
+
+    [[provider_subject]] =
+      Repo.query!(
+        """
+        SELECT provider_subject
+        FROM public.mithril_auth_identities
+        WHERE user_id = $1::uuid AND provider = 'phone'
+        """,
+        [dump_uuid(user_id)]
+      ).rows
+
+    assert provider_subject == "+233200000021"
+  end
+
+  test "update_profile rolls back when the new phone conflicts with another phone identity" do
+    {user_id, _email} =
+      insert_account(
+        "phone-identity-owner@tryinstaclean.com",
+        "correct-horse",
+        phone: "+233200000030"
+      )
+
+    {other_user_id, _other_email} =
+      insert_account("phone-identity-other@tryinstaclean.com", "correct-horse")
+
+    Repo.query!(
+      """
+      INSERT INTO public.mithril_auth_identities (user_id, provider, provider_subject)
+      VALUES ($1::uuid, 'phone', $2), ($3::uuid, 'phone', $4)
+      """,
+      [
+        dump_uuid(user_id),
+        "+233200000030",
+        dump_uuid(other_user_id),
+        "+233200000031"
+      ]
+    )
+
+    assert {:error, :phone_taken} =
+             Auth.update_profile(user_id, %{
+               "first_name" => "Efua",
+               "phone" => "+233200000031"
+             })
+
+    [[public_phone]] =
+      Repo.query!("SELECT phone FROM public.users WHERE id = $1::uuid", [dump_uuid(user_id)]).rows
+
+    [[account_phone]] =
+      Repo.query!("SELECT phone FROM public.mithril_auth_accounts WHERE user_id = $1::uuid", [
+        dump_uuid(user_id)
+      ]).rows
+
+    [[auth_phone]] =
+      Repo.query!("SELECT phone FROM auth.users WHERE id = $1::uuid", [dump_uuid(user_id)]).rows
+
+    [[provider_subject]] =
+      Repo.query!(
+        """
+        SELECT provider_subject
+        FROM public.mithril_auth_identities
+        WHERE user_id = $1::uuid AND provider = 'phone'
+        """,
+        [dump_uuid(user_id)]
+      ).rows
+
+    assert public_phone == "+233200000030"
+    assert account_phone == "+233200000030"
+    assert auth_phone == "+233200000030"
+    assert provider_subject == "+233200000030"
+  end
+
+  test "update_profile clears email consistently when explicitly blank" do
+    {user_id, _email} = insert_account("clear-email@tryinstaclean.com", "correct-horse")
+
+    assert {:ok, _} =
+             Auth.update_profile(user_id, %{
+               "first_name" => "Akosua",
+               "phone" => "+233200000040",
+               "email" => ""
+             })
+
+    [[public_email]] =
+      Repo.query!("SELECT email FROM public.users WHERE id = $1::uuid", [dump_uuid(user_id)]).rows
+
+    [[account_email]] =
+      Repo.query!("SELECT email FROM public.mithril_auth_accounts WHERE user_id = $1::uuid", [
+        dump_uuid(user_id)
+      ]).rows
+
+    [[auth_email]] =
+      Repo.query!("SELECT email FROM auth.users WHERE id = $1::uuid", [dump_uuid(user_id)]).rows
+
+    assert public_email == nil
+    assert account_email == nil
+    assert auth_email == nil
+  end
+
+  test "update_profile rejects an invalid phone" do
+    {user_id, _email} = insert_account("invalid-phone@tryinstaclean.com", "correct-horse")
+
+    assert {:error, :invalid_phone} =
+             Auth.update_profile(user_id, %{
+               "first_name" => "Ama",
+               "phone" => "not-a-phone"
+             })
+  end
+
+  test "update_profile rejects a phone already used by another account" do
+    {_first_id, _first_email} =
+      insert_account("first-profile@tryinstaclean.com", "correct-horse", phone: "+233200000002")
+
+    {user_id, _email} = insert_account("second-profile@tryinstaclean.com", "correct-horse")
+
+    assert {:error, :phone_taken} =
+             Auth.update_profile(user_id, %{
+               "first_name" => "Ama",
+               "phone" => "+233200000002"
+             })
   end
 
   test "login rejects inactive accounts" do
@@ -466,6 +752,17 @@ defmodule Mithril.AuthTest do
   test "google oauth issues a session and links later logins" do
     assert {:ok, first} = Auth.oauth("google", "google-id-token")
     assert first.user.email == "google@example.com"
+    assert first.user.name == "Google User"
+
+    [[firstname, lastname, fullname]] =
+      Repo.query!(
+        "SELECT firstname, lastname, fullname FROM public.profiles WHERE id = $1::uuid",
+        [dump_uuid(first.user.id)]
+      ).rows
+
+    assert firstname == "Google"
+    assert lastname == "User"
+    assert fullname == "Google User"
 
     assert {:ok, second} = Auth.oauth("google", "google-id-token")
     assert second.user.id == first.user.id
@@ -509,6 +806,13 @@ defmodule Mithril.AuthTest do
              google: true,
              facebook: true
            }
+  end
+
+  defp insert_catalog_role(role_id) do
+    Repo.query!(
+      "INSERT INTO public.roles (id, description) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING",
+      [role_id]
+    )
   end
 
   defp insert_account(email, password, opts \\ []) do

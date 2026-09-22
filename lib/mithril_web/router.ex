@@ -66,6 +66,7 @@ defmodule MithrilWeb.Router do
     pipe_through [:api, :user_auth]
 
     get "/me", AuthController, :me
+    patch "/me", AuthController, :update_me
     post "/password", AuthController, :set_password
   end
 
