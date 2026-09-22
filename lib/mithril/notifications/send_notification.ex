@@ -25,7 +25,7 @@ defmodule Mithril.Notifications.SendNotification do
   end
 
   defp deliver_party(ctx, :customer) do
-    {template, message_type} = party_template(ctx, :customer)
+    {template, message_type} = template_for(ctx[:kind], :customer)
 
     post_party(
       ctx[:customer],
@@ -37,7 +37,7 @@ defmodule Mithril.Notifications.SendNotification do
   end
 
   defp deliver_party(ctx, :worker) do
-    {template, message_type} = party_template(ctx, :worker)
+    {template, message_type} = template_for(ctx[:kind], :worker)
 
     post_party(
       ctx[:worker],
@@ -48,14 +48,21 @@ defmodule Mithril.Notifications.SendNotification do
     )
   end
 
-  defp party_template(%{kind: :booking_reminder}, :customer),
+  @doc false
+  def template_for(:booking_reminder, :customer),
     do: {"booking_reminder", "direct_customer_reminder"}
 
-  defp party_template(%{kind: :booking_reminder}, :worker),
+  def template_for(:booking_reminder, :worker),
     do: {"booking_reminder", "direct_worker_reminder"}
 
-  defp party_template(_ctx, :customer), do: {"cleaner_assigned", "direct_customer"}
-  defp party_template(_ctx, :worker), do: {"new_booking", "direct_worker"}
+  def template_for(:admin_receipt, :customer),
+    do: {"payment_received", "direct_admin_receipt"}
+
+  def template_for(:admin_notify_cleaner, :worker),
+    do: {"booking_reminder", "direct_admin_cleaner_reminder"}
+
+  def template_for(_kind, :customer), do: {"cleaner_assigned", "direct_customer"}
+  def template_for(_kind, :worker), do: {"new_booking", "direct_worker"}
 
   defp customer_variables(ctx) do
     worker = party_name(ctx[:worker], "Your cleaner")
@@ -72,6 +79,7 @@ defmodule Mithril.Notifications.SendNotification do
       "scheduled_time" => ctx[:scheduled_time] || "",
       "paymentUrl" => Notifications.payment_url(ctx[:booking_id]),
       "payUrl" => Notifications.payment_url(ctx[:booking_id]),
+      "amount" => format_amount(ctx[:amount_minor], ctx[:currency]),
       "recipientType" => "customer",
       "includeValuablesNotice" => "true"
     }
@@ -179,6 +187,13 @@ defmodule Mithril.Notifications.SendNotification do
   defp party_name(party, fallback) do
     present(party[:name] || party["name"]) || fallback
   end
+
+  defp format_amount(amount, currency) when is_integer(amount) do
+    code = present(currency) || "GHS"
+    "#{code} #{:erlang.float_to_binary(amount / 100, decimals: 2)}"
+  end
+
+  defp format_amount(_amount, currency), do: present(currency) || "GHS"
 
   defp first_date(ctx) do
     case List.wrap(ctx[:dates]) do
