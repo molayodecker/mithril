@@ -26,6 +26,7 @@ defmodule MithrilWeb.OpenApiTest do
     assert spec["paths"]["/direct/admin/notification-broadcast"]["post"]
     assert spec["paths"]["/direct/admin/whatsapp/threads"]["get"]
     assert spec["paths"]["/direct/admin/dispatch-map"]["get"]
+    assert spec["paths"]["/direct/admin/live-jobs"]["get"]
     assert spec["paths"]["/direct/admin/cleaners"]["get"]
     assert spec["paths"]["/direct/admin/cleaner-applications/{id}/approve"]["post"]
     assert spec["paths"]["/direct/admin/bookings/{id}/payment-diagnostics"]["get"]

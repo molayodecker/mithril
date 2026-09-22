@@ -157,6 +157,7 @@ defmodule MithrilWeb.Router do
     post "/admin/whatsapp/send", DirectAdminWhatsAppController, :send
     post "/admin/whatsapp/sms", DirectAdminWhatsAppController, :sms
     get "/admin/dispatch-map", DirectAdminDispatchMapController, :show
+    get "/admin/live-jobs", DirectAdminLiveJobsController, :index
     get "/admin/bookings", DirectAdminBookingsController, :index
     get "/admin/cleaners", DirectOperationsController, :list_admin_cleaners
 
