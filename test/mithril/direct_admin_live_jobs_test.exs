@@ -199,6 +199,32 @@ defmodule Mithril.DirectAdminLiveJobsTest do
     assert live["photos"] == %{"before" => 2, "during" => 1, "after" => 0, "issue" => 0, "total" => 3}
   end
 
+  test "malformed coordinates on one booking do not erase valid coordinates on other jobs" do
+    admin_id = insert_admin!()
+    customer_id = insert_user!("coords-customer@example.com", "+233500000020", "Coordinates Customer")
+    cleaner_id = insert_user!("coords-cleaner@example.com", "+233500000021", "Coordinates Cleaner")
+
+    valid_id =
+      insert_booking!(customer_id, cleaner_id, "in_progress", %{
+        location: %{"latitude" => 5.6037, "longitude" => -0.187}
+      })
+
+    malformed_id =
+      insert_booking!(customer_id, cleaner_id, "en_route", %{
+        location: %{"latitude" => "not-a-number", "longitude" => "also-bad"}
+      })
+
+    assert {:ok, payload} = DirectAdminLiveJobs.list(admin_id)
+
+    valid = Enum.find(payload["jobs"], &(&1["bookingId"] == valid_id))
+    malformed = Enum.find(payload["jobs"], &(&1["bookingId"] == malformed_id))
+
+    assert valid["latitude"] == 5.6037
+    assert valid["longitude"] == -0.187
+    assert malformed["latitude"] == nil
+    assert malformed["longitude"] == nil
+  end
+
   test "still lists jobs when progress tables are missing" do
     admin_id = insert_admin!()
     customer_id = insert_user!("customer@example.com", "+233500000004", "Yaw")
