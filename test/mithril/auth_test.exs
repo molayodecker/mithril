@@ -22,6 +22,7 @@ defmodule Mithril.AuthTest do
           "mithril_auth_accounts",
           "cleaner_data",
           "user_roles",
+          "roles",
           "profiles",
           "users"
         ] do
@@ -68,9 +69,27 @@ defmodule Mithril.AuthTest do
     """)
 
     Repo.query!("""
+    CREATE OR REPLACE FUNCTION public.st_geogfromtext(wkt text)
+    RETURNS text
+    LANGUAGE sql
+    IMMUTABLE
+    AS $$
+      SELECT wkt
+    $$
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.roles (
+      id text PRIMARY KEY,
+      description text
+    )
+    """)
+
+    Repo.query!("""
     CREATE TABLE public.user_roles (
       user_id uuid NOT NULL REFERENCES public.users(id),
-      role_id text NOT NULL
+      role_id text NOT NULL REFERENCES public.roles(id),
+      PRIMARY KEY (user_id, role_id)
     )
     """)
 
@@ -264,6 +283,8 @@ defmodule Mithril.AuthTest do
   test "me reports reviewer and staff from user_roles" do
     {user_id, _email} = insert_account("reviewer@tryinstaclean.com", "correct-horse")
 
+    insert_catalog_role("reviewer")
+
     Repo.query!(
       "INSERT INTO public.user_roles (user_id, role_id) VALUES ($1::uuid, 'reviewer')",
       [
@@ -283,6 +304,8 @@ defmodule Mithril.AuthTest do
 
   test "me reports cleaner role and verification state" do
     {user_id, _email} = insert_account("cleaner@tryinstaclean.com", "correct-horse")
+
+    insert_catalog_role("cleaner")
 
     Repo.query!(
       "INSERT INTO public.user_roles (user_id, role_id) VALUES ($1::uuid, 'cleaner')",
@@ -335,6 +358,14 @@ defmodule Mithril.AuthTest do
     assert fullname == "Arthur Decker"
     assert address == "East Legon"
     assert location_wkt == "POINT(-0.205 5.56)"
+
+    catalog_ids =
+      Repo.query!("SELECT id FROM public.roles ORDER BY id").rows
+      |> Enum.map(&hd/1)
+
+    assert "customer" in catalog_ids
+    assert "cleaner" in catalog_ids
+    refute "admin" in catalog_ids
   end
 
   test "update_profile rejects an invalid phone" do
@@ -594,6 +625,13 @@ defmodule Mithril.AuthTest do
              google: true,
              facebook: true
            }
+  end
+
+  defp insert_catalog_role(role_id) do
+    Repo.query!(
+      "INSERT INTO public.roles (id, description) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING",
+      [role_id]
+    )
   end
 
   defp insert_account(email, password, opts \\ []) do

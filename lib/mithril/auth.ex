@@ -934,24 +934,7 @@ defmodule Mithril.Auth do
     end
   end
 
-  defp grant_admin(user_id) do
-    case Repo.query(
-           """
-           INSERT INTO public.user_roles (user_id, role_id)
-           SELECT $1::uuid, 'admin'
-           WHERE NOT EXISTS (
-             SELECT 1
-             FROM public.user_roles
-             WHERE user_id = $1::uuid
-               AND role_id = 'admin'
-           )
-           """,
-           [dump_uuid(user_id)]
-         ) do
-      {:ok, _} -> :ok
-      {:error, error} -> database_error(error)
-    end
-  end
+  defp grant_admin(user_id), do: assign_user_role(user_id, "admin")
 
   defp update_password_and_revoke_sessions(user_id, password_hash) do
     Repo.transaction(fn ->
@@ -1291,22 +1274,7 @@ defmodule Mithril.Auth do
     end
   end
 
-  defp insert_staff_role(user_id, role) do
-    case Repo.query(
-           """
-           INSERT INTO public.user_roles (user_id, role_id)
-           SELECT $1::uuid, $2
-           WHERE NOT EXISTS (
-             SELECT 1 FROM public.user_roles
-             WHERE user_id = $1::uuid AND role_id = $2
-           )
-           """,
-           [dump_uuid(user_id), role]
-         ) do
-      {:ok, _} -> :ok
-      {:error, error} -> database_error(error)
-    end
-  end
+  defp insert_staff_role(user_id, role), do: assign_user_role(user_id, role)
 
   defp blank_to_nil(value) when is_binary(value) do
     case String.trim(value) do
@@ -1606,7 +1574,21 @@ defmodule Mithril.Auth do
            INSERT INTO public.profiles (
              id, user_id, firstname, lastname, fullname, avatar_url, address, location_wkt
            )
-           VALUES ($1::uuid, $1::uuid, $2, $3, $4, $5, $6, $7)
+           VALUES (
+             $1::uuid,
+             $1::uuid,
+             $2,
+             $3,
+             $4,
+             $5,
+             $6,
+             -- Bind WKT as text. A geography parameter makes Postgrex crash with
+             -- "type geography can not be handled by Postgrex.DefaultTypes".
+             CASE
+               WHEN $7::text IS NULL OR btrim($7::text) = '' THEN NULL
+               ELSE ST_GeogFromText($7::text)
+             END
+           )
            ON CONFLICT (id) DO UPDATE
            SET firstname = EXCLUDED.firstname,
                lastname = EXCLUDED.lastname,
@@ -1634,23 +1616,52 @@ defmodule Mithril.Auth do
 
   defp ensure_profile_roles(user_id, roles) do
     Enum.reduce_while(roles, :ok, fn role, :ok ->
-      case Repo.query(
-             """
-             INSERT INTO public.user_roles (user_id, role_id)
-             SELECT $1::uuid, $2
-             WHERE NOT EXISTS (
-               SELECT 1
-               FROM public.user_roles
-               WHERE user_id = $1::uuid
-                 AND role_id = $2
-             )
-             """,
-             [dump_uuid(user_id), role]
-           ) do
-        {:ok, _} -> {:cont, :ok}
-        {:error, error} -> {:halt, unique_or_database_error(error)}
+      case assign_user_role(user_id, role) do
+        :ok -> {:cont, :ok}
+        {:error, _reason} = error -> {:halt, error}
       end
     end)
+  end
+
+  # Staging/prod `user_roles.role_id` references `roles(id)`. An empty catalog
+  # makes onboarding PATCH /auth/me fail with 23503 and roll back the profile.
+  defp assign_user_role(user_id, role) do
+    with :ok <- ensure_role_catalog_row(role) do
+      insert_user_role(user_id, role)
+    end
+  end
+
+  defp ensure_role_catalog_row(role) when is_binary(role) do
+    case Repo.query(
+           """
+           INSERT INTO public.roles (id, description)
+           VALUES ($1, $2)
+           ON CONFLICT (id) DO NOTHING
+           """,
+           [role, role]
+         ) do
+      {:ok, _} -> :ok
+      {:error, error} -> unique_or_database_error(error)
+    end
+  end
+
+  defp insert_user_role(user_id, role) do
+    case Repo.query(
+           """
+           INSERT INTO public.user_roles (user_id, role_id)
+           SELECT $1::uuid, $2
+           WHERE NOT EXISTS (
+             SELECT 1
+             FROM public.user_roles
+             WHERE user_id = $1::uuid
+               AND role_id = $2
+           )
+           """,
+           [dump_uuid(user_id), role]
+         ) do
+      {:ok, _} -> :ok
+      {:error, error} -> unique_or_database_error(error)
+    end
   end
 
   defp unique_or_database_error(error) do
