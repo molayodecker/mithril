@@ -269,7 +269,7 @@ defmodule Mithril.DirectDispatch do
       amountMinor: total_amount_minor,
       currency: first.currency,
       customerUserId: input.customer_user_id,
-      source: input.source,
+      source: Map.get(first, :source, input.source),
       createdByAdmin: true,
       count: length(bookings),
       bookings: bookings,
@@ -706,29 +706,40 @@ defmodule Mithril.DirectDispatch do
 
     case Repo.query(
            """
-           SELECT id::text,
-                  status::text,
-                  payment_status::text,
-                  COALESCE(final_amount_minor, total_price)::bigint,
-                  COALESCE(currency, 'GHS'),
-                  scheduled_date::text
-           FROM public.bookings
-           WHERE customer_id = $1
-             AND left(idempotency_key, length($2)) = $2
-           ORDER BY idempotency_key ASC
+           SELECT b.id::text,
+                  b.status::text,
+                  b.payment_status::text,
+                  COALESCE(b.final_amount_minor, b.total_price)::bigint,
+                  COALESCE(b.currency, 'GHS'),
+                  b.scheduled_date::text,
+                  o.source
+           FROM public.bookings b
+           JOIN public.direct_booking_origins o ON o.booking_id = b.id
+           WHERE b.customer_id = $1
+             AND left(b.idempotency_key, length($2)) = $2
+           ORDER BY b.idempotency_key ASC
            """,
            [customer_uuid, prefix]
          ) do
       {:ok, result} ->
         {:ok,
-         Enum.map(result.rows, fn [id, status, payment_status, amount_minor, currency, date] ->
+         Enum.map(result.rows, fn [
+                                   id,
+                                   status,
+                                   payment_status,
+                                   amount_minor,
+                                   currency,
+                                   date,
+                                   source
+                                 ] ->
            %{
              id: id,
              status: status,
              paymentStatus: payment_status,
              amountMinor: amount_minor,
              currency: currency,
-             scheduledDate: date
+             scheduledDate: date,
+             source: source
            }
          end)}
 
