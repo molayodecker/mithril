@@ -174,6 +174,13 @@ defmodule Mithril.DirectDispatch do
       else: Repo.rollback(:needed_by_past)
   end
 
+  @doc false
+  def urgent_request_fingerprint_for_params(params) when is_map(params) do
+    with {:ok, input} <- validate_urgent_request(params) do
+      {:ok, urgent_request_fingerprint(input)}
+    end
+  end
+
   defp urgent_request_fingerprint(input) do
     canonical =
       {
