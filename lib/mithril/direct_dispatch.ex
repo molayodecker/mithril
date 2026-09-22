@@ -176,74 +176,64 @@ defmodule Mithril.DirectDispatch do
          :ok <- ensure_customer_exists(input.customer_uuid),
          {:ok, dates} <- expand_booking_dates(params) do
       Repo.transaction(fn ->
-        created =
-          dates
-          |> Enum.with_index()
-          |> Enum.map(fn {date, index} ->
-            booking_params =
-              params
-              |> Map.take([
-                "serviceId",
-                "cleanerId",
-                "scheduledTime",
-                "durationHours",
-                "address",
-                "specialInstructions",
-                "timezone"
-              ])
-              |> Map.put("scheduledDate", date)
-              |> maybe_put_admin_idempotency_key(input.idempotency_key, date, index)
+        with :ok <- lock_admin_booking_series(input.customer_uuid, input.idempotency_key),
+             {:ok, existing} <-
+               find_admin_booking_series(input.customer_uuid, input.idempotency_key) do
+          case existing do
+            [_ | _] ->
+              admin_booking_result(existing, input, false)
 
-            case DirectBookings.create_booking(input.customer_user_id, booking_params) do
-              {:ok, booking} ->
-                case insert_booking_origin(
-                       booking.id,
-                       input.customer_uuid,
-                       admin_uid,
-                       input.source,
-                       input.admin_note
-                     ) do
-                  {:ok, origin_created?} ->
-                    booking =
-                      Map.merge(booking, %{
-                        scheduledDate: date,
-                        customerUserId: input.customer_user_id,
-                        source: input.source,
-                        createdByAdmin: true
-                      })
+            [] ->
+              created =
+                dates
+                |> Enum.with_index()
+                |> Enum.map(fn {date, index} ->
+                  booking_params =
+                    params
+                    |> Map.take([
+                      "serviceId",
+                      "cleanerId",
+                      "scheduledTime",
+                      "durationHours",
+                      "address",
+                      "specialInstructions",
+                      "timezone"
+                    ])
+                    |> Map.put("scheduledDate", date)
+                    |> maybe_put_admin_idempotency_key(input.idempotency_key, date, index)
 
-                    {booking, origin_created?}
+                  case DirectBookings.create_booking(input.customer_user_id, booking_params) do
+                    {:ok, booking} ->
+                      case insert_booking_origin(
+                             booking.id,
+                             input.customer_uuid,
+                             admin_uid,
+                             input.source,
+                             input.admin_note
+                           ) do
+                        {:ok, _origin_created?} ->
+                          Map.merge(booking, %{
+                            scheduledDate: date,
+                            customerUserId: input.customer_user_id,
+                            source: input.source,
+                            createdByAdmin: true
+                          })
 
-                  {:error, error} ->
-                    Repo.rollback({:database, error})
-                end
+                        {:error, error} ->
+                          Repo.rollback({:database, error})
+                      end
 
-              {:error, reason} ->
-                Repo.rollback(reason)
-            end
-          end)
+                    {:error, reason} ->
+                      Repo.rollback(reason)
+                  end
+                end)
 
-        bookings = Enum.map(created, &elem(&1, 0))
-        created_new? = Enum.any?(created, &elem(&1, 1))
-
-        total_amount_minor =
-          Enum.reduce(bookings, 0, fn booking, sum -> sum + booking.amountMinor end)
-
-        first = hd(bookings)
-
-        %{
-          id: first.id,
-          status: first.status,
-          paymentStatus: first.paymentStatus,
-          amountMinor: total_amount_minor,
-          currency: first.currency,
-          customerUserId: input.customer_user_id,
-          source: input.source,
-          createdByAdmin: true,
-          count: length(bookings),
-          bookings: bookings,
-          createdNew: created_new?
-        }
+              admin_booking_result(created, input, true)
+          end
+        else
+          {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
+          {:error, error} -> Repo.rollback({:database, error})
+        end
       end)
       |> normalize_transaction()
       |> case do
@@ -264,6 +254,27 @@ defmodule Mithril.DirectDispatch do
       {:error, reason} when is_atom(reason) -> {:error, reason}
       {:error, error} -> database_error(error)
     end
+  end
+
+  defp admin_booking_result(bookings, input, created_new?) do
+    total_amount_minor =
+      Enum.reduce(bookings, 0, fn booking, sum -> sum + booking.amountMinor end)
+
+    first = hd(bookings)
+
+    %{
+      id: first.id,
+      status: first.status,
+      paymentStatus: first.paymentStatus,
+      amountMinor: total_amount_minor,
+      currency: first.currency,
+      customerUserId: input.customer_user_id,
+      source: input.source,
+      createdByAdmin: true,
+      count: length(bookings),
+      bookings: bookings,
+      createdNew: created_new?
+    }
   end
 
   def list_admin_service_requests(user_id) do
@@ -676,14 +687,72 @@ defmodule Mithril.DirectDispatch do
     Map.put(params, "idempotencyKey", admin_booking_idempotency_key(key, date, index))
   end
 
-  @doc false
-  def admin_booking_idempotency_key(key, date, index)
-      when is_binary(key) and is_binary(date) and is_integer(index) and index >= 0 do
+  defp lock_admin_booking_series(_customer_uuid, nil), do: :ok
+
+  defp lock_admin_booking_series(customer_uuid, key) do
+    customer_key = Base.encode16(customer_uuid, case: :lower)
+    lock_key = "direct-admin-booking:#{customer_key}:#{admin_booking_series_prefix(key)}"
+
+    case Repo.query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", [lock_key]) do
+      {:ok, _} -> :ok
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp find_admin_booking_series(_customer_uuid, nil), do: {:ok, []}
+
+  defp find_admin_booking_series(customer_uuid, key) do
+    prefix = admin_booking_series_prefix(key)
+
+    case Repo.query(
+           """
+           SELECT id::text,
+                  status::text,
+                  payment_status::text,
+                  COALESCE(final_amount_minor, total_price)::bigint,
+                  COALESCE(currency, 'GHS'),
+                  scheduled_date::text
+           FROM public.bookings
+           WHERE customer_id = $1
+             AND left(idempotency_key, length($2)) = $2
+           ORDER BY idempotency_key ASC
+           """,
+           [customer_uuid, prefix]
+         ) do
+      {:ok, result} ->
+        {:ok,
+         Enum.map(result.rows, fn [id, status, payment_status, amount_minor, currency, date] ->
+           %{
+             id: id,
+             status: status,
+             paymentStatus: payment_status,
+             amountMinor: amount_minor,
+             currency: currency,
+             scheduledDate: date,
+             customerUserId: Ecto.UUID.load!(customer_uuid),
+             source: "admin",
+             createdByAdmin: true
+           }
+         end)}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp admin_booking_series_prefix(key) do
     digest =
-      :crypto.hash(:sha256, "#{String.trim(key)}:#{index}:#{date}")
+      :crypto.hash(:sha256, String.trim(key))
       |> Base.url_encode64(padding: false)
 
-    "admin:#{digest}"
+    "admin:#{digest}:"
+  end
+
+  @doc false
+  def admin_booking_idempotency_key(key, _date, index)
+      when is_binary(key) and is_integer(index) and index >= 0 do
+    suffix = index |> Integer.to_string() |> String.pad_leading(2, "0")
+    admin_booking_series_prefix(key) <> suffix
   end
 
   def expand_booking_dates(params) do
