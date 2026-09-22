@@ -147,7 +147,7 @@ if sumsub_webhook_secret = System.get_env("SUMSUB_WEBHOOK_SECRET") do
 end
 
 if sumsub_level_name =
-     System.get_env("SUMSUB_LEVEL_NAME") || System.get_env("SUMSUB_WORKER_LEVEL_NAME") do
+     System.get_env("SUMSUB_WORKER_LEVEL_NAME") || System.get_env("SUMSUB_LEVEL_NAME") do
   config :mithril, :sumsub_level_name, sumsub_level_name
 end
 
