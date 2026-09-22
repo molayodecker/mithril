@@ -103,9 +103,16 @@ defmodule Mithril.DirectDispatchTest do
       assigned_worker_user_id uuid,
       assigned_by_user_id uuid,
       assigned_at timestamptz,
+      idempotency_key text,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     )
+    """)
+
+    Repo.query!("""
+    CREATE UNIQUE INDEX direct_service_requests_customer_idempotency_uidx
+      ON public.direct_service_requests (customer_id, idempotency_key)
+      WHERE idempotency_key IS NOT NULL
     """)
 
     Repo.query!("""
@@ -152,6 +159,38 @@ defmodule Mithril.DirectDispatchTest do
     assert request["role"] == "elder_caregiver"
     assert request["priority"] == "urgent"
     assert request["requirements"]["mobilitySupport"] == true
+  end
+
+  test "urgent-help retries with the same idempotency key return the original request" do
+    customer_id = insert_user!("retry@example.com", "+233500000099")
+    key = "urgent-0b76d53d-95d6-4b79"
+
+    params = %{
+      "role" => "cleaner",
+      "priority" => "urgent",
+      "neededBy" => "2026-10-07T15:00:00Z",
+      "durationHours" => 3,
+      "householdAddress" => "East Legon, Accra",
+      "requirements" => %{},
+      "notes" => "Need help today",
+      "idempotencyKey" => key
+    }
+
+    assert {:ok, first} = DirectDispatch.create_urgent_request(customer_id, params)
+    assert {:ok, retry} = DirectDispatch.create_urgent_request(customer_id, params)
+    assert retry.id == first.id
+
+    [[count]] =
+      Repo.query!(
+        """
+        SELECT count(*)::int
+        FROM public.direct_service_requests
+        WHERE customer_id = $1 AND idempotency_key = $2
+        """,
+        [Ecto.UUID.dump!(customer_id), key]
+      ).rows
+
+    assert count == 1
   end
 
   test "prevents duplicate active replacement requests for one booking" do
