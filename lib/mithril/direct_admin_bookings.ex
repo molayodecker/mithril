@@ -269,6 +269,7 @@ defmodule Mithril.DirectAdminBookings do
          {:ok, bid} <- dump_uuid(booking_id),
          :ok <- require_admin(admin_uid),
          {:ok, booking} <- fetch_booking(bid),
+         :ok <- ensure_paid_receipt(booking),
          customer when is_map(customer) <- Notifications.load_party(booking["customerId"]) do
       if is_nil(customer[:phone]) and is_nil(customer[:email]) do
         {:error, :missing_contact}
@@ -295,6 +296,9 @@ defmodule Mithril.DirectAdminBookings do
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp ensure_paid_receipt(%{"paymentStatus" => "paid"}), do: :ok
+  defp ensure_paid_receipt(_booking), do: {:error, :booking_not_paid}
 
   defp fetch_booking(bid) do
     case Repo.query(

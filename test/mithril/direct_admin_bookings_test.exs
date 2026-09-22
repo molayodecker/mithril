@@ -186,6 +186,20 @@ defmodule Mithril.DirectAdminBookingsTest do
     assert detail["walletBalanceMinor"] == 23671
   end
 
+  test "rejects receipt delivery for an unpaid booking" do
+    admin_id = insert_admin!()
+    customer_id = insert_user!("receipt-customer@example.com", "+233500000043")
+    booking_id = insert_booking!(customer_id, nil, "pending")
+
+    Repo.query!(
+      "UPDATE public.bookings SET payment_status = 'pending' WHERE id = $1",
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:error, :booking_not_paid} =
+             DirectAdminBookings.send_receipt(admin_id, booking_id)
+  end
+
   test "assigns a cleaner and updates status" do
     admin_id = insert_admin!()
     customer_id = insert_user!("customer@example.com", "+233500000004")
