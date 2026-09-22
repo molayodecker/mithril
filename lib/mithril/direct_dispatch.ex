@@ -722,30 +722,31 @@ defmodule Mithril.DirectDispatch do
            [customer_uuid, prefix]
          ) do
       {:ok, result} ->
-        {:ok,
-         Enum.map(result.rows, fn [
-                                   id,
-                                   status,
-                                   payment_status,
-                                   amount_minor,
-                                   currency,
-                                   date,
-                                   source
-                                 ] ->
-           %{
-             id: id,
-             status: status,
-             paymentStatus: payment_status,
-             amountMinor: amount_minor,
-             currency: currency,
-             scheduledDate: date,
-             source: source
-           }
-         end)}
+        {:ok, Enum.map(result.rows, &admin_booking_series_row/1)}
 
       {:error, error} ->
         {:error, error}
     end
+  end
+
+  defp admin_booking_series_row([
+         id,
+         status,
+         payment_status,
+         amount_minor,
+         currency,
+         date,
+         source
+       ]) do
+    %{
+      id: id,
+      status: status,
+      paymentStatus: payment_status,
+      amountMinor: amount_minor,
+      currency: currency,
+      scheduledDate: date,
+      source: source
+    }
   end
 
   defp admin_booking_series_prefix(key) do
