@@ -146,8 +146,22 @@ if sumsub_webhook_secret = System.get_env("SUMSUB_WEBHOOK_SECRET") do
   config :mithril, :sumsub_webhook_secret, sumsub_webhook_secret
 end
 
-if sumsub_level_name =
-     System.get_env("SUMSUB_WORKER_LEVEL_NAME") || System.get_env("SUMSUB_LEVEL_NAME") do
+sumsub_level_name =
+  ["SUMSUB_WORKER_LEVEL_NAME", "SUMSUB_LEVEL_NAME"]
+  |> Enum.find_value(fn name ->
+    case System.get_env(name) do
+      value when is_binary(value) ->
+        case String.trim(value) do
+          "" -> nil
+          trimmed -> trimmed
+        end
+
+      _ ->
+        nil
+    end
+  end)
+
+if sumsub_level_name do
   config :mithril, :sumsub_level_name, sumsub_level_name
 end
 
