@@ -48,60 +48,165 @@ defmodule Mithril.Direct do
   def create_placement(user_id, params) when is_map(params) do
     with {:ok, uid} <- dump_uuid(user_id),
          :ok <- validate_placement(params),
-         {:ok, result} <-
-           Repo.query(
-             """
-             INSERT INTO public.placement_requests (
-               customer_id,
-               status,
-               role,
-               living_arrangement,
-               employment_type,
-               desired_start_date,
-               salary_min_pesewas,
-               salary_max_pesewas,
-               salary_frequency,
-               household_address_snapshot,
-               requirements,
-               notes
-             ) VALUES (
-               $1,
-               'submitted',
-               $2,
-               $3,
-               $4,
-               NULLIF($5::text, '')::date,
-               $6,
-               $7,
-               NULLIF($8::text, ''),
-               $9,
-               $10::text::jsonb,
-               NULLIF($11::text, '')
-             )
-             RETURNING id::text
-             """,
-             [
-               uid,
-               params["role"],
-               params["livingArrangement"],
-               params["employmentType"],
-               text_or_empty(params["desiredStartDate"]),
-               params["salaryMinPesewas"],
-               params["salaryMaxPesewas"],
-               text_or_empty(params["salaryFrequency"]),
-               String.trim(params["householdAddress"]),
-               Jason.encode!(params["requirements"] || %{}),
-               text_or_empty(params["notes"])
-             ]
-           ) do
-      [[id]] = result.rows
-      {:ok, %{id: id}}
+         {:ok, idempotency_key} <- optional_idempotency_key(params["idempotencyKey"]) do
+      Repo.transaction(fn ->
+        fingerprint = placement_request_fingerprint(params)
+
+        with :ok <- lock_placement_idempotency(uid, idempotency_key),
+             {:ok, existing} <- find_idempotent_placement(uid, idempotency_key) do
+          case existing do
+            %{intentFingerprint: ^fingerprint} ->
+              %{id: existing.id}
+
+            %{intentFingerprint: _other} ->
+              Repo.rollback(:idempotency_conflict)
+
+            nil ->
+              case Repo.query(
+                     """
+                     INSERT INTO public.placement_requests (
+                       customer_id,
+                       status,
+                       role,
+                       living_arrangement,
+                       employment_type,
+                       desired_start_date,
+                       salary_min_pesewas,
+                       salary_max_pesewas,
+                       salary_frequency,
+                       household_address_snapshot,
+                       requirements,
+                       notes,
+                       idempotency_key,
+                       intent_fingerprint
+                     ) VALUES (
+                       $1,
+                       'submitted',
+                       $2,
+                       $3,
+                       $4,
+                       NULLIF($5::text, '')::date,
+                       $6,
+                       $7,
+                       NULLIF($8::text, ''),
+                       $9,
+                       $10::text::jsonb,
+                       NULLIF($11::text, ''),
+                       $12,
+                       $13
+                     )
+                     RETURNING id::text
+                     """,
+                     [
+                       uid,
+                       params["role"],
+                       params["livingArrangement"],
+                       params["employmentType"],
+                       text_or_empty(params["desiredStartDate"]),
+                       params["salaryMinPesewas"],
+                       params["salaryMaxPesewas"],
+                       text_or_empty(params["salaryFrequency"]),
+                       String.trim(params["householdAddress"]),
+                       Jason.encode!(params["requirements"] || %{}),
+                       text_or_empty(params["notes"]),
+                       idempotency_key,
+                       fingerprint
+                     ]
+                   ) do
+                {:ok, %{rows: [[id]]}} -> %{id: id}
+                {:error, error} -> Repo.rollback({:database, error})
+              end
+          end
+        else
+          {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
+          {:error, error} -> Repo.rollback({:database, error})
+        end
+      end)
+      |> normalize_transaction()
     else
       :error -> {:error, :invalid_user}
       {:error, error} when is_atom(error) -> {:error, error}
       {:error, error} -> database_error(error)
     end
   end
+
+  defp lock_placement_idempotency(_uid, nil), do: :ok
+
+  defp lock_placement_idempotency(uid, key) do
+    customer_key = Base.encode16(uid, case: :lower)
+    lock_key = "direct-placement:#{customer_key}:#{key}"
+
+    case Repo.query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", [lock_key]) do
+      {:ok, _} -> :ok
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp find_idempotent_placement(_uid, nil), do: {:ok, nil}
+
+  defp find_idempotent_placement(uid, key) do
+    case Repo.query(
+           """
+           SELECT id::text, intent_fingerprint
+           FROM public.placement_requests
+           WHERE customer_id = $1
+             AND idempotency_key = $2
+           LIMIT 1
+           """,
+           [uid, key]
+         ) do
+      {:ok, %{rows: [[id, fingerprint]]}} ->
+        {:ok, %{id: id, intentFingerprint: fingerprint}}
+
+      {:ok, %{rows: []}} ->
+        {:ok, nil}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp placement_request_fingerprint(params) do
+    canonical =
+      {
+        params["role"],
+        params["livingArrangement"],
+        params["employmentType"],
+        text_or_empty(params["desiredStartDate"]),
+        params["salaryMinPesewas"],
+        params["salaryMaxPesewas"],
+        text_or_empty(params["salaryFrequency"]),
+        String.trim(params["householdAddress"]),
+        canonical_idempotency_term(params["requirements"] || %{}),
+        text_or_empty(params["notes"])
+      }
+
+    :crypto.hash(:sha256, :erlang.term_to_binary(canonical))
+    |> Base.encode16(case: :lower)
+  end
+
+  defp canonical_idempotency_term(value) when is_map(value) do
+    value
+    |> Enum.map(fn {key, item} -> {to_string(key), canonical_idempotency_term(item)} end)
+    |> Enum.sort()
+  end
+
+  defp canonical_idempotency_term(value) when is_list(value),
+    do: Enum.map(value, &canonical_idempotency_term/1)
+
+  defp canonical_idempotency_term(value), do: value
+
+  defp optional_idempotency_key(nil), do: {:ok, nil}
+
+  defp optional_idempotency_key(value) when is_binary(value) do
+    value = String.trim(value)
+
+    if String.length(value) >= 8 and String.length(value) <= 128,
+      do: {:ok, value},
+      else: {:error, :invalid_request}
+  end
+
+  defp optional_idempotency_key(_), do: {:error, :invalid_request}
 
   def get_placement(user_id, placement_id) do
     with {:ok, uid} <- dump_uuid(user_id),
