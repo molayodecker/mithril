@@ -183,7 +183,7 @@ defmodule MithrilWeb.DirectDispatchController do
   defp error_response(:request_closed), do: {409, "request_closed"}
   defp error_response(:invalid_status_transition), do: {409, "invalid_status_transition"}
   defp error_response(:replacement_already_requested), do: {409, "replacement_already_requested"}
-  defp error_response(:idempotency_conflict), do: {409, "idempotency_conflict")
+  defp error_response(:idempotency_conflict), do: {409, "idempotency_conflict"}
   defp error_response(:candidate_unavailable), do: {409, "candidate_unavailable"}
   defp error_response(:needed_by_past), do: {422, "needed_by_past"}
   defp error_response(:replacement_time_required), do: {422, "replacement_time_required"}
