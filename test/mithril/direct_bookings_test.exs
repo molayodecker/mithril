@@ -528,6 +528,68 @@ defmodule Mithril.DirectBookingsTest do
     assert Enum.all?(stamps, &is_nil/1)
   end
 
+  test "clears every reminder stamp when only the timezone changes" do
+    customer_id = Ecto.UUID.generate()
+    scheduled_date = Date.add(Date.utc_today(), 5)
+
+    booking_id =
+      insert_booking!(customer_id, scheduled_date, ~T[10:00:00], "scheduled",
+        payment_status: "paid"
+      )
+
+    Repo.query!(
+      """
+      UPDATE public.bookings SET
+        customer_reminder_sent_at = now(),
+        customer_reminder_claimed_at = now(),
+        customer_reminder_7d_sent_at = now(),
+        customer_reminder_7d_claimed_at = now(),
+        customer_reminder_48h_sent_at = now(),
+        customer_reminder_48h_claimed_at = now(),
+        customer_reminder_morning_sent_at = now(),
+        customer_reminder_morning_claimed_at = now(),
+        cleaner_reminder_sent_at = now(),
+        cleaner_reminder_claimed_at = now()
+      WHERE id = $1
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:ok, _} =
+             DirectBookings.reschedule(customer_id, booking_id, %{
+               "scheduledDate" => Date.to_iso8601(scheduled_date),
+               "scheduledTime" => "10:00",
+               "timezone" => "America/New_York"
+             })
+
+    [[timezone, timezone_name, stamps]] =
+      Repo.query!(
+        """
+        SELECT
+          timezone,
+          timezone_name,
+          ARRAY[
+            customer_reminder_sent_at,
+            customer_reminder_claimed_at,
+            customer_reminder_7d_sent_at,
+            customer_reminder_7d_claimed_at,
+            customer_reminder_48h_sent_at,
+            customer_reminder_48h_claimed_at,
+            customer_reminder_morning_sent_at,
+            customer_reminder_morning_claimed_at,
+            cleaner_reminder_sent_at,
+            cleaner_reminder_claimed_at
+          ]
+        FROM public.bookings WHERE id = $1
+        """,
+        [Ecto.UUID.dump!(booking_id)]
+      ).rows
+
+    assert timezone == "America/New_York"
+    assert timezone_name == "America/New_York"
+    assert Enum.all?(stamps, &is_nil/1)
+  end
+
   test "reprices an unpaid pending booking when the schedule changes" do
     customer_id = Ecto.UUID.generate()
     new_date = Date.add(Date.utc_today(), 6)
