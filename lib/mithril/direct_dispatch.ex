@@ -67,39 +67,148 @@ defmodule Mithril.DirectDispatch do
 
   def create_urgent_request(user_id, params) when is_map(params) do
     with {:ok, uid} <- dump_uuid(user_id),
-         {:ok, input} <- validate_urgent_request(params),
-         {:ok, result} <-
-           Repo.query(
-             """
-             INSERT INTO public.direct_service_requests (
-               customer_id, kind, status, priority, role, requested_start_at,
-               duration_hours, household_address_snapshot, requirements, notes,
-               created_by_user_id
-             ) VALUES (
-               $1, 'urgent_help', 'submitted', $2, $3, $4, $5, $6,
-               $7::text::jsonb, NULLIF($8::text, ''), $1
-             )
-             RETURNING id::text, status
-             """,
-             [
-               uid,
-               input.priority,
-               input.role,
-               input.needed_by,
-               input.duration_hours,
-               input.household_address,
-               Jason.encode!(input.requirements),
-               input.notes
-             ]
-           ) do
-      [[id, status]] = result.rows
-      {:ok, %{id: id, status: status, kind: "urgent_help"}}
+         {:ok, input} <- validate_urgent_request(params) do
+      Repo.transaction(fn ->
+        fingerprint = urgent_request_fingerprint(input)
+
+        with :ok <- lock_urgent_request_idempotency(uid, input.idempotency_key),
+             {:ok, existing} <- find_idempotent_urgent_request(uid, input.idempotency_key) do
+          case existing do
+            %{intentFingerprint: ^fingerprint} ->
+              Map.drop(existing, [:intentFingerprint])
+
+            %{intentFingerprint: _other} ->
+              Repo.rollback(:idempotency_conflict)
+
+            nil ->
+              :ok = ensure_urgent_request_future(input.needed_by)
+
+              case Repo.query(
+                     """
+                     INSERT INTO public.direct_service_requests (
+                       customer_id, kind, status, priority, role, requested_start_at,
+                       duration_hours, household_address_snapshot, requirements, notes,
+                       created_by_user_id, idempotency_key, intent_fingerprint
+                     ) VALUES (
+                       $1, 'urgent_help', 'submitted', $2, $3, $4, $5, $6,
+                       $7::text::jsonb, NULLIF($8::text, ''), $1, $9, $10
+                     )
+                     RETURNING id::text, status
+                     """,
+                     [
+                       uid,
+                       input.priority,
+                       input.role,
+                       input.needed_by,
+                       input.duration_hours,
+                       input.household_address,
+                       Jason.encode!(input.requirements),
+                       input.notes,
+                       input.idempotency_key,
+                       fingerprint
+                     ]
+                   ) do
+                {:ok, %{rows: [[id, status]]}} ->
+                  %{id: id, status: status, kind: "urgent_help"}
+
+                {:error, error} ->
+                  Repo.rollback({:database, error})
+              end
+          end
+        else
+          {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
+          {:error, error} -> Repo.rollback({:database, error})
+        end
+      end)
+      |> normalize_transaction()
     else
       :error -> {:error, :invalid_user}
       {:error, reason} when is_atom(reason) -> {:error, reason}
-      {:error, error} -> database_error(error)
     end
   end
+
+  defp lock_urgent_request_idempotency(_uid, nil), do: :ok
+
+  defp lock_urgent_request_idempotency(uid, key) do
+    customer_key = Base.encode16(uid, case: :lower)
+    lock_key = "direct-urgent-help:#{customer_key}:#{key}"
+
+    case Repo.query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", [lock_key]) do
+      {:ok, _} -> :ok
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp find_idempotent_urgent_request(_uid, nil), do: {:ok, nil}
+
+  defp find_idempotent_urgent_request(uid, key) do
+    case Repo.query(
+           """
+           SELECT id::text, status, intent_fingerprint
+           FROM public.direct_service_requests
+           WHERE customer_id = $1
+             AND kind = 'urgent_help'
+             AND idempotency_key = $2
+           LIMIT 1
+           """,
+           [uid, key]
+         ) do
+      {:ok, %{rows: [[id, status, fingerprint]]}} ->
+        {:ok,
+         %{
+           id: id,
+           status: status,
+           kind: "urgent_help",
+           intentFingerprint: fingerprint
+         }}
+
+      {:ok, %{rows: []}} ->
+        {:ok, nil}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp ensure_urgent_request_future(needed_by) do
+    minimum = DateTime.add(DateTime.utc_now(), 60, :second)
+
+    if DateTime.compare(needed_by, minimum) == :gt,
+      do: :ok,
+      else: Repo.rollback(:needed_by_past)
+  end
+
+  @doc false
+  def urgent_request_fingerprint_for_params(params) when is_map(params) do
+    with {:ok, input} <- validate_urgent_request(params) do
+      {:ok, urgent_request_fingerprint(input)}
+    end
+  end
+
+  defp urgent_request_fingerprint(input) do
+    canonical =
+      {
+        input.role,
+        input.priority,
+        DateTime.to_iso8601(input.needed_by),
+        Decimal.to_string(input.duration_hours, :normal),
+        input.household_address,
+        canonical_term(input.requirements),
+        input.notes
+      }
+
+    :crypto.hash(:sha256, :erlang.term_to_binary(canonical))
+    |> Base.encode16(case: :lower)
+  end
+
+  defp canonical_term(value) when is_map(value) do
+    value
+    |> Enum.map(fn {key, item} -> {to_string(key), canonical_term(item)} end)
+    |> Enum.sort()
+  end
+
+  defp canonical_term(value) when is_list(value), do: Enum.map(value, &canonical_term/1)
+  defp canonical_term(value), do: value
 
   def request_replacement(user_id, booking_id, params) when is_map(params) do
     with {:ok, uid} <- dump_uuid(user_id),
@@ -593,7 +702,8 @@ defmodule Mithril.DirectDispatch do
          {:ok, needed_by} <- iso_datetime(params["neededBy"]),
          {:ok, duration_hours} <- duration_hours(params["durationHours"]),
          {:ok, household_address} <- required_text(params["householdAddress"], 3, 500),
-         {:ok, request_requirements} <- requirements(params["requirements"]) do
+         {:ok, request_requirements} <- requirements(params["requirements"]),
+         {:ok, idempotency_key} <- optional_request_idempotency_key(params["idempotencyKey"]) do
       {:ok,
        %{
          role: role,
@@ -602,12 +712,25 @@ defmodule Mithril.DirectDispatch do
          duration_hours: duration_hours,
          household_address: household_address,
          requirements: request_requirements,
-         notes: optional_text(params["notes"], 4_000)
+         notes: optional_text(params["notes"], 4_000),
+         idempotency_key: idempotency_key
        }}
     else
       _ -> {:error, :invalid_request}
     end
   end
+
+  defp optional_request_idempotency_key(nil), do: {:ok, nil}
+
+  defp optional_request_idempotency_key(value) when is_binary(value) do
+    value = String.trim(value)
+
+    if String.length(value) >= 8 and String.length(value) <= 128,
+      do: {:ok, value},
+      else: :error
+  end
+
+  defp optional_request_idempotency_key(_), do: :error
 
   defp validate_replacement_request(params) do
     with {:ok, priority} <- priority(params["priority"] || "same_day"),
