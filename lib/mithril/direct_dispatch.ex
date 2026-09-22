@@ -176,70 +176,75 @@ defmodule Mithril.DirectDispatch do
          :ok <- ensure_customer_exists(input.customer_uuid),
          {:ok, dates} <- expand_booking_dates(params) do
       Repo.transaction(fn ->
-        created =
-          Enum.map(dates, fn date ->
-            booking_params =
-              params
-              |> Map.take([
-                "serviceId",
-                "cleanerId",
-                "scheduledTime",
-                "durationHours",
-                "address",
-                "specialInstructions",
-                "timezone"
-              ])
-              |> Map.put("scheduledDate", date)
+        with :ok <- lock_admin_booking_series(input.customer_uuid, input.idempotency_key),
+             {:ok, existing} <-
+               find_admin_booking_series(input.customer_uuid, input.idempotency_key) do
+          case existing do
+            [_ | _] ->
+              admin_booking_result(existing, input, false)
 
-            case DirectBookings.create_booking(input.customer_user_id, booking_params) do
-              {:ok, booking} ->
-                case insert_booking_origin(
-                       booking.id,
-                       input.customer_uuid,
-                       admin_uid,
-                       input.source,
-                       input.admin_note
-                     ) do
-                  :ok ->
-                    Map.merge(booking, %{
-                      scheduledDate: date,
-                      customerUserId: input.customer_user_id,
-                      source: input.source,
-                      createdByAdmin: true
-                    })
+            [] ->
+              created =
+                dates
+                |> Enum.with_index()
+                |> Enum.map(fn {date, index} ->
+                  booking_params =
+                    params
+                    |> Map.take([
+                      "serviceId",
+                      "cleanerId",
+                      "scheduledTime",
+                      "durationHours",
+                      "address",
+                      "specialInstructions",
+                      "timezone"
+                    ])
+                    |> Map.put("scheduledDate", date)
+                    |> maybe_put_admin_idempotency_key(input.idempotency_key, date, index)
 
-                  {:error, error} ->
-                    Repo.rollback({:database, error})
-                end
+                  case DirectBookings.create_booking(input.customer_user_id, booking_params) do
+                    {:ok, booking} ->
+                      case insert_booking_origin(
+                             booking.id,
+                             input.customer_uuid,
+                             admin_uid,
+                             input.source,
+                             input.admin_note
+                           ) do
+                        {:ok, _origin_created?} ->
+                          Map.merge(booking, %{
+                            scheduledDate: date,
+                            customerUserId: input.customer_user_id,
+                            source: input.source,
+                            createdByAdmin: true
+                          })
 
-              {:error, reason} ->
-                Repo.rollback(reason)
-            end
-          end)
+                        {:error, error} ->
+                          Repo.rollback({:database, error})
+                      end
 
-        total_amount_minor =
-          Enum.reduce(created, 0, fn booking, sum -> sum + booking.amountMinor end)
+                    {:error, reason} ->
+                      Repo.rollback(reason)
+                  end
+                end)
 
-        first = hd(created)
-
-        %{
-          id: first.id,
-          status: first.status,
-          paymentStatus: first.paymentStatus,
-          amountMinor: total_amount_minor,
-          currency: first.currency,
-          customerUserId: input.customer_user_id,
-          source: input.source,
-          createdByAdmin: true,
-          count: length(created),
-          bookings: created
-        }
+              admin_booking_result(created, input, true)
+          end
+        else
+          {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
+          {:error, error} -> Repo.rollback({:database, error})
+        end
       end)
       |> normalize_transaction()
       |> case do
         {:ok, result} ->
-          {:ok,
-           Map.put(result, :notificationsSent, notify_created_booking(result, input, params))}
+          created_new? = result.createdNew
+          public_result = Map.delete(result, :createdNew)
+
+          notifications_sent =
+            created_new? and notify_created_booking(public_result, input, params)
+
+          {:ok, Map.put(public_result, :notificationsSent, notifications_sent)}
 
         error ->
           error
@@ -249,6 +254,27 @@ defmodule Mithril.DirectDispatch do
       {:error, reason} when is_atom(reason) -> {:error, reason}
       {:error, error} -> database_error(error)
     end
+  end
+
+  defp admin_booking_result(bookings, input, created_new?) do
+    total_amount_minor =
+      Enum.reduce(bookings, 0, fn booking, sum -> sum + booking.amountMinor end)
+
+    first = hd(bookings)
+
+    %{
+      id: first.id,
+      status: first.status,
+      paymentStatus: first.paymentStatus,
+      amountMinor: total_amount_minor,
+      currency: first.currency,
+      customerUserId: input.customer_user_id,
+      source: Map.get(first, :source, input.source),
+      createdByAdmin: true,
+      count: length(bookings),
+      bookings: bookings,
+      createdNew: created_new?
+    }
   end
 
   def list_admin_service_requests(user_id) do
@@ -644,12 +670,98 @@ defmodule Mithril.DirectDispatch do
              booking_id, customer_id, created_by_user_id, source,
              consent_confirmed, admin_note
            ) VALUES ($1::uuid, $2, $3, $4, true, NULLIF($5::text, ''))
+           ON CONFLICT (booking_id) DO NOTHING
+           RETURNING booking_id
            """,
            [booking_id, customer_uuid, admin_uid, source, admin_note]
          ) do
+      {:ok, %{num_rows: 1}} -> {:ok, true}
+      {:ok, %{num_rows: 0}} -> {:ok, false}
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp maybe_put_admin_idempotency_key(params, nil, _date, _index), do: params
+
+  defp maybe_put_admin_idempotency_key(params, key, date, index) do
+    Map.put(params, "idempotencyKey", admin_booking_idempotency_key(key, date, index))
+  end
+
+  defp lock_admin_booking_series(_customer_uuid, nil), do: :ok
+
+  defp lock_admin_booking_series(customer_uuid, key) do
+    customer_key = Base.encode16(customer_uuid, case: :lower)
+    lock_key = "direct-admin-booking:#{customer_key}:#{admin_booking_series_prefix(key)}"
+
+    case Repo.query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", [lock_key]) do
       {:ok, _} -> :ok
       {:error, error} -> {:error, error}
     end
+  end
+
+  defp find_admin_booking_series(_customer_uuid, nil), do: {:ok, []}
+
+  defp find_admin_booking_series(customer_uuid, key) do
+    prefix = admin_booking_series_prefix(key)
+
+    case Repo.query(
+           """
+           SELECT b.id::text,
+                  b.status::text,
+                  b.payment_status::text,
+                  COALESCE(b.final_amount_minor, b.total_price)::bigint,
+                  COALESCE(b.currency, 'GHS'),
+                  b.scheduled_date::text,
+                  o.source
+           FROM public.bookings b
+           JOIN public.direct_booking_origins o ON o.booking_id = b.id
+           WHERE b.customer_id = $1
+             AND left(b.idempotency_key, length($2)) = $2
+           ORDER BY b.idempotency_key ASC
+           """,
+           [customer_uuid, prefix]
+         ) do
+      {:ok, result} ->
+        {:ok, Enum.map(result.rows, &admin_booking_series_row/1)}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp admin_booking_series_row([
+         id,
+         status,
+         payment_status,
+         amount_minor,
+         currency,
+         date,
+         source
+       ]) do
+    %{
+      id: id,
+      status: status,
+      paymentStatus: payment_status,
+      amountMinor: amount_minor,
+      currency: currency,
+      scheduledDate: date,
+      source: source
+    }
+  end
+
+  defp admin_booking_series_prefix(key) do
+    digest =
+      :crypto.hash(:sha256, String.trim(key))
+      |> Base.url_encode64(padding: false)
+
+    "admin:#{digest}:"
+  end
+
+  @doc false
+  def admin_booking_idempotency_key(key, _date, index)
+      when is_binary(key) and is_integer(index) and index >= 0 do
+    suffix = index |> Integer.to_string() |> String.pad_leading(2, "0")
+    admin_booking_series_prefix(key) <> suffix
   end
 
   def expand_booking_dates(params) do
@@ -731,19 +843,33 @@ defmodule Mithril.DirectDispatch do
   defp validate_admin_booking(params) do
     with true <- params["consentConfirmed"] == true,
          {:ok, customer_uuid} <- dump_uuid(params["customerUserId"]),
-         {:ok, source} <- admin_source(params["source"] || "admin") do
+         {:ok, source} <- admin_source(params["source"] || "admin"),
+         {:ok, idempotency_key} <- optional_idempotency_key(params["idempotencyKey"]) do
       {:ok,
        %{
          customer_uuid: customer_uuid,
          customer_user_id: params["customerUserId"],
          source: source,
-         admin_note: optional_text(params["adminNote"], 2_000)
+         admin_note: optional_text(params["adminNote"], 2_000),
+         idempotency_key: idempotency_key
        }}
     else
       false -> {:error, :consent_required}
       _ -> {:error, :invalid_request}
     end
   end
+
+  defp optional_idempotency_key(nil), do: {:ok, nil}
+
+  defp optional_idempotency_key(value) when is_binary(value) do
+    value = String.trim(value)
+
+    if String.length(value) >= 8 and String.length(value) <= 128,
+      do: {:ok, value},
+      else: :error
+  end
+
+  defp optional_idempotency_key(_), do: :error
 
   defp validate_customer_search(value) when is_binary(value) do
     value = String.trim(value)

@@ -315,6 +315,31 @@ defmodule Mithril.DirectDispatchTest do
              })
   end
 
+  test "admin booking idempotency keys are stable and distinct per visit" do
+    key = "9a52619b-e692-48f9-a901-ddf55d341d1d"
+
+    first = DirectDispatch.admin_booking_idempotency_key(key, "2026-10-01", 0)
+    retry = DirectDispatch.admin_booking_idempotency_key(key, "2026-10-01", 0)
+    edited_same_visit = DirectDispatch.admin_booking_idempotency_key(key, "2026-11-01", 0)
+    second = DirectDispatch.admin_booking_idempotency_key(key, "2026-10-08", 1)
+
+    assert first == retry
+    assert first == edited_same_visit
+    refute first == second
+    assert String.starts_with?(first, "admin:")
+    assert String.length(first) <= 128
+  end
+
+  test "admin-assisted booking rejects malformed idempotency keys" do
+    assert {:error, :invalid_request} =
+             DirectDispatch.create_admin_booking(Ecto.UUID.generate(), %{
+               "customerUserId" => Ecto.UUID.generate(),
+               "source" => "phone",
+               "consentConfirmed" => true,
+               "idempotencyKey" => "short"
+             })
+  end
+
   test "invalid custom days are rejected before a booking is created" do
     admin_id = insert_user!("ops@tryinstaclean.com", "+233555000333")
     customer_id = insert_user!("booked@tryinstaclean.com", "+233555000444")
