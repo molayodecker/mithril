@@ -18,7 +18,14 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
         durationHours: %Schema{type: :number, minimum: 0.5, maximum: 24},
         householdAddress: %Schema{type: :string, minLength: 3, maxLength: 500},
         requirements: %Schema{type: :object, additionalProperties: true, default: %{}},
-        notes: %Schema{type: :string, maxLength: 4000, nullable: true}
+        notes: %Schema{type: :string, maxLength: 4000, nullable: true},
+        idempotencyKey: %Schema{
+          type: :string,
+          minLength: 8,
+          maxLength: 128,
+          nullable: true,
+          description: "Stable per-intent key so retries return the same urgent-help request."
+        }
       },
       required: [:role, :neededBy, :durationHours, :householdAddress]
     })
