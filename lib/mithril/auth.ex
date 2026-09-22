@@ -112,16 +112,22 @@ defmodule Mithril.Auth do
   def me(user_id) when is_binary(user_id) do
     with {:ok, account} <- fetch_account_by_id(user_id),
          {:ok, roles} <- fetch_roles(user_id),
-         {:ok, cleaner_state} <- fetch_cleaner_state(user_id) do
+         {:ok, cleaner_state} <- fetch_cleaner_state(user_id),
+         {:ok, profile} <- fetch_profile(user_id) do
       user =
         account
-        |> session_user()
+        |> session_user(profile)
         |> Map.put(:status, account.status)
         |> Map.put(:admin, "admin" in roles)
         |> Map.put(:reviewer, "reviewer" in roles)
         |> Map.put(:roles, roles)
         |> Map.put(:cleanerVerified, cleaner_state.verified)
         |> Map.put(:cleanerStatus, cleaner_state.status)
+        |> Map.put(:first_name, profile.first_name)
+        |> Map.put(:last_name, profile.last_name)
+        |> Map.put(:avatar_url, profile.avatar_url)
+        |> Map.put(:address, profile.address)
+        |> Map.put(:location, profile.location)
 
       {:ok, user}
     end
@@ -138,6 +144,20 @@ defmodule Mithril.Auth do
   end
 
   def update_profile(_, _), do: {:error, :invalid_profile}
+
+  def check_availability(params, exclude_user_id \\ nil) when is_map(params) do
+    email = profile_optional_string(params, ["email", :email])
+    phone = profile_optional_string(params, ["phone", :phone])
+
+    if is_nil(email) and is_nil(phone) do
+      {:error, :invalid_profile}
+    else
+      with {:ok, email_exists} <- email_taken?(email, exclude_user_id),
+           {:ok, phone_exists} <- phone_taken?(phone, exclude_user_id) do
+        {:ok, availability_payload(email, phone, email_exists, phone_exists)}
+      end
+    end
+  end
 
   def admin?(user_id) when is_binary(user_id), do: has_role?(user_id, "admin")
 
@@ -1319,7 +1339,7 @@ defmodule Mithril.Auth do
 
   defp normalize_request_ip(_), do: nil
 
-  defp session_user(account) do
+  defp session_user(account, profile \\ nil) do
     phone = account.phone || e164_if_phone(account.email)
     email = if phone && account.email == phone, do: nil, else: account.email
 
@@ -1327,9 +1347,12 @@ defmodule Mithril.Auth do
       id: account.user_id,
       email: email,
       phone: phone,
-      name: profile_display_name(account.user_id)
+      name: session_display_name(account.user_id, profile)
     }
   end
+
+  defp session_display_name(_user_id, %{name: name}) when is_binary(name) and name != "", do: name
+  defp session_display_name(user_id, _profile), do: profile_display_name(user_id)
 
   defp profile_display_name(user_id) do
     case Repo.query(
@@ -1348,6 +1371,243 @@ defmodule Mithril.Auth do
       _other -> nil
     end
   end
+
+  defp empty_profile do
+    %{
+      first_name: nil,
+      last_name: nil,
+      name: nil,
+      avatar_url: nil,
+      address: nil,
+      location: nil
+    }
+  end
+
+  defp fetch_profile(user_id) do
+    uuid = dump_uuid(user_id)
+
+    postgis = """
+    SELECT
+      NULLIF(btrim(firstname), ''),
+      NULLIF(btrim(lastname), ''),
+      NULLIF(btrim(fullname), ''),
+      NULLIF(btrim(avatar_url), ''),
+      NULLIF(btrim(address), ''),
+      CASE WHEN location_wkt IS NULL THEN NULL ELSE ST_Y(location_wkt::geometry) END,
+      CASE WHEN location_wkt IS NULL THEN NULL ELSE ST_X(location_wkt::geometry) END,
+      CASE WHEN location_wkt IS NULL THEN NULL ELSE ST_AsText(location_wkt::geometry) END
+    FROM public.profiles
+    WHERE id = $1::uuid
+    LIMIT 1
+    """
+
+    case Repo.query(postgis, [uuid]) do
+      {:ok, %{rows: []}} ->
+        {:ok, empty_profile()}
+
+      {:ok, %{rows: [[first_name, last_name, fullname, avatar_url, address, lat, lng, wkt]]}} ->
+        {:ok,
+         profile_from_row(first_name, last_name, fullname, avatar_url, address, lat, lng, wkt)}
+
+      {:error, _postgis_unavailable} ->
+        fetch_profile_from_text(uuid)
+    end
+  end
+
+  defp fetch_profile_from_text(uuid) do
+    case Repo.query(
+           """
+           SELECT
+             NULLIF(btrim(firstname), ''),
+             NULLIF(btrim(lastname), ''),
+             NULLIF(btrim(fullname), ''),
+             NULLIF(btrim(avatar_url), ''),
+             NULLIF(btrim(address), ''),
+             location_wkt
+           FROM public.profiles
+           WHERE id = $1::uuid
+           LIMIT 1
+           """,
+           [uuid]
+         ) do
+      {:ok, %{rows: []}} ->
+        {:ok, empty_profile()}
+
+      {:ok, %{rows: [[first_name, last_name, fullname, avatar_url, address, wkt]]}} ->
+        {:ok,
+         profile_from_row(
+           first_name,
+           last_name,
+           fullname,
+           avatar_url,
+           address,
+           parse_wkt_location(wkt)
+         )}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp profile_from_row(first_name, last_name, fullname, avatar_url, address, lat, lng, wkt) do
+    profile_from_row(
+      first_name,
+      last_name,
+      fullname,
+      avatar_url,
+      address,
+      location_payload(lat, lng, wkt)
+    )
+  end
+
+  defp profile_from_row(first_name, last_name, fullname, avatar_url, address, location) do
+    name =
+      cond do
+        is_binary(fullname) and fullname != "" ->
+          fullname
+
+        true ->
+          [first_name, last_name]
+          |> Enum.filter(&(is_binary(&1) and &1 != ""))
+          |> Enum.join(" ")
+          |> case do
+            "" -> nil
+            joined -> joined
+          end
+      end
+
+    %{
+      first_name: first_name,
+      last_name: last_name,
+      name: name,
+      avatar_url: avatar_url,
+      address: address,
+      location: location
+    }
+  end
+
+  defp availability_payload(email, phone, email_exists, phone_exists) do
+    cond do
+      is_binary(email) and is_binary(phone) ->
+        %{
+          exists: email_exists or phone_exists,
+          email_exists: email_exists,
+          phone_exists: phone_exists
+        }
+
+      is_binary(email) ->
+        %{exists: email_exists}
+
+      true ->
+        %{exists: phone_exists}
+    end
+  end
+
+  defp email_taken?(nil, _exclude_user_id), do: {:ok, false}
+
+  defp email_taken?(email, exclude_user_id) do
+    case fetch_account_by_email(String.downcase(email)) do
+      {:ok, account} -> {:ok, account.user_id != exclude_user_id}
+      {:error, :not_found} -> {:ok, false}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp phone_taken?(nil, _exclude_user_id), do: {:ok, false}
+
+  defp phone_taken?(phone, exclude_user_id) do
+    case Phone.normalize(phone) do
+      {:ok, e164} -> phone_identifier_taken?(phone_lookup_variants(e164), exclude_user_id)
+      :error -> {:ok, false}
+    end
+  end
+
+  defp phone_lookup_variants(e164) do
+    digits = String.replace_prefix(e164, "+", "")
+
+    variants = [e164, digits]
+
+    variants =
+      if String.starts_with?(digits, "233") and byte_size(digits) == 12 do
+        ["0" <> String.slice(digits, 3, 9) | variants]
+      else
+        variants
+      end
+
+    Enum.uniq(variants)
+  end
+
+  defp phone_identifier_taken?(variants, exclude_user_id) do
+    case Repo.query(
+           """
+           SELECT a.user_id::text
+           FROM public.mithril_auth_accounts a
+           JOIN public.users u ON u.id = a.user_id
+           WHERE u.status::text = 'active'
+             AND (
+               a.phone = ANY($1::text[])
+               OR u.phone = ANY($1::text[])
+             )
+             AND ($2::uuid IS NULL OR a.user_id <> $2::uuid)
+           LIMIT 1
+           """,
+           [variants, dump_exclude_uuid(exclude_user_id)]
+         ) do
+      {:ok, %{num_rows: 1}} -> {:ok, true}
+      {:ok, _} -> {:ok, false}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp dump_exclude_uuid(user_id) when is_binary(user_id) do
+    case Ecto.UUID.cast(user_id) do
+      {:ok, _} -> dump_uuid(user_id)
+      :error -> nil
+    end
+  end
+
+  defp dump_exclude_uuid(_), do: nil
+
+  @point_wkt ~r/^POINT\s*\(\s*([+-]?\d+(?:\.\d+)?)\s+([+-]?\d+(?:\.\d+)?)\s*\)/i
+
+  defp parse_wkt_location(wkt) when is_binary(wkt) do
+    case Regex.run(@point_wkt, String.trim(wkt)) do
+      [_, lng, lat] -> location_payload(lat, lng, String.trim(wkt))
+      _other -> nil
+    end
+  end
+
+  defp parse_wkt_location(_), do: nil
+
+  defp location_payload(lat, lng, wkt) do
+    latitude = coord_float(lat)
+    longitude = coord_float(lng)
+
+    if is_float(latitude) and is_float(longitude) and latitude >= -90 and latitude <= 90 and
+         longitude >= -180 and longitude <= 180 do
+      %{
+        latitude: latitude,
+        longitude: longitude,
+        location_wkt: wkt_string(wkt, longitude, latitude)
+      }
+    end
+  end
+
+  defp wkt_string(wkt, _lng, _lat) when is_binary(wkt) and wkt != "", do: wkt
+  defp wkt_string(_wkt, lng, lat), do: "POINT(#{lng} #{lat})"
+
+  defp coord_float(%Decimal{} = value), do: Decimal.to_float(value)
+  defp coord_float(value) when is_float(value), do: value
+  defp coord_float(value) when is_integer(value), do: value * 1.0
+
+  defp coord_float(value) when is_binary(value) do
+    case Float.parse(value) do
+      {number, ""} -> number
+      _other -> nil
+    end
+  end
+
+  defp coord_float(_), do: nil
 
   defp seed_oauth_profile(user_id, identity) do
     {first_name, last_name, fullname} = oauth_name_parts(identity)

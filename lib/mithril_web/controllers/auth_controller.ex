@@ -2,6 +2,8 @@ defmodule MithrilWeb.AuthController do
   use Phoenix.Controller, formats: [:json]
 
   alias Mithril.Auth
+  alias Mithril.Auth.Token
+  alias MithrilWeb.Plugs.UserAuth
 
   def methods(conn, _params) do
     json(conn, %{methods: Auth.methods()})
@@ -70,6 +72,23 @@ defmodule MithrilWeb.AuthController do
 
   def register(conn, params) do
     respond(conn, Auth.register(Map.get(params, "email"), Map.get(params, "password")))
+  end
+
+  def availability(conn, params) do
+    respond(conn, Auth.check_availability(params, optional_user_id(conn)))
+  end
+
+  defp optional_user_id(conn) do
+    case UserAuth.bearer_token(conn) do
+      nil ->
+        nil
+
+      token ->
+        case Token.verify_access(token) do
+          {:ok, %{"sub" => user_id}} when is_binary(user_id) -> user_id
+          _other -> nil
+        end
+    end
   end
 
   defp request_ip(conn) do

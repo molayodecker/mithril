@@ -321,6 +321,46 @@ defmodule Mithril.AuthTest do
     assert "cleaner" in me.roles
     assert me.cleanerVerified
     assert me.cleanerStatus == "active"
+    assert me.location == nil
+  end
+
+  test "me returns nil location when the profile has no coordinates" do
+    {user_id, _email} = insert_account("no-location@tryinstaclean.com", "correct-horse")
+
+    assert {:ok, me} = Auth.me(user_id)
+    assert me.location == nil
+    assert me.address == nil
+    assert me.avatar_url == nil
+  end
+
+  test "check_availability reports another account's email as taken" do
+    {owner_id, email} = insert_account("taken@tryinstaclean.com", "correct-horse")
+    {other_id, _} = insert_account("other@tryinstaclean.com", "correct-horse")
+
+    assert {:ok, %{exists: true}} =
+             Auth.check_availability(%{"email" => "Taken@tryinstaclean.com"})
+
+    assert {:ok, %{exists: false}} = Auth.check_availability(%{"email" => email}, owner_id)
+    assert {:ok, %{exists: true}} = Auth.check_availability(%{"email" => email}, other_id)
+
+    assert {:ok, %{exists: false}} =
+             Auth.check_availability(%{"email" => "free@tryinstaclean.com"})
+  end
+
+  test "check_availability reports another account's phone as taken across Ghana formats" do
+    {owner_id, _} =
+      insert_account("phone-taken@tryinstaclean.com", "correct-horse", phone: "+233241234567")
+
+    assert {:ok, %{exists: true}} = Auth.check_availability(%{"phone" => "0241234567"})
+
+    assert {:ok, %{exists: false}} =
+             Auth.check_availability(%{"phone" => "+233241234567"}, owner_id)
+
+    assert {:ok, %{exists: false}} = Auth.check_availability(%{"phone" => "+233200000099"})
+  end
+
+  test "check_availability requires an email or phone" do
+    assert {:error, :invalid_profile} = Auth.check_availability(%{})
   end
 
   test "update_profile upserts profiles, phone, and onboarding roles" do
@@ -339,6 +379,9 @@ defmodule Mithril.AuthTest do
 
     assert me.phone == "+233200000001"
     assert me.name == "Arthur Decker"
+    assert me.first_name == "Arthur"
+    assert me.last_name == "Decker"
+    assert me.address == "East Legon"
     assert "customer" in me.roles
     assert "cleaner" in me.roles
     refute "admin" in me.roles
@@ -358,6 +401,9 @@ defmodule Mithril.AuthTest do
     assert fullname == "Arthur Decker"
     assert address == "East Legon"
     assert location_wkt == "POINT(-0.205 5.56)"
+    assert me.location.latitude == 5.56
+    assert me.location.longitude == -0.205
+    assert me.location.location_wkt == "POINT(-0.205 5.56)"
 
     catalog_ids =
       Repo.query!("SELECT id FROM public.roles ORDER BY id").rows
@@ -398,12 +444,16 @@ defmodule Mithril.AuthTest do
                "location_wkt" => "POINT(-0.18 5.60)"
              })
 
-    assert {:ok, _} =
+    assert {:ok, me} =
              Auth.update_profile(user_id, %{
                "first_name" => "Ama",
                "last_name" => "Boateng",
                "phone" => "+233200000010"
              })
+
+    assert me.location.latitude == 5.60
+    assert me.location.longitude == -0.18
+    assert me.location.location_wkt == "POINT(-0.18 5.60)"
 
     [[avatar_url, address, location_wkt]] =
       Repo.query!(
