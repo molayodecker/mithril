@@ -1538,7 +1538,7 @@ defmodule Mithril.Auth do
         """
         UPDATE auth.users
         SET phone = $2,
-            email = COALESCE($3, email),
+            email = $3,
             updated_at = now()
         WHERE id = $1::uuid
         """
