@@ -728,10 +728,7 @@ defmodule Mithril.DirectDispatch do
              paymentStatus: payment_status,
              amountMinor: amount_minor,
              currency: currency,
-             scheduledDate: date,
-             customerUserId: Ecto.UUID.load!(customer_uuid),
-             source: "admin",
-             createdByAdmin: true
+             scheduledDate: date
            }
          end)}
 
