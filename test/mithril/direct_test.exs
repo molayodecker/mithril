@@ -92,9 +92,17 @@ defmodule Mithril.DirectTest do
       household_address_snapshot text NOT NULL,
       requirements jsonb NOT NULL DEFAULT '{}'::jsonb,
       notes text,
+      idempotency_key text,
+      intent_fingerprint text,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     )
+    """)
+
+    Repo.query!("""
+    CREATE UNIQUE INDEX placement_requests_customer_idempotency_uidx
+      ON public.placement_requests (customer_id, idempotency_key)
+      WHERE idempotency_key IS NOT NULL
     """)
 
     Repo.query!("""
@@ -164,6 +172,40 @@ defmodule Mithril.DirectTest do
     assert placement["id"] == placement_id
     assert placement["status"] == "submitted"
     assert placement["role"] == "househelp"
+  end
+
+  test "placement request retries with the same idempotency key return the original request" do
+    customer_id = Ecto.UUID.generate()
+    key = "placement-7e67f9b1-b6d4-4cd5"
+    params = Map.put(valid_placement_params(), "idempotencyKey", key)
+
+    assert {:ok, %{id: first_id}} = Direct.create_placement(customer_id, params)
+    assert {:ok, %{id: retry_id}} = Direct.create_placement(customer_id, params)
+    assert retry_id == first_id
+
+    assert [[1]] =
+             Repo.query!(
+               """
+               SELECT count(*)::int
+               FROM public.placement_requests
+               WHERE customer_id = $1 AND idempotency_key = $2
+               """,
+               [Ecto.UUID.dump!(customer_id), key]
+             ).rows
+  end
+
+  test "placement idempotency keys reject changed request payloads" do
+    customer_id = Ecto.UUID.generate()
+    key = "placement-d6539746-b50d-48fd"
+    params = Map.put(valid_placement_params(), "idempotencyKey", key)
+
+    assert {:ok, _created} = Direct.create_placement(customer_id, params)
+
+    assert {:error, :idempotency_conflict} =
+             Direct.create_placement(
+               customer_id,
+               Map.put(params, "householdAddress", "Cantonments, Accra")
+             )
   end
 
   test "placement creation rejects an invalid desired start date before SQL casting" do

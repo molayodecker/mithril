@@ -369,6 +369,7 @@ defmodule MithrilWeb.DirectController do
   defp error_response(:forbidden), do: {403, "forbidden"}
   defp error_response(:not_found), do: {404, "not_found"}
   defp error_response(:placement_closed), do: {409, "placement_closed"}
+  defp error_response(:idempotency_conflict), do: {409, "idempotency_conflict"}
   defp error_response(:candidate_unavailable), do: {409, "candidate_unavailable"}
   defp error_response(:candidate_missing_phone), do: {409, "candidate_missing_phone"}
   defp error_response(:consent_required), do: {409, "consent_required"}
