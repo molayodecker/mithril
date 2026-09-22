@@ -25,7 +25,14 @@ defmodule MithrilWeb.Schemas.Direct do
         },
         householdAddress: %Schema{type: :string, minLength: 3},
         requirements: %Schema{type: :object, additionalProperties: true, default: %{}},
-        notes: %Schema{type: :string, nullable: true}
+        notes: %Schema{type: :string, nullable: true},
+        idempotencyKey: %Schema{
+          type: :string,
+          minLength: 8,
+          maxLength: 128,
+          nullable: true,
+          description: "Stable per-intent key so retries return the same placement request."
+        }
       },
       required: [:role, :livingArrangement, :employmentType, :householdAddress]
     })
