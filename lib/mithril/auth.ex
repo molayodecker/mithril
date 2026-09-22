@@ -1417,6 +1417,9 @@ defmodule Mithril.Auth do
     address = profile_optional_string(attrs, ["address", :address])
     location_wkt = profile_optional_string(attrs, ["location_wkt", :location_wkt])
     write_email? = profile_has_key?(attrs, ["email", :email])
+    write_avatar_url? = profile_has_key?(attrs, ["avatar_url", :avatar_url])
+    write_address? = profile_has_key?(attrs, ["address", :address])
+    write_location_wkt? = profile_has_key?(attrs, ["location_wkt", :location_wkt])
     roles = profile_roles(attrs)
 
     cond do
@@ -1433,8 +1436,11 @@ defmodule Mithril.Auth do
              email: email,
              write_email?: write_email?,
              avatar_url: avatar_url,
+             write_avatar_url?: write_avatar_url?,
              address: address,
+             write_address?: write_address?,
              location_wkt: location_wkt,
+             write_location_wkt?: write_location_wkt?,
              roles: roles
            }}
         end
@@ -1446,6 +1452,7 @@ defmodule Mithril.Auth do
       with :ok <- update_public_user_profile(user_id, fields),
            :ok <- update_auth_account_profile(user_id, fields),
            :ok <- update_auth_user_profile(user_id, fields),
+           :ok <- sync_phone_identity(user_id, fields.phone),
            :ok <- upsert_public_profile(user_id, fields),
            :ok <- ensure_profile_roles(user_id, fields.roles) do
         :ok
@@ -1558,6 +1565,29 @@ defmodule Mithril.Auth do
     end
   end
 
+  defp sync_phone_identity(user_id, phone) do
+    case Repo.query(
+           """
+           UPDATE public.mithril_auth_identities
+           SET provider_subject = $2,
+               updated_at = now()
+           WHERE user_id = $1::uuid
+             AND provider = 'phone'
+             AND provider_subject IS DISTINCT FROM $2
+           """,
+           [dump_uuid(user_id), phone]
+         ) do
+      {:ok, _} ->
+        :ok
+
+      {:error, %Postgrex.Error{postgres: %{code: :unique_violation}}} ->
+        {:error, :phone_taken}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
   defp upsert_public_profile(user_id, fields) do
     fullname =
       [fields.first_name, fields.last_name]
@@ -1593,9 +1623,18 @@ defmodule Mithril.Auth do
            SET firstname = EXCLUDED.firstname,
                lastname = EXCLUDED.lastname,
                fullname = EXCLUDED.fullname,
-               avatar_url = EXCLUDED.avatar_url,
-               address = EXCLUDED.address,
-               location_wkt = EXCLUDED.location_wkt
+               avatar_url = CASE
+                 WHEN $8::boolean THEN EXCLUDED.avatar_url
+                 ELSE public.profiles.avatar_url
+               END,
+               address = CASE
+                 WHEN $9::boolean THEN EXCLUDED.address
+                 ELSE public.profiles.address
+               END,
+               location_wkt = CASE
+                 WHEN $10::boolean THEN EXCLUDED.location_wkt
+                 ELSE public.profiles.location_wkt
+               END
            """,
            [
              dump_uuid(user_id),
@@ -1604,7 +1643,10 @@ defmodule Mithril.Auth do
              fullname,
              fields.avatar_url,
              fields.address,
-             fields.location_wkt
+             fields.location_wkt,
+             fields.write_avatar_url?,
+             fields.write_address?,
+             fields.write_location_wkt?
            ]
          ) do
       {:ok, _} -> :ok
@@ -1649,13 +1691,8 @@ defmodule Mithril.Auth do
     case Repo.query(
            """
            INSERT INTO public.user_roles (user_id, role_id)
-           SELECT $1::uuid, $2
-           WHERE NOT EXISTS (
-             SELECT 1
-             FROM public.user_roles
-             WHERE user_id = $1::uuid
-               AND role_id = $2
-           )
+           VALUES ($1::uuid, $2)
+           ON CONFLICT (user_id, role_id) DO NOTHING
            """,
            [dump_uuid(user_id), role]
          ) do
