@@ -162,8 +162,11 @@ defmodule Mithril.DirectDispatch do
            intentFingerprint: fingerprint
          }}
 
-      {:ok, %{rows: []}} -> {:ok, nil}
-      {:error, error} -> {:error, error}
+      {:ok, %{rows: []}} ->
+        {:ok, nil}
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
