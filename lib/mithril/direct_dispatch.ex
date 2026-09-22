@@ -183,15 +183,16 @@ defmodule Mithril.DirectDispatch do
   end
 
   defp urgent_request_fingerprint(input) do
-    canonical = {
-      input.role,
-      input.priority,
-      DateTime.to_iso8601(input.needed_by),
-      Decimal.to_string(input.duration_hours, :normal),
-      input.household_address,
-      canonical_term(input.requirements),
-      input.notes
-    }
+    canonical =
+      {
+        input.role,
+        input.priority,
+        DateTime.to_iso8601(input.needed_by),
+        Decimal.to_string(input.duration_hours, :normal),
+        input.household_address,
+        canonical_term(input.requirements),
+        input.notes
+      }
 
     :crypto.hash(:sha256, :erlang.term_to_binary(canonical))
     |> Base.encode16(case: :lower)
