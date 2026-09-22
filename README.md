@@ -39,11 +39,17 @@ See [`docs/architecture/12-factor.md`](docs/architecture/12-factor.md) for the f
 
 ## Local development
 
+Use Elixir `1.20.4` on Erlang/OTP `28.5.0.6` (same as the Docker image). This repo ships `mise.toml` / `.tool-versions` for that pair.
+
 ```bash
-mix deps.get
-mix ecto.create
-mix phx.server
+mise install
+mise exec -- mix deps.get
+mise exec -- mix ecto.create
+mise exec -- mix test
+mise exec -- mix phx.server
 ```
+
+If `elixir --version` prints `1.19.x`, Intel Homebrew at `/usr/local/bin` is ahead of Apple Silicon Homebrew at `/opt/homebrew/bin`. Prefer `mise exec --` in this directory, or put `/opt/homebrew/bin` first on `PATH`. Do not lower `mix.exs` to `~> 1.19`.
 
 Health check:
 

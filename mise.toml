@@ -1,0 +1,6 @@
+# Match the production Docker image (hexpm/elixir:1.20.4-erlang-28.5.0.6-alpine-3.24.1).
+# Intel Homebrew's /usr/local/bin/elixir is 1.19.4 and often shadows ARM Homebrew 1.20.4.
+
+[tools]
+erlang = "28.5.0.6"
+elixir = "1.20.4-otp-28"

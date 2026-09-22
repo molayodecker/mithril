@@ -60,6 +60,7 @@ defmodule MithrilWeb.Router do
     post "/refresh", AuthController, :refresh
     post "/logout", AuthController, :logout
     post "/register", AuthController, :register
+    get "/availability", AuthController, :availability
   end
 
   scope "/auth", MithrilWeb do
