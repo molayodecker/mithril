@@ -193,14 +193,17 @@ defmodule Mithril.DirectAdminLiveJobsTest do
     assert live["customerName"] == "Ama Mensah"
     assert live["latitude"] == 5.56
     assert live["longitude"] == -0.2
+
     assert Enum.map(live["milestones"], & &1["stage"]) == [
              "scheduled",
              "en_route",
              "arrived",
              "in_progress"
            ]
+
     assert live["tracking"]["latitude"] == 5.562
     assert live["tracking"]["longitude"] == -0.197
+
     assert live["photos"] == %{
              "before" => 2,
              "during" => 1,
@@ -212,6 +215,7 @@ defmodule Mithril.DirectAdminLiveJobsTest do
 
   test "malformed coordinates on one booking do not erase valid coordinates on other jobs" do
     admin_id = insert_admin!()
+
     customer_id =
       insert_user!("coords-customer@example.com", "+233500000020", "Coordinates Customer")
 
