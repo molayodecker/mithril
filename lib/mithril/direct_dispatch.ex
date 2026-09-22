@@ -177,7 +177,9 @@ defmodule Mithril.DirectDispatch do
          {:ok, dates} <- expand_booking_dates(params) do
       Repo.transaction(fn ->
         created =
-          Enum.map(dates, fn date ->
+          dates
+          |> Enum.with_index()
+          |> Enum.map(fn {date, index} ->
             booking_params =
               params
               |> Map.take([
@@ -190,6 +192,7 @@ defmodule Mithril.DirectDispatch do
                 "timezone"
               ])
               |> Map.put("scheduledDate", date)
+              |> maybe_put_admin_idempotency_key(input.idempotency_key, date, index)
 
             case DirectBookings.create_booking(input.customer_user_id, booking_params) do
               {:ok, booking} ->
@@ -200,13 +203,16 @@ defmodule Mithril.DirectDispatch do
                        input.source,
                        input.admin_note
                      ) do
-                  :ok ->
-                    Map.merge(booking, %{
-                      scheduledDate: date,
-                      customerUserId: input.customer_user_id,
-                      source: input.source,
-                      createdByAdmin: true
-                    })
+                  {:ok, origin_created?} ->
+                    booking =
+                      Map.merge(booking, %{
+                        scheduledDate: date,
+                        customerUserId: input.customer_user_id,
+                        source: input.source,
+                        createdByAdmin: true
+                      })
+
+                    {booking, origin_created?}
 
                   {:error, error} ->
                     Repo.rollback({:database, error})
@@ -217,10 +223,13 @@ defmodule Mithril.DirectDispatch do
             end
           end)
 
-        total_amount_minor =
-          Enum.reduce(created, 0, fn booking, sum -> sum + booking.amountMinor end)
+        bookings = Enum.map(created, &elem(&1, 0))
+        created_new? = Enum.any?(created, &elem(&1, 1))
 
-        first = hd(created)
+        total_amount_minor =
+          Enum.reduce(bookings, 0, fn booking, sum -> sum + booking.amountMinor end)
+
+        first = hd(bookings)
 
         %{
           id: first.id,
@@ -231,15 +240,21 @@ defmodule Mithril.DirectDispatch do
           customerUserId: input.customer_user_id,
           source: input.source,
           createdByAdmin: true,
-          count: length(created),
-          bookings: created
+          count: length(bookings),
+          bookings: bookings,
+          createdNew: created_new?
         }
       end)
       |> normalize_transaction()
       |> case do
         {:ok, result} ->
-          {:ok,
-           Map.put(result, :notificationsSent, notify_created_booking(result, input, params))}
+          created_new? = result.createdNew
+          public_result = Map.delete(result, :createdNew)
+
+          notifications_sent =
+            created_new? and notify_created_booking(public_result, input, params)
+
+          {:ok, Map.put(public_result, :notificationsSent, notifications_sent)}
 
         error ->
           error
@@ -644,12 +659,31 @@ defmodule Mithril.DirectDispatch do
              booking_id, customer_id, created_by_user_id, source,
              consent_confirmed, admin_note
            ) VALUES ($1::uuid, $2, $3, $4, true, NULLIF($5::text, ''))
+           ON CONFLICT (booking_id) DO NOTHING
+           RETURNING booking_id
            """,
            [booking_id, customer_uuid, admin_uid, source, admin_note]
          ) do
-      {:ok, _} -> :ok
+      {:ok, %{num_rows: 1}} -> {:ok, true}
+      {:ok, %{num_rows: 0}} -> {:ok, false}
       {:error, error} -> {:error, error}
     end
+  end
+
+  defp maybe_put_admin_idempotency_key(params, nil, _date, _index), do: params
+
+  defp maybe_put_admin_idempotency_key(params, key, date, index) do
+    Map.put(params, "idempotencyKey", admin_booking_idempotency_key(key, date, index))
+  end
+
+  @doc false
+  def admin_booking_idempotency_key(key, date, index)
+      when is_binary(key) and is_binary(date) and is_integer(index) and index >= 0 do
+    digest =
+      :crypto.hash(:sha256, "#{String.trim(key)}:#{index}:#{date}")
+      |> Base.url_encode64(padding: false)
+
+    "admin:#{digest}"
   end
 
   def expand_booking_dates(params) do
@@ -731,19 +765,33 @@ defmodule Mithril.DirectDispatch do
   defp validate_admin_booking(params) do
     with true <- params["consentConfirmed"] == true,
          {:ok, customer_uuid} <- dump_uuid(params["customerUserId"]),
-         {:ok, source} <- admin_source(params["source"] || "admin") do
+         {:ok, source} <- admin_source(params["source"] || "admin"),
+         {:ok, idempotency_key} <- optional_idempotency_key(params["idempotencyKey"]) do
       {:ok,
        %{
          customer_uuid: customer_uuid,
          customer_user_id: params["customerUserId"],
          source: source,
-         admin_note: optional_text(params["adminNote"], 2_000)
+         admin_note: optional_text(params["adminNote"], 2_000),
+         idempotency_key: idempotency_key
        }}
     else
       false -> {:error, :consent_required}
       _ -> {:error, :invalid_request}
     end
   end
+
+  defp optional_idempotency_key(nil), do: {:ok, nil}
+
+  defp optional_idempotency_key(value) when is_binary(value) do
+    value = String.trim(value)
+
+    if String.length(value) >= 8 and String.length(value) <= 128,
+      do: {:ok, value},
+      else: :error
+  end
+
+  defp optional_idempotency_key(_), do: :error
 
   defp validate_customer_search(value) when is_binary(value) do
     value = String.trim(value)
