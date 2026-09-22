@@ -141,12 +141,13 @@ defmodule Mithril.DirectDispatchTest do
 
   test "creates urgent household help and lists it for the customer" do
     customer_id = insert_user!("customer@example.com", "+233500000001")
+    needed_by = DateTime.utc_now() |> DateTime.add(3_600, :second) |> DateTime.to_iso8601()
 
     assert {:ok, created} =
              DirectDispatch.create_urgent_request(customer_id, %{
                "role" => "elder_caregiver",
                "priority" => "urgent",
-               "neededBy" => "2026-09-07T15:00:00Z",
+               "neededBy" => needed_by,
                "durationHours" => 6,
                "householdAddress" => "East Legon Hills, Accra",
                "requirements" => %{"mobilitySupport" => true},
@@ -166,11 +167,12 @@ defmodule Mithril.DirectDispatchTest do
   test "urgent-help retries with the same idempotency key return the original request" do
     customer_id = insert_user!("retry@example.com", "+233500000099")
     key = "urgent-0b76d53d-95d6-4b79"
+    needed_by = DateTime.utc_now() |> DateTime.add(3_600, :second) |> DateTime.to_iso8601()
 
     params = %{
       "role" => "cleaner",
       "priority" => "urgent",
-      "neededBy" => "2026-10-07T15:00:00Z",
+      "neededBy" => needed_by,
       "durationHours" => 3,
       "householdAddress" => "East Legon, Accra",
       "requirements" => %{},
