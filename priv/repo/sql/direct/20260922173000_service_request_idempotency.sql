@@ -2,7 +2,8 @@
 -- Direct schema phases are replayed on each deploy, so keep this idempotent.
 
 ALTER TABLE public.direct_service_requests
-  ADD COLUMN IF NOT EXISTS idempotency_key text;
+  ADD COLUMN IF NOT EXISTS idempotency_key text,
+  ADD COLUMN IF NOT EXISTS intent_fingerprint text;
 
 CREATE UNIQUE INDEX IF NOT EXISTS direct_service_requests_customer_idempotency_uidx
   ON public.direct_service_requests (customer_id, idempotency_key)
@@ -10,3 +11,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS direct_service_requests_customer_idempotency_u
 
 COMMENT ON COLUMN public.direct_service_requests.idempotency_key IS
   'Client-supplied per-intent key used to make Direct service-request creation retry-safe.';
+
+COMMENT ON COLUMN public.direct_service_requests.intent_fingerprint IS
+  'Canonical SHA-256 fingerprint of the request payload bound to an idempotency key.';
