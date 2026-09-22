@@ -161,6 +161,7 @@ defmodule Mithril.DirectDispatch do
            kind: "urgent_help",
            intentFingerprint: fingerprint
          }}
+
       {:ok, %{rows: []}} -> {:ok, nil}
       {:error, error} -> {:error, error}
     end
