@@ -71,7 +71,10 @@ defmodule MithrilWeb.MobileGatewayController do
   defp respond(conn, {:error, :function_not_migrated}) do
     conn
     |> put_status(501)
-    |> json(%{error: "function_not_migrated", message: "This action is not available on Mithril yet."})
+    |> json(%{
+      error: "function_not_migrated",
+      message: "This action is not available on Mithril yet."
+    })
   end
 
   defp respond(conn, {:error, :forbidden}) do
@@ -82,15 +85,8 @@ defmodule MithrilWeb.MobileGatewayController do
     conn |> put_status(400) |> json(%{error: Atom.to_string(reason)})
   end
 
-  defp respond(conn, {:error, %Postgrex.Error{postgres: postgres}}) do
-    conn
-    |> put_status(400)
-    |> json(%{
-      error: postgres[:message] || "database_error",
-      code: postgres[:code],
-      details: postgres[:detail],
-      hint: postgres[:hint]
-    })
+  defp respond(conn, {:error, %Postgrex.Error{}}) do
+    conn |> put_status(400) |> json(%{error: "database_error"})
   end
 
   defp user_id(conn), do: conn.assigns.instaclean_user_id

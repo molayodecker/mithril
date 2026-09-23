@@ -80,7 +80,7 @@ defmodule Mithril.MobileQueryTest do
                    "alias" => "customer",
                    "table" => "users",
                    "constraint" => "bookings_customer_id_fkey",
-                   "columns" => ["id", "email"],
+                   "columns" => ["id"],
                    "embeds" => [
                      %{
                        "table" => "profiles",
@@ -94,6 +94,120 @@ defmodule Mithril.MobileQueryTest do
     assert sql =~ "public.users"
     assert sql =~ "public.profiles"
     assert sql =~ "profiles.id = users.id"
+    refute sql =~ "users.email"
+    refute sql =~ "users.password_hash"
+  end
+
+  test "rejects credential and private fields on users and profile embeds" do
+    assert {:error, :forbidden} =
+             MobileQuery.compile("cleaner-a", %{
+               "table" => "bookings",
+               "action" => "select",
+               "columns" => ["id"],
+               "embeds" => [
+                 %{
+                   "table" => "users",
+                   "constraint" => "bookings_customer_id_fkey",
+                   "columns" => ["id", "email"]
+                 }
+               ]
+             })
+
+    assert {:error, :forbidden} =
+             MobileQuery.compile("user-1", %{
+               "table" => "users",
+               "action" => "select",
+               "columns" => ["password_hash"]
+             })
+
+    assert {:error, :forbidden} =
+             MobileQuery.compile("cleaner-a", %{
+               "table" => "bookings",
+               "action" => "select",
+               "columns" => ["id"],
+               "embeds" => [
+                 %{
+                   "table" => "users",
+                   "constraint" => "bookings_customer_id_fkey",
+                   "columns" => ["id"],
+                   "embeds" => [
+                     %{
+                       "table" => "profiles",
+                       "columns" => ["address", "location_wkt"]
+                     }
+                   ]
+                 }
+               ]
+             })
+  end
+
+  test "directory and lifecycle tables cannot be mutated through the generic query" do
+    assert {:error, :forbidden} =
+             MobileQuery.compile("customer-a", %{
+               "table" => "jobs",
+               "action" => "insert",
+               "rows" => [%{"customer_id" => "customer-a", "status" => "completed"}]
+             })
+
+    assert {:error, :forbidden} =
+             MobileQuery.compile("customer-a", %{
+               "table" => "kyc_profiles",
+               "action" => "update",
+               "patch" => %{"kyc_status" => "approved"}
+             })
+
+    assert {:error, :forbidden} =
+             MobileQuery.compile("user-1", %{
+               "table" => "users",
+               "action" => "update",
+               "patch" => %{"password_hash" => "stolen"}
+             })
+
+    assert {:error, :forbidden} =
+             MobileQuery.compile("customer-a", %{
+               "table" => "properties",
+               "action" => "update",
+               "patch" => %{"customer_id" => "customer-b"}
+             })
+  end
+
+  test "limits cleaner directory reads to public profile fields" do
+    assert {:ok, %{sql: sql}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "cleaner_data",
+               "action" => "select",
+               "columns" => ["*"]
+             })
+
+    assert sql =~ "jsonb_build_object"
+    assert sql =~ "'user_id'"
+    refute sql =~ "to_jsonb(cleaner_data)"
+
+    assert {:error, :forbidden} =
+             MobileQuery.compile("user-1", %{
+               "table" => "cleaner_data",
+               "action" => "select",
+               "columns" => ["user_id", "bank_account"]
+             })
+  end
+
+  test "redacts encrypted calendar feed URLs from every projection" do
+    assert {:error, :forbidden} =
+             MobileQuery.compile("owner-a", %{
+               "table" => "property_calendar_feeds",
+               "action" => "select",
+               "columns" => ["feed_url_encrypted"]
+             })
+
+    assert {:ok, %{sql: sql}} =
+             MobileQuery.compile("owner-a", %{
+               "table" => "property_calendar_feeds",
+               "action" => "select",
+               "columns" => ["*"]
+             })
+
+    assert sql =~ "to_jsonb(property_calendar_feeds)"
+    assert sql =~ "- 'feed_url_encrypted'"
   end
 
   test "scopes a booking to the caller and refuses another customer's insert" do

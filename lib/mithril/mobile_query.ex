@@ -69,12 +69,80 @@ defmodule Mithril.MobileQuery do
 
   @ident ~r/^[a-z_][a-z0-9_]*$/
 
+  @secret_columns MapSet.new(~w(
+    password_hash
+    encrypted_password
+    feed_url_encrypted
+  ))
+
+  @ownership_columns MapSet.new(~w(
+    id
+    user_id
+    customer_id
+    cleaner_id
+    owner_id
+    claimed_by
+    reviewer_id
+    sender_id
+    inviter_user_id
+  ))
+
+  @money_columns MapSet.new(~w(
+    payment_status
+    payment_method
+    reference
+    final_amount_minor
+    total_price
+    platform_fee
+    tax_share_minor
+    vendor_share_minor
+    platform_share_minor
+    duration_hours
+    duration_final
+    kyc_status
+    kyc_provider
+    review_answer
+  ))
+
+  @embedded_columns %{
+    "users" => MapSet.new(~w(id)),
+    "profiles" => MapSet.new(~w(id firstname lastname fullname avatar_url))
+  }
+
+  @directory_columns %{
+    "cleaner_data" => MapSet.new(~w(
+        user_id
+        verified
+        status
+        hourly_rate
+        specialties
+        rating
+        completed_jobs
+        intro_video_url
+        intro_video_thumbnail_url
+      ))
+  }
+
+  @safe_user_columns MapSet.new(~w(id email phone status created_at updated_at))
+
+  @read_only_mutations MapSet.new(~w(
+    bookings
+    users
+    jobs
+    subscriptions
+    transactions
+    kyc_profiles
+    cleaner_applications
+    cleaner_data
+  ))
+
   def compile(user_id, query) when is_binary(user_id) and is_map(query) do
     table = query["table"]
     action = query["action"]
 
     with :ok <- validate_table(table),
-         :ok <- validate_action(action) do
+         :ok <- validate_action(action),
+         :ok <- validate_mutation(table, action) do
       compile_action(action, table, query, user_id)
     end
   end
@@ -86,7 +154,7 @@ defmodule Mithril.MobileQuery do
     filters = query["filters"] || []
     {embed_filters, root_filters} = Enum.split_with(filters, &embed_filter?(&1, embeds))
 
-    with :ok <- validate_columns(query["columns"] || ["*"]),
+    with :ok <- validate_projection(table, query["columns"] || ["*"]),
          {:ok, object_sql, params, required_embeds} <-
            object_sql(table, query["columns"] || ["*"], embeds, embed_filters, []),
          {:ok, where_sql, where_params} <-
@@ -96,28 +164,29 @@ defmodule Mithril.MobileQuery do
       where_sql = append_required_embeds(where_sql, required_embeds)
       params = params ++ where_params
 
-      with {:ok, where_sql, params} <- Mithril.MobileScope.apply(user_id, "select", table, where_sql, params) do
-      sql =
-        if query["head"] == true do
-          """
-          SELECT count(*)::int
-          FROM public.#{table}
-          #{where_sql}
-          """
-        else
-          """
-          SELECT COALESCE(jsonb_agg(payload), '[]'::jsonb)
-          FROM (
-            SELECT #{object_sql} AS payload
+      with {:ok, where_sql, params} <-
+             Mithril.MobileScope.apply(user_id, "select", table, where_sql, params) do
+        sql =
+          if query["head"] == true do
+            """
+            SELECT count(*)::int
             FROM public.#{table}
             #{where_sql}
-            #{order_sql}
-            #{limit_sql}
-          ) rows
-          """
-        end
+            """
+          else
+            """
+            SELECT COALESCE(jsonb_agg(payload), '[]'::jsonb)
+            FROM (
+              SELECT #{object_sql} AS payload
+              FROM public.#{table}
+              #{where_sql}
+              #{order_sql}
+              #{limit_sql}
+            ) rows
+            """
+          end
 
-      {:ok, %{sql: sql, params: params}}
+        {:ok, %{sql: sql, params: params}}
       end
     end
   end
@@ -127,8 +196,8 @@ defmodule Mithril.MobileQuery do
 
     with {:ok, rows} <- Mithril.MobileScope.prepare_rows(user_id, table, rows),
          :ok <- validate_rows(rows),
-         {:ok, columns} <- row_columns(rows),
-         :ok <- validate_returning(query["returning"]),
+         {:ok, columns} <- row_columns(table, rows),
+         :ok <- validate_returning(table, query["returning"]),
          {:ok, conflict} <- conflict_target(query["onConflict"], action) do
       payload_param = "$1::jsonb"
       column_sql = Enum.map_join(columns, ", ", & &1)
@@ -183,10 +252,11 @@ defmodule Mithril.MobileQuery do
   defp compile_action("update", table, query, user_id) do
     patch = query["patch"] || %{}
 
-    with :ok <- validate_patch(patch),
-         :ok <- validate_returning(query["returning"]),
+    with :ok <- validate_patch(table, patch),
+         :ok <- validate_returning(table, query["returning"]),
          {:ok, where_sql, params} <- filters_sql(table, query["filters"] || [], 2, []),
-         {:ok, where_sql, params} <- Mithril.MobileScope.apply(user_id, "update", table, where_sql, params) do
+         {:ok, where_sql, params} <-
+           Mithril.MobileScope.apply(user_id, "update", table, where_sql, params) do
       columns = Map.keys(patch)
 
       set_sql =
@@ -208,9 +278,10 @@ defmodule Mithril.MobileQuery do
   end
 
   defp compile_action("delete", table, query, user_id) do
-    with :ok <- validate_returning(query["returning"]),
+    with :ok <- validate_returning(table, query["returning"]),
          {:ok, where_sql, params} <- filters_sql(table, query["filters"] || [], 1, []),
-         {:ok, where_sql, params} <- Mithril.MobileScope.apply(user_id, "delete", table, where_sql, params) do
+         {:ok, where_sql, params} <-
+           Mithril.MobileScope.apply(user_id, "delete", table, where_sql, params) do
       returning = returning_sql(table, query["returning"])
 
       sql = """
@@ -223,31 +294,36 @@ defmodule Mithril.MobileQuery do
     end
   end
 
-  defp object_sql(table, columns, embeds, embed_filters, params) do
-    base =
-      cond do
-        "*" in columns and table == "property_calendar_feeds" ->
-          "(to_jsonb(#{table}) - 'feed_url_encrypted')"
+  defp object_sql(table, columns, embeds, embed_filters, params, kind \\ :root) do
+    with {:ok, columns} <- expand_columns(table, columns, kind) do
+      base =
+        cond do
+          "*" in columns ->
+            redact_wildcard_sql(table)
 
-        "*" in columns -> "to_jsonb(#{table})"
-        columns == [] -> "'{}'::jsonb"
-        true ->
-          pairs = Enum.map_join(columns, ", ", fn column -> "'#{column}', #{table}.#{column}" end)
-          "jsonb_build_object(#{pairs})"
-      end
+          columns == [] ->
+            "'{}'::jsonb"
 
-    Enum.reduce_while(embeds, {:ok, base, params, []}, fn embed, {:ok, acc, params, required} ->
-      case embed_sql(table, embed, embed_filters, params) do
-        {:ok, sql, params, embed_required} ->
-          alias_name = embed["alias"] || embed["table"]
-          merged = "(#{acc} || jsonb_build_object('#{alias_name}', #{sql}))"
-          required = if embed_required, do: [sql | required], else: required
-          {:cont, {:ok, merged, params, required}}
+          true ->
+            pairs =
+              Enum.map_join(columns, ", ", fn column -> "'#{column}', #{table}.#{column}" end)
 
-        {:error, reason} ->
-          {:halt, {:error, reason}}
-      end
-    end)
+            "jsonb_build_object(#{pairs})"
+        end
+
+      Enum.reduce_while(embeds, {:ok, base, params, []}, fn embed, {:ok, acc, params, required} ->
+        case embed_sql(table, embed, embed_filters, params) do
+          {:ok, sql, params, embed_required} ->
+            alias_name = embed["alias"] || embed["table"]
+            merged = "(#{acc} || jsonb_build_object('#{alias_name}', #{sql}))"
+            required = if embed_required, do: [sql | required], else: required
+            {:cont, {:ok, merged, params, required}}
+
+          {:error, reason} ->
+            {:halt, {:error, reason}}
+        end
+      end)
+    end
   end
 
   defp append_required_embeds(where_sql, []), do: where_sql
@@ -270,7 +346,7 @@ defmodule Mithril.MobileQuery do
     with :ok <- validate_table(child),
          :ok <- validate_ident(alias_name),
          {:ok, {local_key, remote_key}} <- join_keys(parent, child, constraint),
-         :ok <- validate_columns(embed["columns"] || ["*"]) do
+         :ok <- validate_projection(child, embed["columns"] || ["*"], :embed) do
       child_filters =
         Enum.flat_map(parent_filters, fn
           %{"op" => "not", "filter" => inner} = filter ->
@@ -293,7 +369,7 @@ defmodule Mithril.MobileQuery do
         nested = embed["embeds"] || []
 
         with {:ok, projected, params, nested_required} <-
-               object_sql(child, columns, nested, [], params) do
+               object_sql(child, columns, nested, [], params, :embed) do
           join_sql = "#{child}.#{remote_key} = #{parent}.#{local_key}"
 
           where_sql =
@@ -330,7 +406,8 @@ defmodule Mithril.MobileQuery do
 
   defp strip_embed_column(_, _, _), do: :skip
 
-  defp embed_filter?(%{"op" => "not", "filter" => inner}, embeds), do: embed_filter?(inner, embeds)
+  defp embed_filter?(%{"op" => "not", "filter" => inner}, embeds),
+    do: embed_filter?(inner, embeds)
 
   defp embed_filter?(%{"column" => column}, embeds) when is_binary(column) do
     case String.split(column, ".", parts: 2) do
@@ -373,7 +450,8 @@ defmodule Mithril.MobileQuery do
 
   defp filters_sql(_, _, _, _), do: {:error, :invalid_filter}
 
-  defp filter_sql(table, %{"op" => "or", "filters" => nested}, index, embeds) when is_list(nested) do
+  defp filter_sql(table, %{"op" => "or", "filters" => nested}, index, embeds)
+       when is_list(nested) do
     {parts, params, next} =
       Enum.reduce(nested, {[], [], index}, fn filter, {parts, params, index} ->
         {:ok, sql, extra, next} = filter_sql(table, filter, index, embeds)
@@ -401,7 +479,8 @@ defmodule Mithril.MobileQuery do
           if values == [] do
             {:ok, "FALSE", [], index}
           else
-            {:ok, "#{qualified}::text = ANY($#{index}::text[])", [Enum.map(values, &to_string/1)], index + 1}
+            {:ok, "#{qualified}::text = ANY($#{index}::text[])", [Enum.map(values, &to_string/1)],
+             index + 1}
           end
 
         binary when binary in ["eq", "neq", "gt", "gte", "lt", "lte"] ->
@@ -415,11 +494,14 @@ defmodule Mithril.MobileQuery do
               "lte" -> "<="
             end
 
-          {:ok, "#{qualified}::text #{operator} $#{index}::text", [stringify(filter["value"])], index + 1}
+          {:ok, "#{qualified}::text #{operator} $#{index}::text", [stringify(filter["value"])],
+           index + 1}
 
         "contains" ->
           values = filter["value"] || []
-          {:ok, "#{qualified}::text[] @> $#{index}::text[]", [Enum.map(values, &to_string/1)], index + 1}
+
+          {:ok, "#{qualified}::text[] @> $#{index}::text[]", [Enum.map(values, &to_string/1)],
+           index + 1}
 
         _ ->
           {:error, :invalid_filter}
@@ -502,31 +584,26 @@ defmodule Mithril.MobileQuery do
     end
   end
 
-  defp validate_returning(nil), do: :ok
-  defp validate_returning([]), do: :ok
+  defp validate_returning(_table, nil), do: :ok
+  defp validate_returning(_table, []), do: :ok
 
-  defp validate_returning(columns) when is_list(columns) do
-    if Enum.all?(columns, fn
-         "*" -> true
-         column -> validate_ident(column) == :ok
-       end) do
-      :ok
-    else
-      {:error, :invalid_column}
-    end
+  defp validate_returning(table, columns) when is_list(columns) do
+    validate_projection(table, columns)
   end
 
-  defp validate_returning(_), do: {:error, :invalid_column}
+  defp validate_returning(_table, _), do: {:error, :invalid_column}
 
   defp returning_sql(_table, nil), do: ""
   defp returning_sql(_table, []), do: ""
 
   defp returning_sql(table, returning) when is_list(returning) do
-    if "*" in returning do
-      "RETURNING to_jsonb(#{table})"
-    else
-      pairs = Enum.map_join(returning, ", ", fn column -> "'#{column}', #{table}.#{column}" end)
-      "RETURNING jsonb_build_object(#{pairs})"
+    cond do
+      "*" in returning ->
+        "RETURNING #{redact_wildcard_sql(table)}"
+
+      true ->
+        pairs = Enum.map_join(returning, ", ", fn column -> "'#{column}', #{table}.#{column}" end)
+        "RETURNING jsonb_build_object(#{pairs})"
     end
   end
 
@@ -543,27 +620,49 @@ defmodule Mithril.MobileQuery do
     if Enum.all?(rows, &is_map/1), do: :ok, else: {:error, :invalid_rows}
   end
 
-  defp row_columns(rows) do
+  defp row_columns(_table, rows) do
     columns =
       rows
       |> Enum.flat_map(&Map.keys/1)
       |> Enum.uniq()
 
-    if columns == [] do
-      {:error, :invalid_rows}
-    else
-      case Enum.find(columns, &(validate_ident(&1) != :ok)) do
-        nil -> {:ok, columns}
-        _ -> {:error, :invalid_column}
-      end
+    cond do
+      columns == [] ->
+        {:error, :invalid_rows}
+
+      Enum.any?(columns, &(validate_ident(&1) != :ok)) ->
+        {:error, :invalid_column}
+
+      Enum.any?(columns, &protected_write_column?/1) ->
+        {:error, :forbidden}
+
+      true ->
+        {:ok, columns}
     end
   end
 
-  defp validate_patch(patch) when is_map(patch) and map_size(patch) > 0 do
-    if Enum.all?(Map.keys(patch), &(validate_ident(&1) == :ok)), do: :ok, else: {:error, :invalid_column}
+  defp validate_patch(table, patch) when is_map(patch) and map_size(patch) > 0 do
+    keys = Map.keys(patch)
+
+    cond do
+      MapSet.member?(@read_only_mutations, table) ->
+        {:error, :forbidden}
+
+      Enum.any?(keys, &(validate_ident(&1) != :ok)) ->
+        {:error, :invalid_column}
+
+      Enum.any?(keys, &protected_write_column?/1) ->
+        {:error, :forbidden}
+
+      Enum.any?(keys, &MapSet.member?(@ownership_columns, &1)) ->
+        {:error, :forbidden}
+
+      true ->
+        :ok
+    end
   end
 
-  defp validate_patch(_), do: {:error, :invalid_rows}
+  defp validate_patch(_table, _), do: {:error, :invalid_rows}
 
   defp conflict_target(_value, "insert"), do: {:ok, []}
 
@@ -594,11 +693,105 @@ defmodule Mithril.MobileQuery do
   defp validate_columns(_), do: {:error, :invalid_column}
 
   defp validate_table(table) do
-    if is_binary(table) and MapSet.member?(@tables, table), do: :ok, else: {:error, :unknown_table}
+    if is_binary(table) and MapSet.member?(@tables, table),
+      do: :ok,
+      else: {:error, :unknown_table}
   end
 
-  defp validate_action(action) when action in ["select", "insert", "update", "delete", "upsert"], do: :ok
+  defp validate_action(action) when action in ["select", "insert", "update", "delete", "upsert"],
+    do: :ok
+
   defp validate_action(_), do: {:error, :invalid_query}
+
+  defp validate_mutation(_table, "select"), do: :ok
+
+  defp validate_mutation(table, _action) do
+    if MapSet.member?(@read_only_mutations, table), do: {:error, :forbidden}, else: :ok
+  end
+
+  defp validate_projection(table, columns, kind \\ :root)
+
+  defp validate_projection(table, columns, kind) when is_list(columns) do
+    case expand_columns(table, columns, kind) do
+      {:ok, _columns} -> :ok
+      error -> error
+    end
+  end
+
+  defp validate_projection(_table, _columns, _kind), do: {:error, :invalid_column}
+
+  defp expand_columns(table, columns, kind) do
+    with :ok <- validate_columns(columns) do
+      requested = if "*" in columns, do: wildcard_columns(table, kind), else: columns
+
+      cond do
+        requested == :wildcard ->
+          {:ok, ["*"]}
+
+        Enum.any?(List.wrap(requested), &secret_column?/1) ->
+          {:error, :forbidden}
+
+        not allowed_columns?(table, List.wrap(requested), kind) ->
+          {:error, :forbidden}
+
+        true ->
+          {:ok, List.wrap(requested)}
+      end
+    end
+  end
+
+  defp wildcard_columns(table, :embed) do
+    case Map.get(@embedded_columns, table) do
+      nil -> :wildcard
+      allowed -> MapSet.to_list(allowed)
+    end
+  end
+
+  defp wildcard_columns(table, :root) do
+    cond do
+      Map.has_key?(@directory_columns, table) ->
+        MapSet.to_list(Map.fetch!(@directory_columns, table))
+
+      table == "users" ->
+        MapSet.to_list(@safe_user_columns)
+
+      true ->
+        :wildcard
+    end
+  end
+
+  defp allowed_columns?(table, columns, :embed) do
+    case Map.get(@embedded_columns, table) do
+      nil -> Enum.all?(columns, &(not secret_column?(&1)))
+      allowed -> Enum.all?(columns, &MapSet.member?(allowed, &1))
+    end
+  end
+
+  defp allowed_columns?(table, columns, :root) do
+    cond do
+      Map.has_key?(@directory_columns, table) ->
+        allowed = Map.fetch!(@directory_columns, table)
+        Enum.all?(columns, &MapSet.member?(allowed, &1))
+
+      table == "users" ->
+        Enum.all?(columns, &MapSet.member?(@safe_user_columns, &1))
+
+      true ->
+        Enum.all?(columns, &(not secret_column?(&1)))
+    end
+  end
+
+  defp redact_wildcard_sql(table) do
+    Enum.reduce(@secret_columns, "to_jsonb(#{table})", fn column, acc ->
+      "(#{acc} - '#{column}')"
+    end)
+  end
+
+  defp secret_column?(column), do: MapSet.member?(@secret_columns, column)
+
+  defp protected_write_column?(column) do
+    secret_column?(column) or MapSet.member?(@money_columns, column)
+  end
 
   defp validate_ident(name) when is_binary(name) do
     if Regex.match?(@ident, name), do: :ok, else: {:error, :invalid_column}

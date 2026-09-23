@@ -22,6 +22,17 @@ defmodule Mithril.MobileScope do
 
   @directory_select MapSet.new(~w(cleaner_data))
 
+  @lifecycle MapSet.new(~w(
+    bookings
+    users
+    jobs
+    subscriptions
+    transactions
+    kyc_profiles
+    cleaner_applications
+    cleaner_data
+  ))
+
   def mutation_predicate(table, index), do: clause(table, "update", index)
 
   def apply(user_id, action, table, where_sql, params) when is_binary(user_id) do
@@ -44,13 +55,13 @@ defmodule Mithril.MobileScope do
       MapSet.member?(@catalog, table) ->
         {:error, :forbidden}
 
-      table in ["users", "bookings"] ->
+      MapSet.member?(@lifecycle, table) ->
         {:error, :forbidden}
 
       force = force_column(table) ->
         {:ok, Enum.map(rows, &Map.put(&1, force, user_id))}
 
-      table in ["jobs", "subscriptions", "properties"] ->
+      table == "properties" ->
         require_column(rows, "customer_id", user_id)
 
       table == "conversations" ->
@@ -59,14 +70,17 @@ defmodule Mithril.MobileScope do
       table == "messages" ->
         require_column(rows, "sender_id", user_id)
 
-      table in ["booking_micro_tasks", "booking_job_photos", "job_photo_comparisons", "cleaner_tracking", "turnover_opportunities"] ->
+      table in [
+        "booking_micro_tasks",
+        "booking_job_photos",
+        "job_photo_comparisons",
+        "cleaner_tracking",
+        "turnover_opportunities"
+      ] ->
         {:ok, rows}
 
       table == "job_offers" ->
         require_column(rows, "cleaner_id", user_id)
-
-      table == "transactions" ->
-        require_any(rows, ["customer_id", "cleaner_id"], user_id)
 
       table == "reviews" ->
         require_column(rows, "reviewer_id", user_id)
@@ -90,7 +104,12 @@ defmodule Mithril.MobileScope do
         {:ok,
          "AND (jsonb_populate_record(NULL::public.messages, value)).conversation_id IN (#{conversation_ids(index)})"}
 
-      table in ["booking_micro_tasks", "booking_job_photos", "job_photo_comparisons", "cleaner_tracking"] ->
+      table in [
+        "booking_micro_tasks",
+        "booking_job_photos",
+        "job_photo_comparisons",
+        "cleaner_tracking"
+      ] ->
         column = if table == "cleaner_tracking", do: "booking_id", else: "booking_id"
 
         {:ok,
@@ -116,7 +135,7 @@ defmodule Mithril.MobileScope do
       MapSet.member?(@directory_select, table) and action == "select" ->
         :open
 
-      table == "bookings" and action != "select" ->
+      MapSet.member?(@lifecycle, table) and action != "select" ->
         {:error, :forbidden}
 
       column = force_column(table) ->
@@ -142,11 +161,17 @@ defmodule Mithril.MobileScope do
       table == "messages" ->
         {:ok, "messages.conversation_id IN (#{conversation_ids(index)})"}
 
-      table in ["booking_micro_tasks", "booking_job_photos", "job_photo_comparisons", "cleaner_tracking"] ->
+      table in [
+        "booking_micro_tasks",
+        "booking_job_photos",
+        "job_photo_comparisons",
+        "cleaner_tracking"
+      ] ->
         {:ok, "#{table}.booking_id IN (#{booking_ids(index)})"}
 
       table == "job_offers" ->
-        {:ok, "job_offers.cleaner_id::text = $#{index}::text OR job_offers.job_id IN (SELECT id FROM public.jobs WHERE customer_id::text = $#{index}::text)"}
+        {:ok,
+         "job_offers.cleaner_id::text = $#{index}::text OR job_offers.job_id IN (SELECT id FROM public.jobs WHERE customer_id::text = $#{index}::text)"}
 
       table == "turnover_opportunities" ->
         {:ok, "turnover_opportunities.property_id IN (#{property_ids(index)})"}

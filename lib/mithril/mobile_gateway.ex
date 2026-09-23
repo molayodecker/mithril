@@ -27,6 +27,7 @@ defmodule Mithril.MobileGateway do
   ))
 
   @safe_embedded_user_columns MapSet.new(~w(id))
+  @safe_embedded_profile_columns MapSet.new(~w(id firstname lastname fullname avatar_url))
 
   def call_rpc(user_id, name, args) do
     with {:ok, compiled} <- MobileRpc.compile(name, args || %{}) do
@@ -78,11 +79,17 @@ defmodule Mithril.MobileGateway do
       columns = embed["columns"] || ["*"]
 
       result =
-        if embed["table"] == "users" and
-             ("*" in columns or Enum.any?(columns, &(not MapSet.member?(@safe_embedded_user_columns, &1)))) do
-          {:error, :forbidden}
-        else
-          validate_embeds(embed["embeds"] || [])
+        cond do
+          embed["table"] == "users" and
+              unsafe_embed_columns?(columns, @safe_embedded_user_columns) ->
+            {:error, :forbidden}
+
+          embed["table"] == "profiles" and
+              unsafe_embed_columns?(columns, @safe_embedded_profile_columns) ->
+            {:error, :forbidden}
+
+          true ->
+            validate_embeds(embed["embeds"] || [])
         end
 
       case result do
@@ -93,6 +100,10 @@ defmodule Mithril.MobileGateway do
   end
 
   defp validate_embeds(_), do: {:error, :invalid_query}
+
+  defp unsafe_embed_columns?(columns, allowed) do
+    "*" in columns or Enum.any?(columns, &(not MapSet.member?(allowed, &1)))
+  end
 
   defp transact(user_id, fun) do
     case Repo.transaction(fn ->

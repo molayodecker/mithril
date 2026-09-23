@@ -37,4 +37,20 @@ defmodule MithrilWeb.MobileGatewayControllerTest do
 
     assert json_response(conn, 404)["error"] == "unknown_table"
   end
+
+  test "POST /mobile/query rejects booking lifecycle mutations" do
+    user_id = Ecto.UUID.generate()
+    {:ok, access_token, _claims} = Token.issue(user_id, "jwt@example.com")
+
+    conn =
+      build_conn()
+      |> put_req_header("authorization", "Bearer #{access_token}")
+      |> post("/mobile/query", %{
+        "table" => "bookings",
+        "action" => "update",
+        "patch" => %{"payment_status" => "paid"}
+      })
+
+    assert json_response(conn, 403)["error"] == "forbidden"
+  end
 end
