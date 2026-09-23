@@ -1,6 +1,7 @@
 defmodule Mithril.MobileQueryTest do
   use ExUnit.Case, async: true
 
+  alias Mithril.MobileGateway
   alias Mithril.MobileQuery
   alias Mithril.MobileRpc
 
@@ -119,6 +120,72 @@ defmodule Mithril.MobileQueryTest do
                "action" => "update",
                "patch" => %{"fee_bps" => 1},
                "filters" => [%{"op" => "eq", "column" => "id", "value" => "fee-1"}]
+             })
+  end
+
+  test "generic gateway cannot mutate booking lifecycle fields or delete bookings" do
+    assert {:error, :forbidden} =
+             MobileQuery.compile("customer-a", %{
+               "table" => "bookings",
+               "action" => "insert",
+               "rows" => [%{"customer_id" => "customer-a", "payment_status" => "paid"}]
+             })
+
+    assert {:error, :forbidden} =
+             MobileQuery.compile("customer-a", %{
+               "table" => "bookings",
+               "action" => "update",
+               "patch" => %{"status" => "completed", "payment_status" => "paid"}
+             })
+
+    assert {:error, :forbidden} =
+             MobileQuery.compile("customer-a", %{
+               "table" => "bookings",
+               "action" => "delete"
+             })
+  end
+
+  test "profile directory reads are scoped to the signed-in profile" do
+    assert {:ok, %{sql: sql, params: ["user-1"]}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "profiles",
+               "action" => "select",
+               "columns" => ["address", "location_wkt"]
+             })
+
+    assert sql =~ "profiles.id::text = $1::text"
+  end
+
+  test "gateway rejects unsafe embedded user projections before querying" do
+    assert {:error, :forbidden} =
+             MobileGateway.run_query("cleaner-a", %{
+               "table" => "bookings",
+               "action" => "select",
+               "columns" => ["id"],
+               "embeds" => [
+                 %{
+                   "table" => "users",
+                   "constraint" => "bookings_customer_id_fkey",
+                   "columns" => ["password_hash"]
+                 }
+               ]
+             })
+  end
+
+  test "gateway rejects encrypted calendar feed projections and mutation wildcard returning" do
+    assert {:error, :forbidden} =
+             MobileGateway.run_query("owner-a", %{
+               "table" => "property_calendar_feeds",
+               "action" => "select",
+               "columns" => ["feed_url_encrypted"]
+             })
+
+    assert {:error, :forbidden} =
+             MobileGateway.run_query("owner-a", %{
+               "table" => "property_calendar_feeds",
+               "action" => "update",
+               "patch" => %{"name" => "Calendar"},
+               "returning" => ["*"]
              })
   end
 
