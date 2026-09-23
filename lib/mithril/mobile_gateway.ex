@@ -26,6 +26,8 @@ defmodule Mithril.MobileGateway do
     uber-trip-estimate
   ))
 
+  @safe_embedded_user_columns MapSet.new(~w(id))
+
   def call_rpc(user_id, name, args) do
     with {:ok, compiled} <- MobileRpc.compile(name, args || %{}) do
       transact(user_id, fn ->
@@ -37,7 +39,8 @@ defmodule Mithril.MobileGateway do
   end
 
   def run_query(user_id, query) do
-    with {:ok, compiled} <- MobileQuery.compile(user_id, query) do
+    with :ok <- validate_query_boundary(query),
+         {:ok, compiled} <- MobileQuery.compile(user_id, query) do
       transact(user_id, fn -> query(compiled.sql, compiled.params, true) end)
     end
   end
@@ -51,6 +54,45 @@ defmodule Mithril.MobileGateway do
   end
 
   def function_route(_), do: {:error, :unknown_function}
+
+  defp validate_query_boundary(%{"table" => "property_calendar_feeds"} = query) do
+    columns = query["columns"] || ["*"]
+    returning = query["returning"] || []
+
+    cond do
+      "feed_url_encrypted" in columns -> {:error, :forbidden}
+      "feed_url_encrypted" in returning -> {:error, :forbidden}
+      query["action"] != "select" and "*" in returning -> {:error, :forbidden}
+      true -> validate_embeds(query["embeds"] || [])
+    end
+  end
+
+  defp validate_query_boundary(query) when is_map(query) do
+    validate_embeds(query["embeds"] || [])
+  end
+
+  defp validate_query_boundary(_), do: {:error, :invalid_query}
+
+  defp validate_embeds(embeds) when is_list(embeds) do
+    Enum.reduce_while(embeds, :ok, fn embed, :ok ->
+      columns = embed["columns"] || ["*"]
+
+      result =
+        if embed["table"] == "users" and
+             ("*" in columns or Enum.any?(columns, &(not MapSet.member?(@safe_embedded_user_columns, &1)))) do
+          {:error, :forbidden}
+        else
+          validate_embeds(embed["embeds"] || [])
+        end
+
+      case result do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp validate_embeds(_), do: {:error, :invalid_query}
 
   defp transact(user_id, fun) do
     case Repo.transaction(fn ->
