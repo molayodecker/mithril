@@ -375,4 +375,70 @@ defmodule Mithril.MobileQueryTest do
     assert sql =~ "bookings WHERE cleaner_id::text = $2::text"
     refute sql =~ "customer_id"
   end
+
+  test "unclaimed jobs are visible only through the caller's job offers" do
+    assert {:ok, %{sql: sql}} =
+             MobileQuery.compile("cleaner-a", %{
+               "table" => "jobs",
+               "action" => "select",
+               "columns" => ["id", "status"]
+             })
+
+    assert sql =~ "jobs.customer_id::text = $1::text"
+    assert sql =~ "jobs.claimed_by::text = $1::text"
+    assert sql =~ "job_offers WHERE cleaner_id::text = $1::text"
+    refute sql =~ "jobs.status = 'pending' AND jobs.claimed_by IS NULL)"
+  end
+
+  test "rejects invalid or-filters and cross-table filter columns" do
+    assert {:error, :invalid_column} =
+             MobileQuery.compile("user-1", %{
+               "table" => "bookings",
+               "action" => "select",
+               "columns" => ["id"],
+               "filters" => [
+                 %{
+                   "op" => "or",
+                   "filters" => [%{"op" => "eq", "column" => "id;drop", "value" => "1"}]
+                 }
+               ]
+             })
+
+    assert {:error, :invalid_filter} =
+             MobileQuery.compile("user-1", %{
+               "table" => "bookings",
+               "action" => "select",
+               "columns" => ["id"],
+               "filters" => [%{"op" => "eq", "column" => "users.id", "value" => "other"}]
+             })
+  end
+
+  test "profile and payout inserts cannot take over another user or default flag" do
+    assert {:ok, %{params: [profile_rows]}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "profiles",
+               "action" => "insert",
+               "rows" => [%{"id" => "victim", "user_id" => "victim", "firstname" => "A"}]
+             })
+
+    assert hd(profile_rows)["id"] == "user-1"
+    assert hd(profile_rows)["user_id"] == "user-1"
+
+    assert {:ok, %{params: [payout_rows]}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "payout_methods",
+               "action" => "insert",
+               "rows" => [
+                 %{
+                   "user_id" => "victim",
+                   "type" => "bank",
+                   "recipient_code" => "RCP_1",
+                   "is_default" => true
+                 }
+               ]
+             })
+
+    assert hd(payout_rows)["user_id"] == "user-1"
+    assert hd(payout_rows)["is_default"] == false
+  end
 end

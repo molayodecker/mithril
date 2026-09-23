@@ -544,11 +544,13 @@ defmodule Mithril.MobileQuery do
   defp filters_sql(_, _, _, _), do: {:error, :invalid_filter}
 
   defp filter_sql(table, %{"op" => "or", "filters" => nested}, index, embeds)
-       when is_list(nested) do
+       when is_list(nested) and nested != [] do
     {parts, params, next} =
       Enum.reduce(nested, {[], [], index}, fn filter, {parts, params, index} ->
-        {:ok, sql, extra, next} = filter_sql(table, filter, index, embeds)
-        {[sql | parts], params ++ extra, next}
+        case filter_sql(table, filter, index, embeds) do
+          {:ok, sql, extra, next} -> {[sql | parts], params ++ extra, next}
+          {:error, reason} -> throw({:filter, reason})
+        end
       end)
 
     {:ok, "(" <> Enum.join(Enum.reverse(parts), " OR ") <> ")", params, next}
@@ -620,7 +622,11 @@ defmodule Mithril.MobileQuery do
       [prefix, field] ->
         with :ok <- validate_ident(prefix),
              :ok <- validate_ident(field) do
-          {:ok, "#{prefix}.#{field}"}
+          if prefix == table do
+            {:ok, "#{table}.#{field}"}
+          else
+            {:error, :invalid_filter}
+          end
         end
     end
   end

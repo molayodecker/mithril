@@ -71,7 +71,12 @@ defmodule Mithril.MobileScope do
         {:error, :forbidden}
 
       force = force_column(table) ->
-        {:ok, Enum.map(rows, &Map.put(&1, force, user_id))}
+        {:ok,
+         Enum.map(rows, fn row ->
+           row = Map.put(row, force, user_id)
+           row = if table == "profiles", do: Map.put(row, "user_id", user_id), else: row
+           if table == "payout_methods", do: Map.put(row, "is_default", false), else: row
+         end)}
 
       table == "properties" ->
         require_column(rows, "customer_id", user_id)
@@ -158,7 +163,7 @@ defmodule Mithril.MobileScope do
 
       table == "jobs" and action == "select" ->
         {:ok,
-         "#{party("jobs", ["customer_id", "claimed_by"], index)} OR (jobs.status = 'pending' AND jobs.claimed_by IS NULL)"}
+         "#{party("jobs", ["customer_id", "claimed_by"], index)} OR (jobs.status = 'pending' AND jobs.claimed_by IS NULL AND jobs.id IN (SELECT job_id FROM public.job_offers WHERE cleaner_id::text = $#{index}::text))"}
 
       table == "jobs" ->
         {:ok, party("jobs", ["customer_id", "claimed_by"], index)}
