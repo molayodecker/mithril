@@ -169,6 +169,27 @@ defmodule Mithril.MobileQueryTest do
                "action" => "update",
                "patch" => %{"customer_id" => "customer-b"}
              })
+
+    assert {:error, :forbidden} =
+             MobileQuery.compile("customer-a", %{
+               "table" => "conversations",
+               "action" => "insert",
+               "rows" => [%{"customer_id" => "customer-a", "cleaner_id" => "victim"}]
+             })
+
+    assert {:error, :forbidden} =
+             MobileQuery.compile("customer-a", %{
+               "table" => "reviews",
+               "action" => "insert",
+               "rows" => [%{"reviewer_id" => "customer-a", "booking_id" => "b1", "rating" => 5}]
+             })
+
+    assert {:error, :forbidden} =
+             MobileQuery.compile("customer-a", %{
+               "table" => "properties",
+               "action" => "update",
+               "patch" => %{"auto_booking_enabled" => true}
+             })
   end
 
   test "limits cleaner directory reads to public profile fields" do
@@ -313,5 +334,45 @@ defmodule Mithril.MobileQueryTest do
 
     assert MobileRpc.sql(compiled, :scalar) =~
              "to_jsonb(public.accept_booking_assignment(p_booking_id := $1))"
+  end
+
+  test "rejects account-lookup and unscoped booking-status RPCs" do
+    assert {:error, :unknown_function} = MobileRpc.compile("lookup_sign_in_account", %{})
+    assert {:error, :unknown_function} = MobileRpc.compile("update_booking_status", %{})
+  end
+
+  test "message inserts are owned by the sender and limited to existing threads" do
+    assert {:ok, %{sql: sql, params: [rows, "user-1"]}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "messages",
+               "action" => "insert",
+               "rows" => [
+                 %{"conversation_id" => "c1", "sender_id" => "user-1", "content" => "hi"}
+               ]
+             })
+
+    assert sql =~ "INSERT INTO public.messages"
+    assert sql =~ "conversation_id IN"
+    assert hd(rows)["sender_id"] == "user-1"
+  end
+
+  test "cleaner tracking inserts cannot spoof another cleaner's location" do
+    assert {:ok, %{sql: sql, params: [rows, "cleaner-a"]}} =
+             MobileQuery.compile("cleaner-a", %{
+               "table" => "cleaner_tracking",
+               "action" => "insert",
+               "rows" => [
+                 %{
+                   "booking_id" => "b1",
+                   "cleaner_id" => "cleaner-b",
+                   "latitude" => 5.6,
+                   "longitude" => -0.2
+                 }
+               ]
+             })
+
+    assert hd(rows)["cleaner_id"] == "cleaner-a"
+    assert sql =~ "bookings WHERE cleaner_id::text = $2::text"
+    refute sql =~ "customer_id"
   end
 end

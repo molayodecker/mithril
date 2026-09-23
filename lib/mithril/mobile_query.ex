@@ -125,16 +125,109 @@ defmodule Mithril.MobileQuery do
 
   @safe_user_columns MapSet.new(~w(id email phone status created_at updated_at))
 
-  @read_only_mutations MapSet.new(~w(
-    bookings
-    users
-    jobs
-    subscriptions
-    transactions
-    kyc_profiles
-    cleaner_applications
-    cleaner_data
-  ))
+  @allowed_mutations %{
+    "cleaner_application_drafts" => MapSet.new(~w(insert update upsert delete)),
+    "cleaner_availability_exceptions" => MapSet.new(~w(insert update upsert delete)),
+    "cleaner_devices" => MapSet.new(~w(insert update upsert delete)),
+    "cleaner_tracking" => MapSet.new(~w(insert)),
+    "device_tokens" => MapSet.new(~w(insert update upsert delete)),
+    "messages" => MapSet.new(~w(insert)),
+    "notifications" => MapSet.new(~w(update)),
+    "payout_methods" => MapSet.new(~w(insert delete)),
+    "preferred_cleaners" => MapSet.new(~w(insert delete)),
+    "profiles" => MapSet.new(~w(insert update upsert)),
+    "properties" => MapSet.new(~w(insert update delete)),
+    "property_calendar_feeds" => MapSet.new(~w(insert update delete)),
+    "property_media" => MapSet.new(~w(insert delete)),
+    "property_preferred_cleaners" => MapSet.new(~w(insert delete)),
+    "property_private_instructions" => MapSet.new(~w(insert update upsert delete))
+  }
+
+  @insert_columns %{
+    "cleaner_application_drafts" =>
+      MapSet.new(~w(user_id email payload current_step last_saved_at updated_at)),
+    "cleaner_availability_exceptions" => MapSet.new(~w(cleaner_id exception_date reason)),
+    "cleaner_devices" => MapSet.new(~w(cleaner_id expo_push_token platform updated_at)),
+    "cleaner_tracking" =>
+      MapSet.new(~w(booking_id cleaner_id latitude longitude accuracy heading)),
+    "device_tokens" =>
+      MapSet.new(
+        ~w(user_id token platform android_notification_channel_version app_version updated_at)
+      ),
+    "messages" => MapSet.new(~w(conversation_id sender_id content)),
+    "payout_methods" => MapSet.new(~w(
+        user_id
+        purpose
+        type
+        recipient_code
+        account_name
+        account_number
+        masked_account
+        bank_code
+        bank_name
+        network
+        is_default
+      )),
+    "preferred_cleaners" => MapSet.new(~w(user_id cleaner_id)),
+    "profiles" =>
+      MapSet.new(
+        ~w(id user_id firstname lastname fullname avatar_url address location_wkt updated_at)
+      ),
+    "properties" => MapSet.new(~w(
+        customer_id
+        name
+        address
+        timezone
+        property_type
+        is_default
+        bedroom_count
+        bathroom_count
+        default_duration_hours
+        provides_cleaning_supplies
+        wash_dry_linen
+        turnover_defaults_confirmed
+        location_coordinates
+        updated_at
+      )),
+    "property_calendar_feeds" => MapSet.new(~w(owner_id property_id name source updated_at)),
+    "property_media" =>
+      MapSet.new(~w(owner_id property_id media_type storage_path caption sort_order)),
+    "property_preferred_cleaners" => MapSet.new(~w(owner_id property_id cleaner_id)),
+    "property_private_instructions" =>
+      MapSet.new(
+        ~w(owner_id property_id wifi_network wifi_password parking_notes other_notes updated_at)
+      )
+  }
+
+  @update_columns %{
+    "cleaner_application_drafts" =>
+      MapSet.new(~w(email payload current_step last_saved_at updated_at)),
+    "cleaner_availability_exceptions" => MapSet.new(~w(exception_date reason)),
+    "cleaner_devices" => MapSet.new(~w(expo_push_token platform updated_at)),
+    "device_tokens" =>
+      MapSet.new(~w(token platform android_notification_channel_version app_version updated_at)),
+    "notifications" => MapSet.new(~w(read)),
+    "profiles" =>
+      MapSet.new(~w(firstname lastname fullname avatar_url address location_wkt updated_at)),
+    "properties" => MapSet.new(~w(
+        name
+        address
+        timezone
+        property_type
+        is_default
+        bedroom_count
+        bathroom_count
+        default_duration_hours
+        provides_cleaning_supplies
+        wash_dry_linen
+        turnover_defaults_confirmed
+        location_coordinates
+        updated_at
+      )),
+    "property_calendar_feeds" => MapSet.new(~w(name source updated_at)),
+    "property_private_instructions" =>
+      MapSet.new(~w(wifi_network wifi_password parking_notes other_notes updated_at))
+  }
 
   def compile(user_id, query) when is_binary(user_id) and is_map(query) do
     table = query["table"]
@@ -620,7 +713,7 @@ defmodule Mithril.MobileQuery do
     if Enum.all?(rows, &is_map/1), do: :ok, else: {:error, :invalid_rows}
   end
 
-  defp row_columns(_table, rows) do
+  defp row_columns(table, rows) do
     columns =
       rows
       |> Enum.flat_map(&Map.keys/1)
@@ -636,6 +729,9 @@ defmodule Mithril.MobileQuery do
       Enum.any?(columns, &protected_write_column?/1) ->
         {:error, :forbidden}
 
+      not writable_columns?(table, "insert", columns) ->
+        {:error, :forbidden}
+
       true ->
         {:ok, columns}
     end
@@ -645,9 +741,6 @@ defmodule Mithril.MobileQuery do
     keys = Map.keys(patch)
 
     cond do
-      MapSet.member?(@read_only_mutations, table) ->
-        {:error, :forbidden}
-
       Enum.any?(keys, &(validate_ident(&1) != :ok)) ->
         {:error, :invalid_column}
 
@@ -655,6 +748,9 @@ defmodule Mithril.MobileQuery do
         {:error, :forbidden}
 
       Enum.any?(keys, &MapSet.member?(@ownership_columns, &1)) ->
+        {:error, :forbidden}
+
+      not writable_columns?(table, "update", keys) ->
         {:error, :forbidden}
 
       true ->
@@ -705,8 +801,25 @@ defmodule Mithril.MobileQuery do
 
   defp validate_mutation(_table, "select"), do: :ok
 
-  defp validate_mutation(table, _action) do
-    if MapSet.member?(@read_only_mutations, table), do: {:error, :forbidden}, else: :ok
+  defp validate_mutation(table, action) do
+    case Map.get(@allowed_mutations, table) do
+      %MapSet{} = allowed ->
+        if MapSet.member?(allowed, action), do: :ok, else: {:error, :forbidden}
+
+      _ ->
+        {:error, :forbidden}
+    end
+  end
+
+  defp writable_columns?(table, action, columns) do
+    allowed =
+      case action do
+        "insert" -> Map.get(@insert_columns, table)
+        "update" -> Map.get(@update_columns, table)
+        _ -> nil
+      end
+
+    is_struct(allowed, MapSet) and Enum.all?(columns, &MapSet.member?(allowed, &1))
   end
 
   defp validate_projection(table, columns, kind \\ :root)

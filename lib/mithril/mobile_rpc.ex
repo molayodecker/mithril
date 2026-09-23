@@ -68,7 +68,6 @@ defmodule Mithril.MobileRpc do
     list_direct_requests_for_worker
     list_turnover_opportunities_for_customer
     log_customer_payment_failure
-    lookup_sign_in_account
     manage_extra_tasks
     mark_cleaner_booking_milestone
     mark_conversation_messages_read
@@ -96,7 +95,6 @@ defmodule Mithril.MobileRpc do
     submit_customer_review
     sync_profile_name_from_payout
     sync_recurring_unpaid_checkout_snapshots
-    update_booking_status
     update_my_hourly_rate
     upsert_cleaner_team_name
     validate_promotion_code
@@ -125,12 +123,22 @@ defmodule Mithril.MobileRpc do
   def compile(name, nil), do: compile(name, %{})
   def compile(_, _), do: {:error, :invalid_args}
 
-  def sql(%{name: name, assignments: ""}, :set), do: "SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) FROM public.#{name}() AS t"
-  def sql(%{name: name, assignments: assignments}, :set), do: "SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) FROM public.#{name}(#{assignments}) AS t"
+  def sql(%{name: name, assignments: ""}, :set),
+    do: "SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) FROM public.#{name}() AS t"
+
+  def sql(%{name: name, assignments: assignments}, :set),
+    do:
+      "SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) FROM public.#{name}(#{assignments}) AS t"
+
   def sql(%{name: name, assignments: ""}, :void), do: "SELECT public.#{name}()"
-  def sql(%{name: name, assignments: assignments}, :void), do: "SELECT public.#{name}(#{assignments})"
+
+  def sql(%{name: name, assignments: assignments}, :void),
+    do: "SELECT public.#{name}(#{assignments})"
+
   def sql(%{name: name, assignments: ""}, :scalar), do: "SELECT to_jsonb(public.#{name}())"
-  def sql(%{name: name, assignments: assignments}, :scalar), do: "SELECT to_jsonb(public.#{name}(#{assignments}))"
+
+  def sql(%{name: name, assignments: assignments}, :scalar),
+    do: "SELECT to_jsonb(public.#{name}(#{assignments}))"
 
   defp validate_name(name) do
     if allowlisted?(name), do: :ok, else: {:error, :unknown_function}

@@ -31,6 +31,18 @@ defmodule Mithril.MobileScope do
     kyc_profiles
     cleaner_applications
     cleaner_data
+    conversations
+    conversation_list
+    reviews
+    job_offers
+    job_photo_comparisons
+    booking_job_photos
+    booking_micro_tasks
+    co_cleaner_relationships
+    co_cleaner_invitations
+    preferred_cleaner_invitations
+    auth_identity_lookup
+    turnover_opportunities
   ))
 
   def mutation_predicate(table, index), do: clause(table, "update", index)
@@ -68,16 +80,18 @@ defmodule Mithril.MobileScope do
         require_any(rows, ["customer_id", "cleaner_id"], user_id)
 
       table == "messages" ->
-        require_column(rows, "sender_id", user_id)
+        {:ok, Enum.map(rows, &Map.put(&1, "sender_id", user_id))}
 
       table in [
         "booking_micro_tasks",
         "booking_job_photos",
         "job_photo_comparisons",
-        "cleaner_tracking",
         "turnover_opportunities"
       ] ->
         {:ok, rows}
+
+      table == "cleaner_tracking" ->
+        {:ok, Enum.map(rows, &Map.put(&1, "cleaner_id", user_id))}
 
       table == "job_offers" ->
         require_column(rows, "cleaner_id", user_id)
@@ -104,20 +118,18 @@ defmodule Mithril.MobileScope do
         {:ok,
          "AND (jsonb_populate_record(NULL::public.messages, value)).conversation_id IN (#{conversation_ids(index)})"}
 
+      table == "cleaner_tracking" ->
+        {:ok,
+         "AND (jsonb_populate_record(NULL::public.cleaner_tracking, value)).booking_id IN (SELECT id FROM public.bookings WHERE cleaner_id::text = $#{index}::text)"}
+
       table in [
-        "booking_micro_tasks",
-        "booking_job_photos",
-        "job_photo_comparisons",
-        "cleaner_tracking"
+        "property_media",
+        "property_preferred_cleaners",
+        "property_private_instructions",
+        "property_calendar_feeds"
       ] ->
-        column = if table == "cleaner_tracking", do: "booking_id", else: "booking_id"
-
         {:ok,
-         "AND (jsonb_populate_record(NULL::public.#{table}, value)).#{column} IN (#{booking_ids(index)})"}
-
-      table == "turnover_opportunities" ->
-        {:ok,
-         "AND (jsonb_populate_record(NULL::public.turnover_opportunities, value)).property_id IN (#{property_ids(index)})"}
+         "AND (jsonb_populate_record(NULL::public.#{table}, value)).property_id IN (#{property_ids(index)})"}
 
       true ->
         :none
