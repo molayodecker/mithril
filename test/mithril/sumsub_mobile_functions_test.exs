@@ -161,6 +161,20 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotifyTest do
   end
 end
 
+defmodule Mithril.RateLimiterTest do
+  use ExUnit.Case, async: true
+
+  alias Mithril.RateLimiter
+
+  test "limits repeated requests inside the configured window" do
+    key = {:test, make_ref()}
+
+    assert :ok = RateLimiter.check(key, 2, 60_000)
+    assert :ok = RateLimiter.check(key, 2, 60_000)
+    assert {:error, :rate_limited} = RateLimiter.check(key, 2, 60_000)
+  end
+end
+
 defmodule Mithril.MobileFunctions.RankCleanersTest do
   use ExUnit.Case, async: true
 
@@ -179,7 +193,8 @@ defmodule Mithril.MobileFunctions.RankCleanersTest do
                "cleaners" => [%{"id" => "ignored", "match_score" => 99}]
              })
 
-    assert body.source == "locationiq"
+    assert body.source == "fallback"
+    assert body.provider == "locationiq"
     assert is_list(body.cleaners)
     refute Enum.any?(body.cleaners, fn cleaner -> Map.get(cleaner, :cleaner_id) == "ignored" end)
   end
