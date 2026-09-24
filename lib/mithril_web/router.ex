@@ -185,4 +185,12 @@ defmodule MithrilWeb.Router do
          DirectDispatchController,
          :update_admin_service_request
   end
+
+  scope "/mobile", MithrilWeb do
+    pipe_through [:api, :user_auth]
+
+    post "/rpc/:name", MobileGatewayController, :rpc
+    post "/query", MobileGatewayController, :query
+    post "/functions/*name", MobileGatewayController, :function
+  end
 end
