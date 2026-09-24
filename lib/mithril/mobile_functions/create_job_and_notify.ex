@@ -2,7 +2,6 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
   @moduledoc false
 
   alias Mithril.DbUuid
-  alias Mithril.MobileGateway
   alias Mithril.RateLimiter
   alias Mithril.Repo
 
@@ -222,32 +221,27 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
   end
 
   defp ensure_customer_role(customer_id) do
-    case MobileGateway.call_rpc(customer_id, "get_user_role", %{"p_user_id" => customer_id}) do
-      {:ok, role_payload} ->
-        roles = roles_from_payload(role_payload)
+    case Repo.query(
+           """
+           SELECT EXISTS (
+             SELECT 1
+             FROM public.user_roles
+             WHERE user_id = $1::uuid
+               AND role_id = 'customer'
+           )
+           """,
+           [DbUuid.dump!(customer_id)]
+         ) do
+      {:ok, %{rows: [[true]]}} ->
+        :ok
 
-        if "customer" in roles do
-          :ok
-        else
-          {:error, {:status, 403, %{error: "Only customers can create jobs"}}}
-        end
+      {:ok, _} ->
+        {:error, {:status, 403, %{error: "Only customers can create jobs"}}}
 
       {:error, _} ->
         {:error, {:status, 500, %{error: "Could not verify user role"}}}
     end
   end
-
-  defp roles_from_payload(%{"roles" => roles}) when is_list(roles), do: roles
-  defp roles_from_payload(%{roles: roles}) when is_list(roles), do: roles
-
-  defp roles_from_payload(payload) when is_map(payload) do
-    case Map.get(payload, "roles") || Map.get(payload, :roles) do
-      roles when is_list(roles) -> roles
-      _ -> []
-    end
-  end
-
-  defp roles_from_payload(_), do: []
 
   defp persist_job_and_offers(customer_id, fields) do
     case Repo.transaction(fn ->
