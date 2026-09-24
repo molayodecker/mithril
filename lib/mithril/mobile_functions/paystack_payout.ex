@@ -198,7 +198,10 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     digest =
       :crypto.hash(
         :sha256,
-        Enum.join([user_id, recipient, to_string(amount), currency, Integer.to_string(bucket)], "|")
+        Enum.join(
+          [user_id, recipient, to_string(amount), currency, Integer.to_string(bucket)],
+          "|"
+        )
       )
       |> Base.encode16(case: :lower)
 
@@ -680,7 +683,13 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
                  updated_at = NOW()
              WHERE user_id = $1::uuid AND reference = $2::uuid
              """,
-             [DbUuid.dump!(user_id), DbUuid.dump!(fields.reference), our_status, transfer_code, transfer_id]
+             [
+               DbUuid.dump!(user_id),
+               DbUuid.dump!(fields.reference),
+               our_status,
+               transfer_code,
+               transfer_id
+             ]
            ) do
       :ok
     else
