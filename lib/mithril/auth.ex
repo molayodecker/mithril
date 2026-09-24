@@ -133,6 +133,40 @@ defmodule Mithril.Auth do
     end
   end
 
+  @doc """
+  Server-side activation checklist for the signed-in cleaner.
+
+  Mirrors mobile `cleaner-activate-profile` / `cleanerActivation` rules so the app
+  can load status over GET `/auth/*` when `/mobile/query` is unavailable.
+  """
+  def cleaner_activation_status(user_id) when is_binary(user_id) do
+    uuid = dump_uuid(user_id)
+
+    with {:ok, profile} <- fetch_profile(user_id),
+         {:ok, cleaner} <- fetch_cleaner_activation_row(uuid),
+         {:ok, payout_count} <- count_payout_methods_for_user(uuid) do
+      specialties = cleaner.specialties
+      has_offered = is_list(specialties) and specialties != []
+
+      {:ok,
+       %{
+         hasOfferedServices: has_offered,
+         hasConfirmedRate: hourly_rate_confirmed?(cleaner.hourly_rate, cleaner.rate_set_at),
+         hasPayoutMethod: payout_count > 0,
+         hasUploadedPhoto: uploaded_profile_photo?(profile.avatar_url),
+         hasServiceLocation: service_location_step_complete?(profile),
+         specialties: specialties || [],
+         serviceCategories: cleaner.service_categories || [],
+         hourlyRate: decimal_to_float(cleaner.hourly_rate),
+         rateSetAt: datetime_to_iso8601(cleaner.rate_set_at),
+         avatarUrl: profile.avatar_url,
+         address: profile.address
+       }}
+    end
+  end
+
+  def cleaner_activation_status(_), do: {:error, :invalid_credentials}
+
   @profile_roles MapSet.new(["customer", "cleaner"])
 
   def update_profile(user_id, attrs) when is_binary(user_id) and is_map(attrs) do
@@ -2090,6 +2124,91 @@ defmodule Mithril.Auth do
       :error -> user_id
     end
   end
+
+  defp fetch_cleaner_activation_row(uuid) do
+    case Repo.query(
+           """
+           SELECT specialties, service_categories, hourly_rate, rate_set_at
+           FROM public.cleaner_data
+           WHERE user_id = $1::uuid
+           LIMIT 1
+           """,
+           [uuid]
+         ) do
+      {:ok, %{rows: [[specialties, service_categories, hourly_rate, rate_set_at]]}} ->
+        {:ok,
+         %{
+           specialties: specialties,
+           service_categories: service_categories,
+           hourly_rate: hourly_rate,
+           rate_set_at: rate_set_at
+         }}
+
+      {:ok, %{rows: []}} ->
+        {:ok,
+         %{
+           specialties: [],
+           service_categories: [],
+           hourly_rate: nil,
+           rate_set_at: nil
+         }}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp count_payout_methods_for_user(uuid) do
+    case Repo.query(
+           """
+           SELECT COUNT(*)::int
+           FROM public.payout_methods
+           WHERE user_id = $1::uuid
+             AND purpose = 'payout'
+           """,
+           [uuid]
+         ) do
+      {:ok, %{rows: [[count]]}} when is_integer(count) -> {:ok, count}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp hourly_rate_confirmed?(hourly_rate, rate_set_at) do
+    cond do
+      is_nil(rate_set_at) -> false
+      is_nil(hourly_rate) -> false
+      match?(%Decimal{}, hourly_rate) -> Decimal.compare(hourly_rate, 0) == :gt
+      is_number(hourly_rate) -> hourly_rate > 0
+      true -> false
+    end
+  end
+
+  defp uploaded_profile_photo?(avatar_url) when is_binary(avatar_url) do
+    trimmed = String.trim(avatar_url)
+
+    trimmed != "" and
+      not String.contains?(String.downcase(trimmed), "ui-avatars.com")
+  end
+
+  defp uploaded_profile_photo?(_), do: false
+
+  defp service_location_step_complete?(profile) do
+    has_address =
+      case profile.address do
+        value when is_binary(value) -> String.trim(value) != ""
+        _ -> false
+      end
+
+    has_address or not is_nil(profile.location)
+  end
+
+  defp decimal_to_float(%Decimal{} = value), do: Decimal.to_float(value)
+  defp decimal_to_float(value) when is_number(value), do: value * 1.0
+  defp decimal_to_float(_), do: nil
+
+  defp datetime_to_iso8601(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp datetime_to_iso8601(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)
+  defp datetime_to_iso8601(_), do: nil
 
   defp hash_refresh(token) do
     :crypto.hash(:sha256, token) |> Base.encode16(case: :lower)

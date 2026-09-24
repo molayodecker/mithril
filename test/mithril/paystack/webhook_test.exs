@@ -159,6 +159,121 @@ defmodule Mithril.Paystack.WebhookTest do
     assert reason == "Insufficient funds"
   end
 
+  test "settles transfer.success and treats replay as idempotent" do
+    {reference, _user_id} = insert_payout!("pending", 12_500)
+
+    raw = transfer_event("transfer.success", reference, 12_500, "GHS", "TRF_123")
+    assert {:ok, result} = Webhook.handle(raw, sign(raw))
+    assert result.settled
+    assert result.transfer_status == "success"
+
+    assert [["success", "TRF_123", nil]] =
+             Repo.query!(
+               """
+               SELECT status::text, paystack_transfer_code, error_message
+               FROM public.cleaner_payouts
+               WHERE reference = $1::uuid
+               """,
+               [Ecto.UUID.dump!(reference)]
+             ).rows
+
+    assert {:ok, replay} = Webhook.handle(raw, sign(raw))
+    assert replay.already_settled
+    assert replay.transfer_status == "success"
+  end
+
+  test "rejects transfer.success when amount or currency does not match" do
+    {reference, _user_id} = insert_payout!("pending", 12_500)
+
+    wrong_amount = transfer_event("transfer.success", reference, 1, "GHS", "TRF_amount")
+    assert {:error, :amount_mismatch} = Webhook.handle(wrong_amount, sign(wrong_amount))
+
+    wrong_currency = transfer_event("transfer.success", reference, 12_500, "USD", "TRF_currency")
+    assert {:error, :amount_mismatch} = Webhook.handle(wrong_currency, sign(wrong_currency))
+
+    assert [["pending"]] =
+             Repo.query!(
+               "SELECT status::text FROM public.cleaner_payouts WHERE reference = $1::uuid",
+               [Ecto.UUID.dump!(reference)]
+             ).rows
+  end
+
+  test "finalizes transfer.failed and preserves the provider reason" do
+    {reference, _user_id} = insert_payout!("processing", 12_500)
+
+    raw =
+      Jason.encode!(%{
+        "event" => "transfer.failed",
+        "data" => %{
+          "reference" => reference,
+          "transfer_code" => "TRF_failed",
+          "reason" => "Recipient unavailable"
+        }
+      })
+
+    assert {:ok, result} = Webhook.handle(raw, sign(raw))
+    assert result.settled
+    assert result.transfer_status == "failed"
+
+    assert [["failed", "TRF_failed", "Recipient unavailable"]] =
+             Repo.query!(
+               """
+               SELECT status::text, paystack_transfer_code, error_message
+               FROM public.cleaner_payouts
+               WHERE reference = $1::uuid
+               """,
+               [Ecto.UUID.dump!(reference)]
+             ).rows
+  end
+
+  test "allows a later transfer.reversed to reverse a successful withdrawal" do
+    {reference, _user_id} = insert_payout!("success", 12_500)
+
+    raw =
+      Jason.encode!(%{
+        "event" => "transfer.reversed",
+        "data" => %{
+          "reference" => reference,
+          "transfer_code" => "TRF_reversed",
+          "reason" => "Bank reversal"
+        }
+      })
+
+    assert {:ok, result} = Webhook.handle(raw, sign(raw))
+    assert result.settled
+    assert result.transfer_status == "reversed"
+
+    assert [["reversed", "Bank reversal"]] =
+             Repo.query!(
+               """
+               SELECT status::text, error_message
+               FROM public.cleaner_payouts
+               WHERE reference = $1::uuid
+               """,
+               [Ecto.UUID.dump!(reference)]
+             ).rows
+  end
+
+  test "does not let a stale transfer.failed overwrite success" do
+    {reference, _user_id} = insert_payout!("success", 12_500)
+
+    raw =
+      Jason.encode!(%{
+        "event" => "transfer.failed",
+        "data" => %{"reference" => reference, "reason" => "stale failure"}
+      })
+
+    assert {:ok, result} = Webhook.handle(raw, sign(raw))
+    assert result.ignored
+    assert result.reason == "terminal_transfer_status"
+
+    assert [["success"]] =
+             Repo.query!(
+               "SELECT status::text FROM public.cleaner_payouts WHERE reference = $1::uuid",
+               [Ecto.UUID.dump!(reference)]
+             ).rows
+  end
+
   test "settles refund.processed to refunded for a 100% refund" do
     {booking_id, reference} = insert_paid_booking!(20_000)
     insert_refund!(booking_id, reference, 100, 20_000)
@@ -311,6 +426,46 @@ defmodule Mithril.Paystack.WebhookTest do
     assert status == "processed"
   end
 
+  defp transfer_event(event, reference, amount, currency, transfer_code) do
+    Jason.encode!(%{
+      "event" => event,
+      "data" => %{
+        "reference" => reference,
+        "status" => "success",
+        "amount" => amount,
+        "currency" => currency,
+        "transfer_code" => transfer_code
+      }
+    })
+  end
+
+  defp insert_payout!(status, amount) do
+    user_id = Ecto.UUID.generate()
+    reference = Ecto.UUID.generate()
+
+    Repo.query!(
+      "INSERT INTO public.users (id) VALUES ($1) ON CONFLICT DO NOTHING",
+      [Ecto.UUID.dump!(user_id)]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_payouts (
+        id, user_id, recipient_code, amount, currency, reference, status
+      ) VALUES ($1, $2, 'RCP_test', $3, 'GHS', $4::uuid, $5::public.withdrawal_status)
+      """,
+      [
+        Ecto.UUID.dump!(Ecto.UUID.generate()),
+        Ecto.UUID.dump!(user_id),
+        amount,
+        Ecto.UUID.dump!(reference),
+        status
+      ]
+    )
+
+    {reference, user_id}
+  end
+
   defp charge_success(reference, amount) do
     Jason.encode!(%{
       "event" => "charge.success",
@@ -410,9 +565,59 @@ defmodule Mithril.Paystack.WebhookTest do
       raise "Refusing to recreate Paystack fixtures; expected mithril_test, got #{inspect(database)}"
     end
 
-    for table <- ["booking_refunds", "payment_attempts", "bookings", "users"] do
+    for table <- ["cleaner_payouts", "booking_refunds", "payment_attempts", "bookings", "users"] do
       Repo.query!("DROP TABLE IF EXISTS public.#{table} CASCADE")
     end
+
+    Repo.query!("""
+    DO $withdrawal$
+    BEGIN
+      CREATE TYPE public.withdrawal_status AS ENUM (
+        'pending', 'processing', 'success', 'failed', 'reversed'
+      );
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END
+    $withdrawal$;
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.cleaner_payouts (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id uuid NOT NULL,
+      recipient_code text NOT NULL,
+      amount integer NOT NULL,
+      currency text NOT NULL DEFAULT 'GHS',
+      reference uuid NOT NULL UNIQUE,
+      status public.withdrawal_status NOT NULL DEFAULT 'pending',
+      paystack_transfer_code text,
+      paystack_transfer_id bigint,
+      error_message text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    Repo.query!("""
+    CREATE OR REPLACE FUNCTION public.fn_finalize_withdrawal(
+      p_transfer_reference text,
+      p_status public.withdrawal_status,
+      p_error_msg text,
+      p_paystack_transfer_code text
+    )
+    RETURNS void
+    LANGUAGE plpgsql
+    AS $finalize$
+    BEGIN
+      UPDATE public.cleaner_payouts
+      SET status = p_status,
+          error_message = p_error_msg,
+          paystack_transfer_code = COALESCE(p_paystack_transfer_code, paystack_transfer_code),
+          updated_at = now()
+      WHERE reference = p_transfer_reference::uuid;
+    END;
+    $finalize$;
+    """)
 
     Repo.query!("CREATE TABLE public.users (id uuid PRIMARY KEY)")
 

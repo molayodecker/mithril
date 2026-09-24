@@ -67,8 +67,15 @@ defmodule MithrilWeb.Router do
     pipe_through [:api, :user_auth]
 
     get "/me", AuthController, :me
+    get "/cleaner-activation-status", AuthController, :cleaner_activation_status
     patch "/me", AuthController, :update_me
     post "/password", AuthController, :set_password
+  end
+
+  scope "/bookings", MithrilWeb do
+    pipe_through [:api, :user_auth]
+
+    get "/:id/transport-estimate", BookingTransportController, :estimate
   end
 
   scope "/internal/parity", MithrilWeb do

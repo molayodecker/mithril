@@ -10,6 +10,7 @@ defmodule Mithril.Application do
         metrics_server_child() ++
         [
           Mithril.Repo,
+          Mithril.RateLimiter,
           {Phoenix.PubSub, name: Mithril.PubSub},
           MithrilWeb.Endpoint
         ] ++ oban_child() ++ recruitment_store_child()

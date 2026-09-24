@@ -390,6 +390,51 @@ defmodule Mithril.MobileQueryTest do
     refute sql =~ "jobs.status = 'pending' AND jobs.claimed_by IS NULL)"
   end
 
+  test "directory filters and ordering cannot probe private cleaner fields" do
+    assert {:error, :forbidden} =
+             MobileQuery.compile("user-1", %{
+               "table" => "cleaner_data",
+               "action" => "select",
+               "columns" => ["user_id"],
+               "filters" => [%{"op" => "eq", "column" => "bank_account", "value" => "secret"}]
+             })
+
+    assert {:error, :forbidden} =
+             MobileQuery.compile("user-1", %{
+               "table" => "cleaner_data",
+               "action" => "select",
+               "columns" => ["user_id"],
+               "order" => [%{"column" => "bank_account", "ascending" => true}]
+             })
+  end
+
+  test "is filters preserve boolean semantics" do
+    assert {:ok, %{sql: sql}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "notifications",
+               "action" => "select",
+               "columns" => ["id"],
+               "filters" => [%{"op" => "is", "column" => "read", "value" => false}]
+             })
+
+    assert sql =~ "notifications.read IS FALSE"
+    refute sql =~ "notifications.read IS NULL"
+  end
+
+  test "compiles ilike filters without weakening query semantics" do
+    assert {:ok, %{sql: sql, params: ["%ama%", "user-1"]}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "conversation_list",
+               "action" => "select",
+               "columns" => ["id"],
+               "filters" => [
+                 %{"op" => "ilike", "column" => "other_user_name", "value" => "%ama%"}
+               ]
+             })
+
+    assert sql =~ "conversation_list.other_user_name::text ILIKE $1::text"
+  end
+
   test "rejects invalid or-filters and cross-table filter columns" do
     assert {:error, :invalid_column} =
              MobileQuery.compile("user-1", %{

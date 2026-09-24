@@ -9,6 +9,18 @@ defmodule Mithril.Notifications.SendNotification do
     present?(url()) and present?(token())
   end
 
+  @spec invoke_mobile(map()) :: {:ok, map()} | {:error, term()}
+  def invoke_mobile(body) when is_map(body) do
+    if configured?() do
+      case deliver_raw(body) do
+        {:ok, response} -> {:ok, response}
+        {:error, status, response} -> {:error, {:status, status, response}}
+      end
+    else
+      {:error, {:status, 500, %{error: "Server misconfigured"}}}
+    end
+  end
+
   def deliver(ctx) when is_map(ctx) do
     case ctx[:recipient] do
       :customer ->
@@ -148,22 +160,31 @@ defmodule Mithril.Notifications.SendNotification do
   end
 
   defp post(body) do
+    case deliver_raw(body) do
+      {:ok, response} -> delivered?(response)
+      {:error, _, _} -> false
+    end
+  end
+
+  defp deliver_raw(body) when is_map(body) do
     payload =
       body
       |> Enum.reject(fn {_key, value} -> is_nil(value) or value == "" end)
       |> Map.new()
 
     case Req.post(url(), json: payload, auth: {:bearer, token()}) do
-      {:ok, %{status: status, body: response}} when status in 200..299 ->
-        delivered?(response)
+      {:ok, %{status: status, body: response}} when status in 200..299 and is_map(response) ->
+        {:ok, response}
 
-      {:ok, %{status: status, body: body}} ->
-        Logger.warning("send-notification failed (#{status}): #{inspect(body)}")
-        false
+      {:ok, %{status: status, body: response}} when is_map(response) ->
+        {:error, status, response}
+
+      {:ok, %{status: status, body: response}} ->
+        {:error, status, %{"error" => inspect(response)}}
 
       {:error, error} ->
         Logger.warning("send-notification unavailable: #{inspect(error)}")
-        false
+        {:error, 502, %{"error" => "send-notification unavailable"}}
     end
   end
 
@@ -171,8 +192,6 @@ defmodule Mithril.Notifications.SendNotification do
     truthy?(body["emailSent"]) or truthy?(body["smsSent"]) or truthy?(body["whatsappSent"]) or
       truthy?(body[:emailSent]) or truthy?(body[:smsSent]) or truthy?(body[:whatsappSent])
   end
-
-  defp delivered?(_), do: false
 
   defp notify_channel(email, phone) do
     cond do
