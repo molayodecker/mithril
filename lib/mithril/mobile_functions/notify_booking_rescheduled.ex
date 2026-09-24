@@ -169,7 +169,8 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
            ]
          ) do
       {:ok, %{num_rows: 1}} -> true
-      _ -> true
+      {:ok, %{num_rows: 0}} -> true
+      {:error, _} -> false
     end
   end
 
