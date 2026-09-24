@@ -36,8 +36,9 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
          {:ok, identity} <- resolve_identity(user_id),
          :ok <- ensure_identity_for_withdraw(identity),
          {:ok, payout_method} <- load_payout_method(user_id, fields.recipient),
-         {:ok, balance} <- wallet_balance_subunit(user_id),
-         :ok <- ensure_sufficient_balance(balance, fields.amount),
+         {:ok, wallet} <- wallet_balance(user_id),
+         :ok <- ensure_wallet_currency(wallet, fields.currency),
+         :ok <- ensure_sufficient_balance(wallet.balance, fields.amount),
          {:ok, existing} <- load_existing_payout(user_id, fields.reference),
          {:ok, result} <-
            continue_initiate(user_id, fields, payout_method, existing) do
@@ -150,12 +151,13 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
           Ecto.UUID.generate()
       end
 
-    raw_currency =
+    currency =
       body |> Map.get("currency", "GHS") |> to_string() |> String.trim() |> String.upcase()
 
-    currency = if raw_currency in ["GHS", "USD"], do: raw_currency, else: "GHS"
-
     cond do
+      currency not in ["GHS", "USD"] ->
+        {:error, {:status, 400, %{ok: false, error: "Unsupported currency"}}}
+
       not is_integer(amount) or amount <= 0 ->
         {:error, {:status, 400, %{ok: false, error: "Invalid amount"}}}
 
@@ -379,23 +381,39 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     end
   end
 
-  defp wallet_balance_subunit(user_id) do
+  defp wallet_balance(user_id) do
     case MobileGateway.call_rpc(user_id, "get_my_wallet_balance", %{}) do
       {:ok, rows} when is_list(rows) ->
-        balance =
-          case rows do
-            [%{"balance" => value} | _] when is_number(value) -> trunc(value)
-            [%{balance: value} | _] when is_number(value) -> trunc(value)
-            [[value] | _] when is_number(value) -> trunc(value)
-            _ -> 0
-          end
+        case rows do
+          [%{"balance" => value, "currency" => currency} | _]
+          when is_number(value) and is_binary(currency) ->
+            {:ok, %{balance: trunc(value), currency: String.upcase(String.trim(currency))}}
 
-        {:ok, balance}
+          [%{balance: value, currency: currency} | _]
+          when is_number(value) and is_binary(currency) ->
+            {:ok, %{balance: trunc(value), currency: String.upcase(String.trim(currency))}}
+
+          [[value, currency] | _] when is_number(value) and is_binary(currency) ->
+            {:ok, %{balance: trunc(value), currency: String.upcase(String.trim(currency))}}
+
+          _ ->
+            {:error, {:status, 500, %{ok: false, error: "Wallet currency is unavailable"}}}
+        end
 
       {:error, _} ->
         {:error, {:status, 500, %{ok: false, error: "Could not read wallet balance"}}}
     end
   end
+
+  defp ensure_wallet_currency(%{currency: currency}, requested_currency)
+       when currency == requested_currency,
+       do: :ok
+
+  defp ensure_wallet_currency(_wallet, _requested_currency),
+    do:
+      {:error,
+       {:status, 400,
+        %{ok: false, error: "Withdrawal currency must match your wallet currency"}}}
 
   defp load_existing_payout(user_id, reference) do
     sql = """
