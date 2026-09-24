@@ -289,7 +289,7 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
            DateTime.to_iso8601(fields.offer_expires_at)
          ]) do
       {:ok, %{rows: [[job_id]]}} ->
-        {:ok, job_id}
+        {:ok, DbUuid.encode(job_id)}
 
       {:error, _} ->
         {:error, {:status, 500, %{error: "Could not create job"}}}
