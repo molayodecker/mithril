@@ -204,16 +204,16 @@ defmodule Mithril.MobileFunctions.RequestDataExport do
   defp build_export(user_id) do
     tables = [
       {"users",
-       "SELECT id, email, phone, created_at, updated_at FROM public.users WHERE id = $1::uuid"},
+       "SELECT id::text AS id, email, phone, created_at, updated_at FROM public.users WHERE id = $1::uuid"},
       {"profiles",
-       "SELECT id, user_id, firstname, lastname, fullname, avatar_url, address FROM public.profiles WHERE id = $1::uuid"},
-      {"user_roles", "SELECT user_id, role_id FROM public.user_roles WHERE user_id = $1::uuid"},
+       "SELECT id::text AS id, user_id::text AS user_id, firstname, lastname, fullname, avatar_url, address FROM public.profiles WHERE id = $1::uuid"},
+      {"user_roles", "SELECT user_id::text AS user_id, role_id FROM public.user_roles WHERE user_id = $1::uuid"},
       {"bookings",
-       "SELECT id, status, payment_status, scheduled_date, scheduled_time, address, created_at FROM public.bookings WHERE customer_id = $1::uuid ORDER BY created_at DESC"},
+       "SELECT id::text AS id, status, payment_status, scheduled_date, scheduled_time, address, created_at FROM public.bookings WHERE customer_id = $1::uuid ORDER BY created_at DESC"},
       {"cleaner_applications",
-       "SELECT id, status, created_at, updated_at FROM public.cleaner_applications WHERE user_id = $1::uuid ORDER BY created_at DESC"},
+       "SELECT id::text AS id, status, created_at, updated_at FROM public.cleaner_applications WHERE user_id = $1::uuid ORDER BY created_at DESC"},
       {"kyc_profiles",
-       "SELECT id, kyc_status, created_at, updated_at FROM public.kyc_profiles WHERE user_id = $1::uuid ORDER BY updated_at DESC"}
+       "SELECT id::text AS id, kyc_status, created_at, updated_at FROM public.kyc_profiles WHERE user_id = $1::uuid ORDER BY updated_at DESC"}
     ]
 
     export =
