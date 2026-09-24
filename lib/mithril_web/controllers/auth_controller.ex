@@ -53,6 +53,12 @@ defmodule MithrilWeb.AuthController do
     respond(conn, Auth.me(conn.assigns.instaclean_user_id), fn user -> %{user: user} end)
   end
 
+  def cleaner_activation_status(conn, _params) do
+    respond(conn, Auth.cleaner_activation_status(conn.assigns.instaclean_user_id), fn data ->
+      %{data: data}
+    end)
+  end
+
   def update_me(conn, params) do
     respond(conn, Auth.update_profile(conn.assigns.instaclean_user_id, params), fn user ->
       %{user: user}

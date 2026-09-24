@@ -20,6 +20,7 @@ defmodule Mithril.AuthTest do
           "mithril_auth_otps",
           "mithril_auth_identities",
           "mithril_auth_accounts",
+          "payout_methods",
           "cleaner_data",
           "user_roles",
           "roles",
@@ -97,7 +98,21 @@ defmodule Mithril.AuthTest do
     CREATE TABLE public.cleaner_data (
       user_id uuid PRIMARY KEY REFERENCES public.users(id),
       verified boolean NOT NULL DEFAULT false,
-      status text NOT NULL DEFAULT 'pending'
+      status text NOT NULL DEFAULT 'pending',
+      specialties text[] DEFAULT '{}',
+      service_categories text[] DEFAULT '{}',
+      hourly_rate numeric,
+      rate_set_at timestamptz
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.payout_methods (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id uuid NOT NULL REFERENCES public.users(id),
+      purpose text NOT NULL DEFAULT 'payout',
+      type text,
+      recipient_code text
     )
     """)
 
@@ -322,6 +337,52 @@ defmodule Mithril.AuthTest do
     assert me.cleanerVerified
     assert me.cleanerStatus == "active"
     assert me.location == nil
+  end
+
+  test "cleaner_activation_status reflects services, rate, payout, photo, and address" do
+    {user_id, _email} = insert_account("activation@tryinstaclean.com", "correct-horse")
+    uuid = dump_uuid(user_id)
+
+    Repo.query!(
+      """
+      INSERT INTO public.profiles (id, user_id, avatar_url, address)
+      VALUES ($1::uuid, $1::uuid, 'https://lh3.googleusercontent.com/a/photo', 'East Legon')
+      """,
+      [uuid]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_data (
+        user_id, verified, status, specialties, service_categories, hourly_rate, rate_set_at
+      )
+      VALUES (
+        $1::uuid, true, 'active',
+        ARRAY['standard_clean']::text[],
+        ARRAY['cleaning']::text[],
+        50,
+        now()
+      )
+      """,
+      [uuid]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.payout_methods (user_id, purpose, type, recipient_code)
+      VALUES ($1::uuid, 'payout', 'bank', 'RCP_test')
+      """,
+      [uuid]
+    )
+
+    assert {:ok, status} = Auth.cleaner_activation_status(user_id)
+    assert status.hasOfferedServices
+    assert status.hasConfirmedRate
+    assert status.hasPayoutMethod
+    assert status.hasUploadedPhoto
+    assert status.hasServiceLocation
+    assert status.specialties == ["standard_clean"]
+    assert status.hourlyRate == 50.0
   end
 
   test "me returns nil location when the profile has no coordinates" do
