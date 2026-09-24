@@ -1,6 +1,7 @@
 defmodule Mithril.Subscriptions.Cancel do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.MobileFunctions.Paystack
   alias Mithril.Repo
 
@@ -31,7 +32,7 @@ defmodule Mithril.Subscriptions.Cancel do
     LIMIT 1
     """
 
-    case Repo.query(sql, [subscription_id]) do
+    case Repo.query(sql, [DbUuid.dump!(subscription_id)]) do
       {:ok, %{columns: columns, rows: [row]}} -> {:ok, row_to_map(columns, row)}
       {:ok, %{rows: []}} -> {:error, {:status, 404, %{error: "Subscription not found"}}}
       {:error, _} -> {:error, {:status, 500, %{error: "Could not load subscription"}}}
@@ -39,7 +40,7 @@ defmodule Mithril.Subscriptions.Cancel do
   end
 
   defp ensure_owner(row, user_id) do
-    if Map.get(row, "customer_id") == user_id do
+    if DbUuid.equal?(Map.get(row, "customer_id"), user_id) do
       :ok
     else
       {:error, {:status, 403, %{error: "Subscription does not belong to this user"}}}
@@ -53,7 +54,7 @@ defmodule Mithril.Subscriptions.Cancel do
     WHERE customer_id = $1::uuid AND status IN ('active', 'pending')
     """
 
-    case Repo.query(sql, [user_id]) do
+    case Repo.query(sql, [DbUuid.dump!(user_id)]) do
       {:ok, %{columns: columns, rows: rows}} ->
         Enum.map(rows, &row_to_map(columns, &1))
 
@@ -220,7 +221,7 @@ defmodule Mithril.Subscriptions.Cancel do
 
   defp cancel_locally(subscription_id) do
     case Repo.query("SELECT public.cancel_subscription_with_unpaid_placeholders($1::uuid)", [
-           subscription_id
+           DbUuid.dump!(subscription_id)
          ]) do
       {:ok, %{rows: [[payload]]}} when is_map(payload) ->
         action = Map.get(payload, "action") |> to_string() |> String.downcase()
