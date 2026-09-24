@@ -100,7 +100,7 @@ defmodule Mithril.Paystack.WebhookTest do
     assert [["ready"]] =
              Repo.query!(
                "SELECT status FROM public.payment_attempts WHERE reference = $1",
-               [Ecto.UUID.dump!(reference)]
+               [reference]
              ).rows
   end
 
