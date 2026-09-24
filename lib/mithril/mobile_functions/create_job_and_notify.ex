@@ -17,9 +17,8 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
     with {:ok, fields} <- parse_body(body),
          :ok <- ensure_customer_role(customer_id),
          :ok <- rate_limit_create(customer_id),
-         {:ok, job_id} <- insert_job(customer_id, fields),
-         {:ok, cleaner_ids} <- nearby_cleaner_ids(fields),
-         offers_count <- insert_offers(job_id, cleaner_ids),
+         {:ok, {job_id, cleaner_ids, offers_count}} <-
+           persist_job_and_offers(customer_id, fields),
          push_attempted <- send_job_offer_pushes(cleaner_ids, job_id) do
       {:ok,
        %{
@@ -249,6 +248,27 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
 
   defp roles_from_payload(_), do: []
 
+  defp persist_job_and_offers(customer_id, fields) do
+    case Repo.transaction(fn ->
+           with {:ok, job_id} <- insert_job(customer_id, fields),
+                {:ok, cleaner_ids} <- nearby_cleaner_ids(fields),
+                {:ok, offers_count} <- insert_offers(job_id, cleaner_ids) do
+             {job_id, cleaner_ids, offers_count}
+           else
+             {:error, reason} -> Repo.rollback(reason)
+           end
+         end) do
+      {:ok, result} ->
+        {:ok, result}
+
+      {:error, {:status, _, _} = reason} ->
+        {:error, reason}
+
+      {:error, _} ->
+        {:error, {:status, 500, %{error: "Could not create job"}}}
+    end
+  end
+
   defp insert_job(customer_id, fields) do
     sql = """
     INSERT INTO public.jobs (
@@ -303,10 +323,10 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
     end
   end
 
-  defp insert_offers(_job_id, []), do: 0
+  defp insert_offers(_job_id, []), do: {:ok, 0}
 
   defp insert_offers(job_id, cleaner_ids) do
-    Enum.reduce(cleaner_ids, 0, fn cleaner_id, count ->
+    Enum.reduce_while(cleaner_ids, {:ok, 0}, fn cleaner_id, {:ok, count} ->
       case Repo.query(
              """
              INSERT INTO public.job_offers (job_id, cleaner_id, status)
@@ -314,8 +334,11 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
              """,
              [job_id, cleaner_id]
            ) do
-        {:ok, _} -> count + 1
-        _ -> count
+        {:ok, _} ->
+          {:cont, {:ok, count + 1}}
+
+        {:error, _} ->
+          {:halt, {:error, {:status, 500, %{error: "Could not create job offers"}}}}
       end
     end)
   end
