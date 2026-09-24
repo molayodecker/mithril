@@ -100,7 +100,7 @@ defmodule Mithril.Paystack.WebhookTest do
     assert [["ready"]] =
              Repo.query!(
                "SELECT status FROM public.payment_attempts WHERE reference = $1",
-               [reference]
+               [Ecto.UUID.dump!(reference)]
              ).rows
   end
 
@@ -174,7 +174,7 @@ defmodule Mithril.Paystack.WebhookTest do
                FROM public.cleaner_payouts
                WHERE reference = $1::uuid
                """,
-               [reference]
+               [Ecto.UUID.dump!(reference)]
              ).rows
 
     assert {:ok, replay} = Webhook.handle(raw, sign(raw))
@@ -194,7 +194,7 @@ defmodule Mithril.Paystack.WebhookTest do
     assert [["pending"]] =
              Repo.query!(
                "SELECT status::text FROM public.cleaner_payouts WHERE reference = $1::uuid",
-               [reference]
+               [Ecto.UUID.dump!(reference)]
              ).rows
   end
 
@@ -222,7 +222,7 @@ defmodule Mithril.Paystack.WebhookTest do
                FROM public.cleaner_payouts
                WHERE reference = $1::uuid
                """,
-               [reference]
+               [Ecto.UUID.dump!(reference)]
              ).rows
   end
 
@@ -250,7 +250,7 @@ defmodule Mithril.Paystack.WebhookTest do
                FROM public.cleaner_payouts
                WHERE reference = $1::uuid
                """,
-               [reference]
+               [Ecto.UUID.dump!(reference)]
              ).rows
   end
 
@@ -270,7 +270,7 @@ defmodule Mithril.Paystack.WebhookTest do
     assert [["success"]] =
              Repo.query!(
                "SELECT status::text FROM public.cleaner_payouts WHERE reference = $1::uuid",
-               [reference]
+               [Ecto.UUID.dump!(reference)]
              ).rows
   end
 
@@ -454,7 +454,7 @@ defmodule Mithril.Paystack.WebhookTest do
         id, user_id, recipient_code, amount, currency, reference, status
       ) VALUES ($1, $2, 'RCP_test', $3, 'GHS', $4::uuid, $5::public.withdrawal_status)
       """,
-      [Ecto.UUID.dump!(Ecto.UUID.generate()), Ecto.UUID.dump!(user_id), amount, reference, status]
+      [Ecto.UUID.dump!(Ecto.UUID.generate()), Ecto.UUID.dump!(user_id), amount, Ecto.UUID.dump!(reference), status]
     )
 
     {reference, user_id}
