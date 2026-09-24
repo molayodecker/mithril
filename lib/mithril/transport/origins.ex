@@ -1,11 +1,12 @@
 defmodule Mithril.Transport.Origins do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.Repo
   alias Mithril.Transport.Router
 
   def load_cleaner_origin(cleaner_id) when is_binary(cleaner_id) do
-    case Repo.query("SELECT * FROM public.get_cleaner_trip_origin($1::uuid)", [cleaner_id]) do
+    case Repo.query("SELECT * FROM public.get_cleaner_trip_origin($1::uuid)", [DbUuid.dump!(cleaner_id)]) do
       {:ok, %{columns: columns, rows: [row]}} ->
         coords_from_row(Map.new(Enum.zip(columns, row)))
 
@@ -24,7 +25,7 @@ defmodule Mithril.Transport.Origins do
     LIMIT 1
     """
 
-    case Repo.query(postgis, [user_id]) do
+    case Repo.query(postgis, [DbUuid.dump!(user_id)]) do
       {:ok, %{rows: [[lat, lng]]}} ->
         case coords(lat, lng) do
           {:ok, coord} -> {:ok, coord}
