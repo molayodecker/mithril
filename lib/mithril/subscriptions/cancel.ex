@@ -109,10 +109,10 @@ defmodule Mithril.Subscriptions.Cancel do
 
     with {:ok, secret} <- maybe_paystack_secret(needs_paystack) do
       {cancelled_ids, errors} =
-        Enum.reduce(to_cancel, {[], nil}, fn row, {ids, _error} ->
+        Enum.reduce(to_cancel, {[], nil}, fn row, {ids, error} ->
           case cancel_one(row, secret) do
-            :ok -> {[Map.get(row, "id") | ids], nil}
-            {:error, message} -> {ids, message}
+            :ok -> {[Map.get(row, "id") | ids], error}
+            {:error, message} -> {ids, error || message}
           end
         end)
 
