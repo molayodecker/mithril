@@ -33,26 +33,177 @@ defmodule Mithril.Transport.Estimate do
   end
 
   defp load_booking(booking_id) do
+    coordinate_kind = booking_coordinate_kind()
+    latitude = latitude_expr(coordinate_kind)
+    longitude = longitude_expr(coordinate_kind)
+
     sql = """
     SELECT id, customer_id, cleaner_id, status, address,
-           CASE
-             WHEN location_coordinates IS NULL THEN NULL
-             ELSE ST_Y(location_coordinates::geometry)
-           END AS latitude,
-           CASE
-             WHEN location_coordinates IS NULL THEN NULL
-             ELSE ST_X(location_coordinates::geometry)
-           END AS longitude
-    FROM public.bookings
+           #{latitude} AS latitude,
+           #{longitude} AS longitude
+    FROM public.bookings b
     WHERE id = $1::uuid
     LIMIT 1
     """
 
     case Repo.query(sql, [DbUuid.dump!(booking_id)]) do
-      {:ok, %{columns: columns, rows: [row]}} -> {:ok, Map.new(Enum.zip(columns, row))}
-      {:ok, %{rows: []}} -> {:error, {:status, 404, %{error: "Booking not found"}}}
-      _ -> {:error, {:status, 404, %{error: "Booking not found"}}}
+      {:ok, %{columns: columns, rows: [row]}} ->
+        {:ok, Map.new(Enum.zip(columns, row))}
+
+      {:ok, %{rows: []}} ->
+        {:error, {:status, 404, %{error: "Booking not found"}}}
+
+      {:error, _} ->
+        {:error, {:status, 500, %{error: "Could not load booking"}}}
     end
+  end
+
+  defp booking_coordinate_kind do
+    sql = """
+    SELECT udt_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'bookings'
+      AND column_name = 'location_coordinates'
+    LIMIT 1
+    """
+
+    case Repo.query(sql, []) do
+      {:ok, %{rows: [[type]]}} when type in ["json", "jsonb"] -> :json
+      {:ok, %{rows: [[type]]}} when type in ["geometry", "geography"] -> :spatial
+      {:ok, %{rows: [["point"]]}} -> :point
+      _ -> :none
+    end
+  end
+
+  defp latitude_expr(:json), do: safe_json_coordinate_expr(["latitude", "lat"], -90, 90)
+  defp latitude_expr(:spatial), do: "ST_Y(b.location_coordinates::geometry)"
+  defp latitude_expr(:point), do: "(b.location_coordinates)[1]::double precision"
+  defp latitude_expr(_), do: "NULL::double precision"
+
+  defp longitude_expr(:json), do: safe_json_coordinate_expr(["longitude", "lng"], -180, 180)
+  defp longitude_expr(:spatial), do: "ST_X(b.location_coordinates::geometry)"
+  defp longitude_expr(:point), do: "(b.location_coordinates)[0]::double precision"
+  defp longitude_expr(_), do: "NULL::double precision"
+
+  defp safe_json_coordinate_expr(keys, min, max) do
+    value =
+      keys
+      |> Enum.map_join(", ", &"NULLIF(b.location_coordinates->>'#{&1}', '')")
+      |> then(&"COALESCE(#{&1})")
+
+    """
+    CASE
+      WHEN #{value} ~ '^[+-]?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?
+  defp authorize(user_id, booking) do
+    if DbUuid.equal?(user_id, Map.get(booking, "customer_id")) or
+         DbUuid.equal?(user_id, Map.get(booking, "cleaner_id")) do
+      :ok
+    else
+      {:error, {:status, 403, %{error: "Forbidden"}}}
+    end
+  end
+
+  defp ensure_assigned(booking) do
+    cleaner_id = Map.get(booking, "cleaner_id")
+    status = booking |> Map.get("status") |> to_string() |> String.downcase()
+
+    cond do
+      is_nil(cleaner_id) or cleaner_id == "" ->
+        {:error, {:status, 409, %{error: "No assigned cleaner", code: "no_assigned_cleaner"}}}
+
+      status not in @active_statuses ->
+        {:error, {:status, 409, %{error: "Booking is not active", code: "booking_not_active"}}}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp load_destination(booking) do
+    case Origins.load_booking_destination(booking) do
+      {:ok, dest} ->
+        {:ok, dest}
+
+      _ ->
+        {:error,
+         {:status, 422,
+          %{error: "Booking destination is not available", code: "destination_missing"}}}
+    end
+  end
+
+  defp load_origin(booking) do
+    case Origins.load_cleaner_origin(Map.get(booking, "cleaner_id")) do
+      {:ok, origin} ->
+        {:ok, origin}
+
+      _ ->
+        {:error,
+         {:status, 422,
+          %{error: "Cleaner location is not available", code: "cleaner_location_missing"}}}
+    end
+  end
+
+  defp route(origin, dest) do
+    case Router.directions(origin, dest) do
+      {:ok, %{distance_m: distance_m, duration_s: duration_s}} ->
+        {:ok,
+         %{
+           distance_km: Float.round(distance_m / 1000.0, 2),
+           duration_seconds: max(0, trunc(duration_s))
+         }}
+
+      {:error, :not_configured} ->
+        {:error, {:status, 500, %{error: "Transport routing is not configured"}}}
+
+      {:error, :rate_limited} ->
+        {:error, {:status, 429, %{error: "Too many transport estimates. Try again shortly."}}}
+
+      _ ->
+        {:error, {:status, 502, %{error: "Could not estimate transport"}}}
+    end
+  end
+
+  defp present(user_id, booking, route, priced, origin, dest) do
+    %{
+      bookingId: DbUuid.encode(Map.get(booking, "id")),
+      distanceKm: route.distance_km,
+      durationSeconds: route.duration_seconds,
+      durationLabel: duration_label(route.duration_seconds),
+      amountMinor: priced.amount_minor,
+      currency: priced.currency,
+      display: display(priced),
+      provider: "locationiq",
+      uberHandoffUrl: UberHandoff.maybe_url(user_id, booking, origin, dest)
+    }
+  end
+
+  defp duration_label(seconds) when is_integer(seconds) and seconds > 0 do
+    minutes = max(1, round(seconds / 60))
+    "~#{minutes} min"
+  end
+
+  defp duration_label(_), do: nil
+
+  defp display(%{currency: "GHS", amount_minor: amount}) do
+    major = :erlang.float_to_binary(amount / 100, decimals: 2)
+    "Estimated transport: GH₵#{major}"
+  end
+
+  defp display(%{currency: currency, amount_minor: amount}) do
+    major = :erlang.float_to_binary(amount / 100, decimals: 2)
+    "Estimated transport: #{currency} #{major}"
+  end
+end
+ THEN
+        CASE
+          WHEN (#{value})::double precision BETWEEN #{min} AND #{max}
+          THEN (#{value})::double precision
+          ELSE NULL::double precision
+        END
+      ELSE NULL::double precision
+    END
+    """
   end
 
   defp authorize(user_id, booking) do
