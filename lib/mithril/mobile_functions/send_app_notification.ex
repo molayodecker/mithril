@@ -244,7 +244,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     variables = %{
       "name" => customer_name,
       "cleanerName" => cleaner_name,
-      "bookingId" => to_string(Map.get(booking, "id")),
+      "bookingId" => DbUuid.encode(Map.get(booking, "id")),
       "date" => date_combined,
       "address" => Map.get(booking, "address") || "",
       "scheduled_date" => to_string(scheduled_date || ""),
@@ -267,7 +267,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
             "template" => template,
             "channel" => channel,
             "userId" => customer_id,
-            "bookingId" => to_string(Map.get(booking, "id")),
+            "bookingId" => DbUuid.encode(Map.get(booking, "id")),
             "messageType" => type,
             "smsFallbackToWhatsapp" => true,
             "variables" => variables
