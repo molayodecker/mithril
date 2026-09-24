@@ -12,10 +12,14 @@ defmodule Mithril.Transport.Ranking do
   @time_regex ~r/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/
 
   @spec for_destination(String.t(), map()) :: {:ok, map()} | {:error, term()}
-  def for_destination(_user_id, body) when is_map(body) do
-    with {:ok, dest} <- destination(body),
-         {:ok, fields} <- schedule_fields(body),
-         {:ok, cleaner_ids} <- nearby_cleaner_ids(dest, fields),
+  def for_destination(user_id, body) when is_binary(user_id) and is_map(body) do
+    request = normalize_request(body)
+    requested_ids = requested_cleaner_ids(body)
+
+    with :ok <- enforce_rate_limit(user_id),
+         {:ok, dest} <- destination(request),
+         {:ok, fields} <- schedule_fields(request),
+         {:ok, cleaner_ids} <- nearby_cleaner_ids(dest, fields, requested_ids),
          {:ok, origins} <- load_origins(cleaner_ids),
          {:ok, routes} <- matrix_routes(origins, dest) do
       ranked =
@@ -37,8 +41,20 @@ defmodule Mithril.Transport.Ranking do
           }
         end)
         |> Enum.sort_by(fn row -> {row.duration_seconds, row.distance_km, row.cleaner_id} end)
+        |> Enum.with_index()
+        |> Enum.map(fn {row, index} ->
+          row
+          |> Map.put(:score, max(0, 100 - index * 5))
+          |> Map.put(:reason, "Route duration rank")
+        end)
 
-      {:ok, %{cleaners: ranked, source: "locationiq", reason: "route_duration"}}
+      {:ok,
+       %{
+         cleaners: ranked,
+         source: "fallback",
+         provider: "locationiq",
+         reason: "route_duration"
+       }}
     end
   end
 
@@ -99,7 +115,7 @@ defmodule Mithril.Transport.Ranking do
     parsed
   end
 
-  defp nearby_cleaner_ids(dest, fields) do
+  defp nearby_cleaner_ids(dest, fields, requested_ids) do
     sql = """
     SELECT id
     FROM public.get_nearby_available_cleaners($1, $2, $3, $4::date, $5::time, $6)
@@ -118,12 +134,82 @@ defmodule Mithril.Transport.Ranking do
           rows
           |> Enum.map(fn [id] -> id end)
           |> Enum.uniq()
+          |> maybe_filter_requested_ids(requested_ids)
           |> Enum.take(@limit)
 
         {:ok, ids}
 
       _ ->
         {:ok, []}
+    end
+  end
+
+  defp normalize_request(body) do
+    draft =
+      case Map.get(body, "bookingDraft") || Map.get(body, "booking_draft") do
+        value when is_map(value) -> value
+        _ -> %{}
+      end
+
+    %{
+      "lat" =>
+        Map.get(body, "lat") || Map.get(body, "customer_latitude") ||
+          Map.get(draft, "latitude"),
+      "lng" =>
+        Map.get(body, "lng") || Map.get(body, "customer_longitude") ||
+          Map.get(draft, "longitude"),
+      "scheduled_date" =>
+        Map.get(body, "scheduled_date") || Map.get(draft, "bookingDate") ||
+          Map.get(draft, "booking_date"),
+      "start_time" =>
+        Map.get(body, "start_time") || Map.get(draft, "slotTime24h") ||
+          Map.get(draft, "slot_time_24h"),
+      "duration_hours" =>
+        Map.get(body, "duration_hours") || Map.get(draft, "durationHours") ||
+          Map.get(draft, "duration_hours")
+    }
+  end
+
+  defp requested_cleaner_ids(body) do
+    case Map.get(body, "cleaners") do
+      cleaners when is_list(cleaners) ->
+        cleaners
+        |> Enum.flat_map(fn
+          %{"id" => id} when is_binary(id) -> [id]
+          %{id: id} when is_binary(id) -> [id]
+          _ -> []
+        end)
+        |> MapSet.new()
+
+      _ ->
+        MapSet.new()
+    end
+  end
+
+  defp maybe_filter_requested_ids(ids, %MapSet{} = requested_ids) do
+    if MapSet.size(requested_ids) == 0 do
+      ids
+    else
+      Enum.filter(ids, &MapSet.member?(requested_ids, &1))
+    end
+  end
+
+  defp enforce_rate_limit(user_id) do
+    case Repo.query(
+           "SELECT public.record_lookup_attempt($1, $2, $3, $4) AS blocked",
+           ["rank_cleaners_with_ai", user_id, 30, 60]
+         ) do
+      {:ok, %{rows: [[true]]}} ->
+        {:error, {:status, 429, %{error: "Too many ranking requests. Try again shortly."}}}
+
+      {:ok, %{rows: [[false]]}} ->
+        :ok
+
+      {:error, _} ->
+        {:error, {:status, 503, %{error: "Ranking rate limit unavailable"}}}
+
+      _ ->
+        {:error, {:status, 503, %{error: "Ranking rate limit unavailable"}}}
     end
   end
 
