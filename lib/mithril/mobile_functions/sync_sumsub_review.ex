@@ -1,6 +1,7 @@
 defmodule Mithril.MobileFunctions.SyncSumsubReview do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.Repo
   alias Mithril.Sumsub.CleanerApplicationLookup
   alias Mithril.Sumsub.Client
@@ -15,7 +16,7 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
          {:ok, profiles} <- load_kyc_profiles(user_id) do
       subject = inferred_subject(cleaner_app)
       paths = SyncLookup.build_paths(profiles, cleaner_app)
-      cleaner_application_id = cleaner_app && Map.get(cleaner_app, "id")
+      cleaner_application_id = cleaner_app && DbUuid.encode(Map.get(cleaner_app, "id"))
 
       cond do
         paths == [] ->
@@ -74,7 +75,7 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
     LIMIT 25
     """
 
-    case Repo.query(sql, [user_id]) do
+    case Repo.query(sql, [DbUuid.dump!(user_id)]) do
       {:ok, %{columns: columns, rows: rows}} ->
         {:ok, Enum.map(rows, fn row -> Map.new(Enum.zip(columns, row)) end)}
 
@@ -226,7 +227,7 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
       case Map.get(profile, "cleaner_application_id") do
         id when is_binary(id) ->
           trimmed = String.trim(id)
-          if trimmed == "", do: nil, else: trimmed
+          if trimmed == "", do: nil, else: DbUuid.encode(id)
 
         _ ->
           nil
