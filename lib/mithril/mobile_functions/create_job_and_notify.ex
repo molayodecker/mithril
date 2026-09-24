@@ -2,6 +2,7 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
   @moduledoc false
 
   alias Mithril.MobileGateway
+  alias Mithril.RateLimiter
   alias Mithril.Repo
 
   @radius_meters 10_000
@@ -168,24 +169,12 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
   end
 
   defp rate_limit_create(customer_id) do
-    case MobileGateway.with_user_transaction(customer_id, fn ->
-           case Repo.query(
-                  "SELECT public.record_lookup_attempt($1, $2, $3, $4) AS blocked",
-                  ["create_job_and_notify", customer_id, 5, 600]
-                ) do
-             {:ok, %{rows: [[true]]}} -> {:error, :rate_limited}
-             {:ok, %{rows: [[false]]}} -> {:ok, :ok}
-             _ -> {:ok, :ok}
-           end
-         end) do
-      {:ok, :ok} ->
+    case RateLimiter.check({:create_job_and_notify, customer_id}, 5, 600_000) do
+      :ok ->
         :ok
 
       {:error, :rate_limited} ->
         {:error, {:status, 429, %{error: "Too many jobs. Try again later."}}}
-
-      _ ->
-        :ok
     end
   end
 
