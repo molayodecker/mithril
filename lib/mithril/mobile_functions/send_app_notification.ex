@@ -1,6 +1,7 @@
 defmodule Mithril.MobileFunctions.SendAppNotification do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.Notifications.SendNotification
   alias Mithril.Repo
 
@@ -76,7 +77,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     LIMIT 1
     """
 
-    case Repo.query(sql, [booking_id]) do
+    case Repo.query(sql, [DbUuid.dump!(booking_id)]) do
       {:ok, %{columns: columns, rows: [row]}} ->
         {:ok, Map.new(Enum.zip(columns, row))}
 
@@ -89,7 +90,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
   end
 
   defp ensure_cleaner_assignment(booking, cleaner_user_id) do
-    if Map.get(booking, "cleaner_id") == cleaner_user_id do
+    if DbUuid.equal?(Map.get(booking, "cleaner_id"), cleaner_user_id) do
       :ok
     else
       {:error, {:status, 403, %{success: false, error: "Not the assigned cleaner"}}}
@@ -97,7 +98,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
   end
 
   defp ensure_target_customer(booking, target_user_id) do
-    if Map.get(booking, "customer_id") == target_user_id do
+    if DbUuid.equal?(Map.get(booking, "customer_id"), target_user_id) do
       :ok
     else
       {:error, {:status, 400, %{success: false, error: "targetUserId mismatch"}}}
@@ -125,7 +126,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     WHERE user_id = $1::uuid AND token IS NOT NULL
     """
 
-    case Repo.query(sql, [user_id]) do
+    case Repo.query(sql, [DbUuid.dump!(user_id)]) do
       {:ok, %{rows: rows}} ->
         rows
         |> Enum.map(fn [token] -> token end)
@@ -148,7 +149,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     LIMIT 1
     """
 
-    case Repo.query(sql, [cleaner_user_id]) do
+    case Repo.query(sql, [DbUuid.dump!(cleaner_user_id)]) do
       {:ok, %{rows: [[fullname, firstname]]}} ->
         {:ok, fullname || firstname || "Your cleaner"}
 
@@ -211,13 +212,13 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     """
 
     notif_count =
-      case Repo.query(notif_sql, [user_id]) do
+      case Repo.query(notif_sql, [DbUuid.dump!(user_id)]) do
         {:ok, %{rows: [[count]]}} when is_integer(count) -> count
         _ -> 0
       end
 
     message_count =
-      case Repo.query(conv_sql, [user_id]) do
+      case Repo.query(conv_sql, [DbUuid.dump!(user_id)]) do
         {:ok, %{rows: [[count]]}} when is_integer(count) -> count
         _ -> 0
       end
@@ -308,13 +309,13 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     profile_sql = "SELECT fullname, firstname FROM public.profiles WHERE id = $1::uuid LIMIT 1"
 
     {email, phone} =
-      case Repo.query(user_sql, [customer_id]) do
+      case Repo.query(user_sql, [DbUuid.dump!(customer_id)]) do
         {:ok, %{rows: [[email, phone]]}} -> {present(email), present(phone)}
         _ -> {nil, nil}
       end
 
     name =
-      case Repo.query(profile_sql, [customer_id]) do
+      case Repo.query(profile_sql, [DbUuid.dump!(customer_id)]) do
         {:ok, %{rows: [[fullname, firstname]]}} -> fullname || firstname || "there"
         _ -> "there"
       end
