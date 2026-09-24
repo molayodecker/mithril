@@ -170,7 +170,7 @@ defmodule Mithril.Sumsub.ApplicantLink do
       |> to_string()
       |> String.trim()
 
-    applicant_changed = previous_applicant != "" and previous_applicant != applicant_id
+    applicant_changed = previous_applicant != applicant_id
 
     _ =
       Repo.query(
