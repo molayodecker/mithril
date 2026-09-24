@@ -656,12 +656,23 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
       end
     else
       {:error, :payment_not_configured} ->
+        _ = fail_withdrawal(fields.reference, "Payment is not configured")
         {:error, {:status, 500, %{ok: false, error: "Server misconfigured"}}}
 
-      {:error, {:status, status, message}} ->
-        fail_withdrawal(fields.reference, message)
-        http_status = if status >= 500, do: 502, else: 400
-        {:error, {:status, http_status, %{ok: false, error: message}}}
+      {:error, {:status, status, message}} when status >= 500 ->
+        _ = mark_withdrawal_processing(fields.reference, message)
+
+        {:error,
+         {:status, 502,
+          %{
+            ok: false,
+            error: "Transfer status is unknown. Do not retry with a new reference.",
+            code: "TRANSFER_STATUS_UNKNOWN"
+          }}}
+
+      {:error, {:status, _status, message}} ->
+        _ = fail_withdrawal(fields.reference, message)
+        {:error, {:status, 400, %{ok: false, error: message}}}
     end
   end
 
@@ -716,24 +727,34 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     end
   end
 
+  defp mark_withdrawal_processing(reference, message) do
+    case Repo.query(
+           """
+           UPDATE public.cleaner_payouts
+           SET status = 'processing',
+               error_message = $2::text,
+               updated_at = NOW()
+           WHERE reference = $1::uuid
+             AND status IN ('pending', 'processing')
+           """,
+           [DbUuid.dump!(reference), message]
+         ) do
+      {:ok, _} -> :ok
+      {:error, _} -> {:error, :payout_status_persist_failed}
+    end
+  end
+
   defp fail_withdrawal(reference, message) do
-    _ =
-      Repo.query(
-        "SELECT public.fn_finalize_withdrawal($1::text, 'failed'::public.withdrawal_status, $2::text, NULL::text)",
-        [DbUuid.dump!(reference), message]
-      )
+    case Repo.query(
+           "SELECT public.fn_finalize_withdrawal($1::text, 'failed'::public.withdrawal_status, $2::text, NULL::text)",
+           [reference, message]
+         ) do
+      {:ok, _} ->
+        :ok
 
-    _ =
-      Repo.query(
-        """
-        UPDATE public.cleaner_payouts
-        SET status = 'failed', error_message = $2::text, updated_at = NOW()
-        WHERE reference = $1::uuid
-        """,
-        [reference, message]
-      )
-
-    :ok
+      {:error, _} ->
+        {:error, :finalize_failed}
+    end
   end
 
   defp reused_payout_data(fields, payout) do
