@@ -1,6 +1,7 @@
 defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.Repo
 
   @allowed_reasons ~w(
@@ -58,10 +59,15 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
 
   defp verify_booking_owner(booking_id, user_id) do
     case Repo.query("SELECT customer_id FROM public.bookings WHERE id = $1::uuid LIMIT 1", [
-           booking_id
+           DbUuid.dump!(booking_id)
          ]) do
-      {:ok, %{rows: [[customer_id]]}} when customer_id == user_id -> :ok
-      {:ok, %{rows: [[_]]}} -> {:error, {:status, 403, %{error: "Forbidden"}}}
+      {:ok, %{rows: [[customer_id]]}} ->
+        if DbUuid.equal?(customer_id, user_id),
+          do: :ok,
+          else: {:error, {:status, 403, %{error: "Forbidden"}}}
+
+      {:ok, %{rows: [[_]]}} ->
+        {:error, {:status, 403, %{error: "Forbidden"}}}
       _ -> {:error, {:status, 403, %{error: "Forbidden"}}}
     end
   end
@@ -70,7 +76,7 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
 
   defp verify_subscription_owner(subscription_id, user_id) do
     case Repo.query("SELECT customer_id FROM public.subscriptions WHERE id = $1::uuid LIMIT 1", [
-           subscription_id
+           DbUuid.dump!(subscription_id)
          ]) do
       {:ok, %{rows: [[customer_id]]}} when customer_id == user_id -> :ok
       {:ok, %{rows: [[_]]}} -> {:error, {:status, 403, %{error: "Forbidden"}}}
@@ -89,7 +95,7 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
              AND customer_id = $1::uuid
              AND created_at >= $2::timestamptz
            """,
-           [user_id, since]
+           [DbUuid.dump!(user_id), since]
          ) do
       {:ok, %{rows: [[count]]}} when count >= 10 ->
         {:error, {:status, 429, %{error: "Too many payment failure reports"}}}
@@ -147,7 +153,7 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
            """,
            [
              idempotency_key,
-             user_id,
+             DbUuid.dump!(user_id),
              booking_id,
              subscription_id,
              reason,
@@ -209,7 +215,7 @@ defmodule Mithril.MobileFunctions.RequestDataExport do
                                                                                               sql},
                                                                                              acc ->
         rows =
-          case Repo.query(sql, [user_id]) do
+          case Repo.query(sql, [DbUuid.dump!(user_id)]) do
             {:ok, %{columns: columns, rows: rows}} ->
               Enum.map(rows, fn row -> row |> Map.new(Enum.zip(columns, row)) |> redact() end)
 
@@ -228,7 +234,7 @@ defmodule Mithril.MobileFunctions.RequestDataExport do
   end
 
   defp destination_email(user_id) do
-    case Repo.query("SELECT email FROM public.users WHERE id = $1::uuid LIMIT 1", [user_id]) do
+    case Repo.query("SELECT email FROM public.users WHERE id = $1::uuid LIMIT 1", [DbUuid.dump!(user_id)]) do
       {:ok, %{rows: [[email]]}} when is_binary(email) and email != "" ->
         {:ok, email}
 
