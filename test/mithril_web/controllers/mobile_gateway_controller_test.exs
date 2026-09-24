@@ -79,7 +79,7 @@ defmodule MithrilWeb.MobileGatewayControllerTest do
     assert json_response(conn, 403)["error"] == "forbidden"
   end
 
-  test "POST /mobile/functions/uber-trip-estimate requires a related cleaner" do
+  test "POST /mobile/functions/uber-trip-estimate is retired" do
     conn =
       authenticated_post("/mobile/functions/uber-trip-estimate", %{
         "cleaner_id" => Ecto.UUID.generate(),
@@ -87,7 +87,8 @@ defmodule MithrilWeb.MobileGatewayControllerTest do
         "customer_longitude" => -0.2
       })
 
-    assert json_response(conn, 403)["error"] == "Forbidden"
+    body = json_response(conn, 410)
+    assert body["code"] == "uber_estimate_removed"
   end
 
   defp authenticated_post(path, body) do

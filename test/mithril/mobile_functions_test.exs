@@ -30,10 +30,10 @@ defmodule Mithril.MobileFunctions.GatewayAuthTest do
     assert is_boolean(enabled)
   end
 
-  test "uber trip estimate rejects cleaners the caller is not related to" do
+  test "uber trip estimate is retired in favor of booking transport estimates" do
     user_id = Ecto.UUID.generate()
 
-    assert {:error, {:status, 403, %{error: "Forbidden", code: "cleaner_not_related"}}} =
+    assert {:error, {:status, 410, %{code: "uber_estimate_removed"}}} =
              MobileFunctions.invoke(user_id, "uber-trip-estimate", %{
                "cleaner_id" => Ecto.UUID.generate(),
                "customer_latitude" => 5.6,

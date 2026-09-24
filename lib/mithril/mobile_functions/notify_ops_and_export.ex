@@ -162,48 +162,10 @@ end
 defmodule Mithril.MobileFunctions.RankCleanersWithAi do
   @moduledoc false
 
-  def call(_user_id, body) when is_map(body) do
-    cleaners = Map.get(body, "cleaners")
+  alias Mithril.Transport.Ranking
 
-    if not is_list(cleaners) do
-      {:error, {:status, 400, %{error: "Invalid cleaners payload"}}}
-    else
-      sanitized = sanitize_cleaners(cleaners)
-
-      if is_nil(sanitized) do
-        {:error, {:status, 400, %{error: "Invalid cleaners payload"}}}
-      else
-        ranked =
-          sanitized
-          |> Enum.sort_by(fn cleaner -> String.downcase(Map.get(cleaner, "id", "")) end, :asc)
-          |> Enum.map(fn cleaner ->
-            %{
-              cleaner_id: Map.get(cleaner, "id"),
-              score: 0,
-              reason: "Ordered by cleaner id. Client scores are ignored."
-            }
-          end)
-
-        {:ok, %{cleaners: ranked, source: "fallback", reason: "deterministic_rank"}}
-      end
-    end
-  end
-
-  defp sanitize_cleaners(raw) do
-    raw
-    |> Enum.take(25)
-    |> Enum.reduce_while([], fn item, acc ->
-      if is_map(item) do
-        cleaner_id = item |> Map.get("id", "") |> to_string() |> String.trim()
-        if cleaner_id == "", do: {:halt, nil}, else: {:cont, [item | acc]}
-      else
-        {:halt, nil}
-      end
-    end)
-    |> case do
-      nil -> nil
-      list -> Enum.reverse(list)
-    end
+  def call(user_id, body) when is_map(body) do
+    Ranking.for_destination(user_id, body)
   end
 end
 

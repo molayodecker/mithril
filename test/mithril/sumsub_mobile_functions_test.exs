@@ -146,17 +146,26 @@ defmodule Mithril.MobileFunctions.RankCleanersTest do
 
   alias Mithril.MobileFunctions.RankCleanersWithAi
 
-  test "returns deterministic fallback ranking" do
+  test "ranks nearby cleaners by server-side route distance, not client scores" do
+    user_id = Ecto.UUID.generate()
+
     assert {:ok, body} =
-             RankCleanersWithAi.call(Ecto.UUID.generate(), %{
-               "cleaners" => [
-                 %{"id" => "b", "match_score" => 99},
-                 %{"id" => "a", "match_score" => 1}
-               ]
+             RankCleanersWithAi.call(user_id, %{
+               "lat" => 5.65,
+               "lng" => -0.18,
+               "scheduled_date" => "2026-10-01",
+               "start_time" => "10:00",
+               "duration_hours" => 2,
+               "cleaners" => [%{"id" => "ignored", "match_score" => 99}]
              })
 
-    assert body.source == "fallback"
-    assert hd(body.cleaners).cleaner_id == "a"
-    assert Enum.all?(body.cleaners, fn cleaner -> cleaner.score == 0 end)
+    assert body.source == "locationiq"
+    assert is_list(body.cleaners)
+    refute Enum.any?(body.cleaners, fn cleaner -> Map.get(cleaner, :cleaner_id) == "ignored" end)
+  end
+
+  test "requires a destination for cleaner ranking" do
+    assert {:error, {:status, 400, %{error: "Latitude and longitude are required"}}} =
+             RankCleanersWithAi.call(Ecto.UUID.generate(), %{"cleaners" => [%{"id" => "a"}]})
   end
 end

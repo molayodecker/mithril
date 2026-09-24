@@ -146,6 +146,29 @@ if google_maps_key = System.get_env("GOOGLE_MAPS_API_KEY") do
   config :mithril, :google_maps_api_key, google_maps_key
 end
 
+locationiq_token =
+  System.get_env("LOCATIONIQ_ACCESS_TOKEN") || System.get_env("LOCATIONIQ_API_KEY")
+
+if locationiq_token && String.trim(locationiq_token) != "" do
+  config :mithril, :locationiq_access_token, String.trim(locationiq_token)
+end
+
+if locationiq_base = System.get_env("LOCATIONIQ_BASE_URL") do
+  trimmed = String.trim(locationiq_base)
+
+  if trimmed != "" do
+    config :mithril, :locationiq_base_url, trimmed
+  end
+end
+
+if uber_client_id = System.get_env("UBER_CLIENT_ID") do
+  trimmed = String.trim(uber_client_id)
+
+  if trimmed != "" do
+    config :mithril, :uber_client_id, trimmed
+  end
+end
+
 if otp_delivery_encryption_key = System.get_env("OTP_DELIVERY_ENCRYPTION_KEY") do
   config :mithril, :otp_delivery_encryption_key, otp_delivery_encryption_key
 end
