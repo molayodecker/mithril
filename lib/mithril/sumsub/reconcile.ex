@@ -199,8 +199,11 @@ defmodule Mithril.Sumsub.Reconcile do
              """,
              [DbUuid.dump!(user_id), cv_status]
            ) do
-        {:ok, _} -> persist_errors
-        {:error, error} -> persist_errors ++ ["cleaner_verifications: #{Exception.message(error)}"]
+        {:ok, _} ->
+          persist_errors
+
+        {:error, error} ->
+          persist_errors ++ ["cleaner_verifications: #{Exception.message(error)}"]
       end
 
     maybe_mirror_cleaner_data(persist_errors, user_id, review_answer, now)
