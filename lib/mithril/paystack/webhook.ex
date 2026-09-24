@@ -96,6 +96,9 @@ defmodule Mithril.Paystack.Webhook do
 
   defp dispatch(%{type: "charge.success"} = event), do: settle_charge(event)
   defp dispatch(%{type: "charge.failed"} = event), do: fail_charge(event)
+  defp dispatch(%{type: "transfer.success"} = event), do: settle_transfer(event, "success")
+  defp dispatch(%{type: "transfer.failed"} = event), do: settle_transfer(event, "failed")
+  defp dispatch(%{type: "transfer.reversed"} = event), do: settle_transfer(event, "reversed")
 
   defp dispatch(%{type: type} = event) when type in @refund_events do
     settle_refund(event)
@@ -211,6 +214,148 @@ defmodule Mithril.Paystack.Webhook do
           Logger.error("paystack webhook charge.failed persist error=#{inspect(error)}")
           {:error, :database_unavailable}
       end
+    end
+  end
+
+  defp settle_transfer(event, desired_status) do
+    reference = event.reference
+
+    if is_nil(reference) do
+      {:ok, %{ignored: true, reason: "missing_reference"}}
+    else
+      Repo.transaction(fn ->
+        case lock_transfer(reference) do
+          nil ->
+            Logger.info("paystack webhook unknown transfer reference=#{reference}")
+            %{ignored: true, reason: "unknown_transfer_reference", reference: reference}
+
+          payout ->
+            apply_transfer(payout, event, desired_status)
+        end
+      end)
+      |> normalize_transaction()
+    end
+  end
+
+  defp apply_transfer(payout, event, desired_status) do
+    cond do
+      desired_status == "success" and
+          (event.amount_minor != payout.amount_minor or event.currency != payout.currency) ->
+        Repo.rollback(:amount_mismatch)
+
+      payout.status == desired_status ->
+        %{
+          already_settled: true,
+          transfer_status: desired_status,
+          reference: payout.reference
+        }
+
+      desired_status in ["success", "failed"] and payout.status in ["success", "failed", "reversed"] ->
+        %{
+          ignored: true,
+          reason: "terminal_transfer_status",
+          transfer_status: payout.status,
+          reference: payout.reference
+        }
+
+      desired_status == "reversed" and payout.status == "failed" ->
+        %{
+          ignored: true,
+          reason: "terminal_transfer_status",
+          transfer_status: payout.status,
+          reference: payout.reference
+        }
+
+      true ->
+        finalize_transfer!(payout, event, desired_status)
+
+        %{
+          settled: true,
+          transfer_status: desired_status,
+          reference: payout.reference
+        }
+    end
+  end
+
+  defp lock_transfer(reference) do
+    case Ecto.UUID.cast(reference) do
+      {:ok, uuid} ->
+        case Repo.query(
+               """
+               SELECT id, user_id, reference::text, amount, currency, status::text,
+                      paystack_transfer_code
+               FROM public.cleaner_payouts
+               WHERE reference = $1::uuid
+               LIMIT 1
+               FOR UPDATE
+               """,
+               [uuid]
+             ) do
+          {:ok, %{rows: [[id, user_id, reference, amount, currency, status, transfer_code]]}} ->
+            %{
+              id: id,
+              user_id: user_id,
+              reference: reference,
+              amount_minor: amount_to_integer(amount),
+              currency: normalize_currency(currency),
+              status: status,
+              transfer_code: transfer_code
+            }
+
+          {:ok, %{rows: []}} ->
+            nil
+
+          {:error, error} ->
+            Repo.rollback(error)
+        end
+
+      :error ->
+        nil
+    end
+  end
+
+  defp finalize_transfer!(payout, event, desired_status) do
+    error_message =
+      if desired_status in ["failed", "reversed"] do
+        event.failure_reason || event.gateway_response
+      else
+        nil
+      end
+
+    transfer_code = event.transfer_code || payout.transfer_code
+
+    case Repo.query(
+           """
+           SELECT public.fn_finalize_withdrawal(
+             $1::text,
+             $2::public.withdrawal_status,
+             $3::text,
+             $4::text
+           )
+           """,
+           [payout.reference, desired_status, error_message, transfer_code]
+         ) do
+      {:ok, _} ->
+        :ok
+
+      {:error, error} ->
+        Repo.rollback(error)
+    end
+
+    case Repo.query(
+           """
+           UPDATE public.cleaner_payouts
+           SET status = $2::public.withdrawal_status,
+               paystack_transfer_code = COALESCE($3::text, paystack_transfer_code),
+               error_message = $4::text,
+               updated_at = NOW()
+           WHERE id = $1
+           """,
+           [payout.id, desired_status, transfer_code, error_message]
+         ) do
+      {:ok, %{num_rows: 1}} -> :ok
+      {:ok, %{num_rows: 0}} -> Repo.rollback(:database_unavailable)
+      {:error, error} -> Repo.rollback(error)
     end
   end
 
@@ -457,7 +602,9 @@ defmodule Mithril.Paystack.Webhook do
          currency: currency_field(data),
          status: status_field(data),
          gateway_response: nullable_string(data, "gateway_response"),
-         failure_reason: nullable_string(data, "message")
+         failure_reason:
+           nullable_string(data, "message") || nullable_string(data, "reason"),
+         transfer_code: nullable_string(data, "transfer_code")
        }}
     end
   end
