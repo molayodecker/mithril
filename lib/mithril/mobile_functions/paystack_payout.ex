@@ -2,6 +2,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
   @moduledoc false
 
   alias Mithril.Auth.Phone
+  alias Mithril.DbUuid
   alias Mithril.IdentityVerification
   alias Mithril.MobileFunctions.Paystack
   alias Mithril.MobileGateway
@@ -222,7 +223,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     LIMIT 1
     """
 
-    case Repo.query(sql, [user_id]) do
+    case Repo.query(sql, [DbUuid.dump!(user_id)]) do
       {:ok, %{rows: [[1]]}} ->
         {:ok, true}
 
@@ -337,7 +338,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     """
 
     case Repo.query(sql, [
-           user_id,
+           DbUuid.dump!(user_id),
            fields.payout_type,
            fields.account_number,
            fields.bank_code,
@@ -403,7 +404,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     LIMIT 1
     """
 
-    case Repo.query(sql, [user_id, recipient]) do
+    case Repo.query(sql, [DbUuid.dump!(user_id), recipient]) do
       {:ok, %{rows: [[id, code, currency]]}} ->
         {:ok, %{id: id, recipient_code: code, currency: currency}}
 
@@ -467,7 +468,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     LIMIT 1
     """
 
-    case Repo.query(sql, [user_id, reference]) do
+    case Repo.query(sql, [DbUuid.dump!(user_id), DbUuid.dump!(reference)]) do
       {:ok, %{rows: [[status, transfer_code, transfer_id, error_message]]}} ->
         {:ok,
          %{
@@ -536,11 +537,11 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     """
 
     case Repo.query(sql, [
-           user_id,
+           DbUuid.dump!(user_id),
            fields.amount,
-           fields.reference,
+           DbUuid.dump!(fields.reference),
            fields.recipient,
-           payout_method.id
+           DbUuid.dump!(payout_method.id)
          ]) do
       {:ok, _} ->
         :ok
@@ -585,11 +586,11 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     """
 
     case Repo.query(sql, [
-           user_id,
+           DbUuid.dump!(user_id),
            fields.recipient,
            fields.amount,
            fields.currency,
-           fields.reference,
+           DbUuid.dump!(fields.reference),
            fields.reason,
            metadata
          ]) do
@@ -679,7 +680,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
                  updated_at = NOW()
              WHERE user_id = $1::uuid AND reference = $2::uuid
              """,
-             [user_id, fields.reference, our_status, transfer_code, transfer_id]
+             [DbUuid.dump!(user_id), DbUuid.dump!(fields.reference), our_status, transfer_code, transfer_id]
            ) do
       :ok
     else
@@ -710,7 +711,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     _ =
       Repo.query(
         "SELECT public.fn_finalize_withdrawal($1::text, 'failed'::public.withdrawal_status, $2::text, NULL::text)",
-        [reference, message]
+        [DbUuid.dump!(reference), message]
       )
 
     _ =
@@ -751,7 +752,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     """
 
     case Repo.query(sql, [
-           user_id,
+           DbUuid.dump!(user_id),
            recipient_code,
            fields.type,
            fields.currency,
