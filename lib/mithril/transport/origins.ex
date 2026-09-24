@@ -48,12 +48,12 @@ defmodule Mithril.Transport.Origins do
         coords(Map.get(booking, "lat"), Map.get(booking, "lng"))
 
       true ->
-        case load_profile_origin(Map.get(booking, "customer_id")) do
+        case Router.geocode(Map.get(booking, "address") || "") do
           {:ok, coord} ->
             {:ok, coord}
 
           _ ->
-            case Router.geocode(Map.get(booking, "address") || "") do
+            case load_profile_origin(Map.get(booking, "customer_id")) do
               {:ok, coord} -> {:ok, coord}
               _ -> {:error, :destination_missing}
             end
