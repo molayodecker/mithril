@@ -43,7 +43,10 @@ defmodule Mithril.MobileFunctions.ClaimJob do
 
   defp claim_offered_job(user_id, job_id) do
     case MobileGateway.with_user_transaction(user_id, fn ->
-           case Repo.query("SELECT public.claim_job($1::uuid, $2::uuid)", [DbUuid.dump!(job_id), DbUuid.dump!(user_id)]) do
+           case Repo.query("SELECT public.claim_job($1::uuid, $2::uuid)", [
+                  DbUuid.dump!(job_id),
+                  DbUuid.dump!(user_id)
+                ]) do
              {:ok, %{rows: [[result]]}} when is_map(result) ->
                {:ok, result}
 
