@@ -1,6 +1,7 @@
 defmodule Mithril.OtpDelivery do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.Repo
   alias Mithril.SecretCrypto
 
@@ -214,7 +215,7 @@ defmodule Mithril.OtpDelivery do
       _ =
         Repo.query(
           "UPDATE public.message_delivery_groups SET client_token_fetched_at = $1::timestamptz WHERE id = $2::uuid",
-          [now, group_id]
+          [now, DbUuid.dump!(group_id)]
         )
     end
 
@@ -236,7 +237,7 @@ defmodule Mithril.OtpDelivery do
     LIMIT 1
     """
 
-    case Repo.query(sql, [user_id]) do
+    case Repo.query(sql, [DbUuid.dump!(user_id)]) do
       {:ok, %{rows: [[email]]}} when is_binary(email) ->
         trimmed = String.trim(email)
 
@@ -254,6 +255,16 @@ defmodule Mithril.OtpDelivery do
 
   defp fetch_verified_email(_), do: nil
 
+  defp expired?(%DateTime{} = expires_at),
+    do: DateTime.compare(expires_at, DateTime.utc_now()) != :gt
+
+  defp expired?(%NaiveDateTime{} = expires_at) do
+    expires_at
+    |> DateTime.from_naive!("Etc/UTC")
+    |> DateTime.compare(DateTime.utc_now())
+    |> Kernel.!=(:gt)
+  end
+
   defp expired?(expires_at) when is_binary(expires_at) do
     case DateTime.from_iso8601(expires_at) do
       {:ok, datetime, _} -> DateTime.compare(datetime, DateTime.utc_now()) != :gt
@@ -270,6 +281,7 @@ defmodule Mithril.OtpDelivery do
     end
   end
 
+  defp present?(value) when is_binary(value) and byte_size(value) == 16, do: true
   defp present?(value) when is_binary(value), do: String.trim(value) != ""
   defp present?(_), do: false
 end
