@@ -20,15 +20,19 @@ defmodule Mithril.DirectBookings do
          SELECT jsonb_build_object(
            'id', id,
            'name', name,
+           'category', category::text,
+           'description', description,
+           'features', COALESCE(to_jsonb(features), '[]'::jsonb),
            'priceGhs', price,
            'minimumDurationHours', COALESCE(minimum_duration_hours, 2),
            'maximumDurationHours', COALESCE(maximum_duration_hours, 12),
            'durationIncrementHours', COALESCE(duration_increment_hours, 0.5),
-           'specialtySlug', specialty_slug
+           'specialtySlug', specialty_slug,
+           'weight', COALESCE(weight, 0)
          )
          FROM public.service_types
          WHERE active = true
-         ORDER BY name ASC
+         ORDER BY COALESCE(weight, 0) ASC, name ASC
          """) do
       {:ok, result} -> {:ok, Enum.map(result.rows, &hd/1)}
       {:error, error} -> database_error(error)

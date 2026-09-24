@@ -15,11 +15,16 @@ defmodule MithrilWeb.Schemas.DirectBooking do
         minimumDurationHours: %Schema{type: :number},
         maximumDurationHours: %Schema{type: :number},
         durationIncrementHours: %Schema{type: :number},
-        specialtySlug: %Schema{type: :string, nullable: true}
+        specialtySlug: %Schema{type: :string, nullable: true},
+        category: %Schema{type: :string},
+        description: %Schema{type: :string, nullable: true},
+        features: %Schema{type: :array, items: %Schema{type: :string}, nullable: true},
+        weight: %Schema{type: :integer, minimum: 0}
       },
       required: [
         :id,
         :name,
+        :category,
         :priceGhs,
         :minimumDurationHours,
         :maximumDurationHours,
