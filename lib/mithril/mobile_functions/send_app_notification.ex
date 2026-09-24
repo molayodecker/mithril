@@ -193,8 +193,17 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
           }
         end)
 
-      _ = Req.post("https://exp.host/--/api/v2/push/send", json: messages)
-      length(targets)
+      case Req.post("https://exp.host/--/api/v2/push/send", json: messages) do
+        {:ok, %{status: status, body: %{"data" => tickets}}}
+        when status in 200..299 and is_list(tickets) ->
+          Enum.count(tickets, fn
+            %{"status" => "ok"} -> true
+            _ -> false
+          end)
+
+        _ ->
+          0
+      end
     end
   end
 
