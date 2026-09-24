@@ -177,14 +177,21 @@ defmodule Mithril.Transport.Ranking do
       cleaners when is_list(cleaners) ->
         cleaners
         |> Enum.flat_map(fn
-          %{"id" => id} when is_binary(id) -> [id]
-          %{id: id} when is_binary(id) -> [id]
+          %{"id" => id} when is_binary(id) -> normalize_requested_cleaner_id(id)
+          %{id: id} when is_binary(id) -> normalize_requested_cleaner_id(id)
           _ -> []
         end)
         |> MapSet.new()
 
       _ ->
         MapSet.new()
+    end
+  end
+
+  defp normalize_requested_cleaner_id(id) do
+    case Ecto.UUID.cast(id) do
+      {:ok, uuid} -> [DbUuid.dump!(uuid)]
+      :error -> []
     end
   end
 
