@@ -108,7 +108,12 @@ defmodule Mithril.Transport.Router.LocationIQ do
           |> Enum.map(fn {distance_row, duration_row} ->
             distance = row_value(distance_row)
             duration = row_value(duration_row)
-            %{distance_m: distance || 0.0, duration_s: duration || 0.0}
+
+            if is_number(distance) and is_number(duration) do
+              %{distance_m: distance, duration_s: duration}
+            else
+              nil
+            end
           end)
 
         {:ok, rows}
