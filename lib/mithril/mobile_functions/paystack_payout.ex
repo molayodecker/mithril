@@ -28,7 +28,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
 
   @spec initiate_transfer(String.t(), map()) :: {:ok, map()} | {:error, term()}
   def initiate_transfer(user_id, body) when is_binary(user_id) and is_map(body) do
-    with {:ok, fields} <- parse_initiate_body(body),
+    with {:ok, fields} <- parse_initiate_body(user_id, body),
          :ok <- ensure_paystack_configured(),
          {:ok, has_cleaner} <- user_has_cleaner_role?(user_id),
          :ok <- ensure_cleaner_can_withdraw(has_cleaner),
@@ -126,7 +126,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     end
   end
 
-  defp parse_initiate_body(body) do
+  defp parse_initiate_body(user_id, body) do
     amount_raw = Map.get(body, "amount")
     amount = if is_number(amount_raw), do: round(amount_raw), else: nil
     recipient = body |> Map.get("recipient", "") |> to_string() |> String.trim()
@@ -141,18 +141,23 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
           nil
       end
 
+    currency =
+      body |> Map.get("currency", "GHS") |> to_string() |> String.trim() |> String.upcase()
+
     reference_candidate =
       case Map.get(body, "reference") do
         value when is_binary(value) ->
           trimmed = String.trim(value)
-          if trimmed == "", do: Ecto.UUID.generate(), else: trimmed
+
+          if trimmed == "" do
+            generated_retry_reference(user_id, recipient, amount, currency)
+          else
+            trimmed
+          end
 
         _ ->
-          Ecto.UUID.generate()
+          generated_retry_reference(user_id, recipient, amount, currency)
       end
-
-    currency =
-      body |> Map.get("currency", "GHS") |> to_string() |> String.trim() |> String.upcase()
 
     cond do
       currency not in ["GHS", "USD"] ->
@@ -183,6 +188,22 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
            currency: currency
          }}
     end
+  end
+
+  defp generated_retry_reference(user_id, recipient, amount, currency) do
+    bucket = System.system_time(:second) |> div(900)
+
+    digest =
+      :crypto.hash(
+        :sha256,
+        Enum.join([user_id, recipient, to_string(amount), currency, Integer.to_string(bucket)], "|")
+      )
+      |> Base.encode16(case: :lower)
+
+    <<a::binary-size(8), b::binary-size(4), c::binary-size(4), d::binary-size(4),
+      e::binary-size(12), _::binary>> = digest
+
+    Enum.join([a, b, c, d, e], "-")
   end
 
   defp ensure_paystack_configured do
@@ -472,8 +493,18 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
          :ok <- insert_cleaner_payout(user_id, fields) do
       case call_paystack_transfer(fields) do
         {:ok, data} ->
-          update_payout_success(user_id, fields, data)
-          {:ok, %{ok: true, data: data}}
+          case persist_transfer_result(user_id, fields, data) do
+            :ok ->
+              {:ok, %{ok: true, data: data}}
+
+            {:error, _} ->
+              {:error,
+               {:status, 502,
+                %{
+                  ok: false,
+                  error: "Transfer was submitted but its local status could not be saved"
+                }}}
+          end
 
         {:error, {:status, status, body}} ->
           {:error, {:status, status, body}}
@@ -618,32 +649,49 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     end
   end
 
-  defp update_payout_success(user_id, fields, data) do
+  defp persist_transfer_result(user_id, fields, data) do
     transfer_code = Map.get(data, "transfer_code")
     transfer_id = Map.get(data, "id")
-    paystack_status = Map.get(data, "status", "pending")
-    our_status = if paystack_status == "success", do: "sent", else: "pending"
+    paystack_status = data |> Map.get("status", "pending") |> to_string() |> String.downcase()
+    our_status = if paystack_status == "success", do: "success", else: "processing"
 
-    sql = """
-    UPDATE public.cleaner_payouts
-    SET status = $3::text,
-        paystack_transfer_code = $4::text,
-        paystack_transfer_id = $5::bigint,
-        error_message = NULL,
-        updated_at = NOW()
-    WHERE user_id = $1::uuid AND reference = $2::uuid
-    """
+    with :ok <- maybe_finalize_immediate_success(fields.reference, our_status, transfer_code),
+         {:ok, %{num_rows: 1}} <-
+           Repo.query(
+             """
+             UPDATE public.cleaner_payouts
+             SET status = $3::public.withdrawal_status,
+                 paystack_transfer_code = COALESCE($4::text, paystack_transfer_code),
+                 paystack_transfer_id = COALESCE($5::bigint, paystack_transfer_id),
+                 error_message = NULL,
+                 updated_at = NOW()
+             WHERE user_id = $1::uuid AND reference = $2::uuid
+             """,
+             [user_id, fields.reference, our_status, transfer_code, transfer_id]
+           ) do
+      :ok
+    else
+      _ -> {:error, :payout_status_persist_failed}
+    end
+  end
 
-    _ =
-      Repo.query(sql, [
-        user_id,
-        fields.reference,
-        our_status,
-        transfer_code,
-        transfer_id
-      ])
+  defp maybe_finalize_immediate_success(_reference, "processing", _transfer_code), do: :ok
 
-    :ok
+  defp maybe_finalize_immediate_success(reference, "success", transfer_code) do
+    case Repo.query(
+           """
+           SELECT public.fn_finalize_withdrawal(
+             $1::text,
+             'success'::public.withdrawal_status,
+             NULL::text,
+             $2::text
+           )
+           """,
+           [reference, transfer_code]
+         ) do
+      {:ok, _} -> :ok
+      {:error, _} -> {:error, :finalize_failed}
+    end
   end
 
   defp fail_withdrawal(reference, message) do
