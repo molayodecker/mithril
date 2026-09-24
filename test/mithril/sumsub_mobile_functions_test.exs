@@ -37,6 +37,26 @@ defmodule Mithril.Sumsub.ReconcileTest do
     assert hd(paths) == "/resources/applicants/new-applicant/one"
   end
 
+  test "build_paths prefers the current cleaner application applicant over historical profiles" do
+    paths =
+      SyncLookup.build_paths(
+        [
+          %{
+            "sumsub_applicant_id" => "old-applicant",
+            "sumsub_external_user_id" => "user-old",
+            "reviewed_at" => "2026-09-24T09:30:00Z"
+          }
+        ],
+        %{
+          "sumsub_applicant_id" => "current-applicant",
+          "sumsub_external_user_id" => "user-current"
+        }
+      )
+
+    assert hd(paths) == "/resources/applicants/current-applicant/one"
+    assert Enum.at(paths, 1) == "/resources/applicants/-;externalUserId=user-current/one"
+  end
+
   test "parse_applicant_envelope reads review fields" do
     assert SyncLookup.parse_applicant_envelope(%{
              "id" => "applicant-1",
