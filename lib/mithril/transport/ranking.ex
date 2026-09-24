@@ -1,6 +1,7 @@
 defmodule Mithril.Transport.Ranking do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.RateLimiter
   alias Mithril.Repo
   alias Mithril.Transport.Origins
@@ -34,7 +35,7 @@ defmodule Mithril.Transport.Ranking do
             end
 
           %{
-            cleaner_id: cleaner_id,
+            cleaner_id: DbUuid.encode(cleaner_id),
             distance_km: route.distance_km,
             duration_seconds: route.duration_seconds,
             amount_minor: priced.amount_minor,
