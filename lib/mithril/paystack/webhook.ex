@@ -3,6 +3,7 @@ defmodule Mithril.Paystack.Webhook do
 
   require Logger
 
+  alias Mithril.DbUuid
   alias Mithril.DirectCancellation
   alias Mithril.Repo
 
@@ -290,7 +291,7 @@ defmodule Mithril.Paystack.Webhook do
                LIMIT 1
                FOR UPDATE
                """,
-               [uuid]
+               [DbUuid.dump!(uuid)]
              ) do
           {:ok, %{rows: [[id, user_id, reference, amount, currency, status, transfer_code]]}} ->
             %{
