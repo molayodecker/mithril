@@ -26,7 +26,7 @@ defmodule Mithril.Repo.Migrations.AddBookingMilestoneNotifications do
     create constraint(
              :booking_milestone_notifications,
              :booking_milestone_notifications_status_check,
-             check: "status IN ('dispatching', 'delivered')"
+             check: "status IN ('pending', 'dispatching', 'delivered')"
            )
   end
 end
