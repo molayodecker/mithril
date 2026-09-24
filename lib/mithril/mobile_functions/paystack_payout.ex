@@ -36,6 +36,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
          {:ok, identity} <- resolve_identity(user_id),
          :ok <- ensure_identity_for_withdraw(identity),
          {:ok, payout_method} <- load_payout_method(user_id, fields.recipient),
+         :ok <- ensure_payout_method_currency(payout_method, fields.currency),
          {:ok, wallet} <- wallet_balance(user_id),
          :ok <- ensure_wallet_currency(wallet, fields.currency),
          :ok <- ensure_sufficient_balance(wallet.balance, fields.amount),
@@ -331,6 +332,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
       AND account_number = $3
       AND bank_code = $4
       AND purpose = $5
+      AND upper(coalesce(currency, 'GHS')) = $6
     LIMIT 1
     """
 
@@ -339,7 +341,8 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
            fields.payout_type,
            fields.account_number,
            fields.bank_code,
-           Atom.to_string(fields.purpose)
+           Atom.to_string(fields.purpose),
+           fields.currency
          ]) do
       {:ok, %{rows: [[code]]}} when is_binary(code) ->
         {:ok, code}
@@ -394,15 +397,15 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
 
   defp load_payout_method(user_id, recipient) do
     sql = """
-    SELECT id, recipient_code
+    SELECT id, recipient_code, upper(coalesce(currency, 'GHS'))
     FROM public.payout_methods
     WHERE user_id = $1::uuid AND recipient_code = $2
     LIMIT 1
     """
 
     case Repo.query(sql, [user_id, recipient]) do
-      {:ok, %{rows: [[id, code]]}} ->
-        {:ok, %{id: id, recipient_code: code}}
+      {:ok, %{rows: [[id, code, currency]]}} ->
+        {:ok, %{id: id, recipient_code: code, currency: currency}}
 
       {:ok, %{rows: _}} ->
         {:error, {:status, 404, %{ok: false, error: "Payout method not found"}}}
@@ -413,6 +416,15 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
           %{ok: false, error: db_error_message(error, "Could not verify payout method")}}}
     end
   end
+
+  defp ensure_payout_method_currency(%{currency: currency}, requested_currency)
+       when currency == requested_currency,
+       do: :ok
+
+  defp ensure_payout_method_currency(_payout_method, _requested_currency),
+    do:
+      {:error,
+       {:status, 400, %{ok: false, error: "Payout method currency does not match withdrawal"}}}
 
   defp wallet_balance(user_id) do
     case MobileGateway.call_rpc(user_id, "get_my_wallet_balance", %{}) do
