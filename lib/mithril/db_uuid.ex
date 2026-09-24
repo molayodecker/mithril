@@ -1,7 +1,8 @@
 defmodule Mithril.DbUuid do
   @moduledoc false
 
-  @spec dump!(binary()) :: binary()
+  @spec dump!(binary() | nil) :: binary() | nil
+  def dump!(nil), do: nil
   def dump!(value) when is_binary(value) and byte_size(value) == 16, do: value
 
   def dump!(value) when is_binary(value) do
