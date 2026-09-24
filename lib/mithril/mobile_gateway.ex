@@ -302,6 +302,7 @@ defmodule Mithril.MobileGateway do
 
   defp normalize_rpc_value("numeric", %Decimal{} = value), do: {:ok, value}
   defp normalize_rpc_value("numeric", value) when is_integer(value), do: {:ok, Decimal.new(value)}
+
   defp normalize_rpc_value("numeric", value) when is_float(value),
     do: {:ok, Decimal.from_float(value)}
 
