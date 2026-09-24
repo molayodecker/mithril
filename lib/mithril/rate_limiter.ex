@@ -4,6 +4,8 @@ defmodule Mithril.RateLimiter do
   use GenServer
 
   @type key :: term()
+  @cleanup_interval_ms 300_000
+  @retention_ms 900_000
 
   def start_link(_opts) do
     GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
@@ -16,7 +18,10 @@ defmodule Mithril.RateLimiter do
   end
 
   @impl true
-  def init(_state), do: {:ok, %{}}
+  def init(_state) do
+    schedule_cleanup()
+    {:ok, %{}}
+  end
 
   @impl true
   def handle_call({:check, key, limit, window_ms}, _from, state) do
@@ -34,5 +39,23 @@ defmodule Mithril.RateLimiter do
       updated = [now | recent]
       {:reply, :ok, Map.put(state, key, updated)}
     end
+  end
+
+  @impl true
+  def handle_info(:cleanup, state) do
+    cutoff = System.monotonic_time(:millisecond) - @retention_ms
+
+    pruned =
+      Enum.reduce(state, %{}, fn {key, timestamps}, acc ->
+        recent = Enum.filter(timestamps, &(&1 > cutoff))
+        if recent == [], do: acc, else: Map.put(acc, key, recent)
+      end)
+
+    schedule_cleanup()
+    {:noreply, pruned}
+  end
+
+  defp schedule_cleanup do
+    Process.send_after(self(), :cleanup, @cleanup_interval_ms)
   end
 end
