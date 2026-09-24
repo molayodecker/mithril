@@ -48,7 +48,8 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
              type,
              cleaner_user_id,
              target_user_id
-           ) do
+           ),
+         :ok <- mark_milestone_dispatching(booking_id, type) do
       targets = load_push_targets(target_user_id)
       {:ok, cleaner_name} = load_cleaner_name(cleaner_user_id)
       sent = send_expo_push(targets, type, booking_id, cleaner_name, target_user_id)
@@ -111,8 +112,14 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     sql = """
     INSERT INTO public.booking_milestone_notifications
       (booking_id, milestone, cleaner_id, customer_id, status, inserted_at, updated_at)
-    VALUES ($1::uuid, $2::text, $3::uuid, $4::uuid, 'dispatching', NOW(), NOW())
-    ON CONFLICT (booking_id, milestone) DO NOTHING
+    VALUES ($1::uuid, $2::text, $3::uuid, $4::uuid, 'pending', NOW(), NOW())
+    ON CONFLICT (booking_id, milestone) DO UPDATE
+    SET cleaner_id = EXCLUDED.cleaner_id,
+        customer_id = EXCLUDED.customer_id,
+        inserted_at = NOW(),
+        updated_at = NOW()
+    WHERE booking_milestone_notifications.status = 'pending'
+      AND booking_milestone_notifications.inserted_at < NOW() - INTERVAL '5 minutes'
     RETURNING status
     """
 
@@ -122,7 +129,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
            DbUuid.dump!(cleaner_user_id),
            DbUuid.dump!(target_user_id)
          ]) do
-      {:ok, %{rows: [["dispatching"]]}} ->
+      {:ok, %{rows: [["pending"]]}} ->
         :ok
 
       {:ok, %{rows: _}} ->
@@ -131,6 +138,28 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
       {:error, _} ->
         {:error,
          {:status, 500, %{success: false, error: "Could not reserve milestone notification"}}}
+    end
+  end
+
+  defp mark_milestone_dispatching(booking_id, type) do
+    sql = """
+    UPDATE public.booking_milestone_notifications
+    SET status = 'dispatching', updated_at = NOW()
+    WHERE booking_id = $1::uuid
+      AND milestone = $2::text
+      AND status = 'pending'
+    """
+
+    case Repo.query(sql, [DbUuid.dump!(booking_id), type]) do
+      {:ok, %{num_rows: 1}} ->
+        :ok
+
+      {:ok, %{num_rows: 0}} ->
+        :duplicate
+
+      {:error, _} ->
+        {:error,
+         {:status, 500, %{success: false, error: "Could not start milestone notification"}}}
     end
   end
 
@@ -160,7 +189,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     DELETE FROM public.booking_milestone_notifications
     WHERE booking_id = $1::uuid
       AND milestone = $2::text
-      AND status = 'dispatching'
+      AND status IN ('pending', 'dispatching')
     """
 
     case Repo.query(sql, [DbUuid.dump!(booking_id), type]) do
