@@ -56,20 +56,40 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
       delivered = sent > 0 or channel_results.customer_notified
 
       if delivered do
-        :ok = mark_milestone_delivered(booking_id, type)
+        case mark_milestone_delivered(booking_id, type) do
+          :ok ->
+            {:ok,
+             %{
+               success: true,
+               duplicate: false,
+               sent: sent,
+               reason: nil,
+               customerEmailSms: channel_results.customer_notified,
+               supportEmail: channel_results.support_notified
+             }}
+
+          {:error, _} ->
+            {:error,
+             {:status, 503,
+              %{
+                success: false,
+                error: "Notification was delivered but delivery state could not be confirmed",
+                code: "MILESTONE_DELIVERY_STATE_UNKNOWN"
+              }}}
+        end
       else
         :ok = release_milestone_claim(booking_id, type)
-      end
 
-      {:ok,
-       %{
-         success: true,
-         duplicate: false,
-         sent: sent,
-         reason: if(delivered, do: nil, else: "delivery_failed"),
-         customerEmailSms: channel_results.customer_notified,
-         supportEmail: channel_results.support_notified
-       }}
+        {:ok,
+         %{
+           success: true,
+           duplicate: false,
+           sent: sent,
+           reason: "delivery_failed",
+           customerEmailSms: channel_results.customer_notified,
+           supportEmail: channel_results.support_notified
+         }}
+      end
     else
       :duplicate ->
         {:ok,
@@ -91,14 +111,8 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     sql = """
     INSERT INTO public.booking_milestone_notifications
       (booking_id, milestone, cleaner_id, customer_id, status, inserted_at, updated_at)
-    VALUES ($1::uuid, $2::text, $3::uuid, $4::uuid, 'pending', NOW(), NOW())
-    ON CONFLICT (booking_id, milestone) DO UPDATE
-    SET cleaner_id = EXCLUDED.cleaner_id,
-        customer_id = EXCLUDED.customer_id,
-        inserted_at = NOW(),
-        updated_at = NOW()
-    WHERE booking_milestone_notifications.status = 'pending'
-      AND booking_milestone_notifications.inserted_at < NOW() - INTERVAL '5 minutes'
+    VALUES ($1::uuid, $2::text, $3::uuid, $4::uuid, 'dispatching', NOW(), NOW())
+    ON CONFLICT (booking_id, milestone) DO NOTHING
     RETURNING status
     """
 
@@ -108,7 +122,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
            DbUuid.dump!(cleaner_user_id),
            DbUuid.dump!(target_user_id)
          ]) do
-      {:ok, %{rows: [["pending"]]}} ->
+      {:ok, %{rows: [["dispatching"]]}} ->
         :ok
 
       {:ok, %{rows: _}} ->
@@ -126,12 +140,18 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     SET status = 'delivered', delivered_at = NOW(), updated_at = NOW()
     WHERE booking_id = $1::uuid
       AND milestone = $2::text
-      AND status = 'pending'
+      AND status = 'dispatching'
     """
 
     case Repo.query(sql, [DbUuid.dump!(booking_id), type]) do
-      {:ok, _} -> :ok
-      {:error, _} -> :ok
+      {:ok, %{num_rows: 1}} ->
+        :ok
+
+      {:ok, %{num_rows: 0}} ->
+        {:error, :milestone_state_lost}
+
+      {:error, _} ->
+        {:error, :milestone_state_unavailable}
     end
   end
 
@@ -140,7 +160,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     DELETE FROM public.booking_milestone_notifications
     WHERE booking_id = $1::uuid
       AND milestone = $2::text
-      AND status = 'pending'
+      AND status = 'dispatching'
     """
 
     case Repo.query(sql, [DbUuid.dump!(booking_id), type]) do
