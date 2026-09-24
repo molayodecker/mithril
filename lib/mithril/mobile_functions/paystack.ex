@@ -2,8 +2,7 @@ defmodule Mithril.MobileFunctions.Paystack do
   @moduledoc false
 
   alias Mithril.MobileFunctions.PaystackPayout
-  alias Mithril.MobileGateway
-  alias Mithril.Repo
+  alias Mithril.RateLimiter
 
   @allowed_currencies ~w(GHS NGN USD KES ZAR)
 
@@ -153,24 +152,6 @@ defmodule Mithril.MobileFunctions.Paystack do
   defp provider_message(_), do: "Paystack request failed"
 
   defp rate_limit_resolve(user_id) do
-    case MobileGateway.with_user_transaction(user_id, fn ->
-           case Repo.query(
-                  "SELECT public.record_lookup_attempt($1, $2, $3, $4) AS blocked",
-                  ["paystack_bank_resolve", user_id, 20, 60]
-                ) do
-             {:ok, %{rows: [[true]]}} ->
-               {:error, :rate_limited}
-
-             {:ok, %{rows: [[false]]}} ->
-               {:ok, :ok}
-
-             _ ->
-               {:ok, :ok}
-           end
-         end) do
-      {:ok, :ok} -> :ok
-      {:error, :rate_limited} -> {:error, :rate_limited}
-      _ -> :ok
-    end
+    RateLimiter.check({:paystack_bank_resolve, user_id}, 20, 60_000)
   end
 end
