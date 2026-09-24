@@ -564,7 +564,7 @@ defmodule Mithril.Paystack.WebhookTest do
     end
 
     Repo.query!("""
-    DO $
+    DO $withdrawal$
     BEGIN
       CREATE TYPE public.withdrawal_status AS ENUM (
         'pending', 'processing', 'success', 'failed', 'reversed'
@@ -572,7 +572,7 @@ defmodule Mithril.Paystack.WebhookTest do
     EXCEPTION
       WHEN duplicate_object THEN NULL;
     END
-    $;
+    $withdrawal$;
     """)
 
     Repo.query!("""
@@ -601,7 +601,7 @@ defmodule Mithril.Paystack.WebhookTest do
     )
     RETURNS void
     LANGUAGE plpgsql
-    AS $
+    AS $finalize$
     BEGIN
       UPDATE public.cleaner_payouts
       SET status = p_status,
@@ -610,7 +610,7 @@ defmodule Mithril.Paystack.WebhookTest do
           updated_at = now()
       WHERE reference = p_transfer_reference::uuid;
     END;
-    $;
+    $finalize$;
     """)
 
     Repo.query!("CREATE TABLE public.users (id uuid PRIMARY KEY)")
