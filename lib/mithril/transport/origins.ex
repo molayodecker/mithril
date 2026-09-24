@@ -6,7 +6,9 @@ defmodule Mithril.Transport.Origins do
   alias Mithril.Transport.Router
 
   def load_cleaner_origin(cleaner_id) when is_binary(cleaner_id) do
-    case Repo.query("SELECT * FROM public.get_cleaner_trip_origin($1::uuid)", [DbUuid.dump!(cleaner_id)]) do
+    case Repo.query("SELECT * FROM public.get_cleaner_trip_origin($1::uuid)", [
+           DbUuid.dump!(cleaner_id)
+         ]) do
       {:ok, %{columns: columns, rows: [row]}} ->
         coords_from_row(Map.new(Enum.zip(columns, row)))
 
