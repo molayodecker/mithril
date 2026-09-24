@@ -1,6 +1,7 @@
 defmodule Mithril.Transport.Estimate do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.Repo
   alias Mithril.Transport.Origins
   alias Mithril.Transport.Pricing
@@ -39,7 +40,7 @@ defmodule Mithril.Transport.Estimate do
     LIMIT 1
     """
 
-    case Repo.query(sql, [booking_id]) do
+    case Repo.query(sql, [DbUuid.dump!(booking_id)]) do
       {:ok, %{columns: columns, rows: [row]}} -> {:ok, Map.new(Enum.zip(columns, row))}
       {:ok, %{rows: []}} -> {:error, {:status, 404, %{error: "Booking not found"}}}
       _ -> {:error, {:status, 404, %{error: "Booking not found"}}}
@@ -47,7 +48,8 @@ defmodule Mithril.Transport.Estimate do
   end
 
   defp authorize(user_id, booking) do
-    if user_id in [Map.get(booking, "customer_id"), Map.get(booking, "cleaner_id")] do
+    if DbUuid.equal?(user_id, Map.get(booking, "customer_id")) or
+         DbUuid.equal?(user_id, Map.get(booking, "cleaner_id")) do
       :ok
     else
       {:error, {:status, 403, %{error: "Forbidden"}}}
@@ -116,7 +118,7 @@ defmodule Mithril.Transport.Estimate do
 
   defp present(user_id, booking, route, priced, origin, dest) do
     %{
-      bookingId: Map.get(booking, "id"),
+      bookingId: DbUuid.encode(Map.get(booking, "id")),
       distanceKm: route.distance_km,
       durationSeconds: route.duration_seconds,
       durationLabel: duration_label(route.duration_seconds),
