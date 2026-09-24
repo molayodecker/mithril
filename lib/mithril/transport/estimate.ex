@@ -34,7 +34,15 @@ defmodule Mithril.Transport.Estimate do
 
   defp load_booking(booking_id) do
     sql = """
-    SELECT id, customer_id, cleaner_id, status, address
+    SELECT id, customer_id, cleaner_id, status, address,
+           CASE
+             WHEN location_coordinates IS NULL THEN NULL
+             ELSE ST_Y(location_coordinates::geometry)
+           END AS latitude,
+           CASE
+             WHEN location_coordinates IS NULL THEN NULL
+             ELSE ST_X(location_coordinates::geometry)
+           END AS longitude
     FROM public.bookings
     WHERE id = $1::uuid
     LIMIT 1
