@@ -87,7 +87,9 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
 
       {:ok, %{rows: [[_]]}} ->
         {:error, {:status, 403, %{error: "Forbidden"}}}
-      _ -> {:error, {:status, 403, %{error: "Forbidden"}}}
+
+      _ ->
+        {:error, {:status, 403, %{error: "Forbidden"}}}
     end
   end
 
