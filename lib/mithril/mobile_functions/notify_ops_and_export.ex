@@ -78,8 +78,13 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
     case Repo.query("SELECT customer_id FROM public.subscriptions WHERE id = $1::uuid LIMIT 1", [
            DbUuid.dump!(subscription_id)
          ]) do
-      {:ok, %{rows: [[customer_id]]}} when customer_id == user_id -> :ok
-      {:ok, %{rows: [[_]]}} -> {:error, {:status, 403, %{error: "Forbidden"}}}
+      {:ok, %{rows: [[customer_id]]}} ->
+        if DbUuid.equal?(customer_id, user_id),
+          do: :ok,
+          else: {:error, {:status, 403, %{error: "Forbidden"}}}
+
+      {:ok, %{rows: [[_]]}} ->
+        {:error, {:status, 403, %{error: "Forbidden"}}}
       _ -> {:error, {:status, 403, %{error: "Forbidden"}}}
     end
   end
@@ -183,6 +188,7 @@ end
 defmodule Mithril.MobileFunctions.RequestDataExport do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.Repo
 
   @secret_columns ~w(password_hash encrypted_password feed_url_encrypted)
