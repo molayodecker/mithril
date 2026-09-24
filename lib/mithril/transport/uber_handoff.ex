@@ -1,10 +1,12 @@
 defmodule Mithril.Transport.UberHandoff do
   @moduledoc false
 
+  alias Mithril.DbUuid
+
   @handoff_statuses ~w(confirmed scheduled en_route arrived in_progress)
 
   def maybe_url(user_id, booking, origin, dest) do
-    if user_id == Map.get(booking, "cleaner_id") and
+    if DbUuid.equal?(user_id, Map.get(booking, "cleaner_id")) and
          status(booking) in @handoff_statuses do
       url(origin, dest, Map.get(booking, "address"))
     else
