@@ -116,10 +116,12 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     ON CONFLICT (booking_id, milestone) DO UPDATE
     SET cleaner_id = EXCLUDED.cleaner_id,
         customer_id = EXCLUDED.customer_id,
+        status = 'pending',
+        delivered_at = NULL,
         inserted_at = NOW(),
         updated_at = NOW()
-    WHERE booking_milestone_notifications.status = 'pending'
-      AND booking_milestone_notifications.inserted_at < NOW() - INTERVAL '5 minutes'
+    WHERE booking_milestone_notifications.status IN ('pending', 'dispatching')
+      AND booking_milestone_notifications.updated_at < NOW() - INTERVAL '5 minutes'
     RETURNING status
     """
 

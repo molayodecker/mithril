@@ -51,7 +51,7 @@ defmodule Mithril.Transport.Estimate do
         {:ok, Map.new(Enum.zip(columns, row))}
 
       {:ok, %{rows: []}} ->
-        {:error, {:status, 404, %{error: "Booking not found"}}}
+        not_found()
 
       {:error, _} ->
         {:error, {:status, 500, %{error: "Could not load booking"}}}
@@ -112,9 +112,11 @@ defmodule Mithril.Transport.Estimate do
          DbUuid.equal?(user_id, Map.get(booking, "cleaner_id")) do
       :ok
     else
-      {:error, {:status, 403, %{error: "Forbidden"}}}
+      not_found()
     end
   end
+
+  defp not_found, do: {:error, {:status, 404, %{error: "Booking not found"}}}
 
   defp ensure_assigned(booking) do
     cleaner_id = Map.get(booking, "cleaner_id")
