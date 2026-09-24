@@ -96,7 +96,7 @@ defmodule Mithril.Sumsub.ApplicantLink do
                level_name, country_code, kyc_status,
                submitted_at, sumsub_linked_at, updated_at
              ) VALUES (
-               $1::uuid, 'customer', $2::uuid,
+               $1::uuid, CASE WHEN $2::uuid IS NULL THEN 'customer' ELSE 'cleaner' END, $2::uuid,
                $3, $4, $5, $6, 'started',
                $7::timestamptz, $7::timestamptz, $7::timestamptz
              )
