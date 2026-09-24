@@ -127,6 +127,11 @@ defmodule Mithril.Sumsub.SyncLookup do
     end
   end
 
+  defp parse_time_ms(%DateTime{} = value), do: DateTime.to_unix(value, :millisecond)
+
+  defp parse_time_ms(%NaiveDateTime{} = value),
+    do: NaiveDateTime.diff(value, ~N[1970-01-01 00:00:00], :millisecond)
+
   defp parse_time_ms(raw) when is_binary(raw) do
     case DateTime.from_iso8601(raw) do
       {:ok, datetime, _} -> DateTime.to_unix(datetime, :millisecond)
