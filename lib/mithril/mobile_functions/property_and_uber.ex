@@ -1,6 +1,7 @@
 defmodule Mithril.MobileFunctions.DeletePropertyMedia do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.Repo
   alias Mithril.SupabaseStorage
 
@@ -32,7 +33,7 @@ defmodule Mithril.MobileFunctions.DeletePropertyMedia do
     LIMIT 1
     """
 
-    case Repo.query(sql, [media_id]) do
+    case Repo.query(sql, [DbUuid.dump!(media_id)]) do
       {:ok, %{columns: columns, rows: [row]}} -> {:ok, map_row(columns, row)}
       {:ok, %{rows: []}} -> {:error, {:status, 404, %{error: "Media not found"}}}
       {:error, _} -> {:error, {:status, 500, %{error: "Could not load media"}}}
@@ -43,8 +44,8 @@ defmodule Mithril.MobileFunctions.DeletePropertyMedia do
     property_id = Map.get(media_row, "property_id")
 
     with {:ok, property_row} <- load_property(property_id) do
-      if Map.get(property_row, "customer_id") == user_id and
-           Map.get(media_row, "owner_id") == user_id do
+      if DbUuid.equal?(Map.get(property_row, "customer_id"), user_id) and
+           DbUuid.equal?(Map.get(media_row, "owner_id"), user_id) do
         :ok
       else
         {:error, {:status, 403, %{error: "Forbidden"}}}
@@ -55,7 +56,7 @@ defmodule Mithril.MobileFunctions.DeletePropertyMedia do
   defp load_property(property_id) do
     sql = "SELECT id, customer_id FROM public.properties WHERE id = $1::uuid LIMIT 1"
 
-    case Repo.query(sql, [property_id]) do
+    case Repo.query(sql, [DbUuid.dump!(property_id)]) do
       {:ok, %{columns: columns, rows: [row]}} -> {:ok, map_row(columns, row)}
       _ -> {:error, {:status, 404, %{error: "Property not found"}}}
     end
@@ -85,7 +86,7 @@ defmodule Mithril.MobileFunctions.DeletePropertyMedia do
     media_id = Map.get(media_row, "id")
     storage_path = Map.get(media_row, "storage_path")
 
-    case Repo.query("DELETE FROM public.property_media WHERE id = $1::uuid", [media_id]) do
+    case Repo.query("DELETE FROM public.property_media WHERE id = $1::uuid", [DbUuid.dump!(media_id)]) do
       {:ok, _} ->
         :ok
 
@@ -98,9 +99,9 @@ defmodule Mithril.MobileFunctions.DeletePropertyMedia do
             VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5)
             """,
             [
-              media_id,
-              Map.get(media_row, "property_id"),
-              user_id,
+              DbUuid.dump!(media_id),
+              DbUuid.dump!(Map.get(media_row, "property_id")),
+              DbUuid.dump!(user_id),
               storage_path,
               Exception.message(error)
             ]
