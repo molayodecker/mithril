@@ -68,7 +68,9 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
 
       {:ok, %{rows: [[_]]}} ->
         {:error, {:status, 403, %{error: "Forbidden"}}}
-      _ -> {:error, {:status, 403, %{error: "Forbidden"}}}
+
+      _ ->
+        {:error, {:status, 403, %{error: "Forbidden"}}}
     end
   end
 
@@ -207,7 +209,8 @@ defmodule Mithril.MobileFunctions.RequestDataExport do
        "SELECT id::text AS id, email, phone, created_at, updated_at FROM public.users WHERE id = $1::uuid"},
       {"profiles",
        "SELECT id::text AS id, user_id::text AS user_id, firstname, lastname, fullname, avatar_url, address FROM public.profiles WHERE id = $1::uuid"},
-      {"user_roles", "SELECT user_id::text AS user_id, role_id FROM public.user_roles WHERE user_id = $1::uuid"},
+      {"user_roles",
+       "SELECT user_id::text AS user_id, role_id FROM public.user_roles WHERE user_id = $1::uuid"},
       {"bookings",
        "SELECT id::text AS id, status, payment_status, scheduled_date, scheduled_time, address, created_at FROM public.bookings WHERE customer_id = $1::uuid ORDER BY created_at DESC"},
       {"cleaner_applications",
@@ -240,7 +243,9 @@ defmodule Mithril.MobileFunctions.RequestDataExport do
   end
 
   defp destination_email(user_id) do
-    case Repo.query("SELECT email FROM public.users WHERE id = $1::uuid LIMIT 1", [DbUuid.dump!(user_id)]) do
+    case Repo.query("SELECT email FROM public.users WHERE id = $1::uuid LIMIT 1", [
+           DbUuid.dump!(user_id)
+         ]) do
       {:ok, %{rows: [[email]]}} when is_binary(email) and email != "" ->
         {:ok, email}
 
