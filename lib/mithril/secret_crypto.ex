@@ -7,8 +7,10 @@ defmodule Mithril.SecretCrypto do
   def encrypt(plaintext) when is_binary(plaintext) do
     with {:ok, key} <- encryption_key(),
          iv <- :crypto.strong_rand_bytes(12),
-         cipher <- :crypto.crypto_one_time_aead(:aes_256_gcm, key, iv, plaintext, @aad, true) do
-      {:ok, Base.encode64(iv) <> ":" <> Base.encode64(cipher)}
+         {cipher, tag} <-
+           :crypto.crypto_one_time_aead(:aes_256_gcm, key, iv, plaintext, @aad, 16, true) do
+      {:ok,
+       Enum.join([Base.encode64(iv), Base.encode64(cipher), Base.encode64(tag)], ":")}
     else
       {:error, :not_configured} -> {:error, :not_configured}
     end
@@ -22,13 +24,14 @@ defmodule Mithril.SecretCrypto do
 
   @spec decrypt(String.t()) :: {:ok, String.t()} | {:error, :not_configured | :invalid_payload}
   def decrypt(payload) when is_binary(payload) do
-    case String.split(payload, ":", parts: 2) do
-      [iv_part, cipher_part] ->
+    case String.split(payload, ":", parts: 3) do
+      [iv_part, cipher_part, tag_part] ->
         with {:ok, key} <- encryption_key(),
              {:ok, iv} <- Base.decode64(iv_part),
              {:ok, cipher} <- Base.decode64(cipher_part),
+             {:ok, tag} <- Base.decode64(tag_part),
              plain when is_binary(plain) <-
-               :crypto.crypto_one_time_aead(:aes_256_gcm, key, iv, cipher, @aad, false) do
+               :crypto.crypto_one_time_aead(:aes_256_gcm, key, iv, cipher, @aad, tag, false) do
           {:ok, plain}
         else
           {:error, :not_configured} -> {:error, :not_configured}
