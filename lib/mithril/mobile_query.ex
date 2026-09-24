@@ -115,6 +115,7 @@ defmodule Mithril.MobileQuery do
         verified
         status
         hourly_rate
+        service_categories
         specialties
         rating
         completed_jobs
