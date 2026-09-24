@@ -27,6 +27,7 @@ defmodule Mithril.Transport.Ranking do
       ranked =
         origins
         |> Enum.zip(routes)
+        |> Enum.reject(fn {_origin, route} -> is_nil(route) end)
         |> Enum.map(fn {{cleaner_id, _origin}, route} ->
           priced =
             case Pricing.quote(route.distance_km) do
@@ -233,11 +234,15 @@ defmodule Mithril.Transport.Ranking do
     case Router.matrix(coords, dest) do
       {:ok, rows} ->
         {:ok,
-         Enum.map(rows, fn row ->
-           %{
-             distance_km: Float.round((row.distance_m || 0) / 1000.0, 2),
-             duration_seconds: max(0, trunc(row.duration_s || 0))
-           }
+         Enum.map(rows, fn
+           nil ->
+             nil
+
+           row ->
+             %{
+               distance_km: Float.round(row.distance_m / 1000.0, 2),
+               duration_seconds: max(0, trunc(row.duration_s))
+             }
          end)}
 
       {:error, :not_configured} ->

@@ -33,18 +33,78 @@ defmodule Mithril.Transport.Estimate do
   end
 
   defp load_booking(booking_id) do
+    coordinate_kind = booking_coordinate_kind()
+    latitude = latitude_expr(coordinate_kind)
+    longitude = longitude_expr(coordinate_kind)
+
     sql = """
-    SELECT id, customer_id, cleaner_id, status, address
-    FROM public.bookings
+    SELECT id, customer_id, cleaner_id, status, address,
+           #{latitude} AS latitude,
+           #{longitude} AS longitude
+    FROM public.bookings b
     WHERE id = $1::uuid
     LIMIT 1
     """
 
     case Repo.query(sql, [DbUuid.dump!(booking_id)]) do
-      {:ok, %{columns: columns, rows: [row]}} -> {:ok, Map.new(Enum.zip(columns, row))}
-      {:ok, %{rows: []}} -> {:error, {:status, 404, %{error: "Booking not found"}}}
-      _ -> {:error, {:status, 404, %{error: "Booking not found"}}}
+      {:ok, %{columns: columns, rows: [row]}} ->
+        {:ok, Map.new(Enum.zip(columns, row))}
+
+      {:ok, %{rows: []}} ->
+        not_found()
+
+      {:error, _} ->
+        {:error, {:status, 500, %{error: "Could not load booking"}}}
     end
+  end
+
+  defp booking_coordinate_kind do
+    sql = """
+    SELECT udt_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'bookings'
+      AND column_name = 'location_coordinates'
+    LIMIT 1
+    """
+
+    case Repo.query(sql, []) do
+      {:ok, %{rows: [[type]]}} when type in ["json", "jsonb"] -> :json
+      {:ok, %{rows: [[type]]}} when type in ["geometry", "geography"] -> :spatial
+      {:ok, %{rows: [["point"]]}} -> :point
+      _ -> :none
+    end
+  end
+
+  defp latitude_expr(:json), do: safe_json_coordinate_expr(["latitude", "lat"], -90, 90)
+  defp latitude_expr(:spatial), do: "ST_Y(b.location_coordinates::geometry)"
+  defp latitude_expr(:point), do: "(b.location_coordinates)[1]::double precision"
+  defp latitude_expr(_), do: "NULL::double precision"
+
+  defp longitude_expr(:json),
+    do: safe_json_coordinate_expr(["longitude", "lng"], -180, 180)
+
+  defp longitude_expr(:spatial), do: "ST_X(b.location_coordinates::geometry)"
+  defp longitude_expr(:point), do: "(b.location_coordinates)[0]::double precision"
+  defp longitude_expr(_), do: "NULL::double precision"
+
+  defp safe_json_coordinate_expr(keys, min, max) do
+    value =
+      keys
+      |> Enum.map_join(", ", &"NULLIF(b.location_coordinates->>'#{&1}', '')")
+      |> then(&"COALESCE(#{&1})")
+
+    """
+    CASE
+      WHEN #{value} ~ '^[+-]?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$' THEN
+        CASE
+          WHEN (#{value})::double precision BETWEEN #{min} AND #{max}
+          THEN (#{value})::double precision
+          ELSE NULL::double precision
+        END
+      ELSE NULL::double precision
+    END
+    """
   end
 
   defp authorize(user_id, booking) do
@@ -52,9 +112,11 @@ defmodule Mithril.Transport.Estimate do
          DbUuid.equal?(user_id, Map.get(booking, "cleaner_id")) do
       :ok
     else
-      {:error, {:status, 403, %{error: "Forbidden"}}}
+      not_found()
     end
   end
+
+  defp not_found, do: {:error, {:status, 404, %{error: "Booking not found"}}}
 
   defp ensure_assigned(booking) do
     cleaner_id = Map.get(booking, "cleaner_id")

@@ -31,19 +31,9 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
   def initiate_transfer(user_id, body) when is_binary(user_id) and is_map(body) do
     with {:ok, fields} <- parse_initiate_body(user_id, body),
          :ok <- ensure_paystack_configured(),
-         {:ok, has_cleaner} <- user_has_cleaner_role?(user_id),
-         :ok <- ensure_cleaner_can_withdraw(has_cleaner),
-         :ok <- ensure_cleaner_active(user_id),
-         {:ok, identity} <- resolve_identity(user_id),
-         :ok <- ensure_identity_for_withdraw(identity),
-         {:ok, payout_method} <- load_payout_method(user_id, fields.recipient),
-         :ok <- ensure_payout_method_currency(payout_method, fields.currency),
-         {:ok, wallet} <- wallet_balance(user_id),
-         :ok <- ensure_wallet_currency(wallet, fields.currency),
-         :ok <- ensure_sufficient_balance(wallet.balance, fields.amount),
          {:ok, existing} <- load_existing_payout(user_id, fields.reference),
-         {:ok, result} <-
-           continue_initiate(user_id, fields, payout_method, existing) do
+         :ok <- validate_existing_payout(existing, fields),
+         {:ok, result} <- maybe_continue_existing_payout(user_id, fields, existing) do
       {:ok, result}
     end
   end
@@ -465,20 +455,25 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
 
   defp load_existing_payout(user_id, reference) do
     sql = """
-    SELECT status, paystack_transfer_code, paystack_transfer_id, error_message
+    SELECT status, paystack_transfer_code, paystack_transfer_id, error_message,
+           recipient_code, amount, upper(coalesce(currency, 'GHS'))
     FROM public.cleaner_payouts
     WHERE user_id = $1::uuid AND reference = $2::uuid
     LIMIT 1
     """
 
     case Repo.query(sql, [DbUuid.dump!(user_id), DbUuid.dump!(reference)]) do
-      {:ok, %{rows: [[status, transfer_code, transfer_id, error_message]]}} ->
+      {:ok,
+       %{rows: [[status, transfer_code, transfer_id, error_message, recipient, amount, currency]]}} ->
         {:ok,
          %{
            status: status,
            paystack_transfer_code: transfer_code,
            paystack_transfer_id: transfer_id,
-           error_message: error_message
+           error_message: error_message,
+           recipient: recipient,
+           amount: amount,
+           currency: currency
          }}
 
       {:ok, %{rows: _}} ->
@@ -488,6 +483,48 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
         {:error,
          {:status, 500,
           %{ok: false, error: db_error_message(error, "Could not verify payout state")}}}
+    end
+  end
+
+  defp maybe_continue_existing_payout(_user_id, fields, existing)
+       when not is_nil(existing) do
+    continue_initiate(nil, fields, nil, existing)
+  end
+
+  defp maybe_continue_existing_payout(user_id, fields, nil) do
+    with {:ok, has_cleaner} <- user_has_cleaner_role?(user_id),
+         :ok <- ensure_cleaner_can_withdraw(has_cleaner),
+         :ok <- ensure_cleaner_active(user_id),
+         {:ok, identity} <- resolve_identity(user_id),
+         :ok <- ensure_identity_for_withdraw(identity),
+         {:ok, payout_method} <- load_payout_method(user_id, fields.recipient),
+         :ok <- ensure_payout_method_currency(payout_method, fields.currency),
+         :ok <- ensure_fresh_payout_balance(user_id, fields) do
+      continue_initiate(user_id, fields, payout_method, nil)
+    end
+  end
+
+  defp validate_existing_payout(nil, _fields), do: :ok
+
+  defp validate_existing_payout(existing, fields) do
+    if existing.recipient == fields.recipient and existing.amount == fields.amount and
+         existing.currency == fields.currency do
+      :ok
+    else
+      {:error,
+       {:status, 409,
+        %{
+          ok: false,
+          error: "Withdrawal reference was already used for different transfer details"
+        }}}
+    end
+  end
+
+  defp ensure_fresh_payout_balance(user_id, fields) do
+    with {:ok, wallet} <- wallet_balance(user_id),
+         :ok <- ensure_wallet_currency(wallet, fields.currency),
+         :ok <- ensure_sufficient_balance(wallet.balance, fields.amount) do
+      :ok
     end
   end
 
