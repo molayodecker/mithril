@@ -41,7 +41,14 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     with {:ok, booking} <- load_booking(booking_id),
          :ok <- ensure_cleaner_assignment(booking, cleaner_user_id),
          :ok <- ensure_target_customer(booking, target_user_id),
-         :ok <- ensure_booking_status(booking, type) do
+         :ok <- ensure_booking_status(booking, type),
+         :ok <-
+           claim_milestone_notification(
+             booking_id,
+             type,
+             cleaner_user_id,
+             target_user_id
+           ) do
       targets = load_push_targets(target_user_id)
       {:ok, cleaner_name} = load_cleaner_name(cleaner_user_id)
       sent = send_expo_push(targets, type, booking_id, cleaner_name, target_user_id)
@@ -50,13 +57,53 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
       {:ok,
        %{
          success: true,
+         duplicate: false,
          sent: sent,
          reason: if(sent == 0, do: "no_tokens", else: nil),
          customerEmailSms: channel_results.customer_notified,
          supportEmail: channel_results.support_notified
        }}
     else
-      {:error, {:status, status, body}} -> {:error, {:status, status, body}}
+      :duplicate ->
+        {:ok,
+         %{
+           success: true,
+           duplicate: true,
+           sent: 0,
+           reason: "already_sent",
+           customerEmailSms: false,
+           supportEmail: false
+         }}
+
+      {:error, {:status, status, body}} ->
+        {:error, {:status, status, body}}
+    end
+  end
+
+  defp claim_milestone_notification(booking_id, type, cleaner_user_id, target_user_id) do
+    sql = """
+    INSERT INTO public.booking_milestone_notifications
+      (booking_id, milestone, cleaner_id, customer_id, inserted_at)
+    VALUES ($1::uuid, $2::text, $3::uuid, $4::uuid, NOW())
+    ON CONFLICT (booking_id, milestone) DO NOTHING
+    RETURNING booking_id
+    """
+
+    case Repo.query(sql, [
+           DbUuid.dump!(booking_id),
+           type,
+           DbUuid.dump!(cleaner_user_id),
+           DbUuid.dump!(target_user_id)
+         ]) do
+      {:ok, %{num_rows: 1}} ->
+        :ok
+
+      {:ok, %{num_rows: 0}} ->
+        :duplicate
+
+      {:error, _} ->
+        {:error,
+         {:status, 500, %{success: false, error: "Could not reserve milestone notification"}}}
     end
   end
 
