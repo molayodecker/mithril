@@ -513,7 +513,10 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     else
       {:error,
        {:status, 409,
-        %{ok: false, error: "Withdrawal reference was already used for different transfer details"}}}
+        %{
+          ok: false,
+          error: "Withdrawal reference was already used for different transfer details"
+        }}}
     end
   end
 
