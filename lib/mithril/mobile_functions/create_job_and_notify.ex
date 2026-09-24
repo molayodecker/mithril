@@ -1,6 +1,7 @@
 defmodule Mithril.MobileFunctions.CreateJobAndNotify do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.MobileGateway
   alias Mithril.RateLimiter
   alias Mithril.Repo
@@ -280,7 +281,7 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
     """
 
     case Repo.query(sql, [
-           customer_id,
+           DbUuid.dump!(customer_id),
            fields.address_text,
            fields.lat,
            fields.lng,
@@ -332,7 +333,7 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
              INSERT INTO public.job_offers (job_id, cleaner_id, status)
              VALUES ($1::uuid, $2::uuid, 'sent')
              """,
-             [job_id, cleaner_id]
+             [DbUuid.dump!(job_id), DbUuid.dump!(cleaner_id)]
            ) do
         {:ok, _} ->
           {:cont, {:ok, count + 1}}
@@ -389,7 +390,7 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
     ) tokens
     """
 
-    case Repo.query(sql, [cleaner_ids]) do
+    case Repo.query(sql, [DbUuid.dump_all!(cleaner_ids)]) do
       {:ok, %{rows: rows}} ->
         rows
         |> Enum.map(fn [token] -> token end)
