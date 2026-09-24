@@ -166,12 +166,19 @@ defmodule Mithril.Sumsub.Reconcile do
       case Repo.query(
              """
              UPDATE public.cleaner_applications SET
+               kyc_provider = 'sumsub',
                kyc_status = $1,
                kyc_review_answer = $2,
                kyc_review_status = $3,
                sumsub_applicant_id = COALESCE($4, sumsub_applicant_id),
                sumsub_external_user_id = COALESCE($5, sumsub_external_user_id),
                sumsub_level_name = COALESCE($6, sumsub_level_name),
+               kyc_last_event_at = $7::timestamptz,
+               kyc_completed_at =
+                 CASE
+                   WHEN $1 = 'completed' THEN COALESCE(kyc_completed_at, $7::timestamptz)
+                   ELSE kyc_completed_at
+                 END,
                updated_at = $7::timestamptz
              WHERE id = $8::uuid
              """,
@@ -183,17 +190,20 @@ defmodule Mithril.Sumsub.Reconcile do
 
     cv_status = map_to_cleaner_verification_row_status(review_answer)
 
-    case Repo.query(
-           """
-           INSERT INTO public.cleaner_verifications (id, status)
-           VALUES ($1::uuid, $2)
-           ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status
-           """,
-           [DbUuid.dump!(user_id), cv_status]
-         ) do
-      {:ok, _} -> persist_errors
-      {:error, error} -> persist_errors ++ ["cleaner_verifications: #{Exception.message(error)}"]
-    end
+    persist_errors =
+      case Repo.query(
+             """
+             INSERT INTO public.cleaner_verifications (id, status)
+             VALUES ($1::uuid, $2)
+             ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status
+             """,
+             [DbUuid.dump!(user_id), cv_status]
+           ) do
+        {:ok, _} -> persist_errors
+        {:error, error} -> persist_errors ++ ["cleaner_verifications: #{Exception.message(error)}"]
+      end
+
+    maybe_mirror_cleaner_data(persist_errors, user_id, review_answer, now)
   end
 
   defp update_kyc_profile(
@@ -234,6 +244,11 @@ defmodule Mithril.Sumsub.Reconcile do
              kyc_status = $1,
              review_answer = $2,
              reviewed_at = COALESCE($3::timestamptz, reviewed_at),
+             completed_at =
+               CASE
+                 WHEN $1 = 'completed' THEN COALESCE(completed_at, $8::timestamptz)
+                 ELSE completed_at
+               END,
              sumsub_applicant_id = COALESCE(NULLIF($4, ''), sumsub_applicant_id),
              sumsub_external_user_id = COALESCE($5, sumsub_external_user_id),
              level_name = COALESCE($6, level_name),
@@ -255,6 +270,26 @@ defmodule Mithril.Sumsub.Reconcile do
          ) do
       {:ok, _} -> :ok
       {:error, error} -> {:error, Exception.message(error)}
+    end
+  end
+
+  defp maybe_mirror_cleaner_data(persist_errors, user_id, review_answer, now) do
+    if review_answer |> to_string() |> String.upcase() == "GREEN" do
+      case Repo.query(
+             """
+             UPDATE public.cleaner_data
+             SET verified = true,
+                 is_background_checked = true,
+                 updated_at = $2::timestamptz
+             WHERE user_id = $1::uuid
+             """,
+             [DbUuid.dump!(user_id), now]
+           ) do
+        {:ok, _} -> persist_errors
+        {:error, error} -> persist_errors ++ ["cleaner_data: #{Exception.message(error)}"]
+      end
+    else
+      persist_errors
     end
   end
 
