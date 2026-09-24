@@ -76,32 +76,42 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
 
   defp normalize_start_time(start_time) do
     case Regex.run(@time_regex, start_time) do
-      [_, hour_text, minute_text, second_text] ->
-        hour = String.to_integer(hour_text)
-        minute = String.to_integer(minute_text)
-        second = if second_text in [nil, ""], do: 0, else: String.to_integer(second_text)
+      [_, hour_text, minute_text] ->
+        build_start_time(hour_text, minute_text, "0")
 
-        if hour > 23 or minute > 59 or second > 59 do
-          {:error, {:status, 400, %{error: "start_time is out of range"}}}
-        else
-          {:ok,
-           String.pad_leading(Integer.to_string(hour), 2, "0") <>
-             ":" <>
-             String.pad_leading(Integer.to_string(minute), 2, "0") <>
-             ":" <>
-             String.pad_leading(Integer.to_string(second), 2, "0")}
-        end
+      [_, hour_text, minute_text, second_text] ->
+        build_start_time(hour_text, minute_text, second_text)
 
       _ ->
         {:error, {:status, 400, %{error: "start_time must be HH:mm or HH:mm:ss"}}}
     end
   end
 
+  defp build_start_time(hour_text, minute_text, second_text) do
+    hour = String.to_integer(hour_text)
+    minute = String.to_integer(minute_text)
+    second = if second_text in [nil, ""], do: 0, else: String.to_integer(second_text)
+
+    if hour > 23 or minute > 59 or second > 59 do
+      {:error, {:status, 400, %{error: "start_time is out of range"}}}
+    else
+      {:ok,
+       String.pad_leading(Integer.to_string(hour), 2, "0") <>
+         ":" <>
+         String.pad_leading(Integer.to_string(minute), 2, "0") <>
+         ":" <>
+         String.pad_leading(Integer.to_string(second), 2, "0")}
+    end
+  end
+
   defp parse_duration(duration_hours) do
     duration =
       case duration_hours do
-        value when is_integer(value) -> value
-        value when is_float(value) -> trunc(value)
+        value when is_integer(value) ->
+          value
+
+        value when is_float(value) ->
+          trunc(value)
 
         value when is_binary(value) ->
           case Integer.parse(String.trim(value)) do
@@ -134,7 +144,7 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
   defp parse_price(price) do
     price_num = parse_number(price)
 
-    if is_number(price_num) and price_num >= 0 do
+    if is_number(price_num) and price_num >= 1 and price_num <= 50_000 do
       {:ok, price_num}
     else
       {:error, {:status, 400, %{error: "Invalid price"}}}
@@ -162,9 +172,14 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
   defp parse_offer_expiry(raw) do
     value =
       case raw do
-        nil -> @default_offer_expires_seconds
-        n when is_integer(n) -> n
-        n when is_float(n) -> trunc(n)
+        nil ->
+          @default_offer_expires_seconds
+
+        n when is_integer(n) ->
+          n
+
+        n when is_float(n) ->
+          trunc(n)
 
         n when is_binary(n) ->
           case Integer.parse(String.trim(n)) do
@@ -228,8 +243,8 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
       {:ok, %{rows: [[job_id]]}} ->
         {:ok, job_id}
 
-      {:error, error} ->
-        {:error, {:status, 500, %{error: Exception.message(error)}}}
+      {:error, _} ->
+        {:error, {:status, 500, %{error: "Could not create job"}}}
     end
   end
 
@@ -256,8 +271,8 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
 
         {:ok, ids}
 
-      {:error, error} ->
-        {:error, {:status, 500, %{error: Exception.message(error)}}}
+      {:error, _} ->
+        {:error, {:status, 500, %{error: "Could not find nearby cleaners"}}}
     end
   end
 

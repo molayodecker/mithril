@@ -72,7 +72,8 @@ defmodule Mithril.MobileFunctions.SumsubTokenTest do
     user_id = Ecto.UUID.generate()
 
     assert {:error, {:status, 500, body}} = SumsubToken.call(user_id, %{})
-    assert body.error == "Missing secrets"
+    assert body.error == "Identity verification is not configured"
+    refute Map.has_key?(body, :missing)
   end
 end
 
@@ -82,7 +83,10 @@ defmodule Mithril.Posthog.ReadFlagTest do
   alias Mithril.Posthog
 
   test "read_boolean_flag supports flags map" do
-    assert Posthog.read_boolean_flag(%{"flags" => %{"booking_uber_transportation_v1" => true}}, "booking_uber_transportation_v1")
+    assert Posthog.read_boolean_flag(
+             %{"flags" => %{"booking_uber_transportation_v1" => true}},
+             "booking_uber_transportation_v1"
+           )
   end
 end
 
@@ -98,6 +102,35 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotifyTest do
              CreateJobAndNotify.call(user_id, %{"lat" => 5.0, "lng" => -0.2})
 
     assert body.error =~ "address_text"
+  end
+
+  test "rejects a zero or negative job price" do
+    user_id = Ecto.UUID.generate()
+
+    assert {:error, {:status, 400, %{error: "Invalid price"}}} =
+             CreateJobAndNotify.call(user_id, valid_job_body(%{"price" => 0}))
+  end
+
+  test "rejects an unbounded client-supplied job price" do
+    user_id = Ecto.UUID.generate()
+
+    assert {:error, {:status, 400, %{error: "Invalid price"}}} =
+             CreateJobAndNotify.call(user_id, valid_job_body(%{"price" => 500_001}))
+  end
+
+  defp valid_job_body(overrides) do
+    Map.merge(
+      %{
+        "address_text" => "East Legon",
+        "lat" => 5.65,
+        "lng" => -0.18,
+        "price" => 80,
+        "scheduled_date" => "2026-10-01",
+        "start_time" => "10:00",
+        "duration_hours" => 2
+      },
+      overrides
+    )
   end
 end
 

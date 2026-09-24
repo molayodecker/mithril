@@ -35,7 +35,7 @@ defmodule Mithril.MobileFunctions.DeletePropertyMedia do
     case Repo.query(sql, [media_id]) do
       {:ok, %{columns: columns, rows: [row]}} -> {:ok, map_row(columns, row)}
       {:ok, %{rows: []}} -> {:error, {:status, 404, %{error: "Media not found"}}}
-      {:error, error} -> {:error, {:status, 500, %{error: Exception.message(error)}}}
+      {:error, _} -> {:error, {:status, 500, %{error: "Could not load media"}}}
     end
   end
 
@@ -43,7 +43,8 @@ defmodule Mithril.MobileFunctions.DeletePropertyMedia do
     property_id = Map.get(media_row, "property_id")
 
     with {:ok, property_row} <- load_property(property_id) do
-      if Map.get(property_row, "customer_id") == user_id and Map.get(media_row, "owner_id") == user_id do
+      if Map.get(property_row, "customer_id") == user_id and
+           Map.get(media_row, "owner_id") == user_id do
         :ok
       else
         {:error, {:status, 403, %{error: "Forbidden"}}}
@@ -67,9 +68,12 @@ defmodule Mithril.MobileFunctions.DeletePropertyMedia do
       {:error, {:status, 500, %{error: "Media path missing"}}}
     else
       case SupabaseStorage.remove_object(@bucket, path) do
-        :ok -> :ok
+        :ok ->
+          :ok
+
         {:error, :failed} ->
-          {:error, {:status, 502, %{error: "Could not delete media file", code: "storage_delete_failed"}}}
+          {:error,
+           {:status, 502, %{error: "Could not delete media file", code: "storage_delete_failed"}}}
 
         {:error, :not_configured} ->
           {:error, {:status, 500, %{error: "Server misconfigured"}}}
@@ -119,7 +123,6 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
 
   alias Mithril.Posthog
   alias Mithril.Repo
-  alias Mithril.Uber.TransportationReleaseGate
   alias Mithril.Uber.TripEstimate
 
   @quote_ttl_ms 15 * 60 * 1000
@@ -131,48 +134,50 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
         Posthog.uber_release_gate_distinct_id()
       )
 
-    with :ok <- sync_gate(enabled),
-         true <- enabled,
+    with true <- enabled,
          {:ok, request} <- TripEstimate.parse_request(body),
          :ok <- rate_limit(user_id),
          :ok <- ensure_cleaner_active(request.cleaner_id),
          {:ok, origin} <- load_cleaner_origin(request.cleaner_id),
          estimate_input <-
-           Map.merge(request, %{cleaner_latitude: origin.latitude, cleaner_longitude: origin.longitude}),
+           Map.merge(request, %{
+             cleaner_latitude: origin.latitude,
+             cleaner_longitude: origin.longitude
+           }),
          {:ok, estimate} <- safe_fetch_estimate(estimate_input),
          {:ok, response} <- maybe_persist_quote(user_id, estimate_input, estimate) do
       {:ok, response}
     else
       false ->
         {:error,
-         {:status, 404, %{error: "Cleaner transportation is currently unavailable", code: "feature_disabled"}}}
+         {:status, 404,
+          %{error: "Cleaner transportation is currently unavailable", code: "feature_disabled"}}}
 
       {:error, message} when is_binary(message) ->
         {:error, {:status, 400, %{error: message}}}
 
       {:error, :rate_limited} ->
-        {:error, {:status, 429, %{error: "Too many transportation estimate requests. Try again shortly."}}}
+        {:error,
+         {:status, 429, %{error: "Too many transportation estimate requests. Try again shortly."}}}
 
       {:error, :cleaner_inactive} ->
         {:error,
-         {:status, 422, %{error: "Cleaner is not available for transportation estimates", code: "cleaner_inactive"}}}
+         {:status, 422,
+          %{
+            error: "Cleaner is not available for transportation estimates",
+            code: "cleaner_inactive"
+          }}}
 
       {:error, :cleaner_location_missing} ->
         {:error,
          {:status, 422,
-          %{error: "Cleaner does not have a usable profile location", code: "cleaner_location_missing"}}}
+          %{
+            error: "Cleaner does not have a usable profile location",
+            code: "cleaner_location_missing"
+          }}}
 
       {:error, {:status, status, body}} ->
         {:error, {:status, status, body}}
-    end
-  end
-
-  defp sync_gate(enabled) do
-    case TransportationReleaseGate.sync(enabled) do
-      :ok -> :ok
-      {:error, _} ->
-        {:error,
-         {:status, 503, %{error: "Could not synchronize transportation kill switch", code: "release_gate_sync_failed"}}}
     end
   end
 
@@ -203,7 +208,9 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
     case Repo.query("SELECT status FROM public.cleaner_data WHERE user_id = $1::uuid LIMIT 1", [
            cleaner_id
          ]) do
-      {:ok, %{rows: [["active"]]}} -> :ok
+      {:ok, %{rows: [["active"]]}} ->
+        :ok
+
       {:ok, %{rows: [[status]]}} when is_binary(status) ->
         if String.downcase(status) == "active", do: :ok, else: {:error, :cleaner_inactive}
 
@@ -226,7 +233,8 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
       estimate
       |> Map.new(fn {key, value} -> {key, value} end)
 
-    if estimate.currency_code == "GHS" and estimate.customer_fee_major && estimate.customer_fee_major > 0 do
+    if (estimate.currency_code == "GHS" and estimate.customer_fee_major) &&
+         estimate.customer_fee_major > 0 do
       quote_expires_at = DateTime.utc_now() |> DateTime.add(@quote_ttl_ms, :millisecond)
       amount_minor = max(1, round(estimate.customer_fee_major * 100))
 

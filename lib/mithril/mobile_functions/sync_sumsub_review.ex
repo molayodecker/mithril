@@ -25,17 +25,22 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
           case fetch_applicant_json(paths) do
             {:ok, applicant_json} ->
               parsed = SyncLookup.parse_applicant_envelope(applicant_json)
-              build_sync_payload(user_id, subject, cleaner_app, cleaner_application_id, profiles, parsed, applicant_json)
+
+              build_sync_payload(
+                user_id,
+                subject,
+                cleaner_app,
+                cleaner_application_id,
+                profiles,
+                parsed,
+                applicant_json
+              )
 
             {:not_found} ->
               {:ok, not_found_payload(subject, cleaner_application_id)}
 
-            {:error, status, details} ->
-              http_status = if status >= 400 and status < 600, do: status, else: 502
-
-              {:error,
-               {:status, http_status,
-                %{error: "Sumsub request failed", status: status, details: details}}}
+            {:error, _status, _details} ->
+              {:error, {:status, 502, %{error: "Could not sync identity review"}}}
           end
       end
     end
@@ -47,12 +52,7 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
         :ok
 
       {:error, :missing_credentials} ->
-        {:error,
-         {:status, 500,
-          %{
-            error: "Missing Sumsub credentials",
-            details: "Set SUMSUB_APP_TOKEN and SUMSUB_SECRET_KEY secrets"
-          }}}
+        {:error, {:status, 500, %{error: "Identity verification is not configured"}}}
     end
   end
 
@@ -60,7 +60,7 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
     case CleanerApplicationLookup.find_latest(%{user_id: user_id}) do
       {:ok, row} -> {:ok, row}
       {:error, :not_found} -> {:ok, nil}
-      {:error, error} -> {:error, {:status, 502, %{error: "Database error", details: inspect(error)}}}
+      {:error, _} -> {:error, {:status, 502, %{error: "Could not load identity records"}}}
     end
   end
 
@@ -78,8 +78,8 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
       {:ok, %{columns: columns, rows: rows}} ->
         {:ok, Enum.map(rows, fn row -> Map.new(Enum.zip(columns, row)) end)}
 
-      {:error, error} ->
-        {:error, {:status, 502, %{error: "Database error", details: Exception.message(error)}}}
+      {:error, _} ->
+        {:error, {:status, 502, %{error: "Could not load identity records"}}}
     end
   end
 

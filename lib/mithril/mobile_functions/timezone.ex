@@ -38,7 +38,7 @@ defmodule Mithril.MobileFunctions.Timezone do
   defp google_maps_api_key do
     case Application.get_env(:mithril, :google_maps_api_key) do
       key when is_binary(key) and key != "" -> {:ok, key}
-      _ -> {:error, {:status, 500, %{error: "GOOGLE_MAPS_API_KEY is not configured"}}}
+      _ -> {:error, {:status, 500, %{error: "Timezone lookup is not configured"}}}
     end
   end
 
@@ -56,19 +56,14 @@ defmodule Mithril.MobileFunctions.Timezone do
       {:ok, %{status: status, body: %{"status" => "OK"} = data}} when status in 200..299 ->
         {:ok, %{timezone: data["timeZoneId"], name: data["timeZoneName"]}}
 
-      {:ok, %{status: status, body: %{"status" => status_code} = data}} when status in 200..299 ->
-        {:error,
-         {:status, 400,
-          %{
-            error: status_code,
-            message: Map.get(data, "errorMessage")
-          }}}
+      {:ok, %{status: status, body: %{"status" => _status_code}}} when status in 200..299 ->
+        {:error, {:status, 400, %{error: "Could not resolve timezone"}}}
 
-      {:ok, %{status: status, body: body}} ->
-        {:error, {:status, status, %{error: "google_timezone_error", message: inspect(body)}}}
+      {:ok, %{status: _status, body: _body}} ->
+        {:error, {:status, 502, %{error: "Timezone lookup failed"}}}
 
-      {:error, reason} ->
-        {:error, {:status, 500, %{error: "Internal Server Error", message: inspect(reason)}}}
+      {:error, _reason} ->
+        {:error, {:status, 502, %{error: "Timezone lookup failed"}}}
     end
   end
 end

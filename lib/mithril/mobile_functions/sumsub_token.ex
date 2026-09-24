@@ -26,21 +26,10 @@ defmodule Mithril.MobileFunctions.SumsubToken do
        }}
     else
       {:error, :missing_credentials} ->
-        {:error,
-         {:status, 500,
-          %{
-            error: "Missing secrets",
-            missing: missing_secret_names()
-          }}}
+        {:error, {:status, 500, %{error: "Identity verification is not configured"}}}
 
-      {:error, {:status, status, details}} ->
-        {:error,
-         {:status, 502,
-          %{
-            error: "Sumsub token error",
-            status: status,
-            details: details
-          }}}
+      {:error, {:status, _status, _details}} ->
+        {:error, {:status, 502, %{error: "Could not start identity verification"}}}
     end
   end
 
@@ -49,27 +38,6 @@ defmodule Mithril.MobileFunctions.SumsubToken do
       {:ok, _} -> :ok
       {:error, :missing_credentials} -> {:error, :missing_credentials}
     end
-  end
-
-  defp missing_secret_names do
-    missing = []
-
-    missing =
-      if present?(Application.get_env(:mithril, :sumsub_app_token)),
-        do: missing,
-        else: missing ++ ["SUMSUB_APP_TOKEN"]
-
-    missing =
-      if present?(Application.get_env(:mithril, :sumsub_secret_key)),
-        do: missing,
-        else: missing ++ ["SUMSUB_SECRET_KEY"]
-
-    missing =
-      if present?(Application.get_env(:mithril, :sumsub_level_name)),
-        do: missing,
-        else: missing ++ ["SUMSUB_LEVEL_NAME"]
-
-    missing
   end
 
   defp ttl_in_secs(body) do
@@ -81,8 +49,12 @@ defmodule Mithril.MobileFunctions.SumsubToken do
 
     value =
       case raw do
-        n when is_integer(n) -> n
-        n when is_float(n) -> trunc(n)
+        n when is_integer(n) ->
+          n
+
+        n when is_float(n) ->
+          trunc(n)
+
         n when is_binary(n) ->
           case Integer.parse(String.trim(n)) do
             {parsed, _} -> parsed

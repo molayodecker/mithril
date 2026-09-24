@@ -1,3 +1,36 @@
+defmodule Mithril.MobileFunctions.GatewayAuthTest do
+  use ExUnit.Case, async: true
+
+  alias Mithril.MobileFunctions
+  alias Mithril.MobileFunctions.UberTransportationReleaseGate
+
+  test "forbids OTP theft and open notification relay on the authenticated invoke path" do
+    user_id = Ecto.UUID.generate()
+
+    assert {:error, :forbidden} =
+             MobileFunctions.invoke(user_id, "fetch-otp-delivery-token", %{
+               "phone" => "+233201234567"
+             })
+
+    assert {:error, :forbidden} =
+             MobileFunctions.invoke(user_id, "resend-otp-via-channel", %{
+               "phone" => "+233201234567"
+             })
+
+    assert {:error, :forbidden} =
+             MobileFunctions.invoke(user_id, "send-notification", %{
+               "userId" => Ecto.UUID.generate()
+             })
+  end
+
+  test "uber release gate is a read-only flag lookup" do
+    user_id = Ecto.UUID.generate()
+
+    assert {:ok, %{enabled: enabled}} = UberTransportationReleaseGate.call(user_id, %{})
+    assert is_boolean(enabled)
+  end
+end
+
 defmodule Mithril.MobileFunctions.TimezoneTest do
   use ExUnit.Case, async: true
 

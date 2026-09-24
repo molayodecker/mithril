@@ -2,7 +2,6 @@ defmodule Mithril.MobileFunctions.UberTransportationReleaseGate do
   @moduledoc false
 
   alias Mithril.Posthog
-  alias Mithril.Uber.TransportationReleaseGate
 
   @spec call(String.t(), map()) :: {:ok, map()} | {:error, term()}
   def call(_user_id, _body) do
@@ -12,18 +11,7 @@ defmodule Mithril.MobileFunctions.UberTransportationReleaseGate do
         Posthog.uber_release_gate_distinct_id()
       )
 
-    case TransportationReleaseGate.sync(enabled) do
-      :ok -> {:ok, %{enabled: enabled}}
-      {:error, error} ->
-        {:error,
-         {:status, 503,
-          %{
-            error: "Could not synchronize transportation kill switch",
-            code: "release_gate_sync_failed",
-            enabled: enabled,
-            details: inspect(error)
-          }}}
-    end
+    {:ok, %{enabled: enabled}}
   end
 end
 

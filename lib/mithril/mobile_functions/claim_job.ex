@@ -36,8 +36,8 @@ defmodule Mithril.MobileFunctions.ClaimJob do
           {:error, :no_result} ->
             {:error, {:status, 500, %{success: false, error: "No result"}}}
 
-          {:error, %Postgrex.Error{message: message}} when is_binary(message) ->
-            {:error, {:status, 400, %{success: false, error: message}}}
+          {:error, %Postgrex.Error{}} ->
+            {:error, {:status, 400, %{success: false, error: "claim_failed"}}}
 
           {:error, _} ->
             {:error, {:status, 500, %{success: false, error: "No result"}}}

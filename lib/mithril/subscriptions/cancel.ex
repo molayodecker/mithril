@@ -34,7 +34,7 @@ defmodule Mithril.Subscriptions.Cancel do
     case Repo.query(sql, [subscription_id]) do
       {:ok, %{columns: columns, rows: [row]}} -> {:ok, row_to_map(columns, row)}
       {:ok, %{rows: []}} -> {:error, {:status, 404, %{error: "Subscription not found"}}}
-      {:error, error} -> {:error, {:status, 500, %{error: Exception.message(error)}}}
+      {:error, _} -> {:error, {:status, 500, %{error: "Could not load subscription"}}}
     end
   end
 
@@ -86,7 +86,8 @@ defmodule Mithril.Subscriptions.Cancel do
       Enum.filter(siblings, fn sibling ->
         sibling_id = Map.get(sibling, "id")
 
-        sibling_id != primary_id and Map.get(sibling, "customer_id") == Map.get(primary, "customer_id") and
+        sibling_id != primary_id and
+          Map.get(sibling, "customer_id") == Map.get(primary, "customer_id") and
           cancellable?(Map.get(sibling, "status")) and
           normalize_address(Map.get(sibling, "address")) == primary_address
       end)
@@ -94,7 +95,9 @@ defmodule Mithril.Subscriptions.Cancel do
   end
 
   defp run_cascade(primary, []),
-    do: {:ok, %{outcome: :already_cancelled, cancelled_ids: [Map.get(primary, "id")], cascaded_ids: []}}
+    do:
+      {:ok,
+       %{outcome: :already_cancelled, cancelled_ids: [Map.get(primary, "id")], cascaded_ids: []}}
 
   defp run_cascade(primary, to_cancel) do
     needs_paystack =
@@ -145,7 +148,8 @@ defmodule Mithril.Subscriptions.Cancel do
          }}
 
       {:error, message} ->
-        {:error, {:status, 502, %{error: message, cancelled_ids: [subscription_id], cascaded_ids: []}}}
+        {:error,
+         {:status, 502, %{error: message, cancelled_ids: [subscription_id], cascaded_ids: []}}}
     end
   end
 
@@ -153,6 +157,7 @@ defmodule Mithril.Subscriptions.Cancel do
     message =
       if result.cascaded_ids != [] do
         count = length(result.cascaded_ids)
+
         "Subscription cancelled (including #{count} connected plan#{if count == 1, do: "", else: "s"} at the same address)"
       else
         "Subscription cancelled"
@@ -203,8 +208,11 @@ defmodule Mithril.Subscriptions.Cancel do
 
   defp maybe_paystack_secret(true) do
     case Paystack.secret_key() do
-      {:ok, secret} -> {:ok, secret}
-      {:error, :payment_not_configured} -> {:error, {:status, 500, %{error: "PAYSTACK_SECRET_KEY is not configured"}}}
+      {:ok, secret} ->
+        {:ok, secret}
+
+      {:error, :payment_not_configured} ->
+        {:error, {:status, 500, %{error: "Payment is not configured"}}}
     end
   end
 
@@ -218,7 +226,8 @@ defmodule Mithril.Subscriptions.Cancel do
         action = Map.get(payload, "action") |> to_string() |> String.downcase()
 
         if action == "error" do
-          {:error, Map.get(payload, "error", "Failed to cancel subscription locally") |> to_string()}
+          {:error,
+           Map.get(payload, "error", "Failed to cancel subscription locally") |> to_string()}
         else
           :ok
         end
@@ -227,8 +236,8 @@ defmodule Mithril.Subscriptions.Cancel do
         _ = payload
         :ok
 
-      {:error, error} ->
-        {:error, Exception.message(error)}
+      {:error, _} ->
+        {:error, "Could not cancel subscription"}
     end
   end
 

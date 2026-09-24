@@ -34,7 +34,8 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
         with :ok <- verify_booking_owner(booking_id, user_id),
              :ok <- verify_subscription_owner(subscription_id, user_id),
              :ok <- enforce_rate_limit(user_id),
-             {:ok, idempotency_key} <- insert_alert(user_id, body, booking_id, subscription_id, reason) do
+             {:ok, idempotency_key} <-
+               insert_alert(user_id, body, booking_id, subscription_id, reason) do
           {:ok,
            %{
              received: true,
@@ -103,7 +104,19 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
 
   defp insert_alert(user_id, body, booking_id, subscription_id, reason) do
     idempotency_key =
-      :crypto.hash(:sha256, Enum.join([user_id, booking_id, subscription_id, reason, Integer.to_string(System.system_time(:millisecond))], "|"))
+      :crypto.hash(
+        :sha256,
+        Enum.join(
+          [
+            user_id,
+            booking_id,
+            subscription_id,
+            reason,
+            Integer.to_string(System.system_time(:millisecond))
+          ],
+          "|"
+        )
+      )
       |> Base.encode16(case: :lower)
 
     platform = body |> Map.get("platform", "") |> to_string() |> String.slice(0, 40)
@@ -209,6 +222,8 @@ defmodule Mithril.MobileFunctions.RequestDataExport do
 
   alias Mithril.Repo
 
+  @secret_columns ~w(password_hash encrypted_password feed_url_encrypted)
+
   def call(user_id, _body) do
     with {:ok, payload} <- build_export(user_id),
          {:ok, email} <- destination_email(user_id),
@@ -222,17 +237,22 @@ defmodule Mithril.MobileFunctions.RequestDataExport do
       {"users", "SELECT * FROM public.users WHERE id = $1::uuid"},
       {"profiles", "SELECT * FROM public.profiles WHERE id = $1::uuid"},
       {"user_roles", "SELECT * FROM public.user_roles WHERE user_id = $1::uuid"},
-      {"bookings", "SELECT * FROM public.bookings WHERE customer_id = $1::uuid ORDER BY created_at DESC"},
-      {"cleaner_applications", "SELECT * FROM public.cleaner_applications WHERE user_id = $1::uuid ORDER BY created_at DESC"},
-      {"kyc_profiles", "SELECT * FROM public.kyc_profiles WHERE user_id = $1::uuid ORDER BY updated_at DESC"}
+      {"bookings",
+       "SELECT * FROM public.bookings WHERE customer_id = $1::uuid ORDER BY created_at DESC"},
+      {"cleaner_applications",
+       "SELECT * FROM public.cleaner_applications WHERE user_id = $1::uuid ORDER BY created_at DESC"},
+      {"kyc_profiles",
+       "SELECT * FROM public.kyc_profiles WHERE user_id = $1::uuid ORDER BY updated_at DESC"}
     ]
 
     export =
-      Enum.reduce(tables, %{"exportedAt" => DateTime.utc_now() |> DateTime.to_iso8601()}, fn {key, sql}, acc ->
+      Enum.reduce(tables, %{"exportedAt" => DateTime.utc_now() |> DateTime.to_iso8601()}, fn {key,
+                                                                                              sql},
+                                                                                             acc ->
         rows =
           case Repo.query(sql, [user_id]) do
             {:ok, %{columns: columns, rows: rows}} ->
-              Enum.map(rows, fn row -> Map.new(Enum.zip(columns, row)) end)
+              Enum.map(rows, fn row -> row |> Map.new(Enum.zip(columns, row)) |> redact() end)
 
             _ ->
               []
@@ -244,10 +264,22 @@ defmodule Mithril.MobileFunctions.RequestDataExport do
     {:ok, export}
   end
 
+  defp redact(row) when is_map(row) do
+    Map.drop(row, @secret_columns)
+  end
+
   defp destination_email(user_id) do
     case Repo.query("SELECT email FROM public.users WHERE id = $1::uuid LIMIT 1", [user_id]) do
-      {:ok, %{rows: [[email]]}} when is_binary(email) and email != "" -> {:ok, email}
-      _ -> {:error, {:status, 400, %{error: "No email address is available for this account. Add an email first, then try again."}}}
+      {:ok, %{rows: [[email]]}} when is_binary(email) and email != "" ->
+        {:ok, email}
+
+      _ ->
+        {:error,
+         {:status, 400,
+          %{
+            error:
+              "No email address is available for this account. Add an email first, then try again."
+          }}}
     end
   end
 
@@ -260,7 +292,12 @@ defmodule Mithril.MobileFunctions.RequestDataExport do
       attachment = payload |> Jason.encode!() |> Base.encode64()
 
       body = %{
-        from: Application.get_env(:mithril, :resend_from, "Instaclean <noreply@update.tryinstaclean.com>"),
+        from:
+          Application.get_env(
+            :mithril,
+            :resend_from,
+            "Instaclean <noreply@update.tryinstaclean.com>"
+          ),
         to: [email],
         subject: "Your Instaclean data export is ready",
         html: "<p>Your Instaclean account data export is attached as JSON.</p>",
