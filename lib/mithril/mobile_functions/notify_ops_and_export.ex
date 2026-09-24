@@ -34,14 +34,14 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
         with :ok <- verify_booking_owner(booking_id, user_id),
              :ok <- verify_subscription_owner(subscription_id, user_id),
              :ok <- enforce_rate_limit(user_id),
-             {:ok, idempotency_key} <-
+             {:ok, idempotency_key, duplicate?} <-
                insert_alert(user_id, body, booking_id, subscription_id, reason) do
           {:ok,
            %{
              received: true,
              recorded: true,
              notified: false,
-             duplicate: false,
+             duplicate: duplicate?,
              idempotency_key: idempotency_key
            }}
         end
@@ -103,6 +103,14 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
   end
 
   defp insert_alert(user_id, body, booking_id, subscription_id, reason) do
+    platform = body |> Map.get("platform", "") |> to_string() |> String.slice(0, 40)
+    action = body |> Map.get("action", "") |> to_string() |> String.slice(0, 100)
+
+    transport_failure =
+      Map.get(body, "transport_failure") == true or Map.get(body, "transportFailure") == true
+
+    dedupe_bucket = System.system_time(:second) |> div(600)
+
     idempotency_key =
       :crypto.hash(
         :sha256,
@@ -112,18 +120,15 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
             booking_id,
             subscription_id,
             reason,
-            Integer.to_string(System.system_time(:millisecond))
+            action,
+            platform,
+            to_string(transport_failure),
+            Integer.to_string(dedupe_bucket)
           ],
           "|"
         )
       )
       |> Base.encode16(case: :lower)
-
-    platform = body |> Map.get("platform", "") |> to_string() |> String.slice(0, 40)
-    action = body |> Map.get("action", "") |> to_string() |> String.slice(0, 100)
-
-    transport_failure =
-      Map.get(body, "transport_failure") == true or Map.get(body, "transportFailure") == true
 
     now = DateTime.utc_now() |> DateTime.to_iso8601()
 
@@ -152,8 +157,8 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
              now
            ]
          ) do
-      {:ok, %{rows: [[stored_key]]}} -> {:ok, stored_key}
-      {:ok, %{num_rows: 0}} -> {:ok, idempotency_key}
+      {:ok, %{rows: [[stored_key]]}} -> {:ok, stored_key, false}
+      {:ok, %{num_rows: 0}} -> {:ok, idempotency_key, true}
       {:error, _} -> {:error, {:status, 500, %{error: "Alert persistence failed"}}}
     end
   end
