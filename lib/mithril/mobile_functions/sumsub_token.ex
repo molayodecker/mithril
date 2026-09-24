@@ -1,6 +1,7 @@
 defmodule Mithril.MobileFunctions.SumsubToken do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.Repo
   alias Mithril.Sumsub.Applicant
   alias Mithril.Sumsub.ApplicantLink
@@ -84,7 +85,7 @@ defmodule Mithril.MobileFunctions.SumsubToken do
   defp load_account_identity(user_id) do
     {email, phone} =
       case Repo.query("SELECT email, phone FROM public.users WHERE id = $1::uuid LIMIT 1", [
-             user_id
+             DbUuid.dump!(user_id)
            ]) do
         {:ok, %{rows: [[email, phone]]}} -> {present_or_nil(email), present_or_nil(phone)}
         _ -> {nil, nil}
@@ -93,7 +94,7 @@ defmodule Mithril.MobileFunctions.SumsubToken do
     {first_name, last_name} =
       case Repo.query(
              "SELECT firstname, lastname FROM public.profiles WHERE id = $1::uuid LIMIT 1",
-             [user_id]
+             [DbUuid.dump!(user_id)]
            ) do
         {:ok, %{rows: [[first_name, last_name]]}} ->
           {present_or_nil(first_name), present_or_nil(last_name)}
