@@ -116,7 +116,13 @@ defmodule Mithril.MobileRpc do
         end)
         |> Enum.unzip()
 
-      {:ok, %{name: name, assignments: Enum.join(assignments, ", "), params: params}}
+      {:ok,
+       %{
+         name: name,
+         assignments: Enum.join(assignments, ", "),
+         arg_names: Enum.map(pairs, &elem(&1, 0)),
+         params: params
+       }}
     end
   end
 
