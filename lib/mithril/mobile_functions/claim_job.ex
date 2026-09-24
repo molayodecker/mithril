@@ -1,6 +1,7 @@
 defmodule Mithril.MobileFunctions.ClaimJob do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.MobileGateway
   alias Mithril.Repo
 
@@ -32,7 +33,7 @@ defmodule Mithril.MobileFunctions.ClaimJob do
            WHERE job_id = $1::uuid AND cleaner_id = $2::uuid
            LIMIT 1
            """,
-           [job_id, user_id]
+           [DbUuid.dump!(job_id), DbUuid.dump!(user_id)]
          ) do
       {:ok, %{rows: [[_]]}} -> :ok
       {:ok, %{rows: []}} -> {:error, {:status, 403, %{success: false, error: "Forbidden"}}}
@@ -42,7 +43,7 @@ defmodule Mithril.MobileFunctions.ClaimJob do
 
   defp claim_offered_job(user_id, job_id) do
     case MobileGateway.with_user_transaction(user_id, fn ->
-           case Repo.query("SELECT public.claim_job($1::uuid, $2::uuid)", [job_id, user_id]) do
+           case Repo.query("SELECT public.claim_job($1::uuid, $2::uuid)", [DbUuid.dump!(job_id), DbUuid.dump!(user_id)]) do
              {:ok, %{rows: [[result]]}} when is_map(result) ->
                {:ok, result}
 
