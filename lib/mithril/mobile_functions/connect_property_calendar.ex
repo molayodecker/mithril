@@ -2,6 +2,7 @@ defmodule Mithril.MobileFunctions.ConnectPropertyCalendar do
   @moduledoc false
 
   alias Mithril.CalendarFeedSecurity
+  alias Mithril.DbUuid
   alias Mithril.MobileGateway
   alias Mithril.Repo
   alias Mithril.SecretCrypto
@@ -109,7 +110,7 @@ defmodule Mithril.MobileFunctions.ConnectPropertyCalendar do
                   WHERE id = $1::uuid AND customer_id = $2::uuid
                   LIMIT 1
                   """,
-                  [property_id, user_id]
+                  [DbUuid.dump!(property_id), DbUuid.dump!(user_id)]
                 ) do
              {:ok, %{rows: [[property_timezone]]}} ->
                {:ok, %{timezone: property_timezone}}
@@ -171,7 +172,7 @@ defmodule Mithril.MobileFunctions.ConnectPropertyCalendar do
              AND sync_enabled = true
              AND feed_url_hash <> $2::text
            """,
-           [property_id, feed_hash]
+           [DbUuid.dump!(property_id), feed_hash]
          ) do
       {:ok, _} -> :ok
       {:error, error} -> {:error, error}
@@ -203,8 +204,8 @@ defmodule Mithril.MobileFunctions.ConnectPropertyCalendar do
     """
 
     case Repo.query(sql, [
-           fields.property_id,
-           user_id,
+           DbUuid.dump!(fields.property_id),
+           DbUuid.dump!(user_id),
            fields.provider,
            encrypted,
            feed_hash,
