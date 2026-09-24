@@ -566,7 +566,10 @@ defmodule Mithril.MobileQuery do
     with {:ok, qualified} <- qualify_column(table, column) do
       case op do
         "is" ->
-          {:ok, null_sql(qualified, filter["value"]), [], index}
+          case is_sql(qualified, filter["value"]) do
+            {:ok, sql} -> {:ok, sql, [], index}
+            {:error, reason} -> {:error, reason}
+          end
 
         "in" ->
           values = filter["value"] || []
@@ -577,6 +580,10 @@ defmodule Mithril.MobileQuery do
             {:ok, "#{qualified}::text = ANY($#{index}::text[])", [Enum.map(values, &to_string/1)],
              index + 1}
           end
+
+        "ilike" ->
+          {:ok, "#{qualified}::text ILIKE $#{index}::text", [stringify(filter["value"])],
+           index + 1}
 
         binary when binary in ["eq", "neq", "gt", "gte", "lt", "lte"] ->
           operator =
@@ -606,22 +613,23 @@ defmodule Mithril.MobileQuery do
 
   defp filter_sql(_, _, _, _), do: {:error, :invalid_filter}
 
-  defp null_sql(qualified, value) when value in [nil, "null"] do
-    "#{qualified} IS NULL"
-  end
-
-  defp null_sql(qualified, false), do: "#{qualified} IS NULL"
-  defp null_sql(qualified, true), do: "#{qualified} IS NOT NULL"
-  defp null_sql(qualified, _), do: "#{qualified} IS NOT NULL"
+  defp is_sql(qualified, value) when value in [nil, "null"], do: {:ok, "#{qualified} IS NULL"}
+  defp is_sql(qualified, value) when value in [false, "false"], do: {:ok, "#{qualified} IS FALSE"}
+  defp is_sql(qualified, value) when value in [true, "true"], do: {:ok, "#{qualified} IS TRUE"}
+  defp is_sql(_qualified, _value), do: {:error, :invalid_filter}
 
   defp qualify_column(table, column) when is_binary(column) do
     case String.split(column, ".", parts: 2) do
       [field] ->
-        with :ok <- validate_ident(field), do: {:ok, "#{table}.#{field}"}
+        with :ok <- validate_ident(field),
+             :ok <- validate_query_column(table, field) do
+          {:ok, "#{table}.#{field}"}
+        end
 
       [prefix, field] ->
         with :ok <- validate_ident(prefix),
-             :ok <- validate_ident(field) do
+             :ok <- validate_ident(field),
+             :ok <- validate_query_column(table, field) do
           if prefix == table do
             {:ok, "#{table}.#{field}"}
           else
@@ -648,8 +656,10 @@ defmodule Mithril.MobileQuery do
             _ -> ""
           end
 
-        case validate_ident(column) do
-          :ok -> "#{table}.#{column} #{direction}#{nulls}"
+        with :ok <- validate_ident(column),
+             :ok <- validate_query_column(table, column) do
+          "#{table}.#{column} #{direction}#{nulls}"
+        else
           {:error, reason} -> throw({:order, reason})
         end
       end)
@@ -907,6 +917,24 @@ defmodule Mithril.MobileQuery do
   end
 
   defp secret_column?(column), do: MapSet.member?(@secret_columns, column)
+
+  defp validate_query_column(table, column) do
+    cond do
+      secret_column?(column) ->
+        {:error, :forbidden}
+
+      Map.has_key?(@directory_columns, table) ->
+        if MapSet.member?(Map.fetch!(@directory_columns, table), column),
+          do: :ok,
+          else: {:error, :forbidden}
+
+      table == "users" ->
+        if MapSet.member?(@safe_user_columns, column), do: :ok, else: {:error, :forbidden}
+
+      true ->
+        :ok
+    end
+  end
 
   defp protected_write_column?(column) do
     secret_column?(column) or MapSet.member?(@money_columns, column)
