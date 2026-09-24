@@ -103,6 +103,17 @@ defmodule Mithril.MobileFunctions.PaystackTest do
              })
   end
 
+  test "initiate_transfer rejects unsupported withdrawal currency" do
+    user_id = Ecto.UUID.generate()
+
+    assert {:error, {:status, 400, %{ok: false, error: "Unsupported currency"}}} =
+             Paystack.initiate_transfer(user_id, %{
+               "amount" => 10_000,
+               "recipient" => "RCP_test123",
+               "currency" => "EUR"
+             })
+  end
+
   test "initiate_transfer enforces minimum withdrawal" do
     user_id = Ecto.UUID.generate()
 
