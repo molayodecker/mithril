@@ -499,7 +499,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
          :ok <- ensure_identity_for_withdraw(identity),
          {:ok, payout_method} <- load_payout_method(user_id, fields.recipient),
          :ok <- ensure_payout_method_currency(payout_method, fields.currency),
-         :ok <- ensure_fresh_payout_balance(user_id, fields, nil) do
+         :ok <- ensure_fresh_payout_balance(user_id, fields) do
       continue_initiate(user_id, fields, payout_method, nil)
     end
   end
@@ -520,9 +520,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     end
   end
 
-  defp ensure_fresh_payout_balance(_user_id, _fields, existing) when not is_nil(existing), do: :ok
-
-  defp ensure_fresh_payout_balance(user_id, fields, nil) do
+  defp ensure_fresh_payout_balance(user_id, fields) do
     with {:ok, wallet} <- wallet_balance(user_id),
          :ok <- ensure_wallet_currency(wallet, fields.currency),
          :ok <- ensure_sufficient_balance(wallet.balance, fields.amount) do
