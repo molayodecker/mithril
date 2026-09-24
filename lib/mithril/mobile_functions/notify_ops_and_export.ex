@@ -2,6 +2,7 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
   @moduledoc false
 
   alias Mithril.DbUuid
+  alias Mithril.RateLimiter
   alias Mithril.Repo
 
   @allowed_reasons ~w(
@@ -198,10 +199,21 @@ defmodule Mithril.MobileFunctions.RequestDataExport do
   @secret_columns ~w(password_hash encrypted_password feed_url_encrypted)
 
   def call(user_id, _body) do
-    with {:ok, payload} <- build_export(user_id),
+    with :ok <- enforce_export_rate_limit(user_id),
+         {:ok, payload} <- build_export(user_id),
          {:ok, email} <- destination_email(user_id),
          :ok <- send_export_email(email, payload) do
       {:ok, %{queued: true, email: email}}
+    end
+  end
+
+  defp enforce_export_rate_limit(user_id) do
+    case RateLimiter.check({:request_data_export, user_id}, 3, 3_600_000) do
+      :ok ->
+        :ok
+
+      {:error, :rate_limited} ->
+        {:error, {:status, 429, %{error: "Too many data export requests. Try again later."}}}
     end
   end
 
@@ -221,23 +233,24 @@ defmodule Mithril.MobileFunctions.RequestDataExport do
        "SELECT id::text AS id, kyc_status, created_at, updated_at FROM public.kyc_profiles WHERE user_id = $1::uuid ORDER BY updated_at DESC"}
     ]
 
-    export =
-      Enum.reduce(tables, %{"exportedAt" => DateTime.utc_now() |> DateTime.to_iso8601()}, fn {key,
-                                                                                              sql},
-                                                                                             acc ->
-        rows =
-          case Repo.query(sql, [DbUuid.dump!(user_id)]) do
-            {:ok, %{columns: columns, rows: rows}} ->
-              Enum.map(rows, fn row -> row |> Map.new(Enum.zip(columns, row)) |> redact() end)
+    initial = %{"exportedAt" => DateTime.utc_now() |> DateTime.to_iso8601()}
 
-            _ ->
-              []
-          end
+    Enum.reduce_while(tables, {:ok, initial}, fn {key, sql}, {:ok, acc} ->
+      case Repo.query(sql, [DbUuid.dump!(user_id)]) do
+        {:ok, %{columns: columns, rows: rows}} ->
+          decoded =
+            Enum.map(rows, fn row ->
+              row
+              |> Map.new(Enum.zip(columns, row))
+              |> redact()
+            end)
 
-        Map.put(acc, key, rows)
-      end)
+          {:cont, {:ok, Map.put(acc, key, decoded)}}
 
-    {:ok, export}
+        {:error, _} ->
+          {:halt, {:error, {:status, 500, %{error: "Could not build account data export"}}}}
+      end
+    end)
   end
 
   defp redact(row) when is_map(row) do
@@ -249,7 +262,16 @@ defmodule Mithril.MobileFunctions.RequestDataExport do
            DbUuid.dump!(user_id)
          ]) do
       {:ok, %{rows: [[email]]}} when is_binary(email) and email != "" ->
-        {:ok, email}
+        trimmed = String.trim(email)
+
+        if trimmed != "" and
+             not String.ends_with?(String.downcase(trimmed), "@phone.tryinstaclean.local") do
+          {:ok, trimmed}
+        else
+          {:error,
+           {:status, 400,
+            %{error: "Add a real email address to your account before requesting an export."}}}
+        end
 
       _ ->
         {:error,
