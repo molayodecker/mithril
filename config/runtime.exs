@@ -142,6 +142,16 @@ if paystack_secret = System.get_env("PAYSTACK_SECRET_KEY") do
   config :mithril, :paystack_adapter, Mithril.Paystack.HTTP
 end
 
+if google_maps_key = System.get_env("GOOGLE_MAPS_API_KEY") do
+  config :mithril, :google_maps_api_key, google_maps_key
+end
+
+if otp_delivery_encryption_key = System.get_env("OTP_DELIVERY_ENCRYPTION_KEY") do
+  config :mithril, :otp_delivery_encryption_key, otp_delivery_encryption_key
+end
+
+config :mithril, :support_email, System.get_env("SUPPORT_EMAIL") || "support@tryinstaclean.com"
+
 if sumsub_webhook_secret = System.get_env("SUMSUB_WEBHOOK_SECRET") do
   config :mithril, :sumsub_webhook_secret, sumsub_webhook_secret
 end
@@ -163,6 +173,73 @@ sumsub_level_name =
 
 if sumsub_level_name do
   config :mithril, :sumsub_level_name, sumsub_level_name
+end
+
+if sumsub_app_token = System.get_env("SUMSUB_APP_TOKEN") do
+  config :mithril, :sumsub_app_token, sumsub_app_token
+end
+
+if sumsub_secret_key = System.get_env("SUMSUB_SECRET_KEY") do
+  config :mithril, :sumsub_secret_key, sumsub_secret_key
+end
+
+sumsub_base_url =
+  case System.get_env("SUMSUB_BASE_URL") || System.get_env("SUMSUB_API_URL") do
+    url when is_binary(url) ->
+      case String.trim(url) do
+        "" -> "https://api.sumsub.com"
+        trimmed -> String.trim_trailing(trimmed, "/")
+      end
+
+    _ ->
+      "https://api.sumsub.com"
+  end
+
+config :mithril, :sumsub_base_url, sumsub_base_url
+
+sumsub_default_country =
+  case System.get_env("SUMSUB_DEFAULT_COUNTRY") do
+    value when is_binary(value) ->
+      case String.trim(value) do
+        "" -> "GHA"
+        trimmed -> trimmed
+      end
+
+    _ ->
+      "GHA"
+  end
+
+config :mithril, :sumsub_default_country, sumsub_default_country
+
+sumsub_default_nationality =
+  case System.get_env("SUMSUB_DEFAULT_NATIONALITY") do
+    value when is_binary(value) ->
+      case String.trim(value) do
+        "" -> "GHA"
+        trimmed -> trimmed
+      end
+
+    _ ->
+      "GHA"
+  end
+
+config :mithril, :sumsub_default_nationality, sumsub_default_nationality
+
+if posthog_api_key =
+     System.get_env("POSTHOG_PROJECT_API_KEY") || System.get_env("POSTHOG_API_KEY") do
+  config :mithril, :posthog_project_api_key, posthog_api_key
+end
+
+if posthog_flags_host = System.get_env("POSTHOG_FLAGS_HOST") do
+  config :mithril, :posthog_flags_host, posthog_flags_host
+end
+
+if resend_api_key = System.get_env("RESEND_API_KEY") do
+  config :mithril, :resend_api_key, resend_api_key
+end
+
+if resend_from = System.get_env("RESEND_FROM") do
+  config :mithril, :resend_from, resend_from
 end
 
 if tax_subaccount = System.get_env("PAYSTACK_TAX_SUBACCOUNT") do

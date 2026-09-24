@@ -1,6 +1,7 @@
 defmodule Mithril.MobileGateway do
   @moduledoc false
 
+  alias Mithril.MobileFunctions
   alias Mithril.MobileQuery
   alias Mithril.MobileRpc
   alias Mithril.Repo
@@ -14,6 +15,10 @@ defmodule Mithril.MobileGateway do
     fetch-otp-delivery-token
     notify-booking-rescheduled
     notify-payment-failure-ops
+    paystack-create-transfer-recipient
+    paystack-fetch-banks
+    paystack-initiate-transfer
+    paystack-resolve-bank-account
     rank-cleaners-with-ai
     request-data-export
     resend-otp-via-channel
@@ -25,6 +30,8 @@ defmodule Mithril.MobileGateway do
     uber-transportation-release-gate
     uber-trip-estimate
   ))
+
+  @migrated_functions @functions
 
   @safe_embedded_user_columns MapSet.new(~w(id))
   @safe_embedded_profile_columns MapSet.new(~w(id firstname lastname fullname avatar_url))
@@ -44,6 +51,25 @@ defmodule Mithril.MobileGateway do
          {:ok, compiled} <- MobileQuery.compile(user_id, query) do
       transact(user_id, fn -> query(compiled.sql, compiled.params, true) end)
     end
+  end
+
+  def invoke_function(user_id, name, body) when is_binary(name) and is_map(body) do
+    cond do
+      MapSet.member?(@migrated_functions, name) ->
+        MobileFunctions.invoke(user_id, name, body)
+
+      MapSet.member?(@functions, name) ->
+        {:error, :function_not_migrated}
+
+      true ->
+        {:error, :unknown_function}
+    end
+  end
+
+  def invoke_function(_user_id, _name, _body), do: {:error, :bad_request}
+
+  def with_user_transaction(user_id, fun) when is_function(fun, 0) do
+    transact(user_id, fun)
   end
 
   def function_route(name) when is_binary(name) do

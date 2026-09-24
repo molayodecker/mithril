@@ -45,8 +45,10 @@ defmodule MithrilWeb.MobileGatewayController do
     ]
   )
 
-  def function(conn, %{"name" => name}) do
-    respond(conn, MobileGateway.function_route(function_name(name)))
+  def function(conn, params) do
+    name = function_name(params["name"])
+    body = Map.drop(params, ["name"])
+    respond(conn, MobileGateway.invoke_function(user_id(conn), name, body))
   end
 
   defp function_name(name) when is_list(name), do: Enum.join(name, "/")
@@ -79,6 +81,14 @@ defmodule MithrilWeb.MobileGatewayController do
 
   defp respond(conn, {:error, :forbidden}) do
     conn |> put_status(403) |> json(%{error: "forbidden"})
+  end
+
+  defp respond(conn, {:error, :bad_request}) do
+    conn |> put_status(400) |> json(%{error: "bad_request"})
+  end
+
+  defp respond(conn, {:error, {:status, status, body}}) when is_map(body) do
+    conn |> put_status(status) |> json(body)
   end
 
   defp respond(conn, {:error, reason}) when is_atom(reason) do
