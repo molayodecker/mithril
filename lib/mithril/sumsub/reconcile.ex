@@ -1,6 +1,7 @@
 defmodule Mithril.Sumsub.Reconcile do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.Repo
 
   @spec derive_kyc_profile_kyc_status(String.t() | nil, String.t() | nil) :: String.t()
@@ -158,7 +159,7 @@ defmodule Mithril.Sumsub.Reconcile do
       external_from_sumsub,
       level_name,
       now,
-      cleaner_application_id
+      DbUuid.dump!(cleaner_application_id)
     ]
 
     persist_errors =
@@ -188,7 +189,7 @@ defmodule Mithril.Sumsub.Reconcile do
            VALUES ($1::uuid, $2)
            ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status
            """,
-           [user_id, cv_status]
+           [DbUuid.dump!(user_id), cv_status]
          ) do
       {:ok, _} -> persist_errors
       {:error, error} -> persist_errors ++ ["cleaner_verifications: #{Exception.message(error)}"]
@@ -221,6 +222,8 @@ defmodule Mithril.Sumsub.Reconcile do
     sumsub_linked_at =
       cond do
         applicant_changed -> now
+        match?(%DateTime{}, linked_at) -> DateTime.to_iso8601(linked_at)
+        match?(%NaiveDateTime{}, linked_at) -> NaiveDateTime.to_iso8601(linked_at)
         is_binary(linked_at) and String.trim(linked_at) != "" -> linked_at
         true -> now
       end
@@ -247,7 +250,7 @@ defmodule Mithril.Sumsub.Reconcile do
              level_name,
              sumsub_linked_at,
              now,
-             Map.get(target_kyc, "id")
+             DbUuid.dump!(Map.get(target_kyc, "id"))
            ]
          ) do
       {:ok, _} -> :ok
@@ -313,6 +316,7 @@ defmodule Mithril.Sumsub.Reconcile do
     end
   end
 
+  defp present?(value) when is_binary(value) and byte_size(value) == 16, do: true
   defp present?(value) when is_binary(value), do: String.trim(value) != ""
   defp present?(_), do: false
 end
