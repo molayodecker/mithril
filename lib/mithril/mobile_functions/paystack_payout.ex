@@ -31,18 +31,9 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
   def initiate_transfer(user_id, body) when is_binary(user_id) and is_map(body) do
     with {:ok, fields} <- parse_initiate_body(user_id, body),
          :ok <- ensure_paystack_configured(),
-         {:ok, has_cleaner} <- user_has_cleaner_role?(user_id),
-         :ok <- ensure_cleaner_can_withdraw(has_cleaner),
-         :ok <- ensure_cleaner_active(user_id),
-         {:ok, identity} <- resolve_identity(user_id),
-         :ok <- ensure_identity_for_withdraw(identity),
          {:ok, existing} <- load_existing_payout(user_id, fields.reference),
-         {:ok, payout_method} <- load_payout_method(user_id, fields.recipient),
-         :ok <- ensure_payout_method_currency(payout_method, fields.currency),
          :ok <- validate_existing_payout(existing, fields),
-         :ok <- ensure_fresh_payout_balance(user_id, fields, existing),
-         {:ok, result} <-
-           continue_initiate(user_id, fields, payout_method, existing) do
+         {:ok, result} <- maybe_continue_existing_payout(user_id, fields, existing) do
       {:ok, result}
     end
   end
@@ -492,6 +483,24 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
         {:error,
          {:status, 500,
           %{ok: false, error: db_error_message(error, "Could not verify payout state")}}}
+    end
+  end
+
+  defp maybe_continue_existing_payout(_user_id, fields, existing)
+       when not is_nil(existing) do
+    continue_initiate(nil, fields, nil, existing)
+  end
+
+  defp maybe_continue_existing_payout(user_id, fields, nil) do
+    with {:ok, has_cleaner} <- user_has_cleaner_role?(user_id),
+         :ok <- ensure_cleaner_can_withdraw(has_cleaner),
+         :ok <- ensure_cleaner_active(user_id),
+         {:ok, identity} <- resolve_identity(user_id),
+         :ok <- ensure_identity_for_withdraw(identity),
+         {:ok, payout_method} <- load_payout_method(user_id, fields.recipient),
+         :ok <- ensure_payout_method_currency(payout_method, fields.currency),
+         :ok <- ensure_fresh_payout_balance(user_id, fields, nil) do
+      continue_initiate(user_id, fields, payout_method, nil)
     end
   end
 
