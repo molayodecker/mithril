@@ -287,7 +287,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     LIMIT 1
     """
 
-    case Repo.query(sql, [user_id]) do
+    case Repo.query(sql, [DbUuid.dump!(user_id)]) do
       {:ok, %{rows: [["active"]]}} ->
         :ok
 
