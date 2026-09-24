@@ -255,5 +255,11 @@ defmodule Mithril.Subscriptions.Cancel do
     |> String.replace(~r/\s+/, " ")
   end
 
-  defp row_to_map(columns, row), do: Map.new(Enum.zip(columns, row))
+  defp row_to_map(columns, row) do
+    columns
+    |> Enum.zip(row)
+    |> Map.new()
+    |> Map.update("id", nil, &DbUuid.encode/1)
+    |> Map.update("customer_id", nil, &DbUuid.encode/1)
+  end
 end
