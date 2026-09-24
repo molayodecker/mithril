@@ -226,8 +226,7 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
     Enum.find_value(profiles, fn profile ->
       case Map.get(profile, "cleaner_application_id") do
         id when is_binary(id) ->
-          trimmed = String.trim(id)
-          if trimmed == "", do: nil, else: DbUuid.encode(id)
+          DbUuid.encode(id)
 
         _ ->
           nil
