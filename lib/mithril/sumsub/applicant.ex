@@ -4,8 +4,6 @@ defmodule Mithril.Sumsub.Applicant do
   alias Mithril.Sumsub.Client
   alias Mithril.Sumsub.Config
 
-  @exists_regex ~r/already exists[^0-9a-f]*([0-9a-f]{24})/i
-
   @spec ensure_for_user(map()) :: %{applicant_id: String.t() | nil, created: boolean()}
   def ensure_for_user(input) when is_map(input) do
     external_user_id = input |> Map.get(:external_user_id, "") |> to_string() |> String.trim()
@@ -37,9 +35,8 @@ defmodule Mithril.Sumsub.Applicant do
           applicant_id = read_applicant_id(body) || find_by_external_user_id(external_user_id)
           %{applicant_id: applicant_id, created: applicant_id != nil}
 
-        {:error, {:status, _status, details}} ->
-          inline_id = extract_applicant_id_from_exists_error(details)
-          applicant_id = inline_id || find_by_external_user_id(external_user_id)
+        {:error, {:status, _status, _details}} ->
+          applicant_id = find_by_external_user_id(external_user_id)
           %{applicant_id: applicant_id, created: false}
       end
     end
@@ -73,15 +70,6 @@ defmodule Mithril.Sumsub.Applicant do
 
     if is_binary(id) and String.trim(id) != "", do: String.trim(id), else: nil
   end
-
-  defp extract_applicant_id_from_exists_error(text) when is_binary(text) do
-    case Regex.run(@exists_regex, text) do
-      [_, applicant_id] -> applicant_id
-      _ -> nil
-    end
-  end
-
-  defp extract_applicant_id_from_exists_error(_), do: nil
 
   defp optional_string(value) when is_binary(value) do
     trimmed = String.trim(value)
