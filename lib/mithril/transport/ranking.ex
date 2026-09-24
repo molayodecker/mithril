@@ -1,6 +1,7 @@
 defmodule Mithril.Transport.Ranking do
   @moduledoc false
 
+  alias Mithril.RateLimiter
   alias Mithril.Repo
   alias Mithril.Transport.Origins
   alias Mithril.Transport.Pricing
@@ -16,9 +17,9 @@ defmodule Mithril.Transport.Ranking do
     request = normalize_request(body)
     requested_ids = requested_cleaner_ids(body)
 
-    with :ok <- enforce_rate_limit(user_id),
-         {:ok, dest} <- destination(request),
+    with {:ok, dest} <- destination(request),
          {:ok, fields} <- schedule_fields(request),
+         :ok <- enforce_rate_limit(user_id),
          {:ok, cleaner_ids} <- nearby_cleaner_ids(dest, fields, requested_ids),
          {:ok, origins} <- load_origins(cleaner_ids),
          {:ok, routes} <- matrix_routes(origins, dest) do
@@ -195,21 +196,12 @@ defmodule Mithril.Transport.Ranking do
   end
 
   defp enforce_rate_limit(user_id) do
-    case Repo.query(
-           "SELECT public.record_lookup_attempt($1, $2, $3, $4) AS blocked",
-           ["rank_cleaners_with_ai", user_id, 30, 60]
-         ) do
-      {:ok, %{rows: [[true]]}} ->
-        {:error, {:status, 429, %{error: "Too many ranking requests. Try again shortly."}}}
-
-      {:ok, %{rows: [[false]]}} ->
+    case RateLimiter.check({:rank_cleaners_with_ai, user_id}, 30, 60_000) do
+      :ok ->
         :ok
 
-      {:error, _} ->
-        {:error, {:status, 503, %{error: "Ranking rate limit unavailable"}}}
-
-      _ ->
-        {:error, {:status, 503, %{error: "Ranking rate limit unavailable"}}}
+      {:error, :rate_limited} ->
+        {:error, {:status, 429, %{error: "Too many ranking requests. Try again shortly."}}}
     end
   end
 
