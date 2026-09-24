@@ -175,17 +175,12 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
       else
         ranked =
           sanitized
-          |> Enum.sort_by(
-            fn cleaner ->
-              {-match_score(cleaner), String.downcase(Map.get(cleaner, "id", ""))}
-            end,
-            :asc
-          )
+          |> Enum.sort_by(fn cleaner -> String.downcase(Map.get(cleaner, "id", "")) end, :asc)
           |> Enum.map(fn cleaner ->
             %{
               cleaner_id: Map.get(cleaner, "id"),
-              score: match_score(cleaner),
-              reason: "Matched by availability and profile fit."
+              score: 0,
+              reason: "Ordered by cleaner id. Client scores are ignored."
             }
           end)
 
@@ -210,11 +205,6 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
       list -> Enum.reverse(list)
     end
   end
-
-  defp match_score(cleaner) do
-    value = Map.get(cleaner, "match_score")
-    if is_number(value), do: value, else: 0
-  end
 end
 
 defmodule Mithril.MobileFunctions.RequestDataExport do
@@ -234,15 +224,17 @@ defmodule Mithril.MobileFunctions.RequestDataExport do
 
   defp build_export(user_id) do
     tables = [
-      {"users", "SELECT * FROM public.users WHERE id = $1::uuid"},
-      {"profiles", "SELECT * FROM public.profiles WHERE id = $1::uuid"},
-      {"user_roles", "SELECT * FROM public.user_roles WHERE user_id = $1::uuid"},
+      {"users",
+       "SELECT id, email, phone, created_at, updated_at FROM public.users WHERE id = $1::uuid"},
+      {"profiles",
+       "SELECT id, user_id, firstname, lastname, fullname, avatar_url, address FROM public.profiles WHERE id = $1::uuid"},
+      {"user_roles", "SELECT user_id, role_id FROM public.user_roles WHERE user_id = $1::uuid"},
       {"bookings",
-       "SELECT * FROM public.bookings WHERE customer_id = $1::uuid ORDER BY created_at DESC"},
+       "SELECT id, status, payment_status, scheduled_date, scheduled_time, address, created_at FROM public.bookings WHERE customer_id = $1::uuid ORDER BY created_at DESC"},
       {"cleaner_applications",
-       "SELECT * FROM public.cleaner_applications WHERE user_id = $1::uuid ORDER BY created_at DESC"},
+       "SELECT id, status, created_at, updated_at FROM public.cleaner_applications WHERE user_id = $1::uuid ORDER BY created_at DESC"},
       {"kyc_profiles",
-       "SELECT * FROM public.kyc_profiles WHERE user_id = $1::uuid ORDER BY updated_at DESC"}
+       "SELECT id, kyc_status, created_at, updated_at FROM public.kyc_profiles WHERE user_id = $1::uuid ORDER BY updated_at DESC"}
     ]
 
     export =

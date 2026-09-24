@@ -18,30 +18,52 @@ defmodule Mithril.MobileFunctions.ClaimJob do
         {:error, {:status, 400, %{success: false, error: "Invalid job_id"}}}
 
       true ->
-        case MobileGateway.with_user_transaction(user_id, fn ->
-               case Repo.query("SELECT public.claim_job($1::uuid, $2::uuid)", [job_id, user_id]) do
-                 {:ok, %{rows: [[result]]}} when is_map(result) ->
-                   {:ok, result}
-
-                 {:ok, %{rows: _rows}} ->
-                   {:error, :no_result}
-
-                 {:error, error} ->
-                   {:error, error}
-               end
-             end) do
-          {:ok, result} ->
-            decode_claim_result(result)
-
-          {:error, :no_result} ->
-            {:error, {:status, 500, %{success: false, error: "No result"}}}
-
-          {:error, %Postgrex.Error{}} ->
-            {:error, {:status, 400, %{success: false, error: "claim_failed"}}}
-
-          {:error, _} ->
-            {:error, {:status, 500, %{success: false, error: "No result"}}}
+        with :ok <- ensure_offer(user_id, job_id) do
+          claim_offered_job(user_id, job_id)
         end
+    end
+  end
+
+  defp ensure_offer(user_id, job_id) do
+    case Repo.query(
+           """
+           SELECT 1
+           FROM public.job_offers
+           WHERE job_id = $1::uuid AND cleaner_id = $2::uuid
+           LIMIT 1
+           """,
+           [job_id, user_id]
+         ) do
+      {:ok, %{rows: [[_]]}} -> :ok
+      {:ok, %{rows: []}} -> {:error, {:status, 403, %{success: false, error: "Forbidden"}}}
+      _ -> {:error, {:status, 403, %{success: false, error: "Forbidden"}}}
+    end
+  end
+
+  defp claim_offered_job(user_id, job_id) do
+    case MobileGateway.with_user_transaction(user_id, fn ->
+           case Repo.query("SELECT public.claim_job($1::uuid, $2::uuid)", [job_id, user_id]) do
+             {:ok, %{rows: [[result]]}} when is_map(result) ->
+               {:ok, result}
+
+             {:ok, %{rows: _rows}} ->
+               {:error, :no_result}
+
+             {:error, error} ->
+               {:error, error}
+           end
+         end) do
+      {:ok, result} ->
+        decode_claim_result(result)
+
+      {:error, :no_result} ->
+        {:error, {:status, 500, %{success: false, error: "No result"}}}
+
+      {:error, %Postgrex.Error{}} ->
+        {:error, {:status, 400, %{success: false, error: "claim_failed"}}}
+
+      {:error, _} ->
+        {:error, {:status, 500, %{success: false, error: "No result"}}}
     end
   end
 

@@ -74,8 +74,8 @@ defmodule Mithril.MobileFunctions do
   def invoke(user_id, "notify-payment-failure-ops", body) when is_map(body),
     do: NotifyPaymentFailureOps.call(user_id, body)
 
-  def invoke(_user_id, "rank-cleaners-with-ai", body) when is_map(body),
-    do: RankCleanersWithAi.call(nil, body)
+  def invoke(user_id, "rank-cleaners-with-ai", body) when is_map(body),
+    do: RankCleanersWithAi.call(user_id, body)
 
   def invoke(user_id, "request-data-export", body) when is_map(body),
     do: RequestDataExport.call(user_id, body)

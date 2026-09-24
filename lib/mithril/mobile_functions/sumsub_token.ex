@@ -1,6 +1,7 @@
 defmodule Mithril.MobileFunctions.SumsubToken do
   @moduledoc false
 
+  alias Mithril.Repo
   alias Mithril.Sumsub.Applicant
   alias Mithril.Sumsub.ApplicantLink
   alias Mithril.Sumsub.Client
@@ -11,7 +12,7 @@ defmodule Mithril.MobileFunctions.SumsubToken do
     with :ok <- require_credentials(),
          level_name <- Config.level_name(),
          ttl_in_secs <- ttl_in_secs(body),
-         applicant <- ensure_applicant(user_id, body),
+         applicant <- ensure_applicant(user_id),
          :ok <- maybe_persist_link(user_id, applicant.applicant_id, level_name, body),
          {:ok, token_body} <- mint_access_token(user_id, level_name, ttl_in_secs) do
       {:ok,
@@ -68,16 +69,48 @@ defmodule Mithril.MobileFunctions.SumsubToken do
     value |> max(60) |> min(3600)
   end
 
-  defp ensure_applicant(user_id, body) do
+  defp ensure_applicant(user_id) do
+    identity = load_account_identity(user_id)
+
     Applicant.ensure_for_user(%{
       external_user_id: user_id,
-      email: Map.get(body, "email"),
-      phone: Map.get(body, "phone"),
-      first_name: Map.get(body, "firstName"),
-      last_name: Map.get(body, "lastName"),
-      dob: Map.get(body, "dob")
+      email: identity.email,
+      phone: identity.phone,
+      first_name: identity.first_name,
+      last_name: identity.last_name
     })
   end
+
+  defp load_account_identity(user_id) do
+    {email, phone} =
+      case Repo.query("SELECT email, phone FROM public.users WHERE id = $1::uuid LIMIT 1", [
+             user_id
+           ]) do
+        {:ok, %{rows: [[email, phone]]}} -> {present_or_nil(email), present_or_nil(phone)}
+        _ -> {nil, nil}
+      end
+
+    {first_name, last_name} =
+      case Repo.query(
+             "SELECT firstname, lastname FROM public.profiles WHERE id = $1::uuid LIMIT 1",
+             [user_id]
+           ) do
+        {:ok, %{rows: [[first_name, last_name]]}} ->
+          {present_or_nil(first_name), present_or_nil(last_name)}
+
+        _ ->
+          {nil, nil}
+      end
+
+    %{email: email, phone: phone, first_name: first_name, last_name: last_name}
+  end
+
+  defp present_or_nil(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed == "", do: nil, else: trimmed
+  end
+
+  defp present_or_nil(_), do: nil
 
   defp maybe_persist_link(user_id, applicant_id, level_name, _body) do
     if present?(applicant_id) do

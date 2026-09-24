@@ -15,6 +15,7 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
   def call(customer_id, body) when is_binary(customer_id) and is_map(body) do
     with {:ok, fields} <- parse_body(body),
          :ok <- ensure_customer_role(customer_id),
+         :ok <- rate_limit_create(customer_id),
          {:ok, job_id} <- insert_job(customer_id, fields),
          {:ok, cleaner_ids} <- nearby_cleaner_ids(fields),
          offers_count <- insert_offers(job_id, cleaner_ids),
@@ -55,7 +56,8 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
         with {:ok, normalized_time} <- normalize_start_time(start_time),
              {:ok, duration} <- parse_duration(duration_hours),
              {:ok, lat_num, lng_num} <- parse_coordinates(lat, lng),
-             {:ok, price_num} <- parse_price(price) do
+             {:ok, price_num} <- parse_price(price),
+             :ok <- ensure_future_date(scheduled_date) do
           expires_seconds = parse_offer_expiry(offer_expires_in_seconds)
           offer_expires_at = DateTime.utc_now() |> DateTime.add(expires_seconds, :second)
 
@@ -148,6 +150,42 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
       {:ok, price_num}
     else
       {:error, {:status, 400, %{error: "Invalid price"}}}
+    end
+  end
+
+  defp ensure_future_date(scheduled_date) do
+    case Date.from_iso8601(scheduled_date) do
+      {:ok, date} ->
+        if Date.compare(date, Date.utc_today()) == :lt do
+          {:error, {:status, 400, %{error: "scheduled_date must be today or later"}}}
+        else
+          :ok
+        end
+
+      _ ->
+        {:error, {:status, 400, %{error: "scheduled_date must be YYYY-MM-DD"}}}
+    end
+  end
+
+  defp rate_limit_create(customer_id) do
+    case MobileGateway.with_user_transaction(customer_id, fn ->
+           case Repo.query(
+                  "SELECT public.record_lookup_attempt($1, $2, $3, $4) AS blocked",
+                  ["create_job_and_notify", customer_id, 5, 600]
+                ) do
+             {:ok, %{rows: [[true]]}} -> {:error, :rate_limited}
+             {:ok, %{rows: [[false]]}} -> {:ok, :ok}
+             _ -> {:ok, :ok}
+           end
+         end) do
+      {:ok, :ok} ->
+        :ok
+
+      {:error, :rate_limited} ->
+        {:error, {:status, 429, %{error: "Too many jobs. Try again later."}}}
+
+      _ ->
+        :ok
     end
   end
 

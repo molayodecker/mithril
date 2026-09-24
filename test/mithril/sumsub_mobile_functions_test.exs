@@ -118,6 +118,13 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotifyTest do
              CreateJobAndNotify.call(user_id, valid_job_body(%{"price" => 500_001}))
   end
 
+  test "rejects a scheduled_date in the past" do
+    user_id = Ecto.UUID.generate()
+
+    assert {:error, {:status, 400, %{error: "scheduled_date must be today or later"}}} =
+             CreateJobAndNotify.call(user_id, valid_job_body(%{"scheduled_date" => "2020-01-01"}))
+  end
+
   defp valid_job_body(overrides) do
     Map.merge(
       %{
@@ -141,14 +148,15 @@ defmodule Mithril.MobileFunctions.RankCleanersTest do
 
   test "returns deterministic fallback ranking" do
     assert {:ok, body} =
-             RankCleanersWithAi.call(nil, %{
+             RankCleanersWithAi.call(Ecto.UUID.generate(), %{
                "cleaners" => [
-                 %{"id" => "a", "match_score" => 1},
-                 %{"id" => "b", "match_score" => 3}
+                 %{"id" => "b", "match_score" => 99},
+                 %{"id" => "a", "match_score" => 1}
                ]
              })
 
     assert body.source == "fallback"
-    assert hd(body.cleaners).cleaner_id == "b"
+    assert hd(body.cleaners).cleaner_id == "a"
+    assert Enum.all?(body.cleaners, fn cleaner -> cleaner.score == 0 end)
   end
 end

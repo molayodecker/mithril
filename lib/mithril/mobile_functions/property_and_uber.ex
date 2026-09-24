@@ -134,8 +134,9 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
         Posthog.uber_release_gate_distinct_id()
       )
 
-    with true <- enabled,
-         {:ok, request} <- TripEstimate.parse_request(body),
+    with {:ok, request} <- TripEstimate.parse_request(body),
+         :ok <- ensure_related_cleaner(user_id, request.cleaner_id),
+         true <- enabled,
          :ok <- rate_limit(user_id),
          :ok <- ensure_cleaner_active(request.cleaner_id),
          {:ok, origin} <- load_cleaner_origin(request.cleaner_id),
@@ -152,6 +153,9 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
         {:error,
          {:status, 404,
           %{error: "Cleaner transportation is currently unavailable", code: "feature_disabled"}}}
+
+      {:error, :unrelated_cleaner} ->
+        {:error, {:status, 403, %{error: "Forbidden", code: "cleaner_not_related"}}}
 
       {:error, message} when is_binary(message) ->
         {:error, {:status, 400, %{error: message}}}
@@ -178,6 +182,38 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
 
       {:error, {:status, status, body}} ->
         {:error, {:status, status, body}}
+    end
+  end
+
+  defp ensure_related_cleaner(user_id, cleaner_id) when user_id == cleaner_id, do: :ok
+
+  defp ensure_related_cleaner(user_id, cleaner_id) do
+    sql = """
+    SELECT 1
+    WHERE EXISTS (
+      SELECT 1
+      FROM public.bookings
+      WHERE customer_id = $1::uuid
+        AND cleaner_id = $2::uuid
+        AND status IN ('pending', 'confirmed', 'scheduled', 'en_route', 'arrived', 'in_progress')
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM public.preferred_cleaners
+      WHERE user_id = $1::uuid AND cleaner_id = $2::uuid
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM public.jobs
+      WHERE customer_id = $1::uuid
+        AND claimed_by = $2::uuid
+        AND status NOT IN ('cancelled', 'completed', 'expired')
+    )
+    """
+
+    case Repo.query(sql, [user_id, cleaner_id]) do
+      {:ok, %{rows: [[_]]}} -> :ok
+      _ -> {:error, :unrelated_cleaner}
     end
   end
 
@@ -222,10 +258,10 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
   defp safe_fetch_estimate(input) do
     case TripEstimate.fetch_estimate(input) do
       {:ok, estimate} -> {:ok, estimate}
-      {:error, message} -> {:error, message}
+      {:error, _} -> {:error, "Could not estimate trip"}
     end
   rescue
-    ArgumentError -> {:error, "Uber estimate did not include trip distance"}
+    ArgumentError -> {:error, "Could not estimate trip"}
   end
 
   defp maybe_persist_quote(user_id, request, estimate) do

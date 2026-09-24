@@ -39,10 +39,11 @@ defmodule Mithril.MobileFunctions.ClaimJobTest do
              ClaimJob.call(user_id, %{})
   end
 
-  test "rejects invalid job_id shape" do
+  test "rejects claiming a job without an offer" do
     user_id = Ecto.UUID.generate()
+    job_id = Ecto.UUID.generate()
 
-    assert {:error, {:status, 400, %{success: false, error: "Invalid job_id"}}} =
-             ClaimJob.call(user_id, %{"job_id" => "not-a-uuid"})
+    assert {:error, {:status, 403, %{success: false, error: "Forbidden"}}} =
+             ClaimJob.call(user_id, %{"job_id" => job_id})
   end
 end
