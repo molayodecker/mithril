@@ -81,7 +81,9 @@ defmodule Mithril.Transport.Estimate do
   defp latitude_expr(:point), do: "(b.location_coordinates)[1]::double precision"
   defp latitude_expr(_), do: "NULL::double precision"
 
-  defp longitude_expr(:json), do: safe_json_coordinate_expr(["longitude", "lng"], -180, 180)
+  defp longitude_expr(:json),
+    do: safe_json_coordinate_expr(["longitude", "lng"], -180, 180)
+
   defp longitude_expr(:spatial), do: "ST_X(b.location_coordinates::geometry)"
   defp longitude_expr(:point), do: "(b.location_coordinates)[0]::double precision"
   defp longitude_expr(_), do: "NULL::double precision"
@@ -94,108 +96,7 @@ defmodule Mithril.Transport.Estimate do
 
     """
     CASE
-      WHEN #{value} ~ '^[+-]?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?
-  defp authorize(user_id, booking) do
-    if DbUuid.equal?(user_id, Map.get(booking, "customer_id")) or
-         DbUuid.equal?(user_id, Map.get(booking, "cleaner_id")) do
-      :ok
-    else
-      {:error, {:status, 403, %{error: "Forbidden"}}}
-    end
-  end
-
-  defp ensure_assigned(booking) do
-    cleaner_id = Map.get(booking, "cleaner_id")
-    status = booking |> Map.get("status") |> to_string() |> String.downcase()
-
-    cond do
-      is_nil(cleaner_id) or cleaner_id == "" ->
-        {:error, {:status, 409, %{error: "No assigned cleaner", code: "no_assigned_cleaner"}}}
-
-      status not in @active_statuses ->
-        {:error, {:status, 409, %{error: "Booking is not active", code: "booking_not_active"}}}
-
-      true ->
-        :ok
-    end
-  end
-
-  defp load_destination(booking) do
-    case Origins.load_booking_destination(booking) do
-      {:ok, dest} ->
-        {:ok, dest}
-
-      _ ->
-        {:error,
-         {:status, 422,
-          %{error: "Booking destination is not available", code: "destination_missing"}}}
-    end
-  end
-
-  defp load_origin(booking) do
-    case Origins.load_cleaner_origin(Map.get(booking, "cleaner_id")) do
-      {:ok, origin} ->
-        {:ok, origin}
-
-      _ ->
-        {:error,
-         {:status, 422,
-          %{error: "Cleaner location is not available", code: "cleaner_location_missing"}}}
-    end
-  end
-
-  defp route(origin, dest) do
-    case Router.directions(origin, dest) do
-      {:ok, %{distance_m: distance_m, duration_s: duration_s}} ->
-        {:ok,
-         %{
-           distance_km: Float.round(distance_m / 1000.0, 2),
-           duration_seconds: max(0, trunc(duration_s))
-         }}
-
-      {:error, :not_configured} ->
-        {:error, {:status, 500, %{error: "Transport routing is not configured"}}}
-
-      {:error, :rate_limited} ->
-        {:error, {:status, 429, %{error: "Too many transport estimates. Try again shortly."}}}
-
-      _ ->
-        {:error, {:status, 502, %{error: "Could not estimate transport"}}}
-    end
-  end
-
-  defp present(user_id, booking, route, priced, origin, dest) do
-    %{
-      bookingId: DbUuid.encode(Map.get(booking, "id")),
-      distanceKm: route.distance_km,
-      durationSeconds: route.duration_seconds,
-      durationLabel: duration_label(route.duration_seconds),
-      amountMinor: priced.amount_minor,
-      currency: priced.currency,
-      display: display(priced),
-      provider: "locationiq",
-      uberHandoffUrl: UberHandoff.maybe_url(user_id, booking, origin, dest)
-    }
-  end
-
-  defp duration_label(seconds) when is_integer(seconds) and seconds > 0 do
-    minutes = max(1, round(seconds / 60))
-    "~#{minutes} min"
-  end
-
-  defp duration_label(_), do: nil
-
-  defp display(%{currency: "GHS", amount_minor: amount}) do
-    major = :erlang.float_to_binary(amount / 100, decimals: 2)
-    "Estimated transport: GH₵#{major}"
-  end
-
-  defp display(%{currency: currency, amount_minor: amount}) do
-    major = :erlang.float_to_binary(amount / 100, decimals: 2)
-    "Estimated transport: #{currency} #{major}"
-  end
-end
- THEN
+      WHEN #{value} ~ '^[+-]?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$' THEN
         CASE
           WHEN (#{value})::double precision BETWEEN #{min} AND #{max}
           THEN (#{value})::double precision
