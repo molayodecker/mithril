@@ -2,7 +2,6 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
   @moduledoc false
 
   alias Mithril.DbUuid
-  alias Mithril.RateLimiter
   alias Mithril.Repo
 
   @allowed_reasons ~w(
@@ -66,9 +65,6 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
         if DbUuid.equal?(customer_id, user_id),
           do: :ok,
           else: {:error, {:status, 403, %{error: "Forbidden"}}}
-
-      {:ok, %{rows: [[_]]}} ->
-        {:error, {:status, 403, %{error: "Forbidden"}}}
 
       _ ->
         {:error, {:status, 403, %{error: "Forbidden"}}}
@@ -194,6 +190,7 @@ defmodule Mithril.MobileFunctions.RequestDataExport do
   @moduledoc false
 
   alias Mithril.DbUuid
+  alias Mithril.RateLimiter
   alias Mithril.Repo
 
   @secret_columns ~w(password_hash encrypted_password feed_url_encrypted)
