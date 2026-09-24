@@ -10,7 +10,8 @@ defmodule Mithril.Sumsub.Client do
     request("GET", path_with_query, "")
   end
 
-  @spec post(String.t(), map() | nil) :: {:ok, map()} | {:error, {:status, non_neg_integer(), binary()}}
+  @spec post(String.t(), map() | nil) ::
+          {:ok, map()} | {:error, {:status, non_neg_integer(), binary()}}
   def post(path_with_query, body \\ nil) do
     body_str =
       case body do

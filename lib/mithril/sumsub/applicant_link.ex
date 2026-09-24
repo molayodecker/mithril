@@ -48,7 +48,16 @@ defmodule Mithril.Sumsub.ApplicantLink do
     row_to_update = global_row || user_row
 
     if row_to_update do
-      patch = build_link_update(row_to_update, user_id, applicant_id, cleaner_application_id, level_name, country, now)
+      patch =
+        build_link_update(
+          row_to_update,
+          user_id,
+          applicant_id,
+          cleaner_application_id,
+          level_name,
+          country,
+          now
+        )
 
       _ =
         Repo.query(
@@ -102,7 +111,15 @@ defmodule Mithril.Sumsub.ApplicantLink do
 
           if raced_row do
             patch =
-              build_link_update(raced_row, user_id, applicant_id, cleaner_application_id, level_name, country, now)
+              build_link_update(
+                raced_row,
+                user_id,
+                applicant_id,
+                cleaner_application_id,
+                level_name,
+                country,
+                now
+              )
 
             _ =
               Repo.query(
@@ -142,7 +159,15 @@ defmodule Mithril.Sumsub.ApplicantLink do
     end
   end
 
-  defp build_link_update(row, user_id, applicant_id, cleaner_application_id, level_name, country, now) do
+  defp build_link_update(
+         row,
+         user_id,
+         applicant_id,
+         cleaner_application_id,
+         level_name,
+         country,
+         now
+       ) do
     kyc_done =
       case Map.get(row, "kyc_status") do
         status when is_binary(status) -> String.trim(status) != ""

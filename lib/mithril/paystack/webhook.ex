@@ -250,7 +250,8 @@ defmodule Mithril.Paystack.Webhook do
           reference: payout.reference
         }
 
-      desired_status in ["success", "failed"] and payout.status in ["success", "failed", "reversed"] ->
+      desired_status in ["success", "failed"] and
+          payout.status in ["success", "failed", "reversed"] ->
         %{
           ignored: true,
           reason: "terminal_transfer_status",
@@ -602,8 +603,7 @@ defmodule Mithril.Paystack.Webhook do
          currency: currency_field(data),
          status: status_field(data),
          gateway_response: nullable_string(data, "gateway_response"),
-         failure_reason:
-           nullable_string(data, "message") || nullable_string(data, "reason"),
+         failure_reason: nullable_string(data, "message") || nullable_string(data, "reason"),
          transfer_code: nullable_string(data, "transfer_code")
        }}
     end

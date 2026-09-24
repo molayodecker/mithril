@@ -11,7 +11,8 @@ defmodule Mithril.Posthog do
   def uber_release_gate_distinct_id, do: @uber_release_gate_distinct_id
 
   @spec fetch_boolean_flag(String.t(), String.t()) :: boolean()
-  def fetch_boolean_flag(flag_key, distinct_id) when is_binary(flag_key) and is_binary(distinct_id) do
+  def fetch_boolean_flag(flag_key, distinct_id)
+      when is_binary(flag_key) and is_binary(distinct_id) do
     api_key = api_key()
 
     if api_key == "" do

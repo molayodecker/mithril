@@ -100,7 +100,11 @@ defmodule Mithril.CalendarFeedSecurity do
   end
 
   @spec validate_feed_timing(map()) :: :ok | {:error, String.t()}
-  def validate_feed_timing(%{timezone: timezone, default_checkin_time: checkin, default_checkout_time: checkout}) do
+  def validate_feed_timing(%{
+        timezone: timezone,
+        default_checkin_time: checkin,
+        default_checkout_time: checkout
+      }) do
     with :ok <- validate_timezone(timezone),
          {:ok, _} <- parse_feed_time(checkin, "15:00:00"),
          {:ok, _} <- parse_feed_time(checkout, "11:00:00") do
@@ -120,7 +124,8 @@ defmodule Mithril.CalendarFeedSecurity do
 
       true ->
         case URI.parse(trimmed) do
-          %URI{scheme: "https", host: host, port: port, userinfo: nil} = uri when is_binary(host) ->
+          %URI{scheme: "https", host: host, port: port, userinfo: nil} = uri
+          when is_binary(host) ->
             if port in [nil, 443] do
               {:ok, uri}
             else

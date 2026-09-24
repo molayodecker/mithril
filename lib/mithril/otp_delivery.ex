@@ -42,7 +42,10 @@ defmodule Mithril.OtpDelivery do
               ciphertext when is_binary(ciphertext) and ciphertext != "" ->
                 case SecretCrypto.decrypt(ciphertext) do
                   {:ok, delivery_token} ->
-                    mark_client_fetched(Map.get(group, "id"), Map.get(group, "client_token_fetched_at"))
+                    mark_client_fetched(
+                      Map.get(group, "id"),
+                      Map.get(group, "client_token_fetched_at")
+                    )
 
                     {:ok, %{delivery_token: delivery_token, channels: channels}}
 
@@ -114,8 +117,7 @@ defmodule Mithril.OtpDelivery do
     else
       nil ->
         {:error,
-         {:status, 400,
-          %{error: "Add and verify an email in Settings to use email delivery."}}}
+         {:status, 400, %{error: "Add and verify an email in Settings to use email delivery."}}}
 
       {:error, message} ->
         {:error, {:status, 400, %{error: message}}}
@@ -125,12 +127,16 @@ defmodule Mithril.OtpDelivery do
   defp send_whatsapp_resend(group, otp) do
     phone = Map.get(group, "to_phone")
 
-    case Mithril.Auth.SMS.send_message(phone, "Your Instaclean verification code is #{otp}. Do not share this code.") do
-      :ok -> {:ok, %{ok: true}}
+    case Mithril.Auth.SMS.send_message(
+           phone,
+           "Your Instaclean verification code is #{otp}. Do not share this code."
+         ) do
+      :ok ->
+        {:ok, %{ok: true}}
+
       {:error, _} ->
         {:error,
-         {:status, 400,
-          %{error: "Could not send code via WhatsApp. Try SMS or email instead."}}}
+         {:status, 400, %{error: "Could not send code via WhatsApp. Try SMS or email instead."}}}
     end
   end
 
@@ -141,7 +147,11 @@ defmodule Mithril.OtpDelivery do
       {:error, "Could not send code via email. Try SMS or WhatsApp."}
     else
       from =
-        Application.get_env(:mithril, :resend_from, "Instaclean <noreply@update.tryinstaclean.com>")
+        Application.get_env(
+          :mithril,
+          :resend_from,
+          "Instaclean <noreply@update.tryinstaclean.com>"
+        )
 
       body = %{
         from: from,
@@ -230,7 +240,8 @@ defmodule Mithril.OtpDelivery do
       {:ok, %{rows: [[email]]}} when is_binary(email) ->
         trimmed = String.trim(email)
 
-        if trimmed != "" and not String.ends_with?(String.downcase(trimmed), "@phone.tryinstaclean.local") do
+        if trimmed != "" and
+             not String.ends_with?(String.downcase(trimmed), "@phone.tryinstaclean.local") do
           trimmed
         else
           nil

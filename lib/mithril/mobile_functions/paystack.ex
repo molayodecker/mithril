@@ -110,7 +110,8 @@ defmodule Mithril.MobileFunctions.Paystack do
     end
   end
 
-  def get_json(path, secret) when is_binary(path) and is_binary(secret), do: paystack_get(path, secret)
+  def get_json(path, secret) when is_binary(path) and is_binary(secret),
+    do: paystack_get(path, secret)
 
   def post_json(path, body, secret) when is_binary(path) and is_map(body) and is_binary(secret) do
     url = "https://api.paystack.co#{path}"

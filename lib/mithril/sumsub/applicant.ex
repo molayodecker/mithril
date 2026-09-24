@@ -13,20 +13,21 @@ defmodule Mithril.Sumsub.Applicant do
     if external_user_id == "" do
       %{applicant_id: nil, created: false}
     else
-      payload = %{
-        "externalUserId" => external_user_id,
-        "email" => optional_string(Map.get(input, :email)),
-        "phone" => optional_string(Map.get(input, :phone)),
-        "info" => %{
-          "firstName" => optional_string(Map.get(input, :first_name)),
-          "lastName" => optional_string(Map.get(input, :last_name)),
-          "dob" => optional_string(Map.get(input, :dob)),
-          "type" => "individual",
-          "country" => Config.country_code(),
-          "nationality" => Config.nationality_code()
+      payload =
+        %{
+          "externalUserId" => external_user_id,
+          "email" => optional_string(Map.get(input, :email)),
+          "phone" => optional_string(Map.get(input, :phone)),
+          "info" => %{
+            "firstName" => optional_string(Map.get(input, :first_name)),
+            "lastName" => optional_string(Map.get(input, :last_name)),
+            "dob" => optional_string(Map.get(input, :dob)),
+            "type" => "individual",
+            "country" => Config.country_code(),
+            "nationality" => Config.nationality_code()
+          }
         }
-      }
-      |> drop_nil_values()
+        |> drop_nil_values()
 
       path =
         "/resources/applicants?levelName=#{URI.encode(Config.level_name())}"
@@ -58,7 +59,9 @@ defmodule Mithril.Sumsub.Applicant do
   defp read_applicant_id(body) when is_map(body) do
     id =
       case Map.get(body, "id") do
-        value when is_binary(value) -> value
+        value when is_binary(value) ->
+          value
+
         _ ->
           applicant = Map.get(body, "applicant") || %{}
 

@@ -201,16 +201,26 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     """
 
     case Repo.query(sql, [user_id]) do
-      {:ok, %{rows: [[1]]}} -> {:ok, true}
-      {:ok, %{rows: _}} -> {:ok, false}
-      {:error, error} -> {:error, {:status, 500, %{ok: false, error: db_error_message(error, "Could not verify cleaner role")}}}
+      {:ok, %{rows: [[1]]}} ->
+        {:ok, true}
+
+      {:ok, %{rows: _}} ->
+        {:ok, false}
+
+      {:error, error} ->
+        {:error,
+         {:status, 500,
+          %{ok: false, error: db_error_message(error, "Could not verify cleaner role")}}}
     end
   end
 
   defp resolve_identity(user_id) do
     case IdentityVerification.resolve(user_id) do
-      {:ok, identity} -> {:ok, identity}
-      {:error, _} -> {:error, {:status, 500, %{ok: false, error: "Could not verify identity status"}}}
+      {:ok, identity} ->
+        {:ok, identity}
+
+      {:error, _} ->
+        {:error, {:status, 500, %{ok: false, error: "Could not verify identity status"}}}
     end
   end
 
@@ -269,7 +279,8 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
 
       {:error, error} ->
         {:error,
-         {:status, 500, %{ok: false, error: db_error_message(error, "Could not verify cleaner status")}}}
+         {:status, 500,
+          %{ok: false, error: db_error_message(error, "Could not verify cleaner status")}}}
     end
   end
 
@@ -377,7 +388,8 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
 
       {:error, error} ->
         {:error,
-         {:status, 500, %{ok: false, error: db_error_message(error, "Could not verify payout method")}}}
+         {:status, 500,
+          %{ok: false, error: db_error_message(error, "Could not verify payout method")}}}
     end
   end
 
@@ -412,8 +424,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
   defp ensure_wallet_currency(_wallet, _requested_currency),
     do:
       {:error,
-       {:status, 400,
-        %{ok: false, error: "Withdrawal currency must match your wallet currency"}}}
+       {:status, 400, %{ok: false, error: "Withdrawal currency must match your wallet currency"}}}
 
   defp load_existing_payout(user_id, reference) do
     sql = """
@@ -438,7 +449,8 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
 
       {:error, error} ->
         {:error,
-         {:status, 500, %{ok: false, error: db_error_message(error, "Could not verify payout state")}}}
+         {:status, 500,
+          %{ok: false, error: db_error_message(error, "Could not verify payout state")}}}
     end
   end
 
@@ -494,7 +506,9 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
         map_begin_withdrawal_error(message)
 
       {:error, error} ->
-        {:error, {:status, 500, %{ok: false, error: db_error_message(error, "Could not start withdrawal")}}}
+        {:error,
+         {:status, 500,
+          %{ok: false, error: db_error_message(error, "Could not start withdrawal")}}}
     end
   end
 
@@ -507,7 +521,8 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
         {:error, {:status, 400, %{ok: false, error: "Insufficient balance"}}}
 
       String.contains?(message, "wallet_not_found") ->
-        {:error, {:status, 400, %{ok: false, error: "No wallet found. Complete a paid job first."}}}
+        {:error,
+         {:status, 400, %{ok: false, error: "No wallet found. Complete a paid job first."}}}
 
       String.contains?(message, "withdrawal_id_conflict") ->
         {:error, {:status, 400, %{ok: false, error: "Invalid withdrawal reference"}}}
@@ -542,7 +557,8 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
         case load_existing_payout(user_id, fields.reference) do
           {:ok, nil} ->
             {:error,
-             {:status, 409, %{ok: false, error: "Transfer already in progress for this reference"}}}
+             {:status, 409,
+              %{ok: false, error: "Transfer already in progress for this reference"}}}
 
           {:ok, raced} ->
             {:error, {:race_conflict, raced}}
@@ -560,8 +576,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
 
   defp handle_race(_fields, %{status: "failed"} = raced) do
     {:error,
-     {:status, 409,
-      %{ok: false, error: raced.error_message || "Earlier transfer attempt failed"}}}
+     {:status, 409, %{ok: false, error: raced.error_message || "Earlier transfer attempt failed"}}}
   end
 
   defp handle_race(fields, raced) do

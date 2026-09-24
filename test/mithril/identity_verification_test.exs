@@ -25,11 +25,14 @@ defmodule Mithril.IdentityVerificationTest do
 
     authoritative =
       rows
-      |> Enum.sort_by(fn row ->
-        case row["updated_at"] do
-          %DateTime{} = dt -> DateTime.to_unix(dt, :millisecond)
-        end
-      end, :desc)
+      |> Enum.sort_by(
+        fn row ->
+          case row["updated_at"] do
+            %DateTime{} = dt -> DateTime.to_unix(dt, :millisecond)
+          end
+        end,
+        :desc
+      )
       |> Enum.find(fn row -> not IdentityVerification.empty_legacy_kyc_placeholder?(row) end)
 
     assert IdentityVerification.kyc_row_verified?(authoritative)

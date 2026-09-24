@@ -2,8 +2,7 @@ defmodule Mithril.Sumsub.SyncLookup do
   @moduledoc false
 
   @type kyc_profile :: %{
-          optional(String.t()) =>
-            String.t() | nil
+          optional(String.t()) => String.t() | nil
         }
 
   @spec build_paths([kyc_profile()], map() | nil) :: [String.t()]
@@ -120,7 +119,10 @@ defmodule Mithril.Sumsub.SyncLookup do
     if decision_ms > 0 do
       decision_ms
     else
-      max(parse_time_ms(Map.get(profile, "updated_at")), parse_time_ms(Map.get(profile, "created_at")))
+      max(
+        parse_time_ms(Map.get(profile, "updated_at")),
+        parse_time_ms(Map.get(profile, "created_at"))
+      )
     end
   end
 

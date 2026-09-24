@@ -157,7 +157,8 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     end
   end
 
-  defp send_expo_push(targets, type, booking_id, cleaner_name, target_user_id) when is_list(targets) do
+  defp send_expo_push(targets, type, booking_id, cleaner_name, target_user_id)
+       when is_list(targets) do
     if targets == [] do
       0
     else
@@ -221,7 +222,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
         _ -> 0
       end
 
-    notif_count + message_count
+    (notif_count + message_count)
     |> max(0)
     |> min(999)
   end
@@ -233,7 +234,11 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     {customer_email, customer_phone, customer_name} = load_customer_contact(customer_id)
     time_short = format_time_short(Map.get(booking, "scheduled_time"))
     scheduled_date = Map.get(booking, "scheduled_date")
-    date_combined = if scheduled_date && time_short != "", do: "#{scheduled_date} #{time_short}", else: to_string(scheduled_date || "")
+
+    date_combined =
+      if scheduled_date && time_short != "",
+        do: "#{scheduled_date} #{time_short}",
+        else: to_string(scheduled_date || "")
 
     variables = %{
       "name" => customer_name,

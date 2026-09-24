@@ -29,7 +29,15 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
           if skipped do
             {:ok, Map.put(skipped, :success, true)}
           else
-            notify_parties(booking, old_date, old_time, new_date, new_time, location_changed, booking_id)
+            notify_parties(
+              booking,
+              old_date,
+              old_time,
+              new_date,
+              new_time,
+              location_changed,
+              booking_id
+            )
           end
         end
     end
@@ -82,7 +90,15 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
     end
   end
 
-  defp notify_parties(booking, old_date, old_time, new_date, new_time, location_changed, booking_id) do
+  defp notify_parties(
+         booking,
+         old_date,
+         old_time,
+         new_date,
+         new_time,
+         location_changed,
+         booking_id
+       ) do
     customer_id = Map.get(booking, "customer_id")
     cleaner_id = Map.get(booking, "cleaner_id")
     old_label = "#{old_date} #{String.slice(old_time, 0, 5)}"
@@ -91,18 +107,39 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
 
     customer_body =
       if location_changed,
-        do: "Your booking has been updated to #{new_label}. The time and location were updated — open the booking for the latest details.",
+        do:
+          "Your booking has been updated to #{new_label}. The time and location were updated — open the booking for the latest details.",
         else: "Your booking has been updated to #{new_label}."
 
     cleaner_body = "Your booking has moved from #{old_label} to #{new_label}."
 
-    customer_notified = insert_notification(customer_id, title, customer_body, booking_id, new_date, new_time, "customer")
-    cleaner_notified = insert_notification(cleaner_id, title, cleaner_body, booking_id, new_date, new_time, "cleaner")
+    customer_notified =
+      insert_notification(
+        customer_id,
+        title,
+        customer_body,
+        booking_id,
+        new_date,
+        new_time,
+        "customer"
+      )
+
+    cleaner_notified =
+      insert_notification(
+        cleaner_id,
+        title,
+        cleaner_body,
+        booking_id,
+        new_date,
+        new_time,
+        "cleaner"
+      )
 
     _ = maybe_send_external(customer_id, booking_id, customer_body, new_label, old_label)
     _ = maybe_send_external(cleaner_id, booking_id, cleaner_body, new_label, old_label)
 
-    {:ok, %{success: true, customerNotified: customer_notified, cleanerNotified: cleaner_notified}}
+    {:ok,
+     %{success: true, customerNotified: customer_notified, cleanerNotified: cleaner_notified}}
   end
 
   defp insert_notification(user_id, title, message, booking_id, new_date, new_time, audience) do
@@ -158,8 +195,12 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
     value = raw |> to_string() |> String.trim()
 
     cond do
-      Regex.match?(~r/^\d{2}:\d{2}:\d{2}$/, value) -> value
-      Regex.match?(~r/^\d{2}:\d{2}$/, value) -> "#{value}:00"
+      Regex.match?(~r/^\d{2}:\d{2}:\d{2}$/, value) ->
+        value
+
+      Regex.match?(~r/^\d{2}:\d{2}$/, value) ->
+        "#{value}:00"
+
       true ->
         case Regex.run(~r/^(\d{1,2}:\d{2})/, value) do
           [_, hour_minute] -> "#{hour_minute}:00"

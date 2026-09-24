@@ -8,8 +8,12 @@ defmodule Mithril.Sumsub.Reconcile do
     review_answer_upper = review_answer |> to_string() |> String.upcase()
 
     cond do
-      review_answer_upper == "GREEN" -> "completed"
-      review_answer_upper == "RED" -> "rejected"
+      review_answer_upper == "GREEN" ->
+        "completed"
+
+      review_answer_upper == "RED" ->
+        "rejected"
+
       true ->
         normalized =
           review_status

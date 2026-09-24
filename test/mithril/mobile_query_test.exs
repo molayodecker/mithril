@@ -390,7 +390,6 @@ defmodule Mithril.MobileQueryTest do
     refute sql =~ "jobs.status = 'pending' AND jobs.claimed_by IS NULL)"
   end
 
-
   test "directory filters and ordering cannot probe private cleaner fields" do
     assert {:error, :forbidden} =
              MobileQuery.compile("user-1", %{

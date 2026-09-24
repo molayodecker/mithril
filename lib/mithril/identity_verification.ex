@@ -80,13 +80,13 @@ defmodule Mithril.IdentityVerification do
       {:ok, %{rows: rows}} ->
         {:ok,
          Enum.map(rows, fn [
-                            kyc_status,
-                            review_answer,
-                            updated_at,
-                            sumsub_applicant_id,
-                            last_event_type,
-                            submitted_at
-                          ] ->
+                             kyc_status,
+                             review_answer,
+                             updated_at,
+                             sumsub_applicant_id,
+                             last_event_type,
+                             submitted_at
+                           ] ->
            %{
              "kyc_status" => kyc_status,
              "review_answer" => review_answer,
@@ -104,13 +104,22 @@ defmodule Mithril.IdentityVerification do
 
   defp resolve_from_kyc(kyc_rows) do
     sorted =
-      Enum.sort_by(kyc_rows, fn row ->
-        case Map.get(row, "updated_at") do
-          %DateTime{} = dt -> DateTime.to_unix(dt, :millisecond)
-          %NaiveDateTime{} = ndt -> NaiveDateTime.diff(ndt, ~N[1970-01-01 00:00:00], :millisecond)
-          _ -> 0
-        end
-      end, :desc)
+      Enum.sort_by(
+        kyc_rows,
+        fn row ->
+          case Map.get(row, "updated_at") do
+            %DateTime{} = dt ->
+              DateTime.to_unix(dt, :millisecond)
+
+            %NaiveDateTime{} = ndt ->
+              NaiveDateTime.diff(ndt, ~N[1970-01-01 00:00:00], :millisecond)
+
+            _ ->
+              0
+          end
+        end,
+        :desc
+      )
 
     authoritative =
       Enum.find(sorted, fn row -> not empty_legacy_kyc_placeholder?(row) end) ||

@@ -34,15 +34,21 @@ defmodule Mithril.MobileFunctions.ConnectPropertyCalendar do
   end
 
   defp parse_body(body) do
-    with {:ok, property_id} <- CalendarFeedSecurity.parse_property_id(Map.get(body, "property_id")),
+    with {:ok, property_id} <-
+           CalendarFeedSecurity.parse_property_id(Map.get(body, "property_id")),
          {:ok, provider} <- CalendarFeedSecurity.parse_provider(Map.get(body, "provider")),
          {:ok, feed_url} <- parse_feed_url(body, provider),
          {:ok, default_checkout_time} <-
-           CalendarFeedSecurity.parse_feed_time(Map.get(body, "default_checkout_time"), "11:00:00"),
+           CalendarFeedSecurity.parse_feed_time(
+             Map.get(body, "default_checkout_time"),
+             "11:00:00"
+           ),
          {:ok, default_checkin_time} <-
            CalendarFeedSecurity.parse_feed_time(Map.get(body, "default_checkin_time"), "15:00:00"),
          {:ok, minimum_turnover_minutes} <-
-           CalendarFeedSecurity.parse_minimum_turnover_minutes(Map.get(body, "minimum_turnover_minutes")) do
+           CalendarFeedSecurity.parse_minimum_turnover_minutes(
+             Map.get(body, "minimum_turnover_minutes")
+           ) do
       timezone =
         case Map.get(body, "timezone") do
           value when is_binary(value) ->
@@ -70,7 +76,8 @@ defmodule Mithril.MobileFunctions.ConnectPropertyCalendar do
   defp effective_timezone(fields, property) do
     property_timezone =
       case property do
-        %{timezone: property_timezone} when is_binary(property_timezone) and property_timezone != "" ->
+        %{timezone: property_timezone}
+        when is_binary(property_timezone) and property_timezone != "" ->
           property_timezone
 
         _ ->
@@ -127,8 +134,11 @@ defmodule Mithril.MobileFunctions.ConnectPropertyCalendar do
 
   defp encrypt_feed(feed_url) do
     case SecretCrypto.encrypt(feed_url) do
-      {:ok, encrypted} -> {:ok, encrypted}
-      {:error, :not_configured} -> {:error, {:status, 500, %{error: "Calendar encryption is not configured"}}}
+      {:ok, encrypted} ->
+        {:ok, encrypted}
+
+      {:error, :not_configured} ->
+        {:error, {:status, 500, %{error: "Calendar encryption is not configured"}}}
     end
   end
 
@@ -187,7 +197,8 @@ defmodule Mithril.MobileFunctions.ConnectPropertyCalendar do
         {:ok, Map.new(Enum.zip(columns, row))}
 
       {:error, error} ->
-        {:error, {:status, 502, %{error: db_error_message(error, "Failed to save calendar feed")}}}
+        {:error,
+         {:status, 502, %{error: db_error_message(error, "Failed to save calendar feed")}}}
     end
   end
 

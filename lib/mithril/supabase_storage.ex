@@ -1,7 +1,8 @@
 defmodule Mithril.SupabaseStorage do
   @moduledoc false
 
-  @spec remove_object(String.t(), String.t()) :: :ok | {:error, :not_configured | :failed | :missing}
+  @spec remove_object(String.t(), String.t()) ::
+          :ok | {:error, :not_configured | :failed | :missing}
   def remove_object(bucket, object_path) when is_binary(bucket) and is_binary(object_path) do
     path = String.trim(object_path)
 
