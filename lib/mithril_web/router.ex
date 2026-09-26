@@ -88,6 +88,7 @@ defmodule MithrilWeb.Router do
     pipe_through [:api, :direct_gateway]
 
     get "/booking-services", DirectBookingController, :list_services
+    get "/booking-categories", DirectBookingController, :list_categories
     get "/booking-cleaners", DirectBookingController, :list_cleaners
     post "/booking-price", DirectBookingController, :preview_price
     post "/bookings", DirectBookingController, :create

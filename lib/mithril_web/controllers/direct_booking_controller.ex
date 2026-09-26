@@ -7,6 +7,7 @@ defmodule MithrilWeb.DirectBookingController do
   alias Mithril.DirectPayments
 
   alias MithrilWeb.Schemas.DirectBooking.{
+    BookingCategoriesResponse,
     BookingDetailResponse,
     BookingListResponse,
     CancelBookingRequest,
@@ -36,6 +37,18 @@ defmodule MithrilWeb.DirectBookingController do
 
   def list_services(conn, _params) do
     respond(conn, DirectBookings.list_services(), fn services -> %{services: services} end)
+  end
+
+  operation(:list_categories,
+    operation_id: "direct.listBookingCategories",
+    summary: "List Book Now service categories ordered by weight",
+    responses: [ok: {"Booking categories", "application/json", BookingCategoriesResponse}]
+  )
+
+  def list_categories(conn, _params) do
+    respond(conn, DirectBookings.list_categories(), fn categories ->
+      %{categories: categories}
+    end)
   end
 
   operation(:list_cleaners,

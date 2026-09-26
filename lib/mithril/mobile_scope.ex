@@ -16,6 +16,7 @@ defmodule Mithril.MobileScope do
     micro_task_options
     micro_tasks
     platform_fees
+    service_categories
     service_duration_options
     service_types
   ))

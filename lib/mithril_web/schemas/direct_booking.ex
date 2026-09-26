@@ -15,11 +15,16 @@ defmodule MithrilWeb.Schemas.DirectBooking do
         minimumDurationHours: %Schema{type: :number},
         maximumDurationHours: %Schema{type: :number},
         durationIncrementHours: %Schema{type: :number},
-        specialtySlug: %Schema{type: :string, nullable: true}
+        specialtySlug: %Schema{type: :string, nullable: true},
+        category: %Schema{type: :string},
+        description: %Schema{type: :string, nullable: true},
+        features: %Schema{type: :array, items: %Schema{type: :string}, nullable: true},
+        weight: %Schema{type: :integer, minimum: 0}
       },
       required: [
         :id,
         :name,
+        :category,
         :priceGhs,
         :minimumDurationHours,
         :maximumDurationHours,
@@ -39,6 +44,40 @@ defmodule MithrilWeb.Schemas.DirectBooking do
       type: :object,
       properties: %{services: %Schema{type: :array, items: BookingService}},
       required: [:services]
+    })
+  end
+
+  defmodule BookingCategory do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectBookingCategory",
+      type: :object,
+      properties: %{
+        id: %Schema{type: :integer},
+        name: %Schema{type: :string},
+        icon: %Schema{type: :string, nullable: true},
+        slug: %Schema{type: :string, nullable: true},
+        weight: %Schema{type: :integer, minimum: 0},
+        description: %Schema{type: :string, nullable: true},
+        imageUrl: %Schema{type: :string, nullable: true},
+        iconScale: %Schema{type: :number, nullable: true}
+      },
+      required: [:id, :name, :weight]
+    })
+  end
+
+  defmodule BookingCategoriesResponse do
+    require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectBooking.BookingCategory
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectBookingCategoriesResponse",
+      type: :object,
+      properties: %{categories: %Schema{type: :array, items: BookingCategory}},
+      required: [:categories]
     })
   end
 
