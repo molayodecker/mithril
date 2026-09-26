@@ -45,6 +45,7 @@ defmodule Mithril.MobileQuery do
     property_preferred_cleaners
     property_private_instructions
     reviews
+    service_categories
     service_duration_options
     service_types
     subscriptions
