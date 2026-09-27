@@ -34,14 +34,30 @@ config :mithril, Oban,
   repo: Mithril.Repo,
   notifier: Oban.Notifiers.Postgres,
   peer: Oban.Peers.Database,
-  queues: [notifications: 10],
+  queues: [notifications: 10, cron: 5],
   plugins: [
     {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 14},
     {Oban.Plugins.Lifeline, rescue_after: :timer.minutes(5)},
     {Oban.Plugins.Cron,
      timezone: "Etc/UTC",
      crontab: [
-       {"0 * * * *", Mithril.Workers.BookingReminderSweep}
+       {"0 * * * *", Mithril.Workers.BookingReminderSweep},
+       {"*/15 * * * *", Mithril.Workers.DatabaseCron,
+        args: %{name: "auth_lookup_rate_limit_prune"}},
+       {"0 * * * *", Mithril.Workers.DatabaseCron, args: %{name: "auto-close-stale-bookings"}},
+       {"*/10 * * * *", Mithril.Workers.DatabaseCron,
+        args: %{name: "broadcast-unassigned-paid-bookings"}},
+       {"*/15 * * * *", Mithril.Workers.DatabaseCron,
+        args: %{name: "cleanup-expired-welcome-promo-reservations"}},
+       {"*/5 * * * *", Mithril.Workers.DatabaseCron,
+        args: %{name: "escalate-unassigned-paid-bookings-past-grace"}},
+       {"0 * * * *", Mithril.Workers.DatabaseCron,
+        args: %{name: "expire_stale_pending_bookings_job"}},
+       {"*/5 * * * *", Mithril.Workers.DatabaseCron,
+        args: %{name: "process-direct-assignment-holds"}},
+       {"15 5 * * *", Mithril.Workers.DatabaseCron,
+        args: %{name: "refresh_cleaner_health_snapshots"}},
+       {"*/5 * * * *", Mithril.Workers.DatabaseCron, args: %{name: "release_cleaner_hold_15min"}}
      ]}
   ]
 
