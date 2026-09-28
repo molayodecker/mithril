@@ -18,7 +18,7 @@ defmodule Mithril.ScheduledJobs.MessageDeliveryFallback do
            FROM public.message_delivery_attempts
            WHERE channel = 'sms'
              AND fallback_sent_at IS NULL
-             AND fallback_checked_at IS NULL
+             AND (fallback_checked_at IS NULL OR fallback_checked_at < now() - interval '15 minutes')
              AND fallback_after IS NOT NULL
              AND fallback_after <= $1::timestamptz
              AND status = ANY($2::text[])
@@ -73,7 +73,7 @@ defmodule Mithril.ScheduledJobs.MessageDeliveryFallback do
            SET fallback_checked_at = now()
            WHERE id = $1::uuid
              AND fallback_sent_at IS NULL
-             AND fallback_checked_at IS NULL
+             AND (fallback_checked_at IS NULL OR fallback_checked_at < now() - interval '15 minutes')
            RETURNING id
            """,
            [attempt_id]
