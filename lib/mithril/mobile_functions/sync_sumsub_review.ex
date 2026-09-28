@@ -1,8 +1,6 @@
 defmodule Mithril.MobileFunctions.SyncSumsubReview do
   @moduledoc false
 
-  require Logger
-
   alias Mithril.DbUuid
   alias Mithril.Repo
   alias Mithril.Sumsub.CleanerApplicationLookup
@@ -18,10 +16,7 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
          {:ok, profiles} <- load_kyc_profiles(user_id) do
       subject = inferred_subject(cleaner_app)
       paths = SyncLookup.build_paths(profiles, cleaner_app)
-      cleaner_application_id =
-        cleaner_app
-        |> then(fn app -> app && Map.get(app, "id") end)
-        |> encode_optional_uuid()
+      cleaner_application_id = cleaner_app && DbUuid.encode(Map.get(cleaner_app, "id"))
 
       cond do
         paths == [] ->
@@ -45,12 +40,8 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
             {:not_found} ->
               {:ok, not_found_payload(subject, cleaner_application_id)}
 
-            {:error, status, details} ->
-              http_status = if status >= 400 and status < 600, do: status, else: 502
-
-              {:error,
-               {:status, http_status,
-                %{error: "Sumsub request failed", status: status, details: details}}}
+            {:error, _status, _details} ->
+              {:error, {:status, 502, %{error: "Could not sync identity review"}}}
           end
       end
     end
@@ -62,26 +53,15 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
         :ok
 
       {:error, :missing_credentials} ->
-        {:error,
-         {:status, 500,
-          %{
-            error: "Missing Sumsub credentials",
-            details: "Set SUMSUB_APP_TOKEN and SUMSUB_SECRET_KEY secrets"
-          }}}
+        {:error, {:status, 500, %{error: "Identity verification is not configured"}}}
     end
   end
 
   defp load_cleaner_application(user_id) do
     case CleanerApplicationLookup.find_latest(%{user_id: user_id}) do
-      {:ok, row} ->
-        {:ok, row}
-
-      {:error, :not_found} ->
-        {:ok, nil}
-
-      {:error, error} ->
-        Logger.error("sync-sumsub-review cleaner application lookup failed: #{inspect(error)}")
-        {:error, {:status, 502, %{error: "Database error"}}}
+      {:ok, row} -> {:ok, row}
+      {:error, :not_found} -> {:ok, nil}
+      {:error, _} -> {:error, {:status, 502, %{error: "Could not load identity records"}}}
     end
   end
 
@@ -99,9 +79,8 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
       {:ok, %{columns: columns, rows: rows}} ->
         {:ok, Enum.map(rows, fn row -> Map.new(Enum.zip(columns, row)) end)}
 
-      {:error, error} ->
-        Logger.error("sync-sumsub-review kyc profile lookup failed: #{Exception.message(error)}")
-        {:error, {:status, 502, %{error: "Database error"}}}
+      {:error, _} ->
+        {:error, {:status, 502, %{error: "Could not load identity records"}}}
     end
   end
 
@@ -247,21 +226,12 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
     Enum.find_value(profiles, fn profile ->
       case Map.get(profile, "cleaner_application_id") do
         id when is_binary(id) ->
-          encode_optional_uuid(id)
+          DbUuid.encode(id)
 
         _ ->
           nil
       end
     end)
-  end
-
-  defp encode_optional_uuid(nil), do: nil
-
-  defp encode_optional_uuid(value) when is_binary(value) do
-    case value do
-      "" -> nil
-      _ -> DbUuid.encode(value)
-    end
   end
 
   defp present?(value) when is_binary(value), do: String.trim(value) != ""
