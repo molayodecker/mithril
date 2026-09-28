@@ -29,7 +29,12 @@ defmodule Mithril.Subscriptions.ManagedRenewalTest do
     test "success transaction" do
       body = %{
         "status" => true,
-        "data" => %{"status" => "success", "reference" => "MGR-x-20990101", "amount" => 12_500, "currency" => "GHS"}
+        "data" => %{
+          "status" => "success",
+          "reference" => "MGR-x-20990101",
+          "amount" => 12_500,
+          "currency" => "GHS"
+        }
       }
 
       assert {:success, "MGR-x-20990101", 12_500, "GHS"} =
@@ -170,7 +175,8 @@ defmodule Mithril.Subscriptions.ManagedRenewalTest do
         other -> other
       end
 
-    charge_result = Map.get(overrides, :charge, {:success, attempt.paystack_reference, 12_500, "GHS"})
+    charge_result =
+      Map.get(overrides, :charge, {:success, attempt.paystack_reference, 12_500, "GHS"})
 
     %{
       claim_attempt: fn -> attempt end,
