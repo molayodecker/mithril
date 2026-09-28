@@ -86,7 +86,9 @@ defmodule Mithril.MobileFunctions.DeletePropertyMedia do
     media_id = Map.get(media_row, "id")
     storage_path = Map.get(media_row, "storage_path")
 
-    case Repo.query("DELETE FROM public.property_media WHERE id = $1::uuid", [DbUuid.dump!(media_id)]) do
+    case Repo.query("DELETE FROM public.property_media WHERE id = $1::uuid", [
+           DbUuid.dump!(media_id)
+         ]) do
       {:ok, _} ->
         :ok
 
