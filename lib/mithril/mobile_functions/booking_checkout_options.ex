@@ -1,6 +1,7 @@
 defmodule Mithril.MobileFunctions.BookingCheckoutOptions do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.Posthog
   alias Mithril.Repo
 
@@ -37,7 +38,7 @@ defmodule Mithril.MobileFunctions.BookingCheckoutOptions do
            WHERE id = $1::uuid AND customer_id = $2::uuid
            LIMIT 1
            """,
-           [booking_id, user_id]
+           [DbUuid.dump!(booking_id), DbUuid.dump!(user_id)]
          ) do
       {:ok, %{rows: [_ | _]}} -> :ok
       {:ok, %{rows: []}} -> :missing
