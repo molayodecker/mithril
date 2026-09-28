@@ -56,8 +56,13 @@ defmodule Mithril.Workers.AdminBroadcastBatch do
           :ok
 
         true ->
-          batch_stats = Delivery.deliver_batch(broadcast, batch_ids)
-          merge_and_continue(broadcast, recipient_ids, offset, batch_stats)
+          case Delivery.deliver_batch(broadcast, batch_ids) do
+            {:ok, batch_stats} ->
+              merge_and_continue(broadcast, recipient_ids, offset, batch_stats)
+
+            {:error, error} ->
+              {:error, error}
+          end
       end
     end
   end
