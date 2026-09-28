@@ -3,6 +3,7 @@ defmodule Mithril.ScheduledJobs.MessageDeliveryFallback do
 
   require Logger
 
+  alias Mithril.Notifications.SendNotification
   alias Mithril.Repo
 
   @batch_limit 50
@@ -140,15 +141,20 @@ defmodule Mithril.ScheduledJobs.MessageDeliveryFallback do
               %{}
           end
 
-        result =
-          Mithril.Notifications.Outbound.deliver(%{
-            "channel" => "whatsapp",
-            "phone" => phone,
-            "template" => Enum.at(row, 4) || "booking_reminder",
-            "variables" => variables
-          })
+        case SendNotification.invoke_mobile(%{
+               "channel" => "whatsapp",
+               "phone" => phone,
+               "template" => Enum.at(row, 4) || "booking_reminder",
+               "variables" => variables
+             }) do
+          {:ok, response} when is_map(response) ->
+            if response["whatsappSent"] == true or response[:whatsappSent] == true,
+              do: :sent,
+              else: :failed
 
-        if result["whatsappSent"], do: :sent, else: :failed
+          _ ->
+            :failed
+        end
     end
   end
 
