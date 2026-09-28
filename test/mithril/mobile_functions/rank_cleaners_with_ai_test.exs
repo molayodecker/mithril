@@ -225,6 +225,49 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAiTest do
              })
   end
 
+  test "deterministic fallback preserves authoritative availability order without faking distance" do
+    enable_settings()
+    Application.delete_env(:mithril, :openai_api_key)
+
+    Application.put_env(:mithril, :ai_match_candidate_loader, fn _body, _requested ->
+      {:ok,
+       [
+         %{
+           id: "first",
+           name: "First",
+           company_name: nil,
+           bio: nil,
+           rating: 4.5,
+           distance: nil,
+           availability_rank: 1,
+           hourly_rate: 60,
+           match_score: nil,
+           years_experience: nil,
+           jobs_completed: 10,
+           completed_jobs: 10
+         },
+         %{
+           id: "second",
+           name: "Second",
+           company_name: nil,
+           bio: nil,
+           rating: 4.9,
+           distance: nil,
+           availability_rank: 2,
+           hourly_rate: 70,
+           match_score: nil,
+           years_experience: nil,
+           jobs_completed: 20,
+           completed_jobs: 20
+         }
+       ]}
+    end)
+
+    assert {:ok, body} = RankCleanersWithAi.call(nil, %{"cleaners" => @cleaners})
+    assert body.reason == "missing_openai_key"
+    assert Enum.map(body.cleaners, & &1.cleaner_id) == ["first", "second"]
+  end
+
   defp enable_settings do
     Application.put_env(:mithril, :ai_match_settings, %{
       "enabled" => true,
