@@ -3,11 +3,12 @@ defmodule Mithril.Workers.DatabaseCronTest do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Mithril.Repo
+  alias Mithril.Cron.Jobs
   alias Mithril.Workers.DatabaseCron
 
   test "each scheduled name maps to one SQL statement" do
     entries = scheduled_database_cron_entries()
-    assert length(entries) == 9
+    assert length(entries) == length(Jobs.sql_job_names())
 
     for {_schedule, DatabaseCron, opts} <- entries do
       assert is_binary(DatabaseCron.statement(opts[:args].name))
@@ -70,13 +71,7 @@ defmodule Mithril.Workers.DatabaseCronTest do
   end
 
   defp scheduled_database_cron_entries do
-    :mithril
-    |> Application.fetch_env!(Oban)
-    |> Keyword.fetch!(:plugins)
-    |> Enum.find_value(fn
-      {Oban.Plugins.Cron, opts} -> Keyword.fetch!(opts, :crontab)
-      _other -> nil
-    end)
+    Jobs.oban_crontab()
     |> Enum.filter(fn
       {_schedule, DatabaseCron, _opts} -> true
       _entry -> false

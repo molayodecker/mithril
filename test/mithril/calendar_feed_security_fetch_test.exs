@@ -1,0 +1,91 @@
+defmodule Mithril.CalendarFeedSecurityFetchTest do
+  use ExUnit.Case, async: true
+
+  alias Mithril.CalendarFeedSecurity
+
+  @ics_body """
+  BEGIN:VCALENDAR
+  VERSION:2.0
+  END:VCALENDAR
+  """
+
+  setup do
+    on_exit(fn -> Application.delete_env(:mithril, :calendar_feed_http_get) end)
+    :ok
+  end
+
+  test "rejects localhost feed URLs" do
+    assert {:error, message} =
+             CalendarFeedSecurity.assert_safe_feed_url(
+               "https://localhost/airbnb/calendar/ical/x.ics",
+               "airbnb"
+             )
+
+    assert message =~ "not allowed" or message =~ "Airbnb"
+  end
+
+  test "rejects private IPv4 feed URLs" do
+    assert {:error, message} =
+             CalendarFeedSecurity.assert_safe_feed_url(
+               "https://192.168.0.5/airbnb/calendar/ical/x.ics",
+               "airbnb"
+             )
+
+    assert message =~ "not allowed" or message =~ "Airbnb"
+  end
+
+  test "redirect to private IP is rejected" do
+    redirect_url = "https://www.airbnb.com/calendar/ical/start.ics"
+
+    Application.put_env(:mithril, :calendar_feed_http_get, fn url ->
+      cond do
+        url == redirect_url ->
+          {:ok,
+           %{
+             status: 302,
+             headers: %{"location" => "https://127.0.0.1/private.ics"},
+             body: ""
+           }}
+
+        true ->
+          {:ok, %{status: 200, body: @ics_body, headers: %{}}}
+      end
+    end)
+
+    assert {:error, message} = CalendarFeedSecurity.fetch_feed_text(redirect_url, "airbnb")
+    assert message =~ "not allowed" or message =~ "Airbnb"
+  end
+
+  test "oversized response is rejected" do
+    url = "https://www.airbnb.com/calendar/ical/large.ics"
+    huge = String.duplicate("A", 5 * 1024 * 1024 + 1)
+
+    Application.put_env(:mithril, :calendar_feed_http_get, fn ^url ->
+      {:ok, %{status: 200, body: huge, headers: %{}}}
+    end)
+
+    assert {:error, message} = CalendarFeedSecurity.fetch_feed_text(url, "airbnb")
+    assert message =~ "maximum size"
+  end
+
+  test "fetch timeout surfaces as request failed" do
+    url = "https://www.airbnb.com/calendar/ical/timeout.ics"
+
+    Application.put_env(:mithril, :calendar_feed_http_get, fn ^url ->
+      {:error, :timeout}
+    end)
+
+    assert {:error, "Feed request failed"} = CalendarFeedSecurity.fetch_feed_text(url, "airbnb")
+  end
+
+  test "temporary fetch failure does not mutate local calendar data (sync layer skips import)" do
+    url = "https://www.airbnb.com/calendar/ical/fail.ics"
+
+    Application.put_env(:mithril, :calendar_feed_http_get, fn ^url ->
+      {:ok, %{status: 503, body: "busy", headers: %{}}}
+    end)
+
+    assert {:error, message} = CalendarFeedSecurity.fetch_feed_text(url, "airbnb")
+    assert message =~ "503"
+  end
+end

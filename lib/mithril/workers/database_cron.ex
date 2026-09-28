@@ -7,9 +7,7 @@ defmodule Mithril.Workers.DatabaseCron do
 
   alias Mithril.Repo
 
-  # Schedules copied from the Instaclean dev Supabase project
-  # (jzevawnetjwnliamyilb) `cron.job` rows that run SQL directly.
-  # Jobs that POST to a Supabase Edge Function are not listed here.
+  # SQL statements for jobs listed in `Mithril.Cron.Jobs` (imported from jzevawnetjwnliamyilb).
   @statements %{
     "auth_lookup_rate_limit_prune" =>
       "DELETE FROM public.auth_lookup_rate_limit WHERE window_start < now() - interval '1 hour'",
