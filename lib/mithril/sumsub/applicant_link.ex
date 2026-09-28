@@ -1,6 +1,7 @@
 defmodule Mithril.Sumsub.ApplicantLink do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.Repo
   alias Mithril.Sumsub.CleanerApplicationLookup
   alias Mithril.Sumsub.Config
@@ -27,12 +28,24 @@ defmodule Mithril.Sumsub.ApplicantLink do
             """
             UPDATE public.cleaner_applications SET
               kyc_provider = 'sumsub',
+              kyc_status = CASE
+                WHEN sumsub_applicant_id IS DISTINCT FROM $1 THEN 'started'
+                ELSE kyc_status
+              END,
+              kyc_review_answer = CASE
+                WHEN sumsub_applicant_id IS DISTINCT FROM $1 THEN NULL
+                ELSE kyc_review_answer
+              END,
+              kyc_review_status = CASE
+                WHEN sumsub_applicant_id IS DISTINCT FROM $1 THEN NULL
+                ELSE kyc_review_status
+              END,
               sumsub_applicant_id = $1,
               sumsub_level_name = $2,
               updated_at = $3::timestamptz
             WHERE id = $4::uuid
             """,
-            [applicant_id, level_name, now, cleaner_application_id]
+            [applicant_id, level_name, now, DbUuid.dump!(cleaner_application_id)]
           )
       end
 
@@ -45,7 +58,16 @@ defmodule Mithril.Sumsub.ApplicantLink do
   defp upsert_kyc_profile(user_id, applicant_id, cleaner_application_id, level_name, country, now) do
     global_row = fetch_kyc_by_applicant(applicant_id)
     user_row = fetch_latest_kyc_for_user(user_id)
-    row_to_update = global_row || user_row
+    row_to_update =
+      global_row ||
+        case user_row do
+          %{} = row ->
+            current = (Map.get(row, "sumsub_applicant_id") || "") |> String.trim()
+            if current in ["", applicant_id], do: row, else: nil
+
+          _ ->
+            nil
+        end
 
     if row_to_update do
       patch =
@@ -64,6 +86,22 @@ defmodule Mithril.Sumsub.ApplicantLink do
           """
           UPDATE public.kyc_profiles SET
             user_id = $1::uuid,
+            review_answer = CASE
+              WHEN sumsub_applicant_id IS DISTINCT FROM $2 THEN NULL
+              ELSE review_answer
+            END,
+            reviewed_at = CASE
+              WHEN sumsub_applicant_id IS DISTINCT FROM $2 THEN NULL
+              ELSE reviewed_at
+            END,
+            completed_at = CASE
+              WHEN sumsub_applicant_id IS DISTINCT FROM $2 THEN NULL
+              ELSE completed_at
+            END,
+            last_event_type = CASE
+              WHEN sumsub_applicant_id IS DISTINCT FROM $2 THEN NULL
+              ELSE last_event_type
+            END,
             sumsub_applicant_id = $2,
             sumsub_external_user_id = $3,
             cleaner_application_id = $4::uuid,
@@ -202,7 +240,8 @@ defmodule Mithril.Sumsub.ApplicantLink do
       cleaner_application_id: cleaner_application_id,
       level_name: level_name,
       country: country,
-      kyc_status: if(kyc_done, do: Map.get(row, "kyc_status"), else: "started"),
+      kyc_status:
+        if(applicant_changed, do: "started", else: if(kyc_done, do: Map.get(row, "kyc_status"), else: "started")),
       submitted_at: if(submitted_done, do: Map.get(row, "submitted_at"), else: now),
       sumsub_linked_at: sumsub_linked_at
     }
