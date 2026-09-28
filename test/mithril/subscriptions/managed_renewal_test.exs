@@ -29,10 +29,10 @@ defmodule Mithril.Subscriptions.ManagedRenewalTest do
     test "success transaction" do
       body = %{
         "status" => true,
-        "data" => %{"status" => "success", "reference" => "MGR-x-20990101"}
+        "data" => %{"status" => "success", "reference" => "MGR-x-20990101", "amount" => 12_500, "currency" => "GHS"}
       }
 
-      assert {:success, "MGR-x-20990101"} =
+      assert {:success, "MGR-x-20990101", 12_500, "GHS"} =
                ManagedRenewal.interpret_paystack(200, body, "MGR-x-20990101")
     end
 
@@ -74,7 +74,7 @@ defmodule Mithril.Subscriptions.ManagedRenewalTest do
           status: :pending_charge,
           paystack_reference: ref,
           verify: :not_found,
-          charge: {:success, ref}
+          charge: {:success, ref, 12_500, "GHS"}
         })
 
       assert {:ok, :paid, _} = ManagedRenewal.run(deps)
@@ -89,7 +89,7 @@ defmodule Mithril.Subscriptions.ManagedRenewalTest do
         minimal_deps(%{
           status: :charged,
           paystack_reference: ref,
-          verify: {:success, ref},
+          verify: {:success, ref, 12_500, "GHS"},
           booking_payment_status: "paid"
         })
 
@@ -118,8 +118,8 @@ defmodule Mithril.Subscriptions.ManagedRenewalTest do
         minimal_deps(%{
           status: :pending_charge,
           paystack_reference: ref,
-          verify: {:success, ref},
-          charge: {:success, ref}
+          verify: {:success, ref, 12_500, "GHS"},
+          charge: {:success, ref, 12_500, "GHS"}
         })
 
       assert {:ok, :paid, _} = ManagedRenewal.run(deps)
@@ -166,11 +166,11 @@ defmodule Mithril.Subscriptions.ManagedRenewalTest do
     verify_kind =
       case Map.get(overrides, :verify, :not_found) do
         :not_found -> :not_found
-        {:success, ref} -> {:success, ref}
+        {:success, ref, 12_500, "GHS"} -> {:success, ref, 12_500, "GHS"}
         other -> other
       end
 
-    charge_result = Map.get(overrides, :charge, {:success, attempt.paystack_reference})
+    charge_result = Map.get(overrides, :charge, {:success, attempt.paystack_reference, 12_500, "GHS"})
 
     %{
       claim_attempt: fn -> attempt end,
@@ -178,7 +178,7 @@ defmodule Mithril.Subscriptions.ManagedRenewalTest do
       verify_reference: fn _ref ->
         case verify_kind do
           :not_found -> :not_found
-          {:success, ref} -> {:success, ref}
+          {:success, ref, amount, currency} -> {:success, ref, amount, currency}
           other -> other
         end
       end,
@@ -192,7 +192,7 @@ defmodule Mithril.Subscriptions.ManagedRenewalTest do
         end)
 
         case charge_result do
-          {:success, ref} -> {:success, ref}
+          {:success, ref, amount, currency} -> {:success, ref, amount, currency}
           other -> other
         end
       end,
