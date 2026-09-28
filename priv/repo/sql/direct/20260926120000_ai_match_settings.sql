@@ -29,10 +29,7 @@ VALUES (
   ),
   'AI cleaner matching settings'
 )
-ON CONFLICT (key) DO UPDATE SET
-  value = EXCLUDED.value,
-  description = EXCLUDED.description,
-  updated_at = now();
+ON CONFLICT (key) DO NOTHING;
 
 CREATE OR REPLACE FUNCTION public.get_ai_match_settings()
 RETURNS jsonb
