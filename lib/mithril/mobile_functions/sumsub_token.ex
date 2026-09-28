@@ -1,8 +1,6 @@
 defmodule Mithril.MobileFunctions.SumsubToken do
   @moduledoc false
 
-  alias Mithril.DbUuid
-  alias Mithril.Repo
   alias Mithril.Sumsub.Applicant
   alias Mithril.Sumsub.ApplicantLink
   alias Mithril.Sumsub.Client
@@ -13,7 +11,7 @@ defmodule Mithril.MobileFunctions.SumsubToken do
     with :ok <- require_credentials(),
          level_name <- Config.level_name(),
          ttl_in_secs <- ttl_in_secs(body),
-         applicant <- ensure_applicant(user_id),
+         applicant <- ensure_applicant(user_id, body),
          :ok <- maybe_persist_link(user_id, applicant.applicant_id, level_name, body),
          {:ok, token_body} <- mint_access_token(user_id, level_name, ttl_in_secs) do
       {:ok,
@@ -28,10 +26,21 @@ defmodule Mithril.MobileFunctions.SumsubToken do
        }}
     else
       {:error, :missing_credentials} ->
-        {:error, {:status, 500, %{error: "Identity verification is not configured"}}}
+        {:error,
+         {:status, 500,
+          %{
+            error: "Missing secrets",
+            missing: missing_secret_names()
+          }}}
 
-      {:error, {:status, _status, _details}} ->
-        {:error, {:status, 502, %{error: "Could not start identity verification"}}}
+      {:error, {:status, status, details}} ->
+        {:error,
+         {:status, 502,
+          %{
+            error: "Sumsub token error",
+            status: status,
+            details: details
+          }}}
     end
   end
 
@@ -40,6 +49,27 @@ defmodule Mithril.MobileFunctions.SumsubToken do
       {:ok, _} -> :ok
       {:error, :missing_credentials} -> {:error, :missing_credentials}
     end
+  end
+
+  defp missing_secret_names do
+    missing = []
+
+    missing =
+      if present?(Application.get_env(:mithril, :sumsub_app_token)),
+        do: missing,
+        else: missing ++ ["SUMSUB_APP_TOKEN"]
+
+    missing =
+      if present?(Application.get_env(:mithril, :sumsub_secret_key)),
+        do: missing,
+        else: missing ++ ["SUMSUB_SECRET_KEY"]
+
+    missing =
+      if present?(Application.get_env(:mithril, :sumsub_level_name)),
+        do: missing,
+        else: missing ++ ["SUMSUB_LEVEL_NAME"]
+
+    missing
   end
 
   defp ttl_in_secs(body) do
@@ -70,48 +100,16 @@ defmodule Mithril.MobileFunctions.SumsubToken do
     value |> max(60) |> min(3600)
   end
 
-  defp ensure_applicant(user_id) do
-    identity = load_account_identity(user_id)
-
+  defp ensure_applicant(user_id, body) do
     Applicant.ensure_for_user(%{
       external_user_id: user_id,
-      email: identity.email,
-      phone: identity.phone,
-      first_name: identity.first_name,
-      last_name: identity.last_name
+      email: Map.get(body, "email"),
+      phone: Map.get(body, "phone"),
+      first_name: Map.get(body, "firstName"),
+      last_name: Map.get(body, "lastName"),
+      dob: Map.get(body, "dob")
     })
   end
-
-  defp load_account_identity(user_id) do
-    {email, phone} =
-      case Repo.query("SELECT email, phone FROM public.users WHERE id = $1::uuid LIMIT 1", [
-             DbUuid.dump!(user_id)
-           ]) do
-        {:ok, %{rows: [[email, phone]]}} -> {present_or_nil(email), present_or_nil(phone)}
-        _ -> {nil, nil}
-      end
-
-    {first_name, last_name} =
-      case Repo.query(
-             "SELECT firstname, lastname FROM public.profiles WHERE id = $1::uuid LIMIT 1",
-             [DbUuid.dump!(user_id)]
-           ) do
-        {:ok, %{rows: [[first_name, last_name]]}} ->
-          {present_or_nil(first_name), present_or_nil(last_name)}
-
-        _ ->
-          {nil, nil}
-      end
-
-    %{email: email, phone: phone, first_name: first_name, last_name: last_name}
-  end
-
-  defp present_or_nil(value) when is_binary(value) do
-    trimmed = String.trim(value)
-    if trimmed == "", do: nil, else: trimmed
-  end
-
-  defp present_or_nil(_), do: nil
 
   defp maybe_persist_link(user_id, applicant_id, level_name, _body) do
     if present?(applicant_id) do

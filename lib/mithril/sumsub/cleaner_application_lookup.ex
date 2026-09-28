@@ -1,7 +1,6 @@
 defmodule Mithril.Sumsub.CleanerApplicationLookup do
   @moduledoc false
 
-  alias Mithril.DbUuid
   alias Mithril.Repo
 
   @select_fields """
@@ -23,7 +22,7 @@ defmodule Mithril.Sumsub.CleanerApplicationLookup do
       LIMIT 1
       """
 
-      case Repo.query(sql, [DbUuid.dump!(user_id)]) do
+      case Repo.query(sql, [user_id]) do
         {:ok, %{columns: columns, rows: [row]}} ->
           {:ok, Map.new(Enum.zip(columns, row))}
 

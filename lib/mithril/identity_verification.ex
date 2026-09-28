@@ -1,7 +1,6 @@
 defmodule Mithril.IdentityVerification do
   @moduledoc false
 
-  alias Mithril.DbUuid
   alias Mithril.Repo
 
   @type source :: :kyc_profiles | :cleaner_data | nil
@@ -77,7 +76,7 @@ defmodule Mithril.IdentityVerification do
     LIMIT 10
     """
 
-    case Repo.query(sql, [DbUuid.dump!(user_id)]) do
+    case Repo.query(sql, [user_id]) do
       {:ok, %{rows: rows}} ->
         {:ok,
          Enum.map(rows, fn [
@@ -141,7 +140,7 @@ defmodule Mithril.IdentityVerification do
     LIMIT 1
     """
 
-    case Repo.query(sql, [DbUuid.dump!(user_id)]) do
+    case Repo.query(sql, [user_id]) do
       {:ok, %{rows: [[true]]}} ->
         {:ok, %{verified: true, source: :cleaner_data, status: :legacy_verified}}
 

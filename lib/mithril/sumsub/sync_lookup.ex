@@ -11,21 +11,20 @@ defmodule Mithril.Sumsub.SyncLookup do
       kyc_profiles
       |> Enum.sort_by(&profile_decision_time_ms/1, :desc)
 
-    initial_paths =
-      []
-      |> push_applicant_paths(
-        cleaner_application && Map.get(cleaner_application, "sumsub_applicant_id"),
-        cleaner_application && Map.get(cleaner_application, "sumsub_external_user_id")
-      )
+    paths =
+      Enum.reduce(sorted, [], fn profile, acc ->
+        acc
+        |> push_applicant_paths(
+          Map.get(profile, "sumsub_applicant_id"),
+          Map.get(profile, "sumsub_external_user_id")
+        )
+      end)
 
-    sorted
-    |> Enum.reduce(initial_paths, fn profile, acc ->
-      acc
-      |> push_applicant_paths(
-        Map.get(profile, "sumsub_applicant_id"),
-        Map.get(profile, "sumsub_external_user_id")
-      )
-    end)
+    paths
+    |> push_applicant_paths(
+      cleaner_application && Map.get(cleaner_application, "sumsub_applicant_id"),
+      cleaner_application && Map.get(cleaner_application, "sumsub_external_user_id")
+    )
     |> uniq_paths()
   end
 
@@ -126,11 +125,6 @@ defmodule Mithril.Sumsub.SyncLookup do
       )
     end
   end
-
-  defp parse_time_ms(%DateTime{} = value), do: DateTime.to_unix(value, :millisecond)
-
-  defp parse_time_ms(%NaiveDateTime{} = value),
-    do: NaiveDateTime.diff(value, ~N[1970-01-01 00:00:00], :millisecond)
 
   defp parse_time_ms(raw) when is_binary(raw) do
     case DateTime.from_iso8601(raw) do
