@@ -13,7 +13,6 @@ defmodule Mithril.MobileGateway do
     claim-job
     create-job-and-notify
     delete-property-media
-    fetch-otp-delivery-token
     notify-booking-rescheduled
     notify-payment-failure-ops
     paystack-create-transfer-recipient
@@ -22,14 +21,11 @@ defmodule Mithril.MobileGateway do
     paystack-resolve-bank-account
     rank-cleaners-with-ai
     request-data-export
-    resend-otp-via-channel
     send-app-notification
-    send-notification
     sumsub-config/token
     sync-sumsub-review
     timezone
     uber-transportation-release-gate
-    uber-trip-estimate
   ))
 
   @migrated_functions @functions

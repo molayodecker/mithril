@@ -34,6 +34,7 @@ defmodule Mithril.MobileRpc do
     get_ai_match_settings
     get_assigned_cleaner_for_customer_booking
     get_available_cleaners_for_booking
+    get_available_timeslots
     get_best_available_cleaners
     get_booking_contact_phone
     get_booking_payment_snapshot
@@ -101,6 +102,7 @@ defmodule Mithril.MobileRpc do
     update_my_hourly_rate
     validate_booking_timeslot
     upsert_cleaner_team_name
+    validate_booking_timeslot
     validate_promotion_code
   ))
 
