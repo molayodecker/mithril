@@ -29,7 +29,6 @@ defmodule MithrilWeb.Router do
     get "/ready", ReadyController, :show
     post "/webhooks/sumsub", SumsubWebhookController, :create
     post "/webhooks/paystack", PaystackWebhookController, :create
-    post "/functions/v1/send-notification", SendNotificationController, :create
   end
 
   scope "/", MithrilWeb do
