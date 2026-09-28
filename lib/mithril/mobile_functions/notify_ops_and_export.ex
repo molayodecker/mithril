@@ -1,6 +1,7 @@
 defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.Repo
 
   @allowed_reasons ~w(
@@ -34,14 +35,14 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
         with :ok <- verify_booking_owner(booking_id, user_id),
              :ok <- verify_subscription_owner(subscription_id, user_id),
              :ok <- enforce_rate_limit(user_id),
-             {:ok, idempotency_key} <-
+             {:ok, idempotency_key, duplicate?} <-
                insert_alert(user_id, body, booking_id, subscription_id, reason) do
           {:ok,
            %{
              received: true,
              recorded: true,
              notified: false,
-             duplicate: false,
+             duplicate: duplicate?,
              idempotency_key: idempotency_key
            }}
         end
@@ -58,11 +59,15 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
 
   defp verify_booking_owner(booking_id, user_id) do
     case Repo.query("SELECT customer_id FROM public.bookings WHERE id = $1::uuid LIMIT 1", [
-           booking_id
+           DbUuid.dump!(booking_id)
          ]) do
-      {:ok, %{rows: [[customer_id]]}} when customer_id == user_id -> :ok
-      {:ok, %{rows: [[_]]}} -> {:error, {:status, 403, %{error: "Forbidden"}}}
-      _ -> {:error, {:status, 403, %{error: "Forbidden"}}}
+      {:ok, %{rows: [[customer_id]]}} ->
+        if DbUuid.equal?(customer_id, user_id),
+          do: :ok,
+          else: {:error, {:status, 403, %{error: "Forbidden"}}}
+
+      _ ->
+        {:error, {:status, 403, %{error: "Forbidden"}}}
     end
   end
 
@@ -70,11 +75,15 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
 
   defp verify_subscription_owner(subscription_id, user_id) do
     case Repo.query("SELECT customer_id FROM public.subscriptions WHERE id = $1::uuid LIMIT 1", [
-           subscription_id
+           DbUuid.dump!(subscription_id)
          ]) do
-      {:ok, %{rows: [[customer_id]]}} when customer_id == user_id -> :ok
-      {:ok, %{rows: [[_]]}} -> {:error, {:status, 403, %{error: "Forbidden"}}}
-      _ -> {:error, {:status, 403, %{error: "Forbidden"}}}
+      {:ok, %{rows: [[customer_id]]}} ->
+        if DbUuid.equal?(customer_id, user_id),
+          do: :ok,
+          else: {:error, {:status, 403, %{error: "Forbidden"}}}
+
+      _ ->
+        {:error, {:status, 403, %{error: "Forbidden"}}}
     end
   end
 
@@ -89,7 +98,7 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
              AND customer_id = $1::uuid
              AND created_at >= $2::timestamptz
            """,
-           [user_id, since]
+           [DbUuid.dump!(user_id), since]
          ) do
       {:ok, %{rows: [[count]]}} when count >= 10 ->
         {:error, {:status, 429, %{error: "Too many payment failure reports"}}}
@@ -103,6 +112,14 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
   end
 
   defp insert_alert(user_id, body, booking_id, subscription_id, reason) do
+    platform = body |> Map.get("platform", "") |> to_string() |> String.slice(0, 40)
+    action = body |> Map.get("action", "") |> to_string() |> String.slice(0, 100)
+
+    transport_failure =
+      Map.get(body, "transport_failure") == true or Map.get(body, "transportFailure") == true
+
+    dedupe_bucket = System.system_time(:second) |> div(600)
+
     idempotency_key =
       :crypto.hash(
         :sha256,
@@ -112,18 +129,15 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
             booking_id,
             subscription_id,
             reason,
-            Integer.to_string(System.system_time(:millisecond))
+            action,
+            platform,
+            to_string(transport_failure),
+            Integer.to_string(dedupe_bucket)
           ],
           "|"
         )
       )
       |> Base.encode16(case: :lower)
-
-    platform = body |> Map.get("platform", "") |> to_string() |> String.slice(0, 40)
-    action = body |> Map.get("action", "") |> to_string() |> String.slice(0, 100)
-
-    transport_failure =
-      Map.get(body, "transport_failure") == true or Map.get(body, "transportFailure") == true
 
     now = DateTime.utc_now() |> DateTime.to_iso8601()
 
@@ -142,7 +156,7 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
            """,
            [
              idempotency_key,
-             user_id,
+             DbUuid.dump!(user_id),
              booking_id,
              subscription_id,
              reason,
@@ -152,62 +166,106 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
              now
            ]
          ) do
-      {:ok, %{rows: [[stored_key]]}} -> {:ok, stored_key}
-      {:ok, %{num_rows: 0}} -> {:ok, idempotency_key}
+      {:ok, %{rows: [[stored_key]]}} -> {:ok, stored_key, false}
+      {:ok, %{num_rows: 0}} -> {:ok, idempotency_key, true}
       {:error, _} -> {:error, {:status, 500, %{error: "Alert persistence failed"}}}
     end
+  end
+end
+
+defmodule Mithril.MobileFunctions.RankCleanersWithAi do
+  @moduledoc false
+
+  alias Mithril.Transport.Ranking
+
+  def call(user_id, body) when is_map(body) do
+    Ranking.for_destination(user_id, body)
   end
 end
 
 defmodule Mithril.MobileFunctions.RequestDataExport do
   @moduledoc false
 
+  alias Mithril.DbUuid
+  alias Mithril.RateLimiter
   alias Mithril.Repo
 
+  @secret_columns ~w(password_hash encrypted_password feed_url_encrypted)
+
   def call(user_id, _body) do
-    with {:ok, payload} <- build_export(user_id),
+    with :ok <- enforce_export_rate_limit(user_id),
+         {:ok, payload} <- build_export(user_id),
          {:ok, email} <- destination_email(user_id),
          :ok <- send_export_email(email, payload) do
       {:ok, %{queued: true, email: email}}
     end
   end
 
+  defp enforce_export_rate_limit(user_id) do
+    case RateLimiter.check({:request_data_export, user_id}, 3, 3_600_000) do
+      :ok ->
+        :ok
+
+      {:error, :rate_limited} ->
+        {:error, {:status, 429, %{error: "Too many data export requests. Try again later."}}}
+    end
+  end
+
   defp build_export(user_id) do
     tables = [
-      {"users", "SELECT * FROM public.users WHERE id = $1::uuid"},
-      {"profiles", "SELECT * FROM public.profiles WHERE id = $1::uuid"},
-      {"user_roles", "SELECT * FROM public.user_roles WHERE user_id = $1::uuid"},
+      {"users",
+       "SELECT id::text AS id, email, phone, created_at, updated_at FROM public.users WHERE id = $1::uuid"},
+      {"profiles",
+       "SELECT id::text AS id, user_id::text AS user_id, firstname, lastname, fullname, avatar_url, address FROM public.profiles WHERE id = $1::uuid"},
+      {"user_roles",
+       "SELECT user_id::text AS user_id, role_id FROM public.user_roles WHERE user_id = $1::uuid"},
       {"bookings",
-       "SELECT * FROM public.bookings WHERE customer_id = $1::uuid ORDER BY created_at DESC"},
+       "SELECT id::text AS id, status, payment_status, scheduled_date, scheduled_time, address, created_at FROM public.bookings WHERE customer_id = $1::uuid ORDER BY created_at DESC"},
       {"cleaner_applications",
-       "SELECT * FROM public.cleaner_applications WHERE user_id = $1::uuid ORDER BY created_at DESC"},
+       "SELECT id::text AS id, status, created_at, updated_at FROM public.cleaner_applications WHERE user_id = $1::uuid ORDER BY created_at DESC"},
       {"kyc_profiles",
-       "SELECT * FROM public.kyc_profiles WHERE user_id = $1::uuid ORDER BY updated_at DESC"}
+       "SELECT id::text AS id, kyc_status, created_at, updated_at FROM public.kyc_profiles WHERE user_id = $1::uuid ORDER BY updated_at DESC"}
     ]
 
-    export =
-      Enum.reduce(tables, %{"exportedAt" => DateTime.utc_now() |> DateTime.to_iso8601()}, fn {key,
-                                                                                              sql},
-                                                                                             acc ->
-        rows =
-          case Repo.query(sql, [user_id]) do
-            {:ok, %{columns: columns, rows: rows}} ->
-              Enum.map(rows, fn row -> Map.new(Enum.zip(columns, row)) end)
+    initial = %{"exportedAt" => DateTime.utc_now() |> DateTime.to_iso8601()}
 
-            _ ->
-              []
-          end
+    Enum.reduce_while(tables, {:ok, initial}, fn {key, sql}, {:ok, acc} ->
+      case Repo.query(sql, [DbUuid.dump!(user_id)]) do
+        {:ok, %{columns: columns, rows: rows}} ->
+          decoded =
+            Enum.map(rows, fn row ->
+              row
+              |> Map.new(Enum.zip(columns, row))
+              |> redact()
+            end)
 
-        Map.put(acc, key, rows)
-      end)
+          {:cont, {:ok, Map.put(acc, key, decoded)}}
 
-    {:ok, export}
+        {:error, _} ->
+          {:halt, {:error, {:status, 500, %{error: "Could not build account data export"}}}}
+      end
+    end)
+  end
+
+  defp redact(row) when is_map(row) do
+    Map.drop(row, @secret_columns)
   end
 
   defp destination_email(user_id) do
-    case Repo.query("SELECT email FROM public.users WHERE id = $1::uuid LIMIT 1", [user_id]) do
+    case Repo.query("SELECT email FROM public.users WHERE id = $1::uuid LIMIT 1", [
+           DbUuid.dump!(user_id)
+         ]) do
       {:ok, %{rows: [[email]]}} when is_binary(email) and email != "" ->
-        {:ok, email}
+        trimmed = String.trim(email)
+
+        if trimmed != "" and
+             not String.ends_with?(String.downcase(trimmed), "@phone.tryinstaclean.local") do
+          {:ok, trimmed}
+        else
+          {:error,
+           {:status, 400,
+            %{error: "Add a real email address to your account before requesting an export."}}}
+        end
 
       _ ->
         {:error,
