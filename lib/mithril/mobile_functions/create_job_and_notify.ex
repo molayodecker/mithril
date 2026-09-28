@@ -1,7 +1,8 @@
 defmodule Mithril.MobileFunctions.CreateJobAndNotify do
   @moduledoc false
 
-  alias Mithril.MobileGateway
+  alias Mithril.DbUuid
+  alias Mithril.RateLimiter
   alias Mithril.Repo
 
   @radius_meters 10_000
@@ -15,9 +16,9 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
   def call(customer_id, body) when is_binary(customer_id) and is_map(body) do
     with {:ok, fields} <- parse_body(body),
          :ok <- ensure_customer_role(customer_id),
-         {:ok, job_id} <- insert_job(customer_id, fields),
-         {:ok, cleaner_ids} <- nearby_cleaner_ids(fields),
-         offers_count <- insert_offers(job_id, cleaner_ids),
+         :ok <- rate_limit_create(customer_id),
+         {:ok, {job_id, cleaner_ids, offers_count}} <-
+           persist_job_and_offers(customer_id, fields),
          push_attempted <- send_job_offer_pushes(cleaner_ids, job_id) do
       {:ok,
        %{
@@ -55,7 +56,8 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
         with {:ok, normalized_time} <- normalize_start_time(start_time),
              {:ok, duration} <- parse_duration(duration_hours),
              {:ok, lat_num, lng_num} <- parse_coordinates(lat, lng),
-             {:ok, price_num} <- parse_price(price) do
+             {:ok, price_num} <- parse_price(price),
+             :ok <- ensure_future_date(scheduled_date) do
           expires_seconds = parse_offer_expiry(offer_expires_in_seconds)
           offer_expires_at = DateTime.utc_now() |> DateTime.add(expires_seconds, :second)
 
@@ -76,24 +78,31 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
 
   defp normalize_start_time(start_time) do
     case Regex.run(@time_regex, start_time) do
-      [_, hour_text, minute_text, second_text] ->
-        hour = String.to_integer(hour_text)
-        minute = String.to_integer(minute_text)
-        second = if second_text in [nil, ""], do: 0, else: String.to_integer(second_text)
+      [_, hour_text, minute_text] ->
+        build_start_time(hour_text, minute_text, "0")
 
-        if hour > 23 or minute > 59 or second > 59 do
-          {:error, {:status, 400, %{error: "start_time is out of range"}}}
-        else
-          {:ok,
-           String.pad_leading(Integer.to_string(hour), 2, "0") <>
-             ":" <>
-             String.pad_leading(Integer.to_string(minute), 2, "0") <>
-             ":" <>
-             String.pad_leading(Integer.to_string(second), 2, "0")}
-        end
+      [_, hour_text, minute_text, second_text] ->
+        build_start_time(hour_text, minute_text, second_text)
 
       _ ->
         {:error, {:status, 400, %{error: "start_time must be HH:mm or HH:mm:ss"}}}
+    end
+  end
+
+  defp build_start_time(hour_text, minute_text, second_text) do
+    hour = String.to_integer(hour_text)
+    minute = String.to_integer(minute_text)
+    second = if second_text in [nil, ""], do: 0, else: String.to_integer(second_text)
+
+    if hour > 23 or minute > 59 or second > 59 do
+      {:error, {:status, 400, %{error: "start_time is out of range"}}}
+    else
+      {:ok,
+       String.pad_leading(Integer.to_string(hour), 2, "0") <>
+         ":" <>
+         String.pad_leading(Integer.to_string(minute), 2, "0") <>
+         ":" <>
+         String.pad_leading(Integer.to_string(second), 2, "0")}
     end
   end
 
@@ -137,10 +146,34 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
   defp parse_price(price) do
     price_num = parse_number(price)
 
-    if is_number(price_num) and price_num >= 0 do
+    if is_number(price_num) and price_num >= 1 and price_num <= 50_000 do
       {:ok, price_num}
     else
       {:error, {:status, 400, %{error: "Invalid price"}}}
+    end
+  end
+
+  defp ensure_future_date(scheduled_date) do
+    case Date.from_iso8601(scheduled_date) do
+      {:ok, date} ->
+        if Date.compare(date, Date.utc_today()) == :lt do
+          {:error, {:status, 400, %{error: "scheduled_date must be today or later"}}}
+        else
+          :ok
+        end
+
+      _ ->
+        {:error, {:status, 400, %{error: "scheduled_date must be YYYY-MM-DD"}}}
+    end
+  end
+
+  defp rate_limit_create(customer_id) do
+    case RateLimiter.check({:create_job_and_notify, customer_id}, 5, 600_000) do
+      :ok ->
+        :ok
+
+      {:error, :rate_limited} ->
+        {:error, {:status, 429, %{error: "Too many jobs. Try again later."}}}
     end
   end
 
@@ -188,32 +221,48 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
   end
 
   defp ensure_customer_role(customer_id) do
-    case MobileGateway.call_rpc(customer_id, "get_user_role", %{"p_user_id" => customer_id}) do
-      {:ok, role_payload} ->
-        roles = roles_from_payload(role_payload)
+    case Repo.query(
+           """
+           SELECT EXISTS (
+             SELECT 1
+             FROM public.user_roles
+             WHERE user_id = $1::uuid
+               AND role_id = 'customer'
+           )
+           """,
+           [DbUuid.dump!(customer_id)]
+         ) do
+      {:ok, %{rows: [[true]]}} ->
+        :ok
 
-        if "customer" in roles do
-          :ok
-        else
-          {:error, {:status, 403, %{error: "Only customers can create jobs"}}}
-        end
+      {:ok, _} ->
+        {:error, {:status, 403, %{error: "Only customers can create jobs"}}}
 
       {:error, _} ->
         {:error, {:status, 500, %{error: "Could not verify user role"}}}
     end
   end
 
-  defp roles_from_payload(%{"roles" => roles}) when is_list(roles), do: roles
-  defp roles_from_payload(%{roles: roles}) when is_list(roles), do: roles
+  defp persist_job_and_offers(customer_id, fields) do
+    case Repo.transaction(fn ->
+           with {:ok, job_id} <- insert_job(customer_id, fields),
+                {:ok, cleaner_ids} <- nearby_cleaner_ids(fields),
+                {:ok, offers_count} <- insert_offers(job_id, cleaner_ids) do
+             {job_id, cleaner_ids, offers_count}
+           else
+             {:error, reason} -> Repo.rollback(reason)
+           end
+         end) do
+      {:ok, result} ->
+        {:ok, result}
 
-  defp roles_from_payload(payload) when is_map(payload) do
-    case Map.get(payload, "roles") || Map.get(payload, :roles) do
-      roles when is_list(roles) -> roles
-      _ -> []
+      {:error, {:status, _, _} = reason} ->
+        {:error, reason}
+
+      {:error, _} ->
+        {:error, {:status, 500, %{error: "Could not create job"}}}
     end
   end
-
-  defp roles_from_payload(_), do: []
 
   defp insert_job(customer_id, fields) do
     sql = """
@@ -226,7 +275,7 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
     """
 
     case Repo.query(sql, [
-           customer_id,
+           DbUuid.dump!(customer_id),
            fields.address_text,
            fields.lat,
            fields.lng,
@@ -234,10 +283,10 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
            DateTime.to_iso8601(fields.offer_expires_at)
          ]) do
       {:ok, %{rows: [[job_id]]}} ->
-        {:ok, job_id}
+        {:ok, DbUuid.encode(job_id)}
 
-      {:error, error} ->
-        {:error, {:status, 500, %{error: Exception.message(error)}}}
+      {:error, _} ->
+        {:error, {:status, 500, %{error: "Could not create job"}}}
     end
   end
 
@@ -264,24 +313,27 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
 
         {:ok, ids}
 
-      {:error, error} ->
-        {:error, {:status, 500, %{error: Exception.message(error)}}}
+      {:error, _} ->
+        {:error, {:status, 500, %{error: "Could not find nearby cleaners"}}}
     end
   end
 
-  defp insert_offers(_job_id, []), do: 0
+  defp insert_offers(_job_id, []), do: {:ok, 0}
 
   defp insert_offers(job_id, cleaner_ids) do
-    Enum.reduce(cleaner_ids, 0, fn cleaner_id, count ->
+    Enum.reduce_while(cleaner_ids, {:ok, 0}, fn cleaner_id, {:ok, count} ->
       case Repo.query(
              """
              INSERT INTO public.job_offers (job_id, cleaner_id, status)
              VALUES ($1::uuid, $2::uuid, 'sent')
              """,
-             [job_id, cleaner_id]
+             [DbUuid.dump!(job_id), DbUuid.dump!(cleaner_id)]
            ) do
-        {:ok, _} -> count + 1
-        _ -> count
+        {:ok, _} ->
+          {:cont, {:ok, count + 1}}
+
+        {:error, _} ->
+          {:halt, {:error, {:status, 500, %{error: "Could not create job offers"}}}}
       end
     end)
   end
@@ -332,7 +384,7 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
     ) tokens
     """
 
-    case Repo.query(sql, [cleaner_ids]) do
+    case Repo.query(sql, [DbUuid.dump_all!(cleaner_ids)]) do
       {:ok, %{rows: rows}} ->
         rows
         |> Enum.map(fn [token] -> token end)
