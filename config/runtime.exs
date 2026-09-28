@@ -399,15 +399,7 @@ if config_env() != :test do
   plugins =
     Enum.map(oban_config[:plugins], fn
       {Oban.Plugins.Cron, cron_opts} ->
-        crontab =
-          if Code.ensure_loaded?(Mithril.Cron.Jobs) and
-               function_exported?(Mithril.Cron.Jobs, :oban_crontab, 0) do
-            Mithril.Cron.Jobs.oban_crontab()
-          else
-            Keyword.get(cron_opts, :crontab, [])
-          end
-
-        {Oban.Plugins.Cron, Keyword.put(cron_opts, :crontab, crontab)}
+        {Oban.Plugins.Cron, Keyword.put(cron_opts, :crontab, Mithril.Cron.Jobs.oban_crontab())}
 
       other ->
         other

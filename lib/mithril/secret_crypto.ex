@@ -8,8 +8,8 @@ defmodule Mithril.SecretCrypto do
     with {:ok, key} <- encryption_key(),
          iv <- :crypto.strong_rand_bytes(12),
          {cipher, tag} <-
-           :crypto.crypto_one_time_aead(:aes_256_gcm, key, iv, plaintext, @aad, 16, true) do
-      {:ok, Enum.join([Base.encode64(iv), Base.encode64(cipher), Base.encode64(tag)], ":")}
+           :crypto.crypto_one_time_aead(:aes_256_gcm, key, iv, plaintext, @aad, true) do
+      {:ok, Base.encode64(iv) <> ":" <> Base.encode64(cipher) <> ":" <> Base.encode64(tag)}
     else
       {:error, :not_configured} -> {:error, :not_configured}
     end
