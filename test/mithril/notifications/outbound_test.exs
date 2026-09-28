@@ -19,9 +19,7 @@ defmodule Mithril.Notifications.OutboundTest do
     end)
 
     :ok
-    defp restore_env(key, nil), do: Application.delete_env(:mithril, key)
-  defp restore_env(key, value), do: Application.put_env(:mithril, key, value)
-end
+  end
 
   test "sms channel sends a phone message and does not pretend WhatsApp succeeded" do
     result =
@@ -53,4 +51,21 @@ end
     refute result["smsSent"]
     refute result["whatsappSent"]
   end
+
+  test "structured channel input does not crash or send" do
+    result =
+      Outbound.deliver(%{
+        "template" => "booking_reminder",
+        "channel" => %{"unexpected" => true},
+        "phone" => "+233200000001",
+        "variables" => %{}
+      })
+
+    refute result["smsSent"]
+    refute result["whatsappSent"]
+    assert Application.get_env(:mithril, :test_sms_messages) == []
+  end
+
+  defp restore_env(key, nil), do: Application.delete_env(:mithril, key)
+  defp restore_env(key, value), do: Application.put_env(:mithril, key, value)
 end
