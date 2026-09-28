@@ -48,17 +48,25 @@ defmodule Mithril.ScheduledJobs.MessageDeliveryFallback do
 
     case claim_fallback(attempt_id) do
       :claimed ->
-        case maybe_send_whatsapp(row) do
-          :sent ->
-            mark_fallback_sent(attempt_id)
-            %{stats | sent: stats.sent + 1}
+        case prepare_uncertain_delivery(attempt_id) do
+          :ok ->
+            case maybe_send_whatsapp(row) do
+              :sent ->
+                case mark_fallback_sent(attempt_id) do
+                  :ok -> %{stats | sent: stats.sent + 1}
+                  {:error, _error} -> %{stats | failed: stats.failed + 1}
+                end
 
-          :skipped ->
-            finalize_skipped(attempt_id)
-            %{stats | skipped: stats.skipped + 1}
+              :skipped ->
+                finalize_skipped(attempt_id)
+                %{stats | skipped: stats.skipped + 1}
 
-          :failed ->
-            release_claim(attempt_id)
+              :failed ->
+                release_claim(attempt_id)
+                %{stats | failed: stats.failed + 1}
+            end
+
+          {:error, _error} ->
             %{stats | failed: stats.failed + 1}
         end
 
@@ -84,9 +92,28 @@ defmodule Mithril.ScheduledJobs.MessageDeliveryFallback do
     end
   end
 
+  defp prepare_uncertain_delivery(attempt_id) do
+    case Repo.query(
+           """
+           UPDATE public.message_delivery_attempts
+           SET fallback_after = NULL
+           WHERE id = $1::uuid AND fallback_sent_at IS NULL
+           """,
+           [attempt_id]
+         ) do
+      {:ok, %{num_rows: 1}} -> :ok
+      {:ok, %{num_rows: 0}} -> {:error, :claim_lost}
+      {:error, error} -> {:error, error}
+    end
+  end
+
   defp release_claim(attempt_id) do
     Repo.query(
-      "UPDATE public.message_delivery_attempts SET fallback_checked_at = NULL WHERE id = $1::uuid",
+      """
+      UPDATE public.message_delivery_attempts
+      SET fallback_checked_at = NULL, fallback_after = now()
+      WHERE id = $1::uuid AND fallback_sent_at IS NULL
+      """,
       [attempt_id]
     )
   end
@@ -103,14 +130,18 @@ defmodule Mithril.ScheduledJobs.MessageDeliveryFallback do
   end
 
   defp mark_fallback_sent(attempt_id) do
-    Repo.query(
-      """
-      UPDATE public.message_delivery_attempts
-      SET fallback_sent_at = now(), fallback_after = NULL
-      WHERE id = $1::uuid
-      """,
-      [attempt_id]
-    )
+    case Repo.query(
+           """
+           UPDATE public.message_delivery_attempts
+           SET fallback_sent_at = now(), fallback_after = NULL
+           WHERE id = $1::uuid
+           """,
+           [attempt_id]
+         ) do
+      {:ok, %{num_rows: 1}} -> :ok
+      {:ok, %{num_rows: 0}} -> {:error, :attempt_not_found}
+      {:error, error} -> {:error, error}
+    end
   end
 
   defp maybe_send_whatsapp(row) do
@@ -124,8 +155,8 @@ defmodule Mithril.ScheduledJobs.MessageDeliveryFallback do
         :skipped
 
       true ->
-        # Full template + OTP decryption lives in the edge shared module; native
-        # WhatsApp fallback for booking reminders uses Notifications.Outbound when configured.
+        # Keep delivery fail-closed: fallback_after is cleared before this external send,
+        # so a successful-but-unstamped delivery is not automatically retried.
         variables =
           case Enum.at(row, 6) do
             map when is_map(map) ->
