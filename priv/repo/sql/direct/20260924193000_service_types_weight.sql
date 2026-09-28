@@ -33,9 +33,7 @@ FROM (
     ('move_in_out_cleaning', 30),
     ('office_cleaning', 40),
     ('post_construction_cleaning', 50),
-    ('eco_friendly_cleaning', 60),
-    ('flooding', 70),
-    ('fumigation', 80)
+    ('eco_friendly_cleaning', 60)
 ) AS ordered (slug, sort_weight)
 WHERE active = true
   AND category = 'cleaning'
