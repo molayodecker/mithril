@@ -46,23 +46,37 @@ defmodule Mithril.AdminBroadcast.Delivery do
       stats["whatsappSent"] > 0
   end
 
-  @spec deliver_batch(map(), [String.t()]) :: map()
+  @spec deliver_batch(map(), [String.t()]) :: {:ok, map()} | {:error, term()}
   def deliver_batch(broadcast, user_ids) do
     channels = parse_channels(broadcast["channels"])
-    recipients = hydrate_recipients(user_ids)
-    stats = empty_stats()
-    stats = %{stats | "fetched" => length(recipients)}
 
-    Enum.reduce(recipients, stats, fn recipient, acc ->
-      if skip_recipient?(recipient, channels, broadcast["requires_marketing_consent"]) do
-        %{acc | "skippedPrefs" => acc["skippedPrefs"] + 1}
-      else
-        deliver_to_recipient(broadcast, recipient, channels, %{
-          acc
-          | "attempted" => acc["attempted"] + 1
-        })
-      end
-    end)
+    with {:ok, recipients} <- hydrate_recipients(user_ids) do
+      stats = %{empty_stats() | "fetched" => length(recipients)}
+
+      Enum.reduce_while(recipients, {:ok, stats}, fn recipient, {:ok, acc} ->
+        case claim_recipient(broadcast["id"], recipient.user_id) do
+          :claimed ->
+            next =
+              if skip_recipient?(recipient, channels, broadcast["requires_marketing_consent"]) do
+                %{acc | "skippedPrefs" => acc["skippedPrefs"] + 1}
+              else
+                deliver_to_recipient(broadcast, recipient, channels, %{
+                  acc
+                  | "attempted" => acc["attempted"] + 1
+                })
+              end
+
+            mark_recipient_delivered(broadcast["id"], recipient.user_id)
+            {:cont, {:ok, next}}
+
+          :already_claimed ->
+            {:cont, {:ok, acc}}
+
+          {:error, error} ->
+            {:halt, {:error, error}}
+        end
+      end)
+    end
   end
 
   defp deliver_to_recipient(broadcast, recipient, channels, stats) do
@@ -167,6 +181,37 @@ defmodule Mithril.AdminBroadcast.Delivery do
     end
   end
 
+  defp claim_recipient(broadcast_id, user_id) do
+    case Repo.query(
+           """
+           INSERT INTO public.admin_broadcast_delivery_receipts (
+             broadcast_id, user_id, claimed_at, inserted_at, updated_at
+           )
+           VALUES ($1::uuid, $2::uuid, now(), now(), now())
+           ON CONFLICT (broadcast_id, user_id) DO NOTHING
+           RETURNING user_id
+           """,
+           [broadcast_id, user_id]
+         ) do
+      {:ok, %{num_rows: 1}} -> :claimed
+      {:ok, %{num_rows: 0}} -> :already_claimed
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp mark_recipient_delivered(broadcast_id, user_id) do
+    Repo.query(
+      """
+      UPDATE public.admin_broadcast_delivery_receipts
+      SET delivered_at = now(), updated_at = now()
+      WHERE broadcast_id = $1::uuid AND user_id = $2::uuid
+      """,
+      [broadcast_id, user_id]
+    )
+
+    :ok
+  end
+
   defp hydrate_recipients(user_ids) do
     case Repo.query(
            """
@@ -181,21 +226,22 @@ defmodule Mithril.AdminBroadcast.Delivery do
            [user_ids]
          ) do
       {:ok, %{rows: rows}} ->
-        Enum.map(rows, fn [user_id, phone, settings, tokens] ->
-          prefs = parse_settings(settings)
+        {:ok,
+         Enum.map(rows, fn [user_id, phone, settings, tokens] ->
+           prefs = parse_settings(settings)
 
-          %{
-            user_id: user_id,
-            phone_e164: normalize_phone(phone),
-            push_enabled: prefs.push,
-            messaging_enabled: prefs.sms,
-            marketing_enabled: prefs.marketing,
-            push_tokens: tokens || []
-          }
-        end)
+           %{
+             user_id: user_id,
+             phone_e164: normalize_phone(phone),
+             push_enabled: prefs.push,
+             messaging_enabled: prefs.sms,
+             marketing_enabled: prefs.marketing,
+             push_tokens: tokens || []
+           }
+         end)}
 
-      _ ->
-        []
+      {:error, error} ->
+        {:error, error}
     end
   end
 
