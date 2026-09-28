@@ -2,7 +2,7 @@ defmodule Mithril.AdminBroadcast.Delivery do
   @moduledoc false
 
   alias Mithril.Auth.SMS
-  alias Mithril.Notifications.ExpoPush
+  alias Mithril.Notifications.{ExpoPush, SendNotification}
   alias Mithril.Repo
 
   @batch_size 50
@@ -101,6 +101,38 @@ defmodule Mithril.AdminBroadcast.Delivery do
           %{stats | "smsSent" => stats["smsSent"] + 1}
         else
           %{stats | "failed" => stats["failed"] + 1}
+        end
+      else
+        stats
+      end
+
+    stats =
+      if channels.whatsapp and recipient.messaging_enabled and recipient.phone_e164 do
+        payload =
+          %{
+            "channel" => "whatsapp",
+            "phone" => recipient.phone_e164,
+            "template" => broadcast["notification_type"] || "admin_broadcast",
+            "messageType" => broadcast["notification_type"] || "admin_broadcast",
+            "variables" => %{
+              "title" => broadcast["title"] || "",
+              "message" => broadcast["message"] || ""
+            },
+            "whatsappContentSid" => broadcast["whatsapp_content_sid"]
+          }
+          |> Enum.reject(fn {_key, value} -> is_nil(value) or value == "" end)
+          |> Map.new()
+
+        case SendNotification.invoke_mobile(payload) do
+          {:ok, response} when is_map(response) ->
+            if response["whatsappSent"] == true or response[:whatsappSent] == true do
+              %{stats | "whatsappSent" => stats["whatsappSent"] + 1}
+            else
+              %{stats | "failed" => stats["failed"] + 1}
+            end
+
+          _ ->
+            %{stats | "failed" => stats["failed"] + 1}
         end
       else
         stats
