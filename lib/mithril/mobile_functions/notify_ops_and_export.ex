@@ -173,16 +173,6 @@ defmodule Mithril.MobileFunctions.NotifyPaymentFailureOps do
   end
 end
 
-defmodule Mithril.MobileFunctions.RankCleanersWithAi do
-  @moduledoc false
-
-  alias Mithril.Transport.Ranking
-
-  def call(user_id, body) when is_map(body) do
-    Ranking.for_destination(user_id, body)
-  end
-end
-
 defmodule Mithril.MobileFunctions.RequestDataExport do
   @moduledoc false
 

@@ -45,4 +45,5 @@ config :mithril,
   sumsub_webhook_secret: "test-sumsub-webhook-secret",
   recruitment_upload_secret: "test-recruitment-upload-secret",
   whatsapp_recruitment_store: Mithril.WhatsApp.Recruitment.Leads.Memory,
-  twilio_http: :noop
+  twilio_http: :noop,
+  ai_match_settings: %{"enabled" => false}
