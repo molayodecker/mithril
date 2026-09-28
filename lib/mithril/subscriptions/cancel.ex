@@ -1,6 +1,7 @@
 defmodule Mithril.Subscriptions.Cancel do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.MobileFunctions.Paystack
   alias Mithril.Repo
 
@@ -31,15 +32,15 @@ defmodule Mithril.Subscriptions.Cancel do
     LIMIT 1
     """
 
-    case Repo.query(sql, [subscription_id]) do
+    case Repo.query(sql, [DbUuid.dump!(subscription_id)]) do
       {:ok, %{columns: columns, rows: [row]}} -> {:ok, row_to_map(columns, row)}
       {:ok, %{rows: []}} -> {:error, {:status, 404, %{error: "Subscription not found"}}}
-      {:error, error} -> {:error, {:status, 500, %{error: Exception.message(error)}}}
+      {:error, _} -> {:error, {:status, 500, %{error: "Could not load subscription"}}}
     end
   end
 
   defp ensure_owner(row, user_id) do
-    if Map.get(row, "customer_id") == user_id do
+    if DbUuid.equal?(Map.get(row, "customer_id"), user_id) do
       :ok
     else
       {:error, {:status, 403, %{error: "Subscription does not belong to this user"}}}
@@ -53,7 +54,7 @@ defmodule Mithril.Subscriptions.Cancel do
     WHERE customer_id = $1::uuid AND status IN ('active', 'pending')
     """
 
-    case Repo.query(sql, [user_id]) do
+    case Repo.query(sql, [DbUuid.dump!(user_id)]) do
       {:ok, %{columns: columns, rows: rows}} ->
         Enum.map(rows, &row_to_map(columns, &1))
 
@@ -108,10 +109,10 @@ defmodule Mithril.Subscriptions.Cancel do
 
     with {:ok, secret} <- maybe_paystack_secret(needs_paystack) do
       {cancelled_ids, errors} =
-        Enum.reduce(to_cancel, {[], nil}, fn row, {ids, _error} ->
+        Enum.reduce(to_cancel, {[], nil}, fn row, {ids, error} ->
           case cancel_one(row, secret) do
-            :ok -> {[Map.get(row, "id") | ids], nil}
-            {:error, message} -> {ids, message}
+            :ok -> {[Map.get(row, "id") | ids], error}
+            {:error, message} -> {ids, error || message}
           end
         end)
 
@@ -212,7 +213,7 @@ defmodule Mithril.Subscriptions.Cancel do
         {:ok, secret}
 
       {:error, :payment_not_configured} ->
-        {:error, {:status, 500, %{error: "PAYSTACK_SECRET_KEY is not configured"}}}
+        {:error, {:status, 500, %{error: "Payment is not configured"}}}
     end
   end
 
@@ -220,7 +221,7 @@ defmodule Mithril.Subscriptions.Cancel do
 
   defp cancel_locally(subscription_id) do
     case Repo.query("SELECT public.cancel_subscription_with_unpaid_placeholders($1::uuid)", [
-           subscription_id
+           DbUuid.dump!(subscription_id)
          ]) do
       {:ok, %{rows: [[payload]]}} when is_map(payload) ->
         action = Map.get(payload, "action") |> to_string() |> String.downcase()
@@ -236,8 +237,8 @@ defmodule Mithril.Subscriptions.Cancel do
         _ = payload
         :ok
 
-      {:error, error} ->
-        {:error, Exception.message(error)}
+      {:error, _} ->
+        {:error, "Could not cancel subscription"}
     end
   end
 
@@ -254,5 +255,11 @@ defmodule Mithril.Subscriptions.Cancel do
     |> String.replace(~r/\s+/, " ")
   end
 
-  defp row_to_map(columns, row), do: Map.new(Enum.zip(columns, row))
+  defp row_to_map(columns, row) do
+    columns
+    |> Enum.zip(row)
+    |> Map.new()
+    |> Map.update("id", nil, &DbUuid.encode/1)
+    |> Map.update("customer_id", nil, &DbUuid.encode/1)
+  end
 end
