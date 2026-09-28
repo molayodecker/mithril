@@ -146,6 +146,11 @@ if google_maps_key = System.get_env("GOOGLE_MAPS_API_KEY") do
   config :mithril, :google_maps_api_key, google_maps_key
 end
 
+if openai_api_key = System.get_env("OPENAI_API_KEY") do
+  trimmed = String.trim(openai_api_key)
+  if trimmed != "", do: config(:mithril, :openai_api_key, trimmed)
+end
+
 locationiq_token =
   System.get_env("LOCATIONIQ_ACCESS_TOKEN") || System.get_env("LOCATIONIQ_API_KEY")
 
