@@ -52,7 +52,7 @@ defmodule Mithril.MobileFunctions.BookingCheckoutOptions do
 
     stripe_flag =
       if stripe_kill_switch do
-        Posthog.fetch_boolean_flag(@stripe_flag, @stripe_distinct_id, evaluation_runtime: "all")
+        Posthog.fetch_boolean_flag(@stripe_flag, @stripe_distinct_id)
       else
         false
       end
