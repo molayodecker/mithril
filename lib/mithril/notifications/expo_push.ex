@@ -29,8 +29,12 @@ defmodule Mithril.Notifications.ExpoPush do
         end)
 
       case Req.post(@expo_url, json: messages) do
-        {:ok, %{status: status}} when status in 200..299 -> count + length(chunk)
-        _ -> count
+        {:ok, %{status: status, body: %{"data" => tickets}}}
+        when status in 200..299 and is_list(tickets) ->
+          count + Enum.count(tickets, &(Map.get(&1, "status") == "ok"))
+
+        _ ->
+          count
       end
     end)
   end
