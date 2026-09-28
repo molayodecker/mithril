@@ -1,7 +1,6 @@
 defmodule Mithril.MobileFunctions do
   @moduledoc false
 
-  alias Mithril.MobileFunctions.BookingCheckoutOptions
   alias Mithril.MobileFunctions.CancelSubscription
   alias Mithril.MobileFunctions.ClaimJob
   alias Mithril.MobileFunctions.ConnectPropertyCalendar
@@ -23,9 +22,6 @@ defmodule Mithril.MobileFunctions do
   alias Mithril.MobileFunctions.UberTripEstimate
 
   @spec invoke(String.t(), String.t(), map()) :: {:ok, map()} | {:error, term()}
-  def invoke(user_id, "booking-checkout-options", body) when is_map(body),
-    do: BookingCheckoutOptions.call(user_id, body)
-
   def invoke(_user_id, "timezone", body) when is_map(body), do: Timezone.call(body)
 
   def invoke(_user_id, "paystack-fetch-banks", body) when is_map(body),
