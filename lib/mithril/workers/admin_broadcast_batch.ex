@@ -85,36 +85,45 @@ defmodule Mithril.Workers.AdminBroadcastBatch do
         @batch_size
       )
 
-    Repo.query(
-      """
-      UPDATE public.admin_broadcasts
-      SET process_offset = $2,
-          stats = $3::jsonb,
-          skipped_prefs_count = skipped_prefs_count + $4,
-          eligible_count = eligible_count + $5,
-          status = CASE WHEN $6 THEN $7 ELSE status END,
-          error_message = CASE WHEN $6 AND $8 THEN 'No deliveries succeeded.' ELSE error_message END,
-          completed_at = CASE WHEN $6 THEN now() ELSE completed_at END
-      WHERE id = $1::uuid AND process_offset = $9
-      """,
-      [
-        broadcast["id"],
-        new_offset,
-        Jason.encode!(merged),
-        batch_stats["skippedPrefs"],
-        batch_stats["attempted"],
-        done,
-        final_status || broadcast["status"],
-        final_status == "failed",
-        offset
-      ]
-    )
+    case Repo.query(
+           """
+           UPDATE public.admin_broadcasts
+           SET process_offset = $2,
+               stats = $3::jsonb,
+               skipped_prefs_count = skipped_prefs_count + $4,
+               eligible_count = eligible_count + $5,
+               status = CASE WHEN $6 THEN $7 ELSE status END,
+               error_message = CASE WHEN $6 AND $8 THEN 'No deliveries succeeded.' ELSE error_message END,
+               completed_at = CASE WHEN $6 THEN now() ELSE completed_at END
+           WHERE id = $1::uuid AND process_offset = $9
+           """,
+           [
+             broadcast["id"],
+             new_offset,
+             Jason.encode!(merged),
+             batch_stats["skippedPrefs"],
+             batch_stats["attempted"],
+             done,
+             final_status || broadcast["status"],
+             final_status == "failed",
+             offset
+           ]
+         ) do
+      {:ok, %{num_rows: 1}} ->
+        if done do
+          :ok
+        else
+          case enqueue(broadcast["id"]) do
+            {:ok, _job} -> :ok
+            {:error, error} -> {:error, error}
+          end
+        end
 
-    if done do
-      :ok
-    else
-      enqueue(broadcast["id"])
-      :ok
+      {:ok, %{num_rows: 0}} ->
+        {:error, :stale_broadcast_offset}
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
