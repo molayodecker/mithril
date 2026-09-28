@@ -7,7 +7,8 @@ config :mithril,
   transport_router: Mithril.Transport.Router.LocationIQ,
   auth_access_ttl: 3600,
   auth_refresh_ttl: 60 * 60 * 24 * 30,
-  direct_client_bookings: false
+  direct_client_bookings: false,
+  stripe_booking_checkout_enabled: false
 
 config :mithril, MithrilWeb.Endpoint,
   url: [host: "localhost"],
@@ -34,15 +35,12 @@ config :mithril, Oban,
   repo: Mithril.Repo,
   notifier: Oban.Notifiers.Postgres,
   peer: Oban.Peers.Database,
-  queues: [notifications: 10],
+  queues: [notifications: 10, cron: 5],
   plugins: [
     {Oban.Plugins.Pruner, max_age: 60 * 60 * 24 * 14},
     {Oban.Plugins.Lifeline, rescue_after: :timer.minutes(5)},
-    {Oban.Plugins.Cron,
-     timezone: "Etc/UTC",
-     crontab: [
-       {"0 * * * *", Mithril.Workers.BookingReminderSweep}
-     ]}
+    # Crontab is filled at runtime from `Mithril.Cron.Jobs` (see `config/runtime.exs`).
+    {Oban.Plugins.Cron, timezone: "Etc/UTC", crontab: []}
   ]
 
 config :logger, :default_formatter,
