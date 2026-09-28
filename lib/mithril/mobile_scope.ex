@@ -243,7 +243,7 @@ defmodule Mithril.MobileScope do
       # Broadcast offers keep cleaner_id null. Id-list reads may also return rows
       # list_broadcast_assignments_for_cleaner would return for this caller.
       owned <>
-        " OR bookings.id IN (SELECT public.list_broadcast_assignments_for_cleaner($#{index}::uuid))"
+        " OR bookings.id IN (SELECT public.list_broadcast_assignments_for_cleaner($#{index}::text::uuid))"
     else
       owned
     end
