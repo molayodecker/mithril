@@ -117,7 +117,9 @@ defmodule Mithril.Notifications.Outbound do
   end
 
   defp message_body("payment_received", variables) do
-    amount = present(variables["amount"]) || present(variables["amountFormatted"]) || "your payment"
+    amount =
+      present(variables["amount"]) || present(variables["amountFormatted"]) || "your payment"
+
     booking = present(variables["bookingId"])
     suffix = if booking, do: " for booking #{booking}", else: ""
     "Instaclean payment received: #{amount}#{suffix}."
