@@ -253,11 +253,32 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewals do
            UPDATE public.bookings
            SET payment_status = 'paid', status = $2, updated_at = now()
            WHERE id = $1::uuid
+             AND status NOT IN ('cancelled', 'completed')
+           RETURNING status
            """,
            [booking_id, status]
          ) do
-      {:ok, _} -> :ok
-      {:error, error} -> {:error, error.postgres.message}
+      {:ok, %{num_rows: 1}} ->
+        :ok
+
+      {:ok, %{num_rows: 0}} ->
+        case Repo.query("SELECT status FROM public.bookings WHERE id = $1::uuid", [booking_id]) do
+          {:ok, %{rows: [[terminal_status]]}}
+          when terminal_status in ["cancelled", "completed"] ->
+            {:error, "booking_terminal_state:#{terminal_status}"}
+
+          {:ok, %{rows: []}} ->
+            {:error, "booking_not_found"}
+
+          {:ok, _} ->
+            {:error, "booking_state_changed"}
+
+          {:error, error} ->
+            {:error, error.postgres.message}
+        end
+
+      {:error, error} ->
+        {:error, error.postgres.message}
     end
   end
 
