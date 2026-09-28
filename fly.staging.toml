@@ -13,6 +13,8 @@ kill_timeout = 30
   DATABASE_BACKEND = "fly"
   FLY_DATABASE_SSL_DISABLE = "true"
   SUMSUB_WORKER_LEVEL_NAME = "id-and-liveness"
+  # Mobile review submit creates bookings through POST /direct/bookings.
+  DIRECT_CLIENT_BOOKINGS = "true"
 
 [http_service]
   internal_port = 4000

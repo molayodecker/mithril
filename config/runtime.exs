@@ -78,6 +78,7 @@ if config_env() != :test do
 end
 
 config :mithril, :direct_client_bookings, truthy_env?.("DIRECT_CLIENT_BOOKINGS")
+config :mithril, :stripe_booking_checkout_enabled, truthy_env?.("STRIPE_BOOKING_CHECKOUT_ENABLED")
 
 if parity_token = System.get_env("MITHRIL_PARITY_TOKEN") do
   config :mithril, :parity_token, parity_token
@@ -144,6 +145,14 @@ end
 
 if google_maps_key = System.get_env("GOOGLE_MAPS_API_KEY") do
   config :mithril, :google_maps_api_key, google_maps_key
+end
+
+if openai_api_key = System.get_env("OPENAI_API_KEY") do
+  trimmed = String.trim(openai_api_key)
+
+  if trimmed != "" do
+    config :mithril, :openai_api_key, trimmed
+  end
 end
 
 locationiq_token =
