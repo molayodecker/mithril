@@ -8,7 +8,6 @@ defmodule Mithril.MobileGateway do
   alias Mithril.Repo
 
   @functions MapSet.new(~w(
-    booking-checkout-options
     cancel-subscription
     connect-property-calendar
     claim-job
