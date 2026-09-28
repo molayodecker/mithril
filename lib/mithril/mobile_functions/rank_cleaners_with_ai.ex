@@ -486,8 +486,12 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
            """,
            [service_id]
          ) do
-      {:ok, %{rows: [[specialty_slug]]}} -> {:ok, specialty_slug}
-      {:ok, %{rows: []}} -> {:fallback, "missing_service"}
+      {:ok, %{rows: [[specialty_slug]]}} ->
+        {:ok, specialty_slug}
+
+      {:ok, %{rows: []}} ->
+        {:fallback, "missing_service"}
+
       {:error, error} ->
         Logger.warning("rank-cleaners-with-ai service lookup failed: #{inspect(error)}")
         {:fallback, "candidate_lookup_failed"}
