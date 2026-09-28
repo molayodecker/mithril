@@ -354,6 +354,8 @@ defmodule Mithril.DirectOperations do
                customer_reminder_claimed_at = NULL,
                customer_reminder_7d_sent_at = NULL,
                customer_reminder_7d_claimed_at = NULL,
+               customer_reminder_5d_sent_at = NULL,
+               customer_reminder_5d_claimed_at = NULL,
                customer_reminder_48h_sent_at = NULL,
                customer_reminder_48h_claimed_at = NULL,
                customer_reminder_morning_sent_at = NULL,

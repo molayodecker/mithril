@@ -2,7 +2,6 @@ defmodule Mithril.MobileFunctions.UberTransportationReleaseGate do
   @moduledoc false
 
   alias Mithril.Posthog
-
   @spec call(String.t(), map()) :: {:ok, map()} | {:error, term()}
   def call(_user_id, _body) do
     enabled =

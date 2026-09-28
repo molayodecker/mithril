@@ -3,8 +3,10 @@ defmodule Mithril.Notifications.RemindersTest do
 
   alias Mithril.Notifications.Reminders
 
-  test "one-off visits get 48h, 24h, morning, and cleaner stages" do
+  test "one-off visits get 7d, 5d, 48h, 24h, morning, and cleaner stages" do
     assert Reminders.enabled_stages(%{}) == [
+             "customer_7d",
+             "customer_5d",
              "customer_48h",
              "customer_24h",
              "customer_morning",
@@ -22,6 +24,15 @@ defmodule Mithril.Notifications.RemindersTest do
 
     assert Reminders.enabled_stages(%{recurrence_interval: "bi_weekly"}) ==
              Reminders.enabled_stages(%{recurrence_interval: "weekly"})
+  end
+
+  test "5d window is one hour wide around the target" do
+    scheduled = DateTime.to_unix(~U[2026-10-06 09:00:00Z], :millisecond)
+    on_target = DateTime.to_unix(~U[2026-10-01 09:00:00Z], :millisecond)
+    too_early = DateTime.to_unix(~U[2026-10-01 07:00:00Z], :millisecond)
+
+    assert Reminders.in_window?(scheduled, on_target, 120)
+    refute Reminders.in_window?(scheduled, too_early, 120)
   end
 
   test "24h window is one hour wide around the target" do

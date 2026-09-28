@@ -15,6 +15,7 @@ defmodule Mithril.Notifications.Reminders do
 
   @claim_ttl_minutes 45
   @hours_7d 24 * 7
+  @hours_5d 24 * 5
   @hours_48 48
   @hours_24 24
   @tolerance_hours 1.0
@@ -24,9 +25,10 @@ defmodule Mithril.Notifications.Reminders do
   @batch_limit 200
   @terminal_statuses ~w(cancelled completed no_show)
 
-  @stages ~w(customer_7d customer_48h customer_24h customer_morning cleaner)
+  @stages ~w(customer_7d customer_5d customer_48h customer_24h customer_morning cleaner)
   @columns %{
     "customer_7d" => {"customer_reminder_7d_claimed_at", "customer_reminder_7d_sent_at"},
+    "customer_5d" => {"customer_reminder_5d_claimed_at", "customer_reminder_5d_sent_at"},
     "customer_48h" => {"customer_reminder_48h_claimed_at", "customer_reminder_48h_sent_at"},
     "customer_24h" => {"customer_reminder_claimed_at", "customer_reminder_sent_at"},
     "customer_morning" =>
@@ -121,7 +123,14 @@ defmodule Mithril.Notifications.Reminders do
         ["customer_7d", "customer_48h", "customer_24h", "cleaner"]
 
       true ->
-        ["customer_48h", "customer_24h", "customer_morning", "cleaner"]
+        [
+          "customer_7d",
+          "customer_5d",
+          "customer_48h",
+          "customer_24h",
+          "customer_morning",
+          "cleaner"
+        ]
     end
   end
 
@@ -169,6 +178,8 @@ defmodule Mithril.Notifications.Reminders do
              b.recurrence_interval,
              b.customer_reminder_7d_sent_at,
              b.customer_reminder_7d_claimed_at,
+             b.customer_reminder_5d_sent_at,
+             b.customer_reminder_5d_claimed_at,
              b.customer_reminder_48h_sent_at,
              b.customer_reminder_48h_claimed_at,
              b.customer_reminder_sent_at,
@@ -225,6 +236,8 @@ defmodule Mithril.Notifications.Reminders do
                b.recurrence_interval,
                b.customer_reminder_7d_sent_at,
                b.customer_reminder_7d_claimed_at,
+               b.customer_reminder_5d_sent_at,
+               b.customer_reminder_5d_claimed_at,
                b.customer_reminder_48h_sent_at,
                b.customer_reminder_48h_claimed_at,
                b.customer_reminder_sent_at,
@@ -271,6 +284,8 @@ defmodule Mithril.Notifications.Reminders do
          recurrence_interval,
          reminder_7d_sent,
          reminder_7d_claimed,
+         reminder_5d_sent,
+         reminder_5d_claimed,
          reminder_48h_sent,
          reminder_48h_claimed,
          reminder_24h_sent,
@@ -294,6 +309,8 @@ defmodule Mithril.Notifications.Reminders do
       recurrence_interval: recurrence_interval,
       customer_reminder_7d_sent_at: reminder_7d_sent,
       customer_reminder_7d_claimed_at: reminder_7d_claimed,
+      customer_reminder_5d_sent_at: reminder_5d_sent,
+      customer_reminder_5d_claimed_at: reminder_5d_claimed,
       customer_reminder_48h_sent_at: reminder_48h_sent,
       customer_reminder_48h_claimed_at: reminder_48h_claimed,
       customer_reminder_sent_at: reminder_24h_sent,
@@ -346,6 +363,9 @@ defmodule Mithril.Notifications.Reminders do
       stage == "customer_7d" ->
         in_window?(scheduled_ms, now_ms, @hours_7d)
 
+      stage == "customer_5d" ->
+        in_window?(scheduled_ms, now_ms, @hours_5d)
+
       stage == "customer_48h" ->
         in_window?(scheduled_ms, now_ms, @hours_48)
 
@@ -358,12 +378,14 @@ defmodule Mithril.Notifications.Reminders do
   end
 
   defp stage_sent_at(row, "customer_7d"), do: row.customer_reminder_7d_sent_at
+  defp stage_sent_at(row, "customer_5d"), do: row.customer_reminder_5d_sent_at
   defp stage_sent_at(row, "customer_48h"), do: row.customer_reminder_48h_sent_at
   defp stage_sent_at(row, "customer_24h"), do: row.customer_reminder_sent_at
   defp stage_sent_at(row, "customer_morning"), do: row.customer_reminder_morning_sent_at
   defp stage_sent_at(row, "cleaner"), do: row.cleaner_reminder_sent_at
 
   defp stage_claimed_at(row, "customer_7d"), do: row.customer_reminder_7d_claimed_at
+  defp stage_claimed_at(row, "customer_5d"), do: row.customer_reminder_5d_claimed_at
   defp stage_claimed_at(row, "customer_48h"), do: row.customer_reminder_48h_claimed_at
   defp stage_claimed_at(row, "customer_24h"), do: row.customer_reminder_claimed_at
   defp stage_claimed_at(row, "customer_morning"), do: row.customer_reminder_morning_claimed_at
@@ -467,7 +489,8 @@ defmodule Mithril.Notifications.Reminders do
   defp stage_urgency("customer_24h"), do: 1
   defp stage_urgency("cleaner"), do: 1
   defp stage_urgency("customer_48h"), do: 2
-  defp stage_urgency("customer_7d"), do: 3
+  defp stage_urgency("customer_5d"), do: 3
+  defp stage_urgency("customer_7d"), do: 4
   defp stage_urgency(_), do: 9
 
   defp accra_date(now_ms) do

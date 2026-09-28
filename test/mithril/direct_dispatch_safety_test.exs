@@ -42,6 +42,8 @@ defmodule Mithril.DirectDispatchSafetyTest do
       assignment_phase text,
       assignment_hold_until timestamptz,
       assignment_reminder_sent_at timestamptz,
+      customer_reminder_5d_sent_at timestamptz,
+      customer_reminder_5d_claimed_at timestamptz,
       service_id integer NOT NULL,
       address text NOT NULL,
       scheduled_date date NOT NULL,

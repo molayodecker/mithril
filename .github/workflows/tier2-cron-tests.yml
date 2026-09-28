@@ -1,0 +1,110 @@
+name: Tier 2 cron tests
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/tier2-cron-tests.yml"
+      - "lib/mithril/scheduled_jobs.ex"
+      - "lib/mithril/scheduled_jobs/**"
+      - "lib/mithril/cron/**"
+      - "lib/mithril/workers/scheduled_job.ex"
+      - "lib/mithril/workers/admin_broadcast_batch.ex"
+      - "lib/mithril/workers/database_cron.ex"
+      - "lib/mithril/booking_customer_reminder/**"
+      - "lib/mithril/booking_review_request.ex"
+      - "lib/mithril/subscriptions/managed_renewal.ex"
+      - "lib/mithril/admin_broadcast/**"
+      - "lib/mithril/property_calendar/**"
+      - "lib/mithril/property_calendar_sync.ex"
+      - "lib/mithril/storage_cleanup/**"
+      - "lib/mithril/object_storage.ex"
+      - "lib/mithril/booking_ops/**"
+      - "lib/mithril/support_ops.ex"
+      - "lib/mithril/notifications/expo_push.ex"
+      - "lib/mithril/paystack/transactions.ex"
+      - "lib/mithril/calendar_feed_security.ex"
+      - "test/mithril/scheduled_jobs/**"
+      - "test/mithril/cron/**"
+      - "test/mithril/booking_customer_reminder/**"
+      - "test/mithril/booking_review_request_test.exs"
+      - "test/mithril/subscriptions/**"
+      - "test/mithril/admin_broadcast/**"
+      - "test/mithril/storage_cleanup/**"
+      - "test/mithril/property_calendar/**"
+      - "test/mithril/calendar_feed_security_fetch_test.exs"
+      - "test/mithril/booking_ops/**"
+      - "test/mithril/workers/database_cron_test.exs"
+      - "test/mithril/scheduled_jobs_test.exs"
+      - "test/support/object_storage_test_double.ex"
+      - "config/config.exs"
+      - "config/runtime.exs"
+  push:
+    branches:
+      - feat/native-tier2-cron
+
+permissions:
+  contents: read
+
+jobs:
+  tier2-cron:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mithril_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      MIX_ENV: test
+      DATABASE_URL: ecto://postgres:postgres@localhost:5432/mithril_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28.5.0.6"
+          elixir-version: "1.20.4"
+
+      - name: Cache Mix
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-tier2-${{ hashFiles('mix.exs', 'mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-tier2-
+            ${{ runner.os }}-mix-
+
+      - run: mix local.hex --force
+      - run: mix local.rebar --force
+      - run: mix deps.get
+      - run: mix format --check-formatted
+      - run: mix compile --warnings-as-errors
+
+      - name: Run Tier 2 cron regression tests
+        run: |
+          mix test \
+            test/mithril/scheduled_jobs_test.exs \
+            test/mithril/cron/ \
+            test/mithril/scheduled_jobs/ \
+            test/mithril/booking_customer_reminder/ \
+            test/mithril/booking_review_request_test.exs \
+            test/mithril/subscriptions/ \
+            test/mithril/admin_broadcast/ \
+            test/mithril/storage_cleanup/ \
+            test/mithril/property_calendar/ \
+            test/mithril/calendar_feed_security_fetch_test.exs \
+            test/mithril/booking_ops/ \
+            test/mithril/workers/database_cron_test.exs

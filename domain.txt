@@ -25,6 +25,17 @@ OpenAPI:             https://dev.tryinstaclean.com/openapi.json
 ## Preview
 API:                 https://instaclean-mithril-preview.fly.dev
 
+## Observability
+Grafana:             https://fly-metrics.net
+Prometheus:          https://api.fly.io/prometheus/personal/
+Production series:   {app="instaclean-mithril"}
+Staging series:      {app="instaclean-mithril-staging"}
+Local metrics:       http://localhost:9091/metrics
+
+# PromEx /metrics is Fly-internal on port 9091. It is not public on
+# api.tryinstaclean.com or dev.tryinstaclean.com. Sign in to Grafana
+# with the Fly account for the personal org. Mithril does not host Grafana.
+
 ## Related sites
 Website:             https://tryinstaclean.com
 Direct:              https://direct.tryinstaclean.com
