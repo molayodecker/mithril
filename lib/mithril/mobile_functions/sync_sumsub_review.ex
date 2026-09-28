@@ -1,6 +1,7 @@
 defmodule Mithril.MobileFunctions.SyncSumsubReview do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.Repo
   alias Mithril.Sumsub.CleanerApplicationLookup
   alias Mithril.Sumsub.Client
@@ -88,7 +89,7 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
     LIMIT 25
     """
 
-    case Repo.query(sql, [user_id]) do
+    case Repo.query(sql, [DbUuid.dump!(user_id)]) do
       {:ok, %{columns: columns, rows: rows}} ->
         {:ok, Enum.map(rows, fn row -> Map.new(Enum.zip(columns, row)) end)}
 
