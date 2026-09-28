@@ -29,7 +29,7 @@ defmodule Mithril.MobileFunctions.SumsubToken do
         {:error,
          {:status, 500,
           %{
-            error: "Missing secrets",
+            error: "Identity verification is not configured",
             missing: missing_secret_names()
           }}}
 
