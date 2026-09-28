@@ -49,6 +49,12 @@ defmodule MithrilWeb.Router do
     get "/openapi.json", OpenApiSpex.Plug.RenderSpec, []
   end
 
+  scope "/functions/v1", MithrilWeb do
+    pipe_through :api
+
+    post "/send-notification", SendNotificationController, :create
+  end
+
   scope "/auth", MithrilWeb do
     pipe_through :api
 
