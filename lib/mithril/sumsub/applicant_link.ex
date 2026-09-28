@@ -16,38 +16,21 @@ defmodule Mithril.Sumsub.ApplicantLink do
       country = Map.get(input, :country, Config.country_code())
       now = DateTime.utc_now() |> DateTime.to_iso8601()
 
-      cleaner_application_id =
+      cleaner_application =
         case CleanerApplicationLookup.find_latest(%{user_id: user_id}) do
-          {:ok, row} -> Map.get(row, "id")
+          {:ok, row} -> row
           _ -> nil
         end
 
-      if present?(cleaner_application_id) do
-        _ =
-          Repo.query(
-            """
-            UPDATE public.cleaner_applications SET
-              kyc_provider = 'sumsub',
-              kyc_status = CASE
-                WHEN sumsub_applicant_id IS DISTINCT FROM $1 THEN 'started'
-                ELSE kyc_status
-              END,
-              kyc_review_answer = CASE
-                WHEN sumsub_applicant_id IS DISTINCT FROM $1 THEN NULL
-                ELSE kyc_review_answer
-              END,
-              kyc_review_status = CASE
-                WHEN sumsub_applicant_id IS DISTINCT FROM $1 THEN NULL
-                ELSE kyc_review_status
-              END,
-              sumsub_applicant_id = $1,
-              sumsub_level_name = $2,
-              updated_at = $3::timestamptz
-            WHERE id = $4::uuid
-            """,
-            [applicant_id, level_name, now, DbUuid.dump!(cleaner_application_id)]
-          )
-      end
+      cleaner_application_id = cleaner_application && Map.get(cleaner_application, "id")
+
+      persist_cleaner_application_link(
+        cleaner_application,
+        user_id,
+        applicant_id,
+        level_name,
+        now
+      )
 
       upsert_kyc_profile(user_id, applicant_id, cleaner_application_id, level_name, country, now)
     end
@@ -60,15 +43,7 @@ defmodule Mithril.Sumsub.ApplicantLink do
     user_row = fetch_latest_kyc_for_user(user_id)
 
     row_to_update =
-      global_row ||
-        case user_row do
-          %{} = row ->
-            current = (Map.get(row, "sumsub_applicant_id") || "") |> String.trim()
-            if current in ["", applicant_id], do: row, else: nil
-
-          _ ->
-            nil
-        end
+      owned_applicant_row(global_row, user_id) || reusable_user_row(user_row, applicant_id)
 
     if row_to_update do
       patch =
@@ -87,22 +62,6 @@ defmodule Mithril.Sumsub.ApplicantLink do
           """
           UPDATE public.kyc_profiles SET
             user_id = $1::uuid,
-            review_answer = CASE
-              WHEN sumsub_applicant_id IS DISTINCT FROM $2 THEN NULL
-              ELSE review_answer
-            END,
-            reviewed_at = CASE
-              WHEN sumsub_applicant_id IS DISTINCT FROM $2 THEN NULL
-              ELSE reviewed_at
-            END,
-            completed_at = CASE
-              WHEN sumsub_applicant_id IS DISTINCT FROM $2 THEN NULL
-              ELSE completed_at
-            END,
-            last_event_type = CASE
-              WHEN sumsub_applicant_id IS DISTINCT FROM $2 THEN NULL
-              ELSE last_event_type
-            END,
             sumsub_applicant_id = $2,
             sumsub_external_user_id = $3,
             cleaner_application_id = $4::uuid,
@@ -125,7 +84,7 @@ defmodule Mithril.Sumsub.ApplicantLink do
             patch.submitted_at,
             patch.sumsub_linked_at,
             now,
-            Map.get(row_to_update, "id")
+            DbUuid.dump!(Map.get(row_to_update, "id"))
           ]
         )
     else
@@ -137,7 +96,7 @@ defmodule Mithril.Sumsub.ApplicantLink do
                level_name, country_code, kyc_status,
                submitted_at, sumsub_linked_at, updated_at
              ) VALUES (
-               $1::uuid, 'customer', $2::uuid,
+               $1::uuid, CASE WHEN $2::uuid IS NULL THEN 'customer' ELSE 'cleaner' END, $2::uuid,
                $3, $4, $5, $6, 'started',
                $7::timestamptz, $7::timestamptz, $7::timestamptz
              )
@@ -156,7 +115,7 @@ defmodule Mithril.Sumsub.ApplicantLink do
         {:ok, %{num_rows: 0}} ->
           raced_row = fetch_kyc_by_applicant(applicant_id)
 
-          if raced_row do
+          if owned_applicant_row(raced_row, user_id) do
             patch =
               build_link_update(
                 raced_row,
@@ -195,7 +154,7 @@ defmodule Mithril.Sumsub.ApplicantLink do
                   patch.submitted_at,
                   patch.sumsub_linked_at,
                   now,
-                  Map.get(raced_row, "id")
+                  DbUuid.dump!(Map.get(raced_row, "id"))
                 ]
               )
           end
@@ -204,6 +163,71 @@ defmodule Mithril.Sumsub.ApplicantLink do
           :ok
       end
     end
+  end
+
+  defp persist_cleaner_application_link(nil, _user_id, _applicant_id, _level_name, _now),
+    do: :ok
+
+  defp persist_cleaner_application_link(
+         cleaner_application,
+         user_id,
+         applicant_id,
+         level_name,
+         now
+       ) do
+    previous_applicant =
+      cleaner_application
+      |> Map.get("sumsub_applicant_id")
+      |> to_string()
+      |> String.trim()
+
+    applicant_changed = previous_applicant != applicant_id
+
+    _ =
+      Repo.query(
+        """
+        UPDATE public.cleaner_applications SET
+          kyc_provider = 'sumsub',
+          sumsub_applicant_id = $1,
+          sumsub_external_user_id = $2,
+          sumsub_level_name = $3,
+          kyc_status = CASE WHEN $4 THEN 'not_started' ELSE kyc_status END,
+          kyc_review_answer = CASE WHEN $4 THEN NULL ELSE kyc_review_answer END,
+          kyc_review_status = CASE WHEN $4 THEN NULL ELSE kyc_review_status END,
+          kyc_completed_at = CASE WHEN $4 THEN NULL ELSE kyc_completed_at END,
+          kyc_last_event_at = CASE WHEN $4 THEN NULL ELSE kyc_last_event_at END,
+          updated_at = $5::timestamptz
+        WHERE id = $6::uuid
+        """,
+        [
+          applicant_id,
+          user_id,
+          level_name,
+          applicant_changed,
+          now,
+          DbUuid.dump!(Map.get(cleaner_application, "id"))
+        ]
+      )
+
+    :ok
+  end
+
+  defp owned_applicant_row(nil, _user_id), do: nil
+
+  defp owned_applicant_row(row, user_id) do
+    if DbUuid.equal?(Map.get(row, "user_id"), user_id), do: row, else: nil
+  end
+
+  defp reusable_user_row(nil, _applicant_id), do: nil
+
+  defp reusable_user_row(row, applicant_id) do
+    previous_applicant =
+      row
+      |> Map.get("sumsub_applicant_id")
+      |> to_string()
+      |> String.trim()
+
+    if previous_applicant in ["", applicant_id], do: row, else: nil
   end
 
   defp build_link_update(
@@ -215,30 +239,20 @@ defmodule Mithril.Sumsub.ApplicantLink do
          country,
          now
        ) do
-    kyc_done =
-      case Map.get(row, "kyc_status") do
-        status when is_binary(status) -> String.trim(status) != ""
-        _ -> false
-      end
-
-    submitted_done =
-      case Map.get(row, "submitted_at") do
-        value when is_binary(value) -> String.trim(value) != ""
-        _ -> false
-      end
-
     prev_applicant = (Map.get(row, "sumsub_applicant_id") || "") |> String.trim()
     applicant_changed = prev_applicant == "" or prev_applicant != applicant_id
 
-    existing_linked_at =
-      case Map.get(row, "sumsub_linked_at") do
-        value when is_binary(value) ->
-          trimmed = String.trim(value)
-          if trimmed == "", do: nil, else: trimmed
+    kyc_done =
+      not applicant_changed and
+        case Map.get(row, "kyc_status") do
+          status when is_binary(status) -> String.trim(status) != ""
+          _ -> false
+        end
 
-        _ ->
-          nil
-      end
+    submitted_done =
+      not applicant_changed and timestamp_present?(Map.get(row, "submitted_at"))
+
+    existing_linked_at = normalize_timestamp(Map.get(row, "sumsub_linked_at"))
 
     sumsub_linked_at =
       if applicant_changed or is_nil(existing_linked_at), do: now, else: existing_linked_at
@@ -249,11 +263,7 @@ defmodule Mithril.Sumsub.ApplicantLink do
       cleaner_application_id: cleaner_application_id,
       level_name: level_name,
       country: country,
-      kyc_status:
-        if(applicant_changed,
-          do: "started",
-          else: if(kyc_done, do: Map.get(row, "kyc_status"), else: "started")
-        ),
+      kyc_status: if(kyc_done, do: Map.get(row, "kyc_status"), else: "started"),
       submitted_at: if(submitted_done, do: Map.get(row, "submitted_at"), else: now),
       sumsub_linked_at: sumsub_linked_at
     }
@@ -261,7 +271,7 @@ defmodule Mithril.Sumsub.ApplicantLink do
 
   defp fetch_kyc_by_applicant(applicant_id) do
     sql = """
-    SELECT id, kyc_status, submitted_at, sumsub_applicant_id, sumsub_linked_at
+    SELECT id, user_id, kyc_status, submitted_at, sumsub_applicant_id, sumsub_linked_at
     FROM public.kyc_profiles
     WHERE sumsub_applicant_id = $1
     LIMIT 1
@@ -279,7 +289,7 @@ defmodule Mithril.Sumsub.ApplicantLink do
     LIMIT 1
     """
 
-    query_one(sql, [user_id])
+    query_one(sql, [DbUuid.dump!(user_id)])
   end
 
   defp query_one(sql, params) do
@@ -289,6 +299,24 @@ defmodule Mithril.Sumsub.ApplicantLink do
     end
   end
 
+  defp timestamp_present?(%DateTime{}), do: true
+  defp timestamp_present?(%NaiveDateTime{}), do: true
+  defp timestamp_present?(value) when is_binary(value), do: String.trim(value) != ""
+  defp timestamp_present?(_), do: false
+
+  defp normalize_timestamp(%DateTime{} = value), do: DateTime.to_iso8601(value)
+
+  defp normalize_timestamp(%NaiveDateTime{} = value),
+    do: NaiveDateTime.to_iso8601(value)
+
+  defp normalize_timestamp(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    if trimmed == "", do: nil, else: trimmed
+  end
+
+  defp normalize_timestamp(_), do: nil
+
+  defp present?(value) when is_binary(value) and byte_size(value) == 16, do: true
   defp present?(value) when is_binary(value), do: String.trim(value) != ""
   defp present?(_), do: false
 end
