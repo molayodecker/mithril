@@ -435,17 +435,18 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
       read_optional_number(draft_value(draft, "maxDistanceMeters", "max_distance_meters")) ||
         10_000
 
-    requested_ids =
-      requested
-      |> Enum.flat_map(fn cleaner ->
+    requested_uuid_ids =
+      Enum.flat_map(requested, fn cleaner ->
         case Ecto.UUID.dump(cleaner.id) do
           {:ok, id} -> [id]
           :error -> []
         end
       end)
-      |> MapSet.new()
 
-    with {:ok, specialty_slug} <- service_specialty(service_id),
+    requested_ids = MapSet.new(requested_uuid_ids)
+
+    with :ok <- validate_requested_ids(requested, requested_uuid_ids),
+         {:ok, specialty_slug} <- service_specialty(service_id),
          {:ok, %{rows: rows}} <-
            Repo.query(
              """
@@ -458,9 +459,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
         rows
         |> Enum.map(fn [id] -> id end)
         |> Enum.uniq()
-        |> Enum.filter(fn id ->
-          MapSet.size(requested_ids) == 0 or MapSet.member?(requested_ids, id)
-        end)
+        |> Enum.filter(&MapSet.member?(requested_ids, &1))
         |> Enum.take(@max_cleaners)
 
       hydrate_authoritative_cleaners(ids, specialty_slug)
@@ -471,6 +470,14 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
       {:error, error} ->
         Logger.warning("rank-cleaners-with-ai candidate lookup failed: #{inspect(error)}")
         {:fallback, "candidate_lookup_failed"}
+    end
+  end
+
+  defp validate_requested_ids(requested, requested_uuid_ids) do
+    if requested != [] and length(requested_uuid_ids) == length(requested) do
+      :ok
+    else
+      {:fallback, "invalid_candidate_ids"}
     end
   end
 
@@ -516,6 +523,8 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
            LEFT JOIN public.profiles p ON p.id = cd.user_id
            WHERE cd.verified = true
              AND cd.status = 'active'
+             AND cd.hourly_rate IS NOT NULL
+             AND cd.hourly_rate > 0
              AND $2::text = ANY(COALESCE(cd.specialties, ARRAY[]::text[]))
            ORDER BY requested.ordinality
            """,
@@ -530,7 +539,8 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
              company_name: nil,
              bio: nil,
              rating: read_optional_number(rating),
-             distance: ordinality,
+             distance: nil,
+             availability_rank: ordinality,
              hourly_rate: read_optional_number(hourly_rate),
              match_score: nil,
              years_experience: nil,
@@ -561,6 +571,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
           company_name: cleaner.company_name,
           rating: cleaner.rating,
           distance_km: cleaner.distance,
+          platform_availability_rank: Map.get(cleaner, :availability_rank),
           hourly_rate: cleaner.hourly_rate,
           years_experience: cleaner.years_experience,
           jobs_completed: cleaner.jobs_completed || cleaner.completed_jobs,
@@ -687,7 +698,8 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
     |> Enum.sort_by(fn cleaner ->
       score = -(cleaner.match_score || 0)
       distance = if is_number(cleaner.distance), do: cleaner.distance, else: 1.0e308
-      {score, distance}
+      availability_rank = Map.get(cleaner, :availability_rank) || 1.0e308
+      {score, distance, availability_rank}
     end)
     |> Enum.with_index()
     |> Enum.map(fn {cleaner, index} ->
