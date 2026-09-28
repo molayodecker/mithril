@@ -109,12 +109,20 @@ defmodule Mithril.Subscriptions.ManagedRenewal do
           if verified_charge_matches?(amount_minor, currency, deps) do
             finalize_after_success(reference, attempt, deps)
           else
-            deps.update_attempt.(%{status: :failed, last_error: "paystack_verified_charge_mismatch"})
+            deps.update_attempt.(%{
+              status: :failed,
+              last_error: "paystack_verified_charge_mismatch"
+            })
+
             {:ok, :failed, %{error: "paystack_verified_charge_mismatch"}}
           end
 
         {:success, _reference} ->
-          deps.update_attempt.(%{status: :failed, last_error: "paystack_success_missing_amount_currency"})
+          deps.update_attempt.(%{
+            status: :failed,
+            last_error: "paystack_success_missing_amount_currency"
+          })
+
           {:ok, :failed, %{error: "paystack_success_missing_amount_currency"}}
       end
     end
@@ -188,7 +196,8 @@ defmodule Mithril.Subscriptions.ManagedRenewal do
         {:pending, reference, txn_status}
 
       api_ok?(http_status, body) and txn_status == "success" ->
-        {:success, reference, read_integer(Map.get(data, "amount")), read_string(Map.get(data, "currency"))}
+        {:success, reference, read_integer(Map.get(data, "amount")),
+         read_string(Map.get(data, "currency"))}
 
       true ->
         error =
@@ -224,7 +233,8 @@ defmodule Mithril.Subscriptions.ManagedRenewal do
 
   defp verified_charge_matches?(amount_minor, currency, deps) do
     is_integer(amount_minor) and amount_minor == deps.amount_minor and
-      is_binary(currency) and String.upcase(String.trim(currency)) == String.upcase(String.trim(deps.currency))
+      is_binary(currency) and
+      String.upcase(String.trim(currency)) == String.upcase(String.trim(deps.currency))
   end
 
   defp read_integer(value) when is_integer(value), do: value
