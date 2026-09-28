@@ -6,7 +6,7 @@ defmodule Mithril.PropertyCalendar.TurnoverOpportunities do
   @entry_buffer_minutes 15
   @guest_ready_buffer_minutes 30
 
-  @spec recompute(map()) :: :ok
+  @spec recompute(map()) :: :ok | {:error, term()}
   def recompute(feed) do
     case Repo.query(
            """
@@ -23,18 +23,24 @@ defmodule Mithril.PropertyCalendar.TurnoverOpportunities do
         now = DateTime.utc_now() |> DateTime.to_iso8601()
         minimum = feed["minimum_turnover_minutes"] || 180
 
-        rows
-        |> Enum.with_index()
-        |> Enum.each(fn {[departing_id, _status, _starts_at, ends_at], index} ->
-          arriving = find_arriving(rows, index, ends_at)
-          upsert_opportunity(feed, departing_id, ends_at, arriving, minimum, now)
-        end)
+        with :ok <-
+               rows
+               |> Enum.with_index()
+               |> Enum.reduce_while(:ok, fn {[departing_id, _status, _starts_at, ends_at], index},
+                                                   :ok ->
+                 arriving = find_arriving(rows, index, ends_at)
 
-        cancel_stale_opportunities(feed, rows, now)
-        :ok
+                 case upsert_opportunity(feed, departing_id, ends_at, arriving, minimum, now) do
+                   :ok -> {:cont, :ok}
+                   {:error, error} -> {:halt, {:error, error}}
+                 end
+               end),
+             :ok <- cancel_stale_opportunities(feed, rows, now) do
+          :ok
+        end
 
-      _ ->
-        :ok
+      {:error, error} ->
+        {:error, error}
     end
   end
 
@@ -59,9 +65,9 @@ defmodule Mithril.PropertyCalendar.TurnoverOpportunities do
 
     arriving_id = if arriving, do: Enum.at(arriving, 0), else: nil
 
-    Repo.query(
-      """
-      INSERT INTO public.turnover_opportunities (
+    case Repo.query(
+           """
+           INSERT INTO public.turnover_opportunities (
         property_id, departing_event_id, arriving_event_id, checkout_at, next_checkin_at,
         suggested_start_at, suggested_duration_hours, status, source, updated_at
       ) VALUES (
@@ -77,18 +83,21 @@ defmodule Mithril.PropertyCalendar.TurnoverOpportunities do
         status = EXCLUDED.status,
         updated_at = EXCLUDED.updated_at
       """,
-      [
-        feed["property_id"],
-        departing_id,
-        arriving_id,
-        DateTime.to_iso8601(checkout_at),
-        if(next_checkin_at, do: DateTime.to_iso8601(next_checkin_at), else: nil),
-        DateTime.to_iso8601(suggestion.start_at),
-        suggestion.duration_hours,
-        suggestion.status,
-        now
-      ]
-    )
+           [
+             feed["property_id"],
+             departing_id,
+             arriving_id,
+             DateTime.to_iso8601(checkout_at),
+             if(next_checkin_at, do: DateTime.to_iso8601(next_checkin_at), else: nil),
+             DateTime.to_iso8601(suggestion.start_at),
+             suggestion.duration_hours,
+             suggestion.status,
+             now
+           ]
+         ) do
+      {:ok, _} -> :ok
+      {:error, error} -> {:error, error}
+    end
   end
 
   defp cancel_stale_opportunities(feed, active_rows, now) do
@@ -103,17 +112,22 @@ defmodule Mithril.PropertyCalendar.TurnoverOpportunities do
            [feed["property_id"]]
          ) do
       {:ok, %{rows: rows}} ->
-        Enum.each(rows, fn [id, departing_event_id, booking_id] ->
+        Enum.reduce_while(rows, :ok, fn [id, departing_event_id, booking_id], :ok ->
           if booking_id == nil and not MapSet.member?(active_departing, departing_event_id) do
-            Repo.query(
-              "UPDATE public.turnover_opportunities SET status = 'cancelled', updated_at = $2::timestamptz WHERE id = $1::uuid",
-              [id, now]
-            )
+            case Repo.query(
+                   "UPDATE public.turnover_opportunities SET status = 'cancelled', updated_at = $2::timestamptz WHERE id = $1::uuid",
+                   [id, now]
+                 ) do
+              {:ok, _} -> {:cont, :ok}
+              {:error, error} -> {:halt, {:error, error}}
+            end
+          else
+            {:cont, :ok}
           end
         end)
 
-      _ ->
-        :ok
+      {:error, error} ->
+        {:error, error}
     end
   end
 
