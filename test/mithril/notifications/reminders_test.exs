@@ -3,8 +3,10 @@ defmodule Mithril.Notifications.RemindersTest do
 
   alias Mithril.Notifications.Reminders
 
-  test "one-off visits get 48h, 24h, morning, and cleaner stages" do
+  test "one-off visits get 7d, 5d, 48h, 24h, morning, and cleaner stages" do
     assert Reminders.enabled_stages(%{}) == [
+             "customer_7d",
+             "customer_5d",
              "customer_48h",
              "customer_24h",
              "customer_morning",
