@@ -5,6 +5,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
 
   alias Mithril.RateLimiter
   alias Mithril.Repo
+  alias Mithril.Transport.Ranking
 
   @max_cleaners 25
   @max_bio_chars 500
@@ -18,18 +19,27 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
 
   @spec call(String.t() | nil, map()) :: {:ok, map()} | {:error, term()}
   def call(user_id, body) when is_map(body) do
-    cleaners = Map.get(body, "cleaners")
+    if ai_request?(body) do
+      cleaners = Map.get(body, "cleaners")
 
-    case sanitize_cleaners(cleaners) do
-      :invalid ->
-        {:error, {:status, 400, %{error: "Invalid cleaners payload"}}}
+      case sanitize_cleaners(cleaners) do
+        :invalid ->
+          {:error, {:status, 400, %{error: "Invalid cleaners payload"}}}
 
-      [] ->
-        {:ok, %{cleaners: [], source: "fallback"}}
+        [] ->
+          {:ok, %{cleaners: [], source: "fallback"}}
 
-      requested ->
-        rank(user_id, requested, body)
+        requested ->
+          rank(user_id, requested, body)
+      end
+    else
+      Ranking.for_destination(user_id, body)
     end
+  end
+
+  defp ai_request?(body) do
+    is_map(Map.get(body, "bookingDraft") || Map.get(body, "booking_draft")) or
+      is_function(Application.get_env(:mithril, :ai_match_candidate_loader), 2)
   end
 
   defp rank(user_id, cleaners, body) do
