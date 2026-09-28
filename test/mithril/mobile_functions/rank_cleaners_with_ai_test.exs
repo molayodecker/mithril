@@ -57,7 +57,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAiTest do
     assert body.reason == "missing_openai_key"
   end
 
-  test "uses injected OpenAI ranking and drops unknown cleaner ids" do
+  test "rejects AI rankings that contain unknown cleaner ids" do
     enable_settings()
     Application.put_env(:mithril, :openai_api_key, "sk-test")
 
@@ -75,9 +75,8 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAiTest do
     end)
 
     assert {:ok, body} = RankCleanersWithAi.call("user-1", %{"cleaners" => @cleaners})
-    assert body.source == "ai"
-    assert body.model == "gpt-4o-mini"
-    assert Enum.map(body.cleaners, & &1.cleaner_id) == ["c", "b", "a"]
+    assert body.source == "fallback"
+    assert body.reason == "ai_insufficient_rows"
   end
 
   test "falls back when AI returns too few valid rows" do
