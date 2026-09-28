@@ -27,18 +27,19 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
       [] ->
         {:ok, %{cleaners: [], source: "fallback"}}
 
-      sanitized ->
-        rank(user_id, sanitized, body)
+      requested ->
+        rank(user_id, requested, body)
     end
   end
 
   defp rank(user_id, cleaners, body) do
     with :ok <- enforce_rate_limit(user_id),
+         :ok <- validate_booking_draft(body),
+         {:ok, cleaners} <- load_authoritative_cleaners(body, cleaners),
          {:ok, settings} <- load_settings(),
          :ok <- require_enabled(settings),
          {:ok, api_key} <- openai_api_key(),
-         {:ok, model} <- resolve_model(settings),
-         :ok <- validate_booking_draft(body) do
+         {:ok, model} <- resolve_model(settings) do
       temperature = clamp(read_number(setting(settings, "temperature"), 0.2), 0, 1)
       max_tokens = clamp_int(read_number(setting(settings, "max_tokens"), 2000), 256, 4000)
       response_format = setting(settings, "response_format")
@@ -377,14 +378,109 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
   defp parse_ai_row(_), do: :error
 
   defp accept_ai_ranking(cleaners, ranked) do
-    valid_ids = MapSet.new(Enum.map(cleaners, & &1.id))
-    filtered = Enum.filter(ranked, &MapSet.member?(valid_ids, &1.cleaner_id))
-    required = min(3, length(cleaners))
+    valid_ids = Enum.map(cleaners, & &1.id)
+    ranked_ids = Enum.map(ranked, & &1.cleaner_id)
 
-    if length(filtered) < required do
-      :insufficient
+    if length(ranked_ids) == length(valid_ids) and
+         MapSet.new(ranked_ids) == MapSet.new(valid_ids) and
+         length(MapSet.new(ranked_ids)) == length(ranked_ids) do
+      {:ok, ranked}
     else
-      {:ok, filtered}
+      :insufficient
+    end
+  end
+
+  defp load_authoritative_cleaners(body, requested) do
+    case Application.get_env(:mithril, :ai_match_candidate_loader) do
+      fun when is_function(fun, 2) ->
+        fun.(body, requested)
+
+      _ ->
+        load_authoritative_cleaners_from_db(body, requested)
+    end
+  end
+
+  defp load_authoritative_cleaners_from_db(body, requested) do
+    draft = booking_draft(body) || %{}
+    latitude = read_optional_number(draft_value(draft, "latitude", "latitude"))
+    longitude = read_optional_number(draft_value(draft, "longitude", "longitude"))
+    scheduled_date = draft_value(draft, "bookingDate", "booking_date")
+    start_time = draft_value(draft, "slotTime24h", "slot_time_24h")
+    duration_hours = read_optional_number(draft_value(draft, "durationHours", "duration_hours"))
+    radius = read_optional_number(draft_value(draft, "maxDistanceMeters", "max_distance_meters")) || 10_000
+
+    requested_ids =
+      requested
+      |> Enum.flat_map(fn cleaner ->
+        case Ecto.UUID.dump(cleaner.id) do
+          {:ok, id} -> [id]
+          :error -> []
+        end
+      end)
+      |> MapSet.new()
+
+    with {:ok, %{rows: rows}} <-
+           Repo.query(
+             """
+             SELECT id
+             FROM public.get_nearby_available_cleaners($1, $2, $3, $4::date, $5::time, $6)
+             """,
+             [latitude, longitude, radius, scheduled_date, start_time, duration_hours]
+           ) do
+      ids =
+        rows
+        |> Enum.map(fn [id] -> id end)
+        |> Enum.uniq()
+        |> Enum.filter(fn id -> MapSet.size(requested_ids) == 0 or MapSet.member?(requested_ids, id) end)
+        |> Enum.take(@max_cleaners)
+
+      hydrate_authoritative_cleaners(ids)
+    else
+      {:error, error} ->
+        Logger.warning("rank-cleaners-with-ai candidate lookup failed: #{inspect(error)}")
+        {:fallback, "candidate_lookup_failed"}
+    end
+  end
+
+  defp hydrate_authoritative_cleaners([]), do: {:ok, []}
+
+  defp hydrate_authoritative_cleaners(ids) do
+    case Repo.query(
+           """
+           SELECT cd.user_id::text,
+                  COALESCE(NULLIF(btrim(p.fullname), ''), 'Instaclean professional'),
+                  cd.rating,
+                  cd.hourly_rate,
+                  cd.completed_jobs
+           FROM public.cleaner_data cd
+           LEFT JOIN public.profiles p ON p.id = cd.user_id
+           WHERE cd.user_id = ANY($1::uuid[])
+             AND cd.verified = true
+             AND cd.status = 'active'
+           """,
+           [ids]
+         ) do
+      {:ok, %{rows: rows}} ->
+        {:ok,
+         Enum.map(rows, fn [id, name, rating, hourly_rate, completed_jobs] ->
+           %{
+             id: id,
+             name: name,
+             company_name: nil,
+             bio: nil,
+             rating: read_optional_number(rating),
+             distance: nil,
+             hourly_rate: read_optional_number(hourly_rate),
+             match_score: nil,
+             years_experience: nil,
+             jobs_completed: read_optional_number(completed_jobs),
+             completed_jobs: read_optional_number(completed_jobs)
+           }
+         end)}
+
+      {:error, error} ->
+        Logger.warning("rank-cleaners-with-ai candidate hydration failed: #{inspect(error)}")
+        {:fallback, "candidate_hydration_failed"}
     end
   end
 
