@@ -114,10 +114,10 @@ defmodule Mithril.Sumsub.ApplicantLink do
           WHERE id = $11::uuid
           """,
           [
-            user_id,
+            DbUuid.dump!(user_id),
             applicant_id,
             user_id,
-            cleaner_application_id,
+            DbUuid.dump!(cleaner_application_id),
             level_name,
             country,
             patch.kyc_status,
@@ -142,7 +142,15 @@ defmodule Mithril.Sumsub.ApplicantLink do
              )
              ON CONFLICT (sumsub_applicant_id) DO NOTHING
              """,
-             [user_id, cleaner_application_id, applicant_id, user_id, level_name, country, now]
+             [
+               DbUuid.dump!(user_id),
+               DbUuid.dump!(cleaner_application_id),
+               applicant_id,
+               user_id,
+               level_name,
+               country,
+               now
+             ]
            ) do
         {:ok, %{num_rows: 0}} ->
           raced_row = fetch_kyc_by_applicant(applicant_id)
@@ -176,10 +184,10 @@ defmodule Mithril.Sumsub.ApplicantLink do
                 WHERE id = $11::uuid
                 """,
                 [
-                  user_id,
+                  DbUuid.dump!(user_id),
                   applicant_id,
                   user_id,
-                  cleaner_application_id,
+                  DbUuid.dump!(cleaner_application_id),
                   level_name,
                   country,
                   patch.kyc_status,
