@@ -27,7 +27,7 @@ defmodule Mithril.PropertyCalendar.TurnoverOpportunities do
                rows
                |> Enum.with_index()
                |> Enum.reduce_while(:ok, fn {[departing_id, _status, _starts_at, ends_at], index},
-                                                   :ok ->
+                                            :ok ->
                  arriving = find_arriving(rows, index, ends_at)
 
                  case upsert_opportunity(feed, departing_id, ends_at, arriving, minimum, now) do
@@ -68,21 +68,21 @@ defmodule Mithril.PropertyCalendar.TurnoverOpportunities do
     case Repo.query(
            """
            INSERT INTO public.turnover_opportunities (
-        property_id, departing_event_id, arriving_event_id, checkout_at, next_checkin_at,
-        suggested_start_at, suggested_duration_hours, status, source, updated_at
-      ) VALUES (
-        $1::uuid, $2::uuid, $3::uuid, $4::timestamptz, $5::timestamptz,
-        $6::timestamptz, $7, $8, 'ical', $9::timestamptz
-      )
-      ON CONFLICT (property_id, departing_event_id) DO UPDATE SET
-        arriving_event_id = EXCLUDED.arriving_event_id,
-        checkout_at = EXCLUDED.checkout_at,
-        next_checkin_at = EXCLUDED.next_checkin_at,
-        suggested_start_at = EXCLUDED.suggested_start_at,
-        suggested_duration_hours = EXCLUDED.suggested_duration_hours,
-        status = EXCLUDED.status,
-        updated_at = EXCLUDED.updated_at
-      """,
+             property_id, departing_event_id, arriving_event_id, checkout_at, next_checkin_at,
+             suggested_start_at, suggested_duration_hours, status, source, updated_at
+           ) VALUES (
+             $1::uuid, $2::uuid, $3::uuid, $4::timestamptz, $5::timestamptz,
+             $6::timestamptz, $7, $8, 'ical', $9::timestamptz
+           )
+           ON CONFLICT (property_id, departing_event_id) DO UPDATE SET
+             arriving_event_id = EXCLUDED.arriving_event_id,
+             checkout_at = EXCLUDED.checkout_at,
+             next_checkin_at = EXCLUDED.next_checkin_at,
+             suggested_start_at = EXCLUDED.suggested_start_at,
+             suggested_duration_hours = EXCLUDED.suggested_duration_hours,
+             status = EXCLUDED.status,
+             updated_at = EXCLUDED.updated_at
+           """,
            [
              feed["property_id"],
              departing_id,
