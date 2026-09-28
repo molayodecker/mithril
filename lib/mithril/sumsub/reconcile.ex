@@ -159,23 +159,30 @@ defmodule Mithril.Sumsub.Reconcile do
       external_from_sumsub,
       level_name,
       now,
-      cleaner_application_id
+      DbUuid.dump!(cleaner_application_id)
     ]
 
     persist_errors =
       case Repo.query(
              """
              UPDATE public.cleaner_applications SET
+               kyc_provider = 'sumsub',
                kyc_status = $1,
                kyc_review_answer = $2,
                kyc_review_status = $3,
                sumsub_applicant_id = COALESCE($4, sumsub_applicant_id),
                sumsub_external_user_id = COALESCE($5, sumsub_external_user_id),
                sumsub_level_name = COALESCE($6, sumsub_level_name),
+               kyc_last_event_at = $7::timestamptz,
+               kyc_completed_at =
+                 CASE
+                   WHEN $1 = 'completed' THEN COALESCE(kyc_completed_at, $7::timestamptz)
+                   ELSE kyc_completed_at
+                 END,
                updated_at = $7::timestamptz
              WHERE id = $8::uuid
              """,
-             List.update_at(app_params, 7, &DbUuid.dump!/1)
+             app_params
            ) do
         {:ok, _} -> persist_errors
         {:error, error} -> persist_errors ++ ["cleaner_applications: #{Exception.message(error)}"]
@@ -199,19 +206,7 @@ defmodule Mithril.Sumsub.Reconcile do
           persist_errors ++ ["cleaner_verifications: #{Exception.message(error)}"]
       end
 
-    verified = String.upcase(to_string(review_answer)) == "GREEN"
-
-    case Repo.query(
-           """
-           UPDATE public.cleaner_data
-           SET verified = $2
-           WHERE user_id = $1::uuid
-           """,
-           [DbUuid.dump!(user_id), verified]
-         ) do
-      {:ok, _} -> persist_errors
-      {:error, error} -> persist_errors ++ ["cleaner_data: #{Exception.message(error)}"]
-    end
+    maybe_mirror_cleaner_data(persist_errors, user_id, review_answer, now)
   end
 
   defp update_kyc_profile(
@@ -240,6 +235,8 @@ defmodule Mithril.Sumsub.Reconcile do
     sumsub_linked_at =
       cond do
         applicant_changed -> now
+        match?(%DateTime{}, linked_at) -> DateTime.to_iso8601(linked_at)
+        match?(%NaiveDateTime{}, linked_at) -> NaiveDateTime.to_iso8601(linked_at)
         is_binary(linked_at) and String.trim(linked_at) != "" -> linked_at
         true -> now
       end
@@ -250,6 +247,11 @@ defmodule Mithril.Sumsub.Reconcile do
              kyc_status = $1,
              review_answer = $2,
              reviewed_at = COALESCE($3::timestamptz, reviewed_at),
+             completed_at =
+               CASE
+                 WHEN $1 = 'completed' THEN COALESCE(completed_at, $8::timestamptz)
+                 ELSE completed_at
+               END,
              sumsub_applicant_id = COALESCE(NULLIF($4, ''), sumsub_applicant_id),
              sumsub_external_user_id = COALESCE($5, sumsub_external_user_id),
              level_name = COALESCE($6, level_name),
@@ -271,6 +273,26 @@ defmodule Mithril.Sumsub.Reconcile do
          ) do
       {:ok, _} -> :ok
       {:error, error} -> {:error, Exception.message(error)}
+    end
+  end
+
+  defp maybe_mirror_cleaner_data(persist_errors, user_id, review_answer, now) do
+    if review_answer |> to_string() |> String.upcase() == "GREEN" do
+      case Repo.query(
+             """
+             UPDATE public.cleaner_data
+             SET verified = true,
+                 is_background_checked = true,
+                 updated_at = $2::timestamptz
+             WHERE user_id = $1::uuid
+             """,
+             [DbUuid.dump!(user_id), now]
+           ) do
+        {:ok, _} -> persist_errors
+        {:error, error} -> persist_errors ++ ["cleaner_data: #{Exception.message(error)}"]
+      end
+    else
+      persist_errors
     end
   end
 
@@ -332,6 +354,7 @@ defmodule Mithril.Sumsub.Reconcile do
     end
   end
 
+  defp present?(value) when is_binary(value) and byte_size(value) == 16, do: true
   defp present?(value) when is_binary(value), do: String.trim(value) != ""
   defp present?(_), do: false
 end
