@@ -24,15 +24,16 @@ defmodule Mithril.ScheduledJobs.BookingReviewRequests do
           BookingReviewRequest.due?(completed_at, now_ms, delay_hours)
         end)
 
-      reviewed_ids =
-        BookingReviewRequest.reviewed_booking_ids(due_rows, load_reviews(due_rows))
+      with {:ok, reviews} <- load_reviews(due_rows) do
+        reviewed_ids = BookingReviewRequest.reviewed_booking_ids(due_rows, reviews)
 
-      due_rows
-      |> BookingReviewRequest.filter_pending(reviewed_ids)
-      |> Enum.take(@batch_limit)
-      |> Enum.each(&deliver_review_request/1)
+        due_rows
+        |> BookingReviewRequest.filter_pending(reviewed_ids)
+        |> Enum.take(@batch_limit)
+        |> Enum.each(&deliver_review_request/1)
 
-      :ok
+        :ok
+      end
     end
   end
 
@@ -63,19 +64,20 @@ defmodule Mithril.ScheduledJobs.BookingReviewRequests do
     booking_ids = Enum.map(bookings, & &1["id"])
 
     if booking_ids == [] do
-      []
+      {:ok, []}
     else
       case Repo.query(
              "SELECT booking_id, reviewer_id FROM public.reviews WHERE booking_id = ANY($1::uuid[])",
              [booking_ids]
            ) do
         {:ok, %{rows: rows}} ->
-          Enum.map(rows, fn [booking_id, reviewer_id] ->
-            %{"booking_id" => booking_id, "reviewer_id" => reviewer_id}
-          end)
+          {:ok,
+           Enum.map(rows, fn [booking_id, reviewer_id] ->
+             %{"booking_id" => booking_id, "reviewer_id" => reviewer_id}
+           end)}
 
-        _ ->
-          []
+        {:error, error} ->
+          {:error, error}
       end
     end
   end
