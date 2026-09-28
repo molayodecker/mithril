@@ -407,6 +407,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
     scheduled_date = draft_value(draft, "bookingDate", "booking_date")
     start_time = draft_value(draft, "slotTime24h", "slot_time_24h")
     duration_hours = read_optional_number(draft_value(draft, "durationHours", "duration_hours"))
+
     radius =
       read_optional_number(draft_value(draft, "maxDistanceMeters", "max_distance_meters")) ||
         10_000
