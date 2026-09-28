@@ -383,7 +383,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
 
     if length(ranked_ids) == length(valid_ids) and
          MapSet.new(ranked_ids) == MapSet.new(valid_ids) and
-         length(MapSet.new(ranked_ids)) == length(ranked_ids) do
+         MapSet.size(MapSet.new(ranked_ids)) == length(ranked_ids) do
       {:ok, ranked}
     else
       :insufficient
