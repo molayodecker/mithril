@@ -58,6 +58,7 @@ defmodule Mithril.Sumsub.ApplicantLink do
   defp upsert_kyc_profile(user_id, applicant_id, cleaner_application_id, level_name, country, now) do
     global_row = fetch_kyc_by_applicant(applicant_id)
     user_row = fetch_latest_kyc_for_user(user_id)
+
     row_to_update =
       global_row ||
         case user_row do
@@ -249,7 +250,10 @@ defmodule Mithril.Sumsub.ApplicantLink do
       level_name: level_name,
       country: country,
       kyc_status:
-        if(applicant_changed, do: "started", else: if(kyc_done, do: Map.get(row, "kyc_status"), else: "started")),
+        if(applicant_changed,
+          do: "started",
+          else: if(kyc_done, do: Map.get(row, "kyc_status"), else: "started")
+        ),
       submitted_at: if(submitted_done, do: Map.get(row, "submitted_at"), else: now),
       sumsub_linked_at: sumsub_linked_at
     }
