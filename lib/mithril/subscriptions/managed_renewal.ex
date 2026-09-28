@@ -105,8 +105,17 @@ defmodule Mithril.Subscriptions.ManagedRenewal do
 
           {:ok, :failed, %{error: error}}
 
-        {:success, reference} ->
-          finalize_after_success(reference, attempt, deps)
+        {:success, reference, amount_minor, currency} ->
+          if verified_charge_matches?(amount_minor, currency, deps) do
+            finalize_after_success(reference, attempt, deps)
+          else
+            deps.update_attempt.(%{status: :failed, last_error: "paystack_verified_charge_mismatch"})
+            {:ok, :failed, %{error: "paystack_verified_charge_mismatch"}}
+          end
+
+        {:success, _reference} ->
+          deps.update_attempt.(%{status: :failed, last_error: "paystack_success_missing_amount_currency"})
+          {:ok, :failed, %{error: "paystack_success_missing_amount_currency"}}
       end
     end
   end
@@ -179,7 +188,7 @@ defmodule Mithril.Subscriptions.ManagedRenewal do
         {:pending, reference, txn_status}
 
       api_ok?(http_status, body) and txn_status == "success" ->
-        {:success, reference}
+        {:success, reference, read_integer(Map.get(data, "amount")), read_string(Map.get(data, "currency"))}
 
       true ->
         error =
@@ -194,6 +203,7 @@ defmodule Mithril.Subscriptions.ManagedRenewal do
   end
 
   defp outcome_kind(:not_found), do: :not_found
+  defp outcome_kind({:success, _, _, _}), do: :success
   defp outcome_kind({:success, _}), do: :success
   defp outcome_kind({:paused, _, _}), do: :paused
   defp outcome_kind({:pending, _, _}), do: :pending
@@ -211,6 +221,22 @@ defmodule Mithril.Subscriptions.ManagedRenewal do
   end
 
   defp not_found_message?(_), do: false
+
+  defp verified_charge_matches?(amount_minor, currency, deps) do
+    is_integer(amount_minor) and amount_minor == deps.amount_minor and
+      is_binary(currency) and String.upcase(String.trim(currency)) == String.upcase(String.trim(deps.currency))
+  end
+
+  defp read_integer(value) when is_integer(value), do: value
+
+  defp read_integer(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {parsed, ""} -> parsed
+      _ -> nil
+    end
+  end
+
+  defp read_integer(_), do: nil
 
   defp read_string(value) when is_binary(value) do
     trimmed = String.trim(value)
