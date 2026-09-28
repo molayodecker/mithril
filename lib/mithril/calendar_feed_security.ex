@@ -2,6 +2,9 @@ defmodule Mithril.CalendarFeedSecurity do
   @moduledoc false
 
   @max_feed_url_length 2048
+  @max_response_bytes 5 * 1024 * 1024
+  @fetch_timeout_ms 20_000
+  @max_redirects 3
   @uuid_regex ~r/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
   @blocked_hostnames MapSet.new([
@@ -11,6 +14,16 @@ defmodule Mithril.CalendarFeedSecurity do
                        "::1",
                        "metadata.google.internal"
                      ])
+
+  @spec fetch_feed_text(String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
+  def fetch_feed_text(raw_url, provider \\ "airbnb") do
+    with :ok <- assert_safe_feed_url(raw_url, provider),
+         {:ok, url} <- parse_https_url(raw_url) do
+      fetch_with_redirects(url, provider, 0)
+    else
+      {:error, message} -> {:error, message}
+    end
+  end
 
   @spec assert_safe_feed_url(String.t(), String.t()) :: :ok | {:error, String.t()}
   def assert_safe_feed_url(raw_url, provider \\ "airbnb") do
@@ -109,6 +122,59 @@ defmodule Mithril.CalendarFeedSecurity do
          {:ok, _} <- parse_feed_time(checkin, "15:00:00"),
          {:ok, _} <- parse_feed_time(checkout, "11:00:00") do
       :ok
+    end
+  end
+
+  defp fetch_with_redirects(_url, _provider, redirect_count)
+       when redirect_count > @max_redirects do
+    {:error, "Feed exceeded maximum redirects"}
+  end
+
+  defp fetch_with_redirects(%URI{} = url, provider, redirect_count) do
+    case calendar_http_get(URI.to_string(url)) do
+      {:ok, %{status: status} = response} when status in 300..399 ->
+        location = response.headers["location"] || response.headers["Location"]
+
+        with location when is_binary(location) <- location,
+             {:ok, next_url} <- parse_https_url(URI.merge(url, location) |> URI.to_string()),
+             :ok <- assert_airbnb_host(next_url),
+             :ok <- assert_not_blocked_host(next_url.host) do
+          fetch_with_redirects(next_url, provider, redirect_count + 1)
+        else
+          {:error, message} when is_binary(message) -> {:error, message}
+          _ -> {:error, "Feed redirect missing location"}
+        end
+
+      {:ok, %{status: status, body: body}} when status in 200..299 and is_binary(body) ->
+        if byte_size(body) > @max_response_bytes do
+          {:error, "Calendar response exceeds maximum size"}
+        else
+          if String.contains?(body, "BEGIN:VCALENDAR") do
+            {:ok, body}
+          else
+            {:error, "Feed response is not a calendar document"}
+          end
+        end
+
+      {:ok, %{status: status}} ->
+        {:error, "Feed HTTP #{status}"}
+
+      {:error, _} ->
+        {:error, "Feed request failed"}
+    end
+  end
+
+  defp calendar_http_get(url) do
+    case Application.get_env(:mithril, :calendar_feed_http_get) do
+      fun when is_function(fun, 1) ->
+        fun.(url)
+
+      _ ->
+        Req.get(url,
+          headers: [{"accept", "text/calendar,*/*"}],
+          receive_timeout: @fetch_timeout_ms,
+          redirect: false
+        )
     end
   end
 

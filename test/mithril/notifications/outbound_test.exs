@@ -4,17 +4,24 @@ defmodule Mithril.Notifications.OutboundTest do
   alias Mithril.Notifications.Outbound
 
   setup do
-    previous = Application.get_env(:mithril, :sms_adapter)
+    previous_sms_adapter = Application.get_env(:mithril, :sms_adapter)
+    previous_sms_messages = Application.get_env(:mithril, :test_sms_messages)
+    previous_resend_api_key = Application.get_env(:mithril, :resend_api_key)
+
     Application.put_env(:mithril, :sms_adapter, Mithril.Auth.SMS.Test)
     Application.put_env(:mithril, :test_sms_messages, [])
     Application.delete_env(:mithril, :resend_api_key)
 
     on_exit(fn ->
-      if previous, do: Application.put_env(:mithril, :sms_adapter, previous)
+      restore_env(:sms_adapter, previous_sms_adapter)
+      restore_env(:test_sms_messages, previous_sms_messages)
+      restore_env(:resend_api_key, previous_resend_api_key)
     end)
 
     :ok
-  end
+    defp restore_env(key, nil), do: Application.delete_env(:mithril, key)
+  defp restore_env(key, value), do: Application.put_env(:mithril, key, value)
+end
 
   test "sms channel sends a phone message and does not pretend WhatsApp succeeded" do
     result =

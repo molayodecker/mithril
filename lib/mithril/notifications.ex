@@ -5,9 +5,9 @@ defmodule Mithril.Notifications do
 
   Booking create and worker assignment stay saved if delivery fails.
   When `SEND_NOTIFICATION_URL` is set, Instaclean's `send-notification`
-  edge function delivers email and SMS, plus a WhatsApp template when the
-  party has a phone. Booking reminders also schedule a WhatsApp send if SMS
-  fails. Otherwise Twilio SMS is used with the same credentials as phone OTP.
+  endpoint delivers email and SMS, plus a WhatsApp template when the
+  party has a phone. Booking reminders can also fall back to WhatsApp
+  when SMS fails. Otherwise Twilio SMS is used with the same credentials as phone OTP.
   """
 
   require Logger

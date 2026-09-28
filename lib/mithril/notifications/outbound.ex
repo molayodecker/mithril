@@ -4,7 +4,7 @@ defmodule Mithril.Notifications.Outbound do
   alias Mithril.Auth.SMS
 
   def deliver(body) when is_map(body) do
-    channel = body["channel"] |> to_string() |> String.trim()
+    channel = present(body["channel"]) || ""
     email = present(body["email"])
     phone = present(body["phone"])
     template = present(body["template"]) || "booking_reminder"

@@ -21,6 +21,18 @@ defmodule Mithril.MobileQueryTest do
     refute sql =~ "user-1"
   end
 
+  test "treats service_categories as an open catalog read" do
+    assert {:ok, %{sql: sql, params: []}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "service_categories",
+               "action" => "select",
+               "columns" => ["id", "slug", "weight"]
+             })
+
+    assert sql =~ "public.service_categories"
+    refute sql =~ "user-1"
+  end
+
   test "rejects unknown tables and unsafe identifiers" do
     assert {:error, :unknown_table} =
              MobileQuery.compile("user-1", %{"table" => "auth.users", "action" => "select"})
@@ -50,6 +62,50 @@ defmodule Mithril.MobileQueryTest do
 
     assert sql =~ "public.service_types"
     assert sql =~ "service_types.id = bookings.service_id"
+  end
+
+  test "compiles the bookings duration-option embed" do
+    assert {:ok, %{sql: sql}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "bookings",
+               "action" => "select",
+               "columns" => ["id", "service_duration_option_id"],
+               "embeds" => [
+                 %{
+                   "alias" => "service_duration_option",
+                   "table" => "service_duration_options",
+                   "columns" => ["label", "duration_hours"]
+                 }
+               ]
+             })
+
+    assert sql =~ "public.service_duration_options"
+    assert sql =~ "service_duration_options.id = bookings.service_duration_option_id"
+    assert sql =~ "'label'"
+    assert sql =~ "'duration_hours'"
+    assert sql =~ "'service_duration_option'"
+  end
+
+  test "includes broadcast offers only when a bookings select filters ids" do
+    assert {:ok, %{sql: listed}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "bookings",
+               "action" => "select",
+               "columns" => ["id"],
+               "filters" => [%{"op" => "in", "column" => "id", "value" => ["booking-1"]}]
+             })
+
+    assert listed =~ "list_broadcast_assignments_for_cleaner"
+
+    assert {:ok, %{sql: owned}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "bookings",
+               "action" => "select",
+               "columns" => ["id"],
+               "filters" => [%{"op" => "eq", "column" => "id", "value" => "booking-1"}]
+             })
+
+    refute owned =~ "list_broadcast_assignments_for_cleaner"
   end
 
   test "compiles a head count and an array contains filter" do
@@ -210,6 +266,59 @@ defmodule Mithril.MobileQueryTest do
                "action" => "select",
                "columns" => ["user_id", "bank_account"]
              })
+
+    assert {:ok, %{sql: profile_sql}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "cleaner_data",
+               "action" => "select",
+               "columns" => [
+                 "rating",
+                 "completed_jobs",
+                 "verified",
+                 "hourly_rate",
+                 "years_experience"
+               ]
+             })
+
+    assert profile_sql =~ "years_experience"
+  end
+
+  test "compiles the home pending-bookings select" do
+    assert {:ok, %{sql: sql}} =
+             MobileQuery.compile("customer-1", %{
+               "table" => "bookings",
+               "action" => "select",
+               "columns" => [
+                 "id",
+                 "status",
+                 "payment_status",
+                 "scheduled_date",
+                 "scheduled_time",
+                 "scheduled_at_utc",
+                 "created_at",
+                 "service_id",
+                 "title"
+               ],
+               "embeds" => [
+                 %{
+                   "alias" => "service_type",
+                   "table" => "service_types",
+                   "columns" => ["id", "name", "price", "duration"]
+                 }
+               ],
+               "filters" => [
+                 %{"op" => "eq", "column" => "customer_id", "value" => "customer-1"},
+                 %{
+                   "op" => "in",
+                   "column" => "status",
+                   "value" => ["pending", "confirmed", "scheduled", "in_progress"]
+                 }
+               ]
+             })
+
+    assert sql =~ "public.bookings"
+    assert sql =~ "public.service_types"
+    assert sql =~ "'service_type'"
   end
 
   test "redacts encrypted calendar feed URLs from every projection" do
@@ -328,9 +437,40 @@ defmodule Mithril.MobileQueryTest do
     assert {:error, :unknown_function} = MobileRpc.compile("pg_read_file", %{})
   end
 
+  test "allowlists get_service_categories as a Fly catalog rpc" do
+    assert {:ok, compiled} = MobileRpc.compile("get_service_categories", %{})
+    assert compiled.name == "get_service_categories"
+  end
+
+  test "allowlists booking schedule time rpcs" do
+    assert {:ok, _} =
+             MobileRpc.compile("get_location_current_time", %{
+               "p_timezone" => "Africa/Accra",
+               "p_duration_hours" => 2
+             })
+
+    assert {:ok, _} =
+             MobileRpc.compile("get_available_timeslots", %{
+               "p_booking_date" => "2026-09-25",
+               "p_timezone" => "Africa/Accra",
+               "p_duration_hours" => 2
+             })
+
+    assert {:ok, _} =
+             MobileRpc.compile("validate_booking_timeslot", %{
+               "p_start_time_12h" => "9:00 AM",
+               "p_duration_hours" => 2,
+               "p_booking_date" => "2026-09-25",
+               "p_timezone" => "Africa/Accra"
+             })
+  end
+
   test "compiles named rpc arguments" do
     assert {:ok, compiled} =
              MobileRpc.compile("accept_booking_assignment", %{"p_booking_id" => "abc"})
+
+    assert compiled.arg_names == ["p_booking_id"]
+    assert compiled.params == ["abc"]
 
     assert MobileRpc.sql(compiled, :scalar) =~
              "to_jsonb(public.accept_booking_assignment(p_booking_id := $1))"
