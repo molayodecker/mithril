@@ -579,8 +579,6 @@ defmodule Mithril.DirectBookingsTest do
             customer_reminder_claimed_at,
             customer_reminder_7d_sent_at,
             customer_reminder_7d_claimed_at,
-            customer_reminder_5d_sent_at,
-            customer_reminder_5d_claimed_at,
             customer_reminder_48h_sent_at,
             customer_reminder_48h_claimed_at,
             customer_reminder_morning_sent_at,
