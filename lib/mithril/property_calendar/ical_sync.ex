@@ -185,8 +185,8 @@ defmodule Mithril.PropertyCalendar.IcalSync do
     checkin = feed["default_checkin_time"] || "15:00:00"
     checkout = feed["default_checkout_time"] || "11:00:00"
 
-    starts_at = resolve_instant(event.dtstart, timezone, checkout)
-    ends_at = resolve_instant(event.dtend, timezone, checkin)
+    starts_at = resolve_instant(event.dtstart, timezone, checkin)
+    ends_at = resolve_instant(event.dtend, timezone, checkout)
     {starts_at, ends_at}
   end
 
