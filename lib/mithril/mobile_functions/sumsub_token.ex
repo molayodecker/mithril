@@ -26,9 +26,7 @@ defmodule Mithril.MobileFunctions.SumsubToken do
        }}
     else
       {:error, :missing_credentials} ->
-        {:error,
-         {:status, 500,
-          %{error: "Identity verification is not configured"}}}
+        {:error, {:status, 500, %{error: "Identity verification is not configured"}}}
 
       {:error, {:status, status, details}} ->
         {:error,
