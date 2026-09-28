@@ -45,6 +45,7 @@ defmodule Mithril.MobileQuery do
     property_preferred_cleaners
     property_private_instructions
     reviews
+    service_categories
     service_duration_options
     service_types
     subscriptions
@@ -57,6 +58,7 @@ defmodule Mithril.MobileQuery do
   # {parent_table, embed_table, constraint | nil} => {local_key, remote_key}
   @joins %{
     {"bookings", "service_types", nil} => {"service_id", "id"},
+    {"bookings", "service_duration_options", nil} => {"service_duration_option_id", "id"},
     {"bookings", "subscriptions", nil} => {"subscription_id", "id"},
     {"bookings", "users", "bookings_customer_id_fkey"} => {"customer_id", "id"},
     {"users", "profiles", nil} => {"id", "id"},
@@ -119,6 +121,7 @@ defmodule Mithril.MobileQuery do
         specialties
         rating
         completed_jobs
+        years_experience
         intro_video_url
         intro_video_thumbnail_url
       ))
@@ -243,6 +246,18 @@ defmodule Mithril.MobileQuery do
 
   def compile(_user_id, _query), do: {:error, :invalid_query}
 
+  # Only id-list booking reads pay for the broadcast eligibility function.
+  # Equality and status-list reads stay on the customer/cleaner ownership predicate.
+  defp scope_opts("bookings", filters) when is_list(filters) do
+    if Enum.any?(filters, &match?(%{"op" => "in", "column" => "id"}, &1)) do
+      [include_broadcast_offers: true]
+    else
+      []
+    end
+  end
+
+  defp scope_opts(_table, _filters), do: []
+
   defp compile_action("select", table, query, user_id) do
     embeds = query["embeds"] || []
     filters = query["filters"] || []
@@ -259,7 +274,14 @@ defmodule Mithril.MobileQuery do
       params = params ++ where_params
 
       with {:ok, where_sql, params} <-
-             Mithril.MobileScope.apply(user_id, "select", table, where_sql, params) do
+             Mithril.MobileScope.apply(
+               user_id,
+               "select",
+               table,
+               where_sql,
+               params,
+               scope_opts(table, root_filters)
+             ) do
         sql =
           if query["head"] == true do
             """
