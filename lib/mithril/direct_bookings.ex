@@ -39,35 +39,6 @@ defmodule Mithril.DirectBookings do
     end
   end
 
-  def list_categories do
-    case Repo.query("""
-         SELECT jsonb_build_object(
-           'id', sc.id,
-           'name', sc.name,
-           'icon', sc.icon,
-           'slug', sc.slug,
-           'weight', COALESCE(sc.weight, 0),
-           'description', sc.description,
-           'imageUrl', sc.image_url,
-           'iconScale', sc.icon_scale
-         )
-         FROM public.service_categories sc
-         WHERE CASE COALESCE(sc.slug, '')
-           WHEN 'caregiving' THEN public.is_care_pet_catalog_visible()
-           WHEN 'pet_care' THEN public.is_care_pet_catalog_visible()
-           WHEN 'airbnb' THEN public.is_airbnb_catalog_visible()
-           WHEN 'quick_tasks' THEN public.is_quick_tasks_catalog_visible()
-           WHEN 'cooks' THEN public.is_cooks_catalog_visible()
-           WHEN 'drivers' THEN public.is_drivers_catalog_visible()
-           ELSE true
-         END
-         ORDER BY COALESCE(sc.weight, 0) ASC, sc.name ASC
-         """) do
-      {:ok, result} -> {:ok, Enum.map(result.rows, &hd/1)}
-      {:error, error} -> database_error(error)
-    end
-  end
-
   def list_cleaners(service_id) do
     with {:ok, service_id} <- positive_integer(service_id),
          {:ok, service} <- service_details(service_id) do
