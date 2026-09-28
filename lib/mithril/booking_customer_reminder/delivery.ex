@@ -2,7 +2,6 @@ defmodule Mithril.BookingCustomerReminder.Delivery do
   @moduledoc false
 
   alias Mithril.BookingCustomerReminder.Schedule
-  alias Mithril.Constants.BookingValuablesNotice
   alias Mithril.Notifications.ExpoPush
   alias Mithril.Notifications.SendNotification
   alias Mithril.Repo
@@ -27,7 +26,7 @@ defmodule Mithril.BookingCustomerReminder.Delivery do
 
     push_body =
       if recipient_type == :customer do
-        "#{base_body} #{BookingValuablesNotice.notice()}"
+        "#{base_body} Please secure valuables before your cleaner arrives."
       else
         base_body
       end
