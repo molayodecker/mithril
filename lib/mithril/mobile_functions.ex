@@ -7,20 +7,16 @@ defmodule Mithril.MobileFunctions do
   alias Mithril.MobileFunctions.ConnectPropertyCalendar
   alias Mithril.MobileFunctions.CreateJobAndNotify
   alias Mithril.MobileFunctions.DeletePropertyMedia
-  alias Mithril.MobileFunctions.FetchOtpDeliveryToken
   alias Mithril.MobileFunctions.NotifyBookingRescheduled
   alias Mithril.MobileFunctions.NotifyPaymentFailureOps
   alias Mithril.MobileFunctions.Paystack
   alias Mithril.MobileFunctions.RankCleanersWithAi
   alias Mithril.MobileFunctions.RequestDataExport
-  alias Mithril.MobileFunctions.ResendOtpViaChannel
   alias Mithril.MobileFunctions.SendAppNotification
-  alias Mithril.MobileFunctions.SendNotificationFn
   alias Mithril.MobileFunctions.SumsubToken
   alias Mithril.MobileFunctions.SyncSumsubReview
   alias Mithril.MobileFunctions.Timezone
   alias Mithril.MobileFunctions.UberTransportationReleaseGate
-  alias Mithril.MobileFunctions.UberTripEstimate
 
   @spec invoke(String.t(), String.t(), map()) :: {:ok, map()} | {:error, term()}
   def invoke(user_id, "booking-checkout-options", body) when is_map(body),
@@ -46,8 +42,7 @@ defmodule Mithril.MobileFunctions do
   def invoke(user_id, "claim-job", body) when is_map(body),
     do: ClaimJob.call(user_id, body)
 
-  def invoke(user_id, "send-notification", body) when is_map(body),
-    do: SendNotificationFn.call(user_id, body)
+  def invoke(_user_id, "send-notification", _body), do: {:error, :forbidden}
 
   def invoke(user_id, "send-app-notification", body) when is_map(body),
     do: SendAppNotification.call(user_id, body)
@@ -64,17 +59,15 @@ defmodule Mithril.MobileFunctions do
   def invoke(user_id, "uber-transportation-release-gate", body) when is_map(body),
     do: UberTransportationReleaseGate.call(user_id, body)
 
-  def invoke(user_id, "uber-trip-estimate", body) when is_map(body),
-    do: UberTripEstimate.call(user_id, body)
+  def invoke(_user_id, "uber-trip-estimate", _body),
+    do: {:error, {:status, 410, %{code: "uber_estimate_removed"}}}
 
   def invoke(user_id, "delete-property-media", body) when is_map(body),
     do: DeletePropertyMedia.call(user_id, body)
 
-  def invoke(_user_id, "fetch-otp-delivery-token", body) when is_map(body),
-    do: FetchOtpDeliveryToken.call(nil, body)
+  def invoke(_user_id, "fetch-otp-delivery-token", _body), do: {:error, :forbidden}
 
-  def invoke(_user_id, "resend-otp-via-channel", body) when is_map(body),
-    do: ResendOtpViaChannel.call(nil, body)
+  def invoke(_user_id, "resend-otp-via-channel", _body), do: {:error, :forbidden}
 
   def invoke(user_id, "cancel-subscription", body) when is_map(body),
     do: CancelSubscription.call(user_id, body)
