@@ -48,6 +48,7 @@ defmodule Mithril.MobileRpc do
     get_customer_booking_verification_requirement
     get_direct_request
     get_latest_paystack_reference_for_booking
+    get_location_current_time
     get_my_cleaner_booking_link
     get_my_cleaner_team
     get_my_referral_info
@@ -56,6 +57,7 @@ defmodule Mithril.MobileRpc do
     get_or_create_care_request_conversation
     get_own_booking_voucher_identity
     get_pending_booking_for_edit
+    get_service_categories
     get_user_profile_data
     get_user_profile_stats
     get_user_role
