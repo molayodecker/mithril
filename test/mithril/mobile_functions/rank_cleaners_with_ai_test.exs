@@ -13,13 +13,19 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAiTest do
     previous = %{
       settings: Application.get_env(:mithril, :ai_match_settings),
       key: Application.get_env(:mithril, :openai_api_key),
-      complete: Application.get_env(:mithril, :openai_complete)
+      complete: Application.get_env(:mithril, :openai_complete),
+      candidates: Application.get_env(:mithril, :ai_match_candidate_loader)
     }
+
+    Application.put_env(:mithril, :ai_match_candidate_loader, fn _body, requested ->
+      {:ok, requested}
+    end)
 
     on_exit(fn ->
       restore(:ai_match_settings, previous.settings)
       restore(:openai_api_key, previous.key)
       restore(:openai_complete, previous.complete)
+      restore(:ai_match_candidate_loader, previous.candidates)
     end)
 
     :ok
