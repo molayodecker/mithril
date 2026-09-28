@@ -20,10 +20,10 @@ defmodule Mithril.Notifications.Outbound do
     whatsapp_sent =
       cond do
         send_whatsapp ->
-          whatsapp_ok?(phone, variables)
+          whatsapp_ok?(phone, template, variables, body)
 
         sms_fallback?(body) and send_sms and not sms_sent ->
-          whatsapp_ok?(phone, variables)
+          whatsapp_ok?(phone, template, variables, body)
 
         true ->
           false
@@ -65,10 +65,14 @@ defmodule Mithril.Notifications.Outbound do
     SMS.send_message(phone, message_body(template, variables)) == :ok
   end
 
-  defp whatsapp_ok?(phone, variables) do
+  defp whatsapp_ok?(phone, template, variables, body) do
     sid = Application.get_env(:mithril, :twilio_account_sid)
     token = Application.get_env(:mithril, :twilio_auth_token)
-    content_sid = env(:twilio_template_booking_reminder)
+
+    content_sid =
+      present(body["whatsappContentSid"]) ||
+        if(template == "booking_reminder", do: env(:twilio_template_booking_reminder), else: nil)
+
     from = env(:twilio_whatsapp_from)
 
     if sid == nil or token == nil or content_sid == nil or from == nil do
@@ -100,7 +104,7 @@ defmodule Mithril.Notifications.Outbound do
     }
   end
 
-  defp message_body(_template, variables) do
+  defp message_body("booking_reminder", variables) do
     date = present(variables["date"]) || "the scheduled time"
     address = present(variables["address"])
     tail = if address, do: " · #{address}", else: ""
@@ -112,7 +116,44 @@ defmodule Mithril.Notifications.Outbound do
     end
   end
 
+  defp message_body("payment_received", variables) do
+    amount = present(variables["amount"]) || present(variables["amountFormatted"]) || "your payment"
+    booking = present(variables["bookingId"])
+    suffix = if booking, do: " for booking #{booking}", else: ""
+    "Instaclean payment received: #{amount}#{suffix}."
+  end
+
+  defp message_body("cleaner_assigned", variables) do
+    cleaner = present(variables["cleanerName"]) || "Your Instaclean professional"
+    date = present(variables["date"])
+    suffix = if date, do: " for #{date}", else: ""
+    "Instaclean: #{cleaner} has been assigned#{suffix}."
+  end
+
+  defp message_body("new_booking", variables) do
+    customer = present(variables["customerName"]) || "a customer"
+    date = present(variables["date"]) || "the scheduled time"
+    address = present(variables["address"])
+    tail = if address, do: " · #{address}", else: ""
+    "Instaclean: New booking for #{customer} · #{date}#{tail}"
+  end
+
+  defp message_body("review_request", variables) do
+    cleaner = present(variables["cleanerName"]) || "your cleaner"
+    review_url = present(variables["reviewUrl"])
+    tail = if review_url, do: " #{review_url}", else: ""
+    "How was your clean? Rate #{cleaner}.#{tail}"
+  end
+
+  defp message_body(_template, variables) do
+    present(variables["message"]) || "Instaclean notification"
+  end
+
   defp subject("booking_reminder"), do: "Reminder – upcoming Instaclean booking"
+  defp subject("payment_received"), do: "Instaclean payment receipt"
+  defp subject("cleaner_assigned"), do: "Your Instaclean professional is assigned"
+  defp subject("new_booking"), do: "New Instaclean booking"
+  defp subject("review_request"), do: "How was your clean?"
   defp subject(_), do: "Instaclean"
 
   defp env(key) do
