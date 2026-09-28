@@ -1,6 +1,8 @@
 defmodule Mithril.MobileFunctions.SyncSumsubReview do
   @moduledoc false
 
+  require Logger
+
   alias Mithril.DbUuid
   alias Mithril.Repo
   alias Mithril.Sumsub.CleanerApplicationLookup
@@ -16,7 +18,10 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
          {:ok, profiles} <- load_kyc_profiles(user_id) do
       subject = inferred_subject(cleaner_app)
       paths = SyncLookup.build_paths(profiles, cleaner_app)
-      cleaner_application_id = cleaner_app && Map.get(cleaner_app, "id")
+      cleaner_application_id =
+        cleaner_app
+        |> then(fn app -> app && Map.get(app, "id") end)
+        |> encode_optional_uuid()
 
       cond do
         paths == [] ->
@@ -75,7 +80,8 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
         {:ok, nil}
 
       {:error, error} ->
-        {:error, {:status, 502, %{error: "Database error", details: inspect(error)}}}
+        Logger.error("sync-sumsub-review cleaner application lookup failed: #{inspect(error)}")
+        {:error, {:status, 502, %{error: "Database error"}}}
     end
   end
 
@@ -94,7 +100,8 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
         {:ok, Enum.map(rows, fn row -> Map.new(Enum.zip(columns, row)) end)}
 
       {:error, error} ->
-        {:error, {:status, 502, %{error: "Database error", details: Exception.message(error)}}}
+        Logger.error("sync-sumsub-review kyc profile lookup failed: #{Exception.message(error)}")
+        {:error, {:status, 502, %{error: "Database error"}}}
     end
   end
 
@@ -240,13 +247,21 @@ defmodule Mithril.MobileFunctions.SyncSumsubReview do
     Enum.find_value(profiles, fn profile ->
       case Map.get(profile, "cleaner_application_id") do
         id when is_binary(id) ->
-          trimmed = String.trim(id)
-          if trimmed == "", do: nil, else: trimmed
+          encode_optional_uuid(id)
 
         _ ->
           nil
       end
     end)
+  end
+
+  defp encode_optional_uuid(nil), do: nil
+
+  defp encode_optional_uuid(value) when is_binary(value) do
+    case value do
+      "" -> nil
+      _ -> DbUuid.encode(value)
+    end
   end
 
   defp present?(value) when is_binary(value), do: String.trim(value) != ""
