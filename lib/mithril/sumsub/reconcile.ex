@@ -1,6 +1,7 @@
 defmodule Mithril.Sumsub.Reconcile do
   @moduledoc false
 
+  alias Mithril.DbUuid
   alias Mithril.Repo
 
   @spec derive_kyc_profile_kyc_status(String.t() | nil, String.t() | nil) :: String.t()
@@ -174,7 +175,7 @@ defmodule Mithril.Sumsub.Reconcile do
                updated_at = $7::timestamptz
              WHERE id = $8::uuid
              """,
-             app_params
+             List.update_at(app_params, 7, &DbUuid.dump!/1)
            ) do
         {:ok, _} -> persist_errors
         {:error, error} -> persist_errors ++ ["cleaner_applications: #{Exception.message(error)}"]
@@ -182,16 +183,34 @@ defmodule Mithril.Sumsub.Reconcile do
 
     cv_status = map_to_cleaner_verification_row_status(review_answer)
 
+    persist_errors =
+      case Repo.query(
+             """
+             INSERT INTO public.cleaner_verifications (id, status)
+             VALUES ($1::uuid, $2)
+             ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status
+             """,
+             [DbUuid.dump!(user_id), cv_status]
+           ) do
+        {:ok, _} ->
+          persist_errors
+
+        {:error, error} ->
+          persist_errors ++ ["cleaner_verifications: #{Exception.message(error)}"]
+      end
+
+    verified = String.upcase(to_string(review_answer)) == "GREEN"
+
     case Repo.query(
            """
-           INSERT INTO public.cleaner_verifications (id, status)
-           VALUES ($1::uuid, $2)
-           ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status
+           UPDATE public.cleaner_data
+           SET verified = $2
+           WHERE user_id = $1::uuid
            """,
-           [user_id, cv_status]
+           [DbUuid.dump!(user_id), verified]
          ) do
       {:ok, _} -> persist_errors
-      {:error, error} -> persist_errors ++ ["cleaner_verifications: #{Exception.message(error)}"]
+      {:error, error} -> persist_errors ++ ["cleaner_data: #{Exception.message(error)}"]
     end
   end
 
@@ -247,7 +266,7 @@ defmodule Mithril.Sumsub.Reconcile do
              level_name,
              sumsub_linked_at,
              now,
-             Map.get(target_kyc, "id")
+             DbUuid.dump!(Map.get(target_kyc, "id"))
            ]
          ) do
       {:ok, _} -> :ok
