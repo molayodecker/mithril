@@ -407,7 +407,9 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
     scheduled_date = draft_value(draft, "bookingDate", "booking_date")
     start_time = draft_value(draft, "slotTime24h", "slot_time_24h")
     duration_hours = read_optional_number(draft_value(draft, "durationHours", "duration_hours"))
-    radius = read_optional_number(draft_value(draft, "maxDistanceMeters", "max_distance_meters")) || 10_000
+    radius =
+      read_optional_number(draft_value(draft, "maxDistanceMeters", "max_distance_meters")) ||
+        10_000
 
     requested_ids =
       requested
@@ -431,7 +433,9 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
         rows
         |> Enum.map(fn [id] -> id end)
         |> Enum.uniq()
-        |> Enum.filter(fn id -> MapSet.size(requested_ids) == 0 or MapSet.member?(requested_ids, id) end)
+        |> Enum.filter(fn id ->
+          MapSet.size(requested_ids) == 0 or MapSet.member?(requested_ids, id)
+        end)
         |> Enum.take(@max_cleaners)
 
       hydrate_authoritative_cleaners(ids)
