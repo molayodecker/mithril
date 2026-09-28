@@ -42,10 +42,24 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
       is_function(Application.get_env(:mithril, :ai_match_candidate_loader), 2)
   end
 
-  defp rank(user_id, cleaners, body) do
+  defp rank(user_id, requested, body) do
+    case validate_booking_draft(body) do
+      :ok ->
+        case load_authoritative_cleaners(body, requested) do
+          {:ok, cleaners} ->
+            rank_authoritative(user_id, cleaners, body)
+
+          {:fallback, reason} ->
+            fallback([], reason)
+        end
+
+      {:fallback, reason} ->
+        fallback([], reason)
+    end
+  end
+
+  defp rank_authoritative(user_id, cleaners, body) do
     with :ok <- enforce_rate_limit(user_id),
-         :ok <- validate_booking_draft(body),
-         {:ok, cleaners} <- load_authoritative_cleaners(body, cleaners),
          {:ok, settings} <- load_settings(),
          :ok <- require_enabled(settings),
          {:ok, api_key} <- openai_api_key(),
@@ -246,10 +260,8 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
   end
 
   defp valid_service_id?(value) do
-    id = value |> to_string() |> String.trim()
-
-    case Ecto.UUID.cast(id) do
-      {:ok, _} -> true
+    case Integer.parse(to_string(value) |> String.trim()) do
+      {id, ""} when id > 0 -> true
       _ -> false
     end
   end
@@ -417,6 +429,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
     scheduled_date = draft_value(draft, "bookingDate", "booking_date")
     start_time = draft_value(draft, "slotTime24h", "slot_time_24h")
     duration_hours = read_optional_number(draft_value(draft, "durationHours", "duration_hours"))
+    service_id = parse_positive_integer(draft_value(draft, "serviceId", "service_id"))
 
     radius =
       read_optional_number(draft_value(draft, "maxDistanceMeters", "max_distance_meters")) ||
@@ -432,7 +445,8 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
       end)
       |> MapSet.new()
 
-    with {:ok, %{rows: rows}} <-
+    with {:ok, specialty_slug} <- service_specialty(service_id),
+         {:ok, %{rows: rows}} <-
            Repo.query(
              """
              SELECT id
@@ -449,42 +463,70 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
         end)
         |> Enum.take(@max_cleaners)
 
-      hydrate_authoritative_cleaners(ids)
+      hydrate_authoritative_cleaners(ids, specialty_slug)
     else
+      {:fallback, reason} ->
+        {:fallback, reason}
+
       {:error, error} ->
         Logger.warning("rank-cleaners-with-ai candidate lookup failed: #{inspect(error)}")
         {:fallback, "candidate_lookup_failed"}
     end
   end
 
-  defp hydrate_authoritative_cleaners([]), do: {:ok, []}
+  defp service_specialty(service_id) when is_integer(service_id) and service_id > 0 do
+    case Repo.query(
+           """
+           SELECT specialty_slug
+           FROM public.service_types
+           WHERE id = $1
+             AND active = true
+             AND NULLIF(btrim(specialty_slug), '') IS NOT NULL
+           LIMIT 1
+           """,
+           [service_id]
+         ) do
+      {:ok, %{rows: [[specialty_slug]]}} -> {:ok, specialty_slug}
+      {:ok, %{rows: []}} -> {:fallback, "missing_service"}
+      {:error, error} ->
+        Logger.warning("rank-cleaners-with-ai service lookup failed: #{inspect(error)}")
+        {:fallback, "candidate_lookup_failed"}
+    end
+  end
 
-  defp hydrate_authoritative_cleaners(ids) do
+  defp service_specialty(_), do: {:fallback, "missing_service"}
+
+  defp hydrate_authoritative_cleaners([], _specialty_slug), do: {:ok, []}
+
+  defp hydrate_authoritative_cleaners(ids, specialty_slug) do
     case Repo.query(
            """
            SELECT cd.user_id::text,
                   COALESCE(NULLIF(btrim(p.fullname), ''), 'Instaclean professional'),
                   cd.rating,
                   cd.hourly_rate,
-                  cd.completed_jobs
-           FROM public.cleaner_data cd
+                  cd.completed_jobs,
+                  requested.ordinality
+           FROM unnest($1::uuid[]) WITH ORDINALITY AS requested(user_id, ordinality)
+           JOIN public.cleaner_data cd ON cd.user_id = requested.user_id
            LEFT JOIN public.profiles p ON p.id = cd.user_id
-           WHERE cd.user_id = ANY($1::uuid[])
-             AND cd.verified = true
+           WHERE cd.verified = true
              AND cd.status = 'active'
+             AND $2::text = ANY(COALESCE(cd.specialties, ARRAY[]::text[]))
+           ORDER BY requested.ordinality
            """,
-           [ids]
+           [ids, specialty_slug]
          ) do
       {:ok, %{rows: rows}} ->
         {:ok,
-         Enum.map(rows, fn [id, name, rating, hourly_rate, completed_jobs] ->
+         Enum.map(rows, fn [id, name, rating, hourly_rate, completed_jobs, ordinality] ->
            %{
              id: id,
              name: name,
              company_name: nil,
              bio: nil,
              rating: read_optional_number(rating),
-             distance: nil,
+             distance: ordinality,
              hourly_rate: read_optional_number(hourly_rate),
              match_score: nil,
              years_experience: nil,
@@ -496,6 +538,13 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
       {:error, error} ->
         Logger.warning("rank-cleaners-with-ai candidate hydration failed: #{inspect(error)}")
         {:fallback, "candidate_hydration_failed"}
+    end
+  end
+
+  defp parse_positive_integer(value) do
+    case Integer.parse(to_string(value) |> String.trim()) do
+      {id, ""} when id > 0 -> id
+      _ -> nil
     end
   end
 
