@@ -281,6 +281,14 @@ if send_notification_token = System.get_env("SEND_NOTIFICATION_TOKEN") do
   config :mithril, :send_notification_token, send_notification_token
 end
 
+if whatsapp_from = System.get_env("TWILIO_WHATSAPP_FROM") do
+  config :mithril, :twilio_whatsapp_from, String.trim(whatsapp_from)
+end
+
+if reminder_sid = System.get_env("TWILIO_TEMPLATE_BOOKING_REMINDER") do
+  config :mithril, :twilio_template_booking_reminder, String.trim(reminder_sid)
+end
+
 if direct_public_url = System.get_env("DIRECT_PUBLIC_URL") do
   config :mithril, :direct_public_url, direct_public_url
 end
