@@ -236,6 +236,8 @@ defmodule Mithril.Notifications.Reminders do
                b.recurrence_interval,
                b.customer_reminder_7d_sent_at,
                b.customer_reminder_7d_claimed_at,
+               b.customer_reminder_5d_sent_at,
+               b.customer_reminder_5d_claimed_at,
                b.customer_reminder_48h_sent_at,
                b.customer_reminder_48h_claimed_at,
                b.customer_reminder_sent_at,
