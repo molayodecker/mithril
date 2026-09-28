@@ -273,12 +273,35 @@ if vendor_subaccount = System.get_env("PAYSTACK_VENDOR_SUBACCOUNT") do
   config :mithril, :paystack_vendor_subaccount, vendor_subaccount
 end
 
+if slack_ops_webhook =
+     System.get_env("SUPPORT_OPS_SLACK_WEBHOOK_URL") || System.get_env("SLACK_OPS_WEBHOOK_URL") do
+  config :mithril, :support_ops_slack_webhook_url, String.trim(slack_ops_webhook)
+end
+
+if ops_emails =
+     System.get_env("SUPPORT_OPS_EMAILS") || System.get_env("CLEANER_APPLICATION_OPS_EMAILS") do
+  config :mithril, :support_ops_emails, ops_emails
+end
+
+if ops_phones =
+     System.get_env("SUPPORT_OPS_PHONES") || System.get_env("CLEANER_APPLICATION_OPS_PHONES") do
+  config :mithril, :support_ops_phones, ops_phones
+end
+
 if send_notification_url = System.get_env("SEND_NOTIFICATION_URL") do
   config :mithril, :send_notification_url, send_notification_url
 end
 
 if send_notification_token = System.get_env("SEND_NOTIFICATION_TOKEN") do
   config :mithril, :send_notification_token, send_notification_token
+end
+
+if whatsapp_from = System.get_env("TWILIO_WHATSAPP_FROM") do
+  config :mithril, :twilio_whatsapp_from, whatsapp_from
+end
+
+if reminder_sid = System.get_env("TWILIO_TEMPLATE_BOOKING_REMINDER") do
+  config :mithril, :twilio_template_booking_reminder, reminder_sid
 end
 
 if direct_public_url = System.get_env("DIRECT_PUBLIC_URL") do
@@ -359,4 +382,19 @@ if config_env() == :prod do
     http: [ip: {0, 0, 0, 0, 0, 0, 0, 0}, port: port],
     secret_key_base: secret_key_base,
     server: true
+end
+
+if config_env() != :test do
+  oban_config = Application.fetch_env!(:mithril, Oban)
+
+  plugins =
+    Enum.map(oban_config[:plugins], fn
+      {Oban.Plugins.Cron, cron_opts} ->
+        {Oban.Plugins.Cron, Keyword.put(cron_opts, :crontab, Mithril.Cron.Jobs.oban_crontab())}
+
+      other ->
+        other
+    end)
+
+  config :mithril, Oban, Keyword.put(oban_config, :plugins, plugins)
 end

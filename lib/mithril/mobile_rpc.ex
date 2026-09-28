@@ -41,6 +41,7 @@ defmodule Mithril.MobileRpc do
     get_cleaner_booking_access_context
     get_cleaner_booking_location_fields
     get_cleaner_by_booking_slug
+    get_available_timeslots
     get_cleaner_hourly_rate_limits
     get_cleaner_profile_v1
     get_cleaner_transaction_history
@@ -48,6 +49,7 @@ defmodule Mithril.MobileRpc do
     get_customer_booking_verification_requirement
     get_direct_request
     get_latest_paystack_reference_for_booking
+    get_location_current_time
     get_my_cleaner_booking_link
     get_my_cleaner_team
     get_my_referral_info
@@ -56,6 +58,7 @@ defmodule Mithril.MobileRpc do
     get_or_create_care_request_conversation
     get_own_booking_voucher_identity
     get_pending_booking_for_edit
+    get_service_categories
     get_user_profile_data
     get_user_profile_stats
     get_user_role
@@ -96,6 +99,7 @@ defmodule Mithril.MobileRpc do
     sync_profile_name_from_payout
     sync_recurring_unpaid_checkout_snapshots
     update_my_hourly_rate
+    validate_booking_timeslot
     upsert_cleaner_team_name
     validate_promotion_code
   ))
@@ -108,20 +112,20 @@ defmodule Mithril.MobileRpc do
   def compile(name, args) when is_binary(name) and is_map(args) do
     with :ok <- validate_name(name),
          {:ok, pairs} <- arg_pairs(args) do
-      {assignments, params} =
+      {arg_names, assignments, params} =
         pairs
         |> Enum.with_index(1)
-        |> Enum.map(fn {{key, value}, index} ->
-          {"#{key} := $#{index}", value}
+        |> Enum.reduce({[], [], []}, fn {{key, value}, index},
+                                        {names, assignment_acc, param_acc} ->
+          {[key | names], ["#{key} := $#{index}" | assignment_acc], [value | param_acc]}
         end)
-        |> Enum.unzip()
 
       {:ok,
        %{
          name: name,
-         assignments: Enum.join(assignments, ", "),
-         arg_names: Enum.map(pairs, &elem(&1, 0)),
-         params: params
+         arg_names: Enum.reverse(arg_names),
+         assignments: assignments |> Enum.reverse() |> Enum.join(", "),
+         params: Enum.reverse(params)
        }}
     end
   end

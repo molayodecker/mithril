@@ -44,7 +44,8 @@ defmodule Mithril.Notifications.SendNotification do
       template,
       customer_variables(ctx),
       ctx[:booking_id] || ctx[:request_id],
-      message_type
+      message_type,
+      sms_fallback_to_whatsapp: ctx[:kind] == :booking_reminder
     )
   end
 
@@ -56,7 +57,8 @@ defmodule Mithril.Notifications.SendNotification do
       template,
       worker_variables(ctx),
       ctx[:booking_id] || ctx[:request_id],
-      message_type
+      message_type,
+      sms_fallback_to_whatsapp: ctx[:kind] == :booking_reminder
     )
   end
 
@@ -113,9 +115,9 @@ defmodule Mithril.Notifications.SendNotification do
     }
   end
 
-  defp post_party(nil, _template, _variables, _booking_id, _message_type), do: false
+  defp post_party(nil, _template, _variables, _booking_id, _message_type, _opts), do: false
 
-  defp post_party(party, template, variables, booking_id, message_type) do
+  defp post_party(party, template, variables, booking_id, message_type, opts) do
     email = present(party[:email] || party["email"])
     phone = present(party[:phone] || party["phone"])
     user_id = party[:user_id] || party["user_id"]
@@ -132,7 +134,7 @@ defmodule Mithril.Notifications.SendNotification do
             "template" => template,
             "channel" => channel,
             "messageType" => message_type,
-            "smsFallbackToWhatsapp" => false,
+            "smsFallbackToWhatsapp" => Keyword.get(opts, :sms_fallback_to_whatsapp, false),
             "variables" => variables,
             "bookingId" => booking_id,
             "userId" => user_id,

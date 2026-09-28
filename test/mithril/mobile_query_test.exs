@@ -21,6 +21,18 @@ defmodule Mithril.MobileQueryTest do
     refute sql =~ "user-1"
   end
 
+  test "treats service_categories as an open catalog read" do
+    assert {:ok, %{sql: sql, params: []}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "service_categories",
+               "action" => "select",
+               "columns" => ["id", "slug", "weight"]
+             })
+
+    assert sql =~ "public.service_categories"
+    refute sql =~ "user-1"
+  end
+
   test "rejects unknown tables and unsafe identifiers" do
     assert {:error, :unknown_table} =
              MobileQuery.compile("user-1", %{"table" => "auth.users", "action" => "select"})
@@ -328,9 +340,40 @@ defmodule Mithril.MobileQueryTest do
     assert {:error, :unknown_function} = MobileRpc.compile("pg_read_file", %{})
   end
 
+  test "allowlists get_service_categories as a Fly catalog rpc" do
+    assert {:ok, compiled} = MobileRpc.compile("get_service_categories", %{})
+    assert compiled.name == "get_service_categories"
+  end
+
+  test "allowlists booking schedule time rpcs" do
+    assert {:ok, _} =
+             MobileRpc.compile("get_location_current_time", %{
+               "p_timezone" => "Africa/Accra",
+               "p_duration_hours" => 2
+             })
+
+    assert {:ok, _} =
+             MobileRpc.compile("get_available_timeslots", %{
+               "p_booking_date" => "2026-09-25",
+               "p_timezone" => "Africa/Accra",
+               "p_duration_hours" => 2
+             })
+
+    assert {:ok, _} =
+             MobileRpc.compile("validate_booking_timeslot", %{
+               "p_start_time_12h" => "9:00 AM",
+               "p_duration_hours" => 2,
+               "p_booking_date" => "2026-09-25",
+               "p_timezone" => "Africa/Accra"
+             })
+  end
+
   test "compiles named rpc arguments" do
     assert {:ok, compiled} =
              MobileRpc.compile("accept_booking_assignment", %{"p_booking_id" => "abc"})
+
+    assert compiled.arg_names == ["p_booking_id"]
+    assert compiled.params == ["abc"]
 
     assert MobileRpc.sql(compiled, :scalar) =~
              "to_jsonb(public.accept_booking_assignment(p_booking_id := $1))"
