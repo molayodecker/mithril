@@ -28,10 +28,7 @@ defmodule Mithril.MobileFunctions.SumsubToken do
       {:error, :missing_credentials} ->
         {:error,
          {:status, 500,
-          %{
-            error: "Identity verification is not configured",
-            missing: missing_secret_names()
-          }}}
+          %{error: "Identity verification is not configured"}}}
 
       {:error, {:status, status, details}} ->
         {:error,
@@ -49,27 +46,6 @@ defmodule Mithril.MobileFunctions.SumsubToken do
       {:ok, _} -> :ok
       {:error, :missing_credentials} -> {:error, :missing_credentials}
     end
-  end
-
-  defp missing_secret_names do
-    missing = []
-
-    missing =
-      if present?(Application.get_env(:mithril, :sumsub_app_token)),
-        do: missing,
-        else: missing ++ ["SUMSUB_APP_TOKEN"]
-
-    missing =
-      if present?(Application.get_env(:mithril, :sumsub_secret_key)),
-        do: missing,
-        else: missing ++ ["SUMSUB_SECRET_KEY"]
-
-    missing =
-      if present?(Application.get_env(:mithril, :sumsub_level_name)),
-        do: missing,
-        else: missing ++ ["SUMSUB_LEVEL_NAME"]
-
-    missing
   end
 
   defp ttl_in_secs(body) do
