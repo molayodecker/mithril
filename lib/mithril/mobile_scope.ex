@@ -16,6 +16,7 @@ defmodule Mithril.MobileScope do
     micro_task_options
     micro_tasks
     platform_fees
+    service_categories
     service_duration_options
     service_types
   ))
@@ -48,7 +49,14 @@ defmodule Mithril.MobileScope do
   def mutation_predicate(table, index), do: clause(table, "update", index)
 
   def apply(user_id, action, table, where_sql, params) when is_binary(user_id) do
-    case clause(table, action, length(params) + 1) do
+    apply(user_id, action, table, where_sql, params, [])
+  end
+
+  def apply(_user_id, _action, _table, _where_sql, _params), do: {:error, :forbidden}
+
+  def apply(user_id, action, table, where_sql, params, opts)
+      when is_binary(user_id) and is_list(opts) do
+    case clause(table, action, length(params) + 1, opts) do
       :open ->
         {:ok, where_sql, params}
 
@@ -60,7 +68,7 @@ defmodule Mithril.MobileScope do
     end
   end
 
-  def apply(_user_id, _action, _table, _where_sql, _params), do: {:error, :forbidden}
+  def apply(_user_id, _action, _table, _where_sql, _params, _opts), do: {:error, :forbidden}
 
   def prepare_rows(user_id, table, rows) when is_binary(user_id) and is_list(rows) do
     cond do
@@ -141,7 +149,7 @@ defmodule Mithril.MobileScope do
     end
   end
 
-  defp clause(table, action, index) do
+  defp clause(table, action, index, opts \\ []) do
     cond do
       MapSet.member?(@catalog, table) and action == "select" ->
         :open
@@ -159,7 +167,7 @@ defmodule Mithril.MobileScope do
         {:ok, "#{table}.#{column}::text = $#{index}::text"}
 
       table in ["bookings", "conversations", "conversation_list", "subscriptions"] ->
-        {:ok, party(table, ["customer_id", "cleaner_id"], index)}
+        {:ok, party_predicate(table, action, index, opts)}
 
       table == "jobs" and action == "select" ->
         {:ok,
@@ -227,6 +235,19 @@ defmodule Mithril.MobileScope do
   defp force_column("cleaner_availability_exceptions"), do: "cleaner_id"
   defp force_column("cleaner_devices"), do: "cleaner_id"
   defp force_column(_), do: nil
+
+  defp party_predicate(table, action, index, opts) do
+    owned = party(table, ["customer_id", "cleaner_id"], index)
+
+    if table == "bookings" and action == "select" and opts[:include_broadcast_offers] do
+      # Broadcast offers keep cleaner_id null. Id-list reads may also return rows
+      # list_broadcast_assignments_for_cleaner would return for this caller.
+      owned <>
+        " OR bookings.id IN (SELECT public.list_broadcast_assignments_for_cleaner($#{index}::uuid))"
+    else
+      owned
+    end
+  end
 
   defp party(table, columns, index) do
     Enum.map_join(columns, " OR ", fn column ->

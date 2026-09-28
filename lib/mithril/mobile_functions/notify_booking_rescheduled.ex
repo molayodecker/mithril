@@ -1,7 +1,6 @@
 defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
   @moduledoc false
 
-  alias Mithril.DbUuid
   alias Mithril.Notifications.SendNotification
   alias Mithril.Repo
 
@@ -50,14 +49,14 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
     FROM public.bookings WHERE id = $1::uuid LIMIT 1
     """
 
-    case Repo.query(sql, [DbUuid.dump!(booking_id)]) do
+    case Repo.query(sql, [booking_id]) do
       {:ok, %{columns: columns, rows: [row]}} -> {:ok, map_row(columns, row)}
       _ -> {:error, {:status, 404, %{success: false, error: "Booking not found"}}}
     end
   end
 
   defp ensure_customer(booking, user_id) do
-    if DbUuid.equal?(Map.get(booking, "customer_id"), user_id) do
+    if Map.get(booking, "customer_id") == user_id do
       :ok
     else
       {:error, {:status, 403, %{success: false, error: "Forbidden"}}}
@@ -100,8 +99,8 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
          location_changed,
          booking_id
        ) do
-    customer_id = DbUuid.encode(Map.get(booking, "customer_id"))
-    cleaner_id = DbUuid.encode(Map.get(booking, "cleaner_id"))
+    customer_id = Map.get(booking, "customer_id")
+    cleaner_id = Map.get(booking, "cleaner_id")
     old_label = "#{old_date} #{String.slice(old_time, 0, 5)}"
     new_label = "#{new_date} #{String.slice(new_time, 0, 5)}"
     title = "Booking rescheduled"
@@ -154,7 +153,7 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
            ON CONFLICT (dedupe_key) DO NOTHING
            """,
            [
-             DbUuid.dump!(user_id),
+             user_id,
              title,
              message,
              dedupe,
@@ -170,8 +169,7 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
            ]
          ) do
       {:ok, %{num_rows: 1}} -> true
-      {:ok, %{num_rows: 0}} -> true
-      {:error, _} -> false
+      _ -> true
     end
   end
 

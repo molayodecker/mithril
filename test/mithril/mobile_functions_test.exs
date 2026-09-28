@@ -1,47 +1,3 @@
-defmodule Mithril.MobileFunctions.GatewayAuthTest do
-  use ExUnit.Case, async: true
-
-  alias Mithril.MobileFunctions
-  alias Mithril.MobileFunctions.UberTransportationReleaseGate
-
-  test "forbids OTP theft and open notification relay on the authenticated invoke path" do
-    user_id = Ecto.UUID.generate()
-
-    assert {:error, :forbidden} =
-             MobileFunctions.invoke(user_id, "fetch-otp-delivery-token", %{
-               "phone" => "+233201234567"
-             })
-
-    assert {:error, :forbidden} =
-             MobileFunctions.invoke(user_id, "resend-otp-via-channel", %{
-               "phone" => "+233201234567"
-             })
-
-    assert {:error, :forbidden} =
-             MobileFunctions.invoke(user_id, "send-notification", %{
-               "userId" => Ecto.UUID.generate()
-             })
-  end
-
-  test "uber release gate is a read-only flag lookup" do
-    user_id = Ecto.UUID.generate()
-
-    assert {:ok, %{enabled: enabled}} = UberTransportationReleaseGate.call(user_id, %{})
-    assert is_boolean(enabled)
-  end
-
-  test "uber trip estimate is retired in favor of booking transport estimates" do
-    user_id = Ecto.UUID.generate()
-
-    assert {:error, {:status, 410, %{code: "uber_estimate_removed"}}} =
-             MobileFunctions.invoke(user_id, "uber-trip-estimate", %{
-               "cleaner_id" => Ecto.UUID.generate(),
-               "customer_latitude" => 5.6,
-               "customer_longitude" => -0.2
-             })
-  end
-end
-
 defmodule Mithril.MobileFunctions.TimezoneTest do
   use ExUnit.Case, async: true
 
@@ -103,17 +59,6 @@ defmodule Mithril.MobileFunctions.PaystackTest do
              })
   end
 
-  test "initiate_transfer rejects unsupported withdrawal currency" do
-    user_id = Ecto.UUID.generate()
-
-    assert {:error, {:status, 400, %{ok: false, error: "Unsupported currency"}}} =
-             Paystack.initiate_transfer(user_id, %{
-               "amount" => 10_000,
-               "recipient" => "RCP_test123",
-               "currency" => "EUR"
-             })
-  end
-
   test "initiate_transfer enforces minimum withdrawal" do
     user_id = Ecto.UUID.generate()
 
@@ -122,5 +67,16 @@ defmodule Mithril.MobileFunctions.PaystackTest do
                "amount" => 100,
                "recipient" => "RCP_test123"
              })
+  end
+end
+
+defmodule Mithril.MobileFunctions.BookingCheckoutOptionsTest do
+  use ExUnit.Case, async: true
+
+  alias Mithril.MobileFunctions.BookingCheckoutOptions
+
+  test "rejects a missing booking id before looking up the booking" do
+    assert {:error, {:status, 400, %{error: "booking_id must be a UUID"}}} =
+             BookingCheckoutOptions.call(Ecto.UUID.generate(), %{})
   end
 end

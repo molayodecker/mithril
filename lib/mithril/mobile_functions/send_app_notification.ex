@@ -1,7 +1,6 @@
 defmodule Mithril.MobileFunctions.SendAppNotification do
   @moduledoc false
 
-  alias Mithril.DbUuid
   alias Mithril.Notifications.SendNotification
   alias Mithril.Repo
 
@@ -41,162 +40,22 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     with {:ok, booking} <- load_booking(booking_id),
          :ok <- ensure_cleaner_assignment(booking, cleaner_user_id),
          :ok <- ensure_target_customer(booking, target_user_id),
-         :ok <- ensure_booking_status(booking, type),
-         :ok <-
-           claim_milestone_notification(
-             booking_id,
-             type,
-             cleaner_user_id,
-             target_user_id
-           ),
-         :ok <- mark_milestone_dispatching(booking_id, type) do
+         :ok <- ensure_booking_status(booking, type) do
       targets = load_push_targets(target_user_id)
       {:ok, cleaner_name} = load_cleaner_name(cleaner_user_id)
       sent = send_expo_push(targets, type, booking_id, cleaner_name, target_user_id)
       channel_results = notify_customer_channels(target_user_id, booking, cleaner_name, type)
-      delivered = sent > 0 or channel_results.customer_notified
 
-      if delivered do
-        case mark_milestone_delivered(booking_id, type) do
-          :ok ->
-            {:ok,
-             %{
-               success: true,
-               duplicate: false,
-               sent: sent,
-               reason: nil,
-               customerEmailSms: channel_results.customer_notified,
-               supportEmail: channel_results.support_notified
-             }}
-
-          {:error, _} ->
-            {:error,
-             {:status, 503,
-              %{
-                success: false,
-                error: "Notification was delivered but delivery state could not be confirmed",
-                code: "MILESTONE_DELIVERY_STATE_UNKNOWN"
-              }}}
-        end
-      else
-        :ok = release_milestone_claim(booking_id, type)
-
-        {:ok,
-         %{
-           success: true,
-           duplicate: false,
-           sent: sent,
-           reason: "delivery_failed",
-           customerEmailSms: channel_results.customer_notified,
-           supportEmail: channel_results.support_notified
-         }}
-      end
+      {:ok,
+       %{
+         success: true,
+         sent: sent,
+         reason: if(sent == 0, do: "no_tokens", else: nil),
+         customerEmailSms: channel_results.customer_notified,
+         supportEmail: channel_results.support_notified
+       }}
     else
-      :duplicate ->
-        {:ok,
-         %{
-           success: true,
-           duplicate: true,
-           sent: 0,
-           reason: "already_sent",
-           customerEmailSms: false,
-           supportEmail: false
-         }}
-
-      {:error, {:status, status, body}} ->
-        {:error, {:status, status, body}}
-    end
-  end
-
-  defp claim_milestone_notification(booking_id, type, cleaner_user_id, target_user_id) do
-    sql = """
-    INSERT INTO public.booking_milestone_notifications
-      (booking_id, milestone, cleaner_id, customer_id, status, inserted_at, updated_at)
-    VALUES ($1::uuid, $2::text, $3::uuid, $4::uuid, 'pending', NOW(), NOW())
-    ON CONFLICT (booking_id, milestone) DO UPDATE
-    SET cleaner_id = EXCLUDED.cleaner_id,
-        customer_id = EXCLUDED.customer_id,
-        status = 'pending',
-        delivered_at = NULL,
-        inserted_at = NOW(),
-        updated_at = NOW()
-    WHERE booking_milestone_notifications.status IN ('pending', 'dispatching')
-      AND booking_milestone_notifications.updated_at < NOW() - INTERVAL '5 minutes'
-    RETURNING status
-    """
-
-    case Repo.query(sql, [
-           DbUuid.dump!(booking_id),
-           type,
-           DbUuid.dump!(cleaner_user_id),
-           DbUuid.dump!(target_user_id)
-         ]) do
-      {:ok, %{rows: [["pending"]]}} ->
-        :ok
-
-      {:ok, %{rows: _}} ->
-        :duplicate
-
-      {:error, _} ->
-        {:error,
-         {:status, 500, %{success: false, error: "Could not reserve milestone notification"}}}
-    end
-  end
-
-  defp mark_milestone_dispatching(booking_id, type) do
-    sql = """
-    UPDATE public.booking_milestone_notifications
-    SET status = 'dispatching', updated_at = NOW()
-    WHERE booking_id = $1::uuid
-      AND milestone = $2::text
-      AND status = 'pending'
-    """
-
-    case Repo.query(sql, [DbUuid.dump!(booking_id), type]) do
-      {:ok, %{num_rows: 1}} ->
-        :ok
-
-      {:ok, %{num_rows: 0}} ->
-        :duplicate
-
-      {:error, _} ->
-        {:error,
-         {:status, 500, %{success: false, error: "Could not start milestone notification"}}}
-    end
-  end
-
-  defp mark_milestone_delivered(booking_id, type) do
-    sql = """
-    UPDATE public.booking_milestone_notifications
-    SET status = 'delivered', delivered_at = NOW(), updated_at = NOW()
-    WHERE booking_id = $1::uuid
-      AND milestone = $2::text
-      AND status = 'dispatching'
-    """
-
-    case Repo.query(sql, [DbUuid.dump!(booking_id), type]) do
-      {:ok, %{num_rows: 1}} ->
-        :ok
-
-      {:ok, %{num_rows: 0}} ->
-        {:error, :milestone_state_lost}
-
-      {:error, _} ->
-        {:error, :milestone_state_unavailable}
-    end
-  end
-
-  defp release_milestone_claim(booking_id, type) do
-    sql = """
-    DELETE FROM public.booking_milestone_notifications
-    WHERE booking_id = $1::uuid
-      AND milestone = $2::text
-      AND status IN ('pending', 'dispatching')
-    """
-
-    case Repo.query(sql, [DbUuid.dump!(booking_id), type]) do
-      {:ok, _} -> :ok
-      {:error, _} -> :ok
+      {:error, {:status, status, body}} -> {:error, {:status, status, body}}
     end
   end
 
@@ -217,7 +76,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     LIMIT 1
     """
 
-    case Repo.query(sql, [DbUuid.dump!(booking_id)]) do
+    case Repo.query(sql, [booking_id]) do
       {:ok, %{columns: columns, rows: [row]}} ->
         {:ok, Map.new(Enum.zip(columns, row))}
 
@@ -230,7 +89,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
   end
 
   defp ensure_cleaner_assignment(booking, cleaner_user_id) do
-    if DbUuid.equal?(Map.get(booking, "cleaner_id"), cleaner_user_id) do
+    if Map.get(booking, "cleaner_id") == cleaner_user_id do
       :ok
     else
       {:error, {:status, 403, %{success: false, error: "Not the assigned cleaner"}}}
@@ -238,7 +97,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
   end
 
   defp ensure_target_customer(booking, target_user_id) do
-    if DbUuid.equal?(Map.get(booking, "customer_id"), target_user_id) do
+    if Map.get(booking, "customer_id") == target_user_id do
       :ok
     else
       {:error, {:status, 400, %{success: false, error: "targetUserId mismatch"}}}
@@ -266,7 +125,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     WHERE user_id = $1::uuid AND token IS NOT NULL
     """
 
-    case Repo.query(sql, [DbUuid.dump!(user_id)]) do
+    case Repo.query(sql, [user_id]) do
       {:ok, %{rows: rows}} ->
         rows
         |> Enum.map(fn [token] -> token end)
@@ -289,7 +148,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     LIMIT 1
     """
 
-    case Repo.query(sql, [DbUuid.dump!(cleaner_user_id)]) do
+    case Repo.query(sql, [cleaner_user_id]) do
       {:ok, %{rows: [[fullname, firstname]]}} ->
         {:ok, fullname || firstname || "Your cleaner"}
 
@@ -333,17 +192,8 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
           }
         end)
 
-      case Req.post("https://exp.host/--/api/v2/push/send", json: messages) do
-        {:ok, %{status: status, body: %{"data" => tickets}}}
-        when status in 200..299 and is_list(tickets) ->
-          Enum.count(tickets, fn
-            %{"status" => "ok"} -> true
-            _ -> false
-          end)
-
-        _ ->
-          0
-      end
+      _ = Req.post("https://exp.host/--/api/v2/push/send", json: messages)
+      length(targets)
     end
   end
 
@@ -361,13 +211,13 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     """
 
     notif_count =
-      case Repo.query(notif_sql, [DbUuid.dump!(user_id)]) do
+      case Repo.query(notif_sql, [user_id]) do
         {:ok, %{rows: [[count]]}} when is_integer(count) -> count
         _ -> 0
       end
 
     message_count =
-      case Repo.query(conv_sql, [DbUuid.dump!(user_id)]) do
+      case Repo.query(conv_sql, [user_id]) do
         {:ok, %{rows: [[count]]}} when is_integer(count) -> count
         _ -> 0
       end
@@ -393,7 +243,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     variables = %{
       "name" => customer_name,
       "cleanerName" => cleaner_name,
-      "bookingId" => DbUuid.encode(Map.get(booking, "id")),
+      "bookingId" => to_string(Map.get(booking, "id")),
       "date" => date_combined,
       "address" => Map.get(booking, "address") || "",
       "scheduled_date" => to_string(scheduled_date || ""),
@@ -416,7 +266,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
             "template" => template,
             "channel" => channel,
             "userId" => customer_id,
-            "bookingId" => DbUuid.encode(Map.get(booking, "id")),
+            "bookingId" => to_string(Map.get(booking, "id")),
             "messageType" => type,
             "smsFallbackToWhatsapp" => true,
             "variables" => variables
@@ -458,13 +308,13 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     profile_sql = "SELECT fullname, firstname FROM public.profiles WHERE id = $1::uuid LIMIT 1"
 
     {email, phone} =
-      case Repo.query(user_sql, [DbUuid.dump!(customer_id)]) do
+      case Repo.query(user_sql, [customer_id]) do
         {:ok, %{rows: [[email, phone]]}} -> {present(email), present(phone)}
         _ -> {nil, nil}
       end
 
     name =
-      case Repo.query(profile_sql, [DbUuid.dump!(customer_id)]) do
+      case Repo.query(profile_sql, [customer_id]) do
         {:ok, %{rows: [[fullname, firstname]]}} -> fullname || firstname || "there"
         _ -> "there"
       end

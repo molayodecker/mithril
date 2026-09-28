@@ -10,9 +10,9 @@ defmodule Mithril.Posthog do
   def booking_uber_transportation_flag, do: @booking_uber_transportation_flag
   def uber_release_gate_distinct_id, do: @uber_release_gate_distinct_id
 
-  @spec fetch_boolean_flag(String.t(), String.t()) :: boolean()
-  def fetch_boolean_flag(flag_key, distinct_id)
-      when is_binary(flag_key) and is_binary(distinct_id) do
+  @spec fetch_boolean_flag(String.t(), String.t(), keyword()) :: boolean()
+  def fetch_boolean_flag(flag_key, distinct_id, opts \\ [])
+      when is_binary(flag_key) and is_binary(distinct_id) and is_list(opts) do
     api_key = api_key()
 
     if api_key == "" do
@@ -21,14 +21,16 @@ defmodule Mithril.Posthog do
       host = flags_host()
 
       body =
-        Jason.encode!(%{
+        %{
           api_key: api_key,
           distinct_id: distinct_id,
           groups: %{},
           person_properties: %{},
           group_properties: %{},
           flag_keys_to_evaluate: [flag_key]
-        })
+        }
+        |> maybe_put_evaluation_runtime(Keyword.get(opts, :evaluation_runtime))
+        |> Jason.encode!()
 
       task =
         Task.async(fn ->
@@ -80,6 +82,13 @@ defmodule Mithril.Posthog do
         end
     end
   end
+
+  defp maybe_put_evaluation_runtime(payload, runtime)
+       when is_binary(runtime) and runtime != "" do
+    Map.put(payload, :evaluation_runtime, runtime)
+  end
+
+  defp maybe_put_evaluation_runtime(payload, _runtime), do: payload
 
   defp api_key do
     Application.get_env(:mithril, :posthog_project_api_key, "")

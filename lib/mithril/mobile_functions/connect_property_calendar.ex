@@ -2,7 +2,6 @@ defmodule Mithril.MobileFunctions.ConnectPropertyCalendar do
   @moduledoc false
 
   alias Mithril.CalendarFeedSecurity
-  alias Mithril.DbUuid
   alias Mithril.MobileGateway
   alias Mithril.Repo
   alias Mithril.SecretCrypto
@@ -25,8 +24,8 @@ defmodule Mithril.MobileFunctions.ConnectPropertyCalendar do
            }),
          {:ok, encrypted} <- encrypt_feed(fields.feed_url),
          feed_hash = SecretCrypto.hash_token(fields.feed_url),
-         {:ok, feed} <-
-           replace_active_feed(user_id, fields, encrypted, feed_hash, timezone) do
+         :ok <- disable_other_active_feeds(fields.property_id, feed_hash),
+         {:ok, feed} <- upsert_feed(user_id, fields, encrypted, feed_hash, timezone) do
       {:ok, %{feed: feed}}
     else
       {:error, {:status, status, body}} -> {:error, {:status, status, body}}
@@ -110,7 +109,7 @@ defmodule Mithril.MobileFunctions.ConnectPropertyCalendar do
                   WHERE id = $1::uuid AND customer_id = $2::uuid
                   LIMIT 1
                   """,
-                  [DbUuid.dump!(property_id), DbUuid.dump!(user_id)]
+                  [property_id, user_id]
                 ) do
              {:ok, %{rows: [[property_timezone]]}} ->
                {:ok, %{timezone: property_timezone}}
@@ -143,40 +142,20 @@ defmodule Mithril.MobileFunctions.ConnectPropertyCalendar do
     end
   end
 
-  defp replace_active_feed(user_id, fields, encrypted, feed_hash, timezone) do
-    case Repo.transaction(fn ->
-           with :ok <- disable_other_active_feeds(fields.property_id, feed_hash),
-                {:ok, feed} <- upsert_feed(user_id, fields, encrypted, feed_hash, timezone) do
-             feed
-           else
-             {:error, reason} -> Repo.rollback(reason)
-           end
-         end) do
-      {:ok, feed} ->
-        {:ok, feed}
-
-      {:error, {:status, _, _} = error} ->
-        {:error, error}
-
-      {:error, _} ->
-        {:error, {:status, 502, %{error: "Failed to save calendar feed"}}}
-    end
-  end
-
   defp disable_other_active_feeds(property_id, feed_hash) do
-    case Repo.query(
-           """
-           UPDATE public.property_calendar_feeds
-           SET sync_enabled = false, updated_at = NOW()
-           WHERE property_id = $1::uuid
-             AND sync_enabled = true
-             AND feed_url_hash <> $2::text
-           """,
-           [DbUuid.dump!(property_id), feed_hash]
-         ) do
-      {:ok, _} -> :ok
-      {:error, error} -> {:error, error}
-    end
+    _ =
+      Repo.query(
+        """
+        UPDATE public.property_calendar_feeds
+        SET sync_enabled = false, updated_at = NOW()
+        WHERE property_id = $1::uuid
+          AND sync_enabled = true
+          AND feed_url_hash <> $2::text
+        """,
+        [property_id, feed_hash]
+      )
+
+    :ok
   end
 
   defp upsert_feed(user_id, fields, encrypted, feed_hash, timezone) do
@@ -204,8 +183,8 @@ defmodule Mithril.MobileFunctions.ConnectPropertyCalendar do
     """
 
     case Repo.query(sql, [
-           DbUuid.dump!(fields.property_id),
-           DbUuid.dump!(user_id),
+           fields.property_id,
+           user_id,
            fields.provider,
            encrypted,
            feed_hash,
