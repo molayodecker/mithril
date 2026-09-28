@@ -142,6 +142,8 @@ defmodule Mithril.Notifications.RemindersSendTest do
       recurrence_interval text,
       customer_reminder_7d_sent_at timestamptz,
       customer_reminder_7d_claimed_at timestamptz,
+      customer_reminder_5d_sent_at timestamptz,
+      customer_reminder_5d_claimed_at timestamptz,
       customer_reminder_48h_sent_at timestamptz,
       customer_reminder_48h_claimed_at timestamptz,
       customer_reminder_sent_at timestamptz,

@@ -14,7 +14,7 @@ This phase turns Instaclean Direct into a concierge/dispatch surface in addition
 - Create a booking on behalf of a customer using the canonical Direct booking pipeline.
 - Record the booking source (`admin`, `phone`, or `whatsapp`), the staff user who created it, and explicit customer consent.
 - Choose whether to send customer and professional notifications after create or assignment. Default is on. Delivery is fail-open: the booking or assignment is kept if notify fails. When `SEND_NOTIFICATION_URL` is configured, Instaclean's `send-notification` edge function is used (email, SMS, WhatsApp). Otherwise Twilio SMS uses the same credentials as phone OTP.
-- Visit reminders for concierge bookings run in Mithril/Oban, not Supabase `pg_cron`. An hourly sweep enqueues unique jobs for ~48h, ~24h, and morning-of (~08:00 Africa/Accra) customer reminders, plus a ~24h professional reminder. Stamps on `public.bookings` keep the legacy Instaclean cron from sending the same stage twice. Unpaid concierge visits are included.
+- Visit reminders for concierge bookings run in Mithril/Oban, not Supabase `pg_cron`. An hourly sweep enqueues unique jobs for one-time visits at ~7 days, ~5 days, ~48h, ~24h, and morning-of (~08:00 Africa/Accra), plus a ~24h professional reminder. Recurring weekly and longer series use ~7 days, ~48h, and ~24h for the customer. Stamps on `public.bookings` keep the legacy Instaclean cron from sending the same stage twice. Unpaid concierge visits are included.
 - View the dispatch queue ordered by open status and urgency.
 - Assign a vetted worker to a request.
 - For caregiver/household roles, assignment requires the worker to have opted into placements, be available, and include the requested role in `desired_roles`.

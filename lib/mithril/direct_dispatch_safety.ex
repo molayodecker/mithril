@@ -569,6 +569,8 @@ defmodule Mithril.DirectDispatchSafety do
                  assignment_phase = 'accepted',
                  assignment_hold_until = NULL,
                  assignment_reminder_sent_at = NULL,
+                 customer_reminder_5d_sent_at = NULL,
+                 customer_reminder_5d_claimed_at = NULL,
                  updated_at = now(),
                  last_updated = now()
              WHERE id = $1
