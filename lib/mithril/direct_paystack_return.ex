@@ -5,7 +5,7 @@ defmodule Mithril.DirectPaystackReturn do
   """
 
   @default_scheme "instaclean"
-  @scheme_re ~r/^[a-zA-Z0-9.-]+$/
+  @allowed_schemes MapSet.new(["instaclean", "instaclean-preview"])
 
   @spec valid_booking_id?(String.t()) :: boolean()
   def valid_booking_id?(id) when is_binary(id) do
@@ -27,7 +27,8 @@ defmodule Mithril.DirectPaystackReturn do
     |> String.trim_trailing("/")
     |> case do
       "" -> @default_scheme
-      normalized -> if Regex.match?(@scheme_re, normalized), do: normalized, else: @default_scheme
+      normalized ->
+        if MapSet.member?(@allowed_schemes, normalized), do: normalized, else: @default_scheme
     end
   end
 
