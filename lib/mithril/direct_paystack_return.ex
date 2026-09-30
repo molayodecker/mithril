@@ -17,7 +17,7 @@ defmodule Mithril.DirectPaystackReturn do
 
   def valid_booking_id?(_), do: false
 
-  @spec normalize_scheme(String.t() | nil) :: String.t()
+  @spec normalize_scheme(term()) :: String.t()
   def normalize_scheme(nil), do: @default_scheme
 
   def normalize_scheme(scheme) when is_binary(scheme) do
@@ -30,6 +30,8 @@ defmodule Mithril.DirectPaystackReturn do
       normalized -> if Regex.match?(@scheme_re, normalized), do: normalized, else: @default_scheme
     end
   end
+
+  def normalize_scheme(_), do: @default_scheme
 
   @spec build_deep_link(String.t(), keyword()) :: String.t()
   def build_deep_link(booking_id, opts \\ []) when is_binary(booking_id) do
