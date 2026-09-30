@@ -18,6 +18,13 @@ defmodule Mithril.DirectPaystackReturnTest do
              "instaclean-preview://booking-status?bookingId=#{URI.encode(@booking_id)}&source=payment&reference=BK-123"
   end
 
+  test "normalize_scheme allowlists only Instaclean app schemes" do
+    assert DirectPaystackReturn.normalize_scheme("instaclean") == "instaclean"
+    assert DirectPaystackReturn.normalize_scheme("instaclean-preview") == "instaclean-preview"
+    assert DirectPaystackReturn.normalize_scheme("javascript") == "instaclean"
+    assert DirectPaystackReturn.normalize_scheme("https") == "instaclean"
+  end
+
   test "normalize_scheme falls back for structured public input" do
     assert DirectPaystackReturn.normalize_scheme(%{"value" => "instaclean-preview"}) ==
              "instaclean"
