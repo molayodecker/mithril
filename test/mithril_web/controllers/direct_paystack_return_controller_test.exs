@@ -33,6 +33,18 @@ defmodule MithrilWeb.DirectPaystackReturnControllerTest do
     refute body =~ "instaclean-preview://booking-status?"
   end
 
+  test "GET /bookings/:id rejects javascript scheme injection" do
+    conn =
+      get(
+        build_conn(),
+        "/bookings/#{@booking_id}?scheme=javascript&reference=%0Aalert(document.domain)"
+      )
+
+    body = response(conn, 200)
+    assert body =~ "instaclean://booking-status?"
+    refute body =~ "javascript://"
+  end
+
   test "GET /bookings/:id rejects invalid ids" do
     conn = get(build_conn(), "/bookings/not-a-uuid")
     assert response(conn, 400) =~ "Invalid booking ID"
