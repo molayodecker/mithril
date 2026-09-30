@@ -79,6 +79,12 @@ defmodule MithrilWeb.Router do
   end
 
   scope "/bookings", MithrilWeb do
+    pipe_through :whatsapp
+
+    get "/:id", DirectPaystackReturnController, :show
+  end
+
+  scope "/bookings", MithrilWeb do
     pipe_through [:api, :user_auth]
 
     get "/:id/transport-estimate", BookingTransportController, :estimate
