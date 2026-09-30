@@ -26,7 +26,9 @@ defmodule Mithril.DirectPaystackReturn do
     |> String.trim_trailing(":")
     |> String.trim_trailing("/")
     |> case do
-      "" -> @default_scheme
+      "" ->
+        @default_scheme
+
       normalized ->
         if MapSet.member?(@allowed_schemes, normalized), do: normalized, else: @default_scheme
     end
