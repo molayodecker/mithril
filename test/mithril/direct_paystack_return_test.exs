@@ -19,7 +19,9 @@ defmodule Mithril.DirectPaystackReturnTest do
   end
 
   test "normalize_scheme falls back for structured public input" do
-    assert DirectPaystackReturn.normalize_scheme(%{"value" => "instaclean-preview"}) == "instaclean"
+    assert DirectPaystackReturn.normalize_scheme(%{"value" => "instaclean-preview"}) ==
+             "instaclean"
+
     assert DirectPaystackReturn.normalize_scheme(["instaclean-preview"]) == "instaclean"
   end
 
