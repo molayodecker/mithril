@@ -47,7 +47,8 @@ defmodule Mithril.DirectPaystackReturn do
   end
 
   @spec resolve_from_query(String.t(), map()) :: String.t()
-  def resolve_from_query(booking_id, query_params) when is_binary(booking_id) and is_map(query_params) do
+  def resolve_from_query(booking_id, query_params)
+      when is_binary(booking_id) and is_map(query_params) do
     reference =
       query_params["reference"] ||
         query_params["trxref"]
