@@ -18,6 +18,11 @@ defmodule Mithril.DirectPaystackReturnTest do
              "instaclean-preview://booking-status?bookingId=#{URI.encode(@booking_id)}&source=payment&reference=BK-123"
   end
 
+  test "normalize_scheme falls back for structured public input" do
+    assert DirectPaystackReturn.normalize_scheme(%{"value" => "instaclean-preview"}) == "instaclean"
+    assert DirectPaystackReturn.normalize_scheme(["instaclean-preview"]) == "instaclean"
+  end
+
   test "resolve_from_query reads scheme and Paystack reference params" do
     deep_link =
       DirectPaystackReturn.resolve_from_query(@booking_id, %{
