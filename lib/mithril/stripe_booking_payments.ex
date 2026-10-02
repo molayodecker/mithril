@@ -584,7 +584,13 @@ defmodule Mithril.StripeBookingPayments do
     normalized = payment_status |> to_string() |> String.downcase()
 
     if normalized in @settled_statuses do
-      {:error, :already_settled, normalized, nil}
+      {:error,
+       {:status, 409,
+        %{
+          error: "Booking payment is already settled.",
+          reason: "already_settled",
+          payment_status: normalized
+        }}}
     else
       {:ok, :payable}
     end
