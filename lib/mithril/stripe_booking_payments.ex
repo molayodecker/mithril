@@ -55,7 +55,11 @@ defmodule Mithril.StripeBookingPayments do
          {:ok, snapshot} <- payable_snapshot(user_id, booking_uuid, booking_meta.specialty_slug),
          {:ok, subscription_activatable} <- subscription_gate(customer_id, booking_meta),
          :ok <-
-           ensure_stripe_available(client_platform, subscription_activatable, snapshot.amount_minor),
+           ensure_stripe_available(
+             client_platform,
+             subscription_activatable,
+             snapshot.amount_minor
+           ),
          {:ok, response} <-
            prepare_checkout(user_id, booking_id, booking_uuid, snapshot, booking_meta, email) do
       {:ok, response}
@@ -67,7 +71,9 @@ defmodule Mithril.StripeBookingPayments do
   end
 
   defp ensure_stripe_configured do
-    if Stripe.configured?(), do: :ok, else: {:error, {:status, 503, %{error: "Stripe checkout is not available"}}}
+    if Stripe.configured?(),
+      do: :ok,
+      else: {:error, {:status, 503, %{error: "Stripe checkout is not available"}}}
   end
 
   defp ensure_checkout_enabled do
@@ -184,7 +190,12 @@ defmodule Mithril.StripeBookingPayments do
     end
   end
 
-  defp normalize_attempt(%{state: "initializing", created: false} = attempt, booking_uuid, fingerprint, snapshot) do
+  defp normalize_attempt(
+         %{state: "initializing", created: false} = attempt,
+         booking_uuid,
+         fingerprint,
+         snapshot
+       ) do
     polled =
       Enum.reduce(@poll_delays_ms, attempt, fn delay_ms, current ->
         if delay_ms > 0, do: Process.sleep(delay_ms)
@@ -223,16 +234,17 @@ defmodule Mithril.StripeBookingPayments do
              {:ok, provider} <-
                Stripe.create_payment_intent(%{
                  reference: attempt.reference,
-                 form_params: payment_intent_form(
-                   charge,
-                   fx,
-                   booking_id,
-                   user_id,
-                   attempt.reference,
-                   email,
-                   booking_meta,
-                   snapshot
-                 )
+                 form_params:
+                   payment_intent_form(
+                     charge,
+                     fx,
+                     booking_id,
+                     user_id,
+                     attempt.reference,
+                     email,
+                     booking_meta,
+                     snapshot
+                   )
                }),
              {:ok, completed} <-
                complete_stripe_attempt(
@@ -282,7 +294,16 @@ defmodule Mithril.StripeBookingPayments do
     end
   end
 
-  defp payment_intent_form(charge, fx, booking_id, user_id, reference, email, booking_meta, snapshot) do
+  defp payment_intent_form(
+         charge,
+         fx,
+         booking_id,
+         user_id,
+         reference,
+         email,
+         booking_meta,
+         snapshot
+       ) do
     metadata =
       %{
         "booking_id" => booking_id,
@@ -665,11 +686,15 @@ defmodule Mithril.StripeBookingPayments do
         if resolved do
           {:ok, resolved}
         else
-          {:error, {:status, 400, %{error: "Missing or invalid email. Add an email to your account before paying."}}}
+          {:error,
+           {:status, 400,
+            %{error: "Missing or invalid email. Add an email to your account before paying."}}}
         end
 
       {:ok, _} ->
-        {:error, {:status, 400, %{error: "Missing or invalid email. Add an email to your account before paying."}}}
+        {:error,
+         {:status, 400,
+          %{error: "Missing or invalid email. Add an email to your account before paying."}}}
 
       {:error, _} ->
         {:error, {:status, 502, %{error: "Failed to load account email"}}}
@@ -789,8 +814,13 @@ defmodule Mithril.StripeBookingPayments do
 
   defp map_atom_error(:bad_request), do: {:status, 400, %{error: "Invalid request"}}
   defp map_atom_error(:not_payable), do: {:status, 400, %{error: "Booking has no payable amount"}}
-  defp map_atom_error(:snapshot_failed), do: {:status, 502, %{error: "Failed to load payable booking snapshot"}}
-  defp map_atom_error(:prepare_failed), do: {:status, 502, %{error: "Failed to prepare Stripe checkout"}}
-  defp map_atom_error(:database_unavailable), do: {:status, 502, %{error: "Failed to prepare Stripe checkout"}}
+  defp map_atom_error(:snapshot_failed),
+    do: {:status, 502, %{error: "Failed to load payable booking snapshot"}}
+
+  defp map_atom_error(:prepare_failed),
+    do: {:status, 502, %{error: "Failed to prepare Stripe checkout"}}
+
+  defp map_atom_error(:database_unavailable),
+    do: {:status, 502, %{error: "Failed to prepare Stripe checkout"}}
   defp map_atom_error(reason), do: {:status, 500, %{error: Atom.to_string(reason)}}
 end
