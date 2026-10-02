@@ -22,7 +22,7 @@ defmodule Mithril.StripeBookingPayments do
          {:ok, email} <- authorized_checkout_email(customer_id, user_id, body),
          {:ok, booking_meta} <- load_booking_meta(customer_id, booking_uuid),
          {:ok, :payable} <- ensure_not_settled(booking_meta.payment_status),
-         {:ok, snapshot} <- payable_snapshot(booking_uuid, booking_meta.specialty_slug),
+         {:ok, snapshot} <- payable_snapshot(user_id, booking_uuid, booking_meta.specialty_slug),
          {:ok, subscription_activatable} <- subscription_gate(customer_id, booking_meta),
          :ok <-
            ensure_stripe_available(client_platform, subscription_activatable, snapshot.amount_minor),
@@ -106,6 +106,11 @@ defmodule Mithril.StripeBookingPayments do
 
       {:error, :missing_attempt} ->
         {:error, {:status, 404, %{error: "Booking is not payable"}}}
+
+      {:error, {:cancel_failed, _reason}} ->
+        {:error,
+         {:status, 502,
+          %{error: "Could not safely replace the previous card checkout. Please try again."}}}
 
       {:error, reason} when is_atom(reason) ->
         {:error, map_atom_error(reason)}
@@ -281,7 +286,9 @@ defmodule Mithril.StripeBookingPayments do
   defp ready_usd_checkout(%{stripe_payment_intent_id: pi, stripe_client_secret: secret} = attempt)
        when is_binary(pi) and pi != "" and is_binary(secret) and secret != "" do
     case Stripe.fetch_payment_intent(pi) do
-      {:ok, %{amount: amount, currency: currency}} when currency in ["usd", "USD"] ->
+      {:ok, %{amount: amount, currency: currency, status: status}}
+      when currency in ["usd", "USD"] and
+             status in ["requires_payment_method", "requires_confirmation", "requires_action"] ->
         amount_minor = amount_to_integer(amount)
 
         if amount_minor > 0 do
@@ -414,16 +421,22 @@ defmodule Mithril.StripeBookingPayments do
            [booking_uuid]
          ) do
       {:ok, %{rows: rows}} ->
-        Enum.each(rows, fn [payment_intent_id] ->
-          if is_binary(payment_intent_id) and payment_intent_id != "" do
-            _ = Stripe.cancel_payment_intent(payment_intent_id)
+        Enum.reduce_while(rows, :ok, fn [payment_intent_id], :ok ->
+          cond do
+            not is_binary(payment_intent_id) or payment_intent_id == "" ->
+              {:cont, :ok}
+
+            true ->
+              case Stripe.cancel_payment_intent(payment_intent_id) do
+                :ok -> {:cont, :ok}
+                {:error, reason} -> {:halt, {:error, {:cancel_failed, reason}}}
+              end
           end
         end)
 
-        :ok
-
-      _ ->
-        :ok
+      {:error, error} ->
+        Logger.error("Stripe superseded intent lookup failed: #{inspect(error)}")
+        {:error, :database_unavailable}
     end
   end
 
@@ -437,7 +450,7 @@ defmodule Mithril.StripeBookingPayments do
     end
   end
 
-  defp payable_snapshot(booking_uuid, specialty_slug) do
+  defp payable_snapshot(user_id, booking_uuid, specialty_slug) do
     function_name =
       if specialty_slug == "airbnb_turnover" do
         "authorize_airbnb_turnover_payment"
@@ -452,43 +465,54 @@ defmodule Mithril.StripeBookingPayments do
     FROM public.#{function_name}($1::uuid)
     """
 
-    case Repo.query(query, [booking_uuid]) do
-      {:ok,
-       %{
-         rows: [
-           [
-             _id,
-             _customer_id,
-             amount_minor,
-             currency,
-             _payment_status,
-             _booking_status,
-             _payment_reference,
-             _payment_split_type,
-             _paystack_split_code,
-             tax_share_minor,
-             vendor_share_minor,
-             platform_share_minor
-           ]
-         ]
-       }} ->
-        amount = amount_to_integer(amount_minor)
+    Repo.transaction(fn ->
+      with {:ok, _} <-
+             Repo.query("SELECT set_config('request.jwt.claim.sub', $1::text, true)", [user_id]),
+           {:ok, result} <- Repo.query(query, [booking_uuid]) do
+        case result.rows do
+          [
+            [
+              _id,
+              _customer_id,
+              amount_minor,
+              currency,
+              _payment_status,
+              _booking_status,
+              _payment_reference,
+              _payment_split_type,
+              _paystack_split_code,
+              tax_share_minor,
+              vendor_share_minor,
+              platform_share_minor
+            ]
+          ] ->
+            amount = amount_to_integer(amount_minor)
 
-        if amount > 0 do
-          {:ok,
-           %{
-             amount_minor: amount,
-             currency: normalize_currency(currency),
-             tax_share_minor: tax_share_minor,
-             vendor_share_minor: vendor_share_minor,
-             platform_share_minor: platform_share_minor
-           }}
-        else
-          {:error, :not_payable}
+            if amount > 0 do
+              %{
+                amount_minor: amount,
+                currency: normalize_currency(currency),
+                tax_share_minor: tax_share_minor,
+                vendor_share_minor: vendor_share_minor,
+                platform_share_minor: platform_share_minor
+              }
+            else
+              Repo.rollback(:not_payable)
+            end
+
+          [] ->
+            Repo.rollback(:not_found)
         end
+      else
+        {:error, error} -> Repo.rollback(error)
+      end
+    end)
+    |> case do
+      {:ok, snapshot} ->
+        {:ok, snapshot}
 
-      {:ok, %{rows: []}} ->
-        {:error, :not_found}
+      {:error, reason} when is_atom(reason) ->
+        {:error, reason}
 
       {:error, error} ->
         Logger.error("Stripe payable snapshot failed: #{inspect(error)}")
@@ -732,7 +756,6 @@ defmodule Mithril.StripeBookingPayments do
   defp amount_to_integer(_), do: 0
 
   defp dump_uuid(value) when is_binary(value), do: Ecto.UUID.dump(value)
-  defp dump_uuid(_value), do: :error
 
   defp map_atom_error(:bad_request), do: {:status, 400, %{error: "Invalid request"}}
   defp map_atom_error(:not_payable), do: {:status, 400, %{error: "Booking has no payable amount"}}
