@@ -4,10 +4,12 @@ defmodule Mithril.Stripe do
   @callback create_payment_intent(map()) :: {:ok, map()} | {:error, term()}
   @callback fetch_payment_intent(String.t()) :: {:ok, map()} | {:error, term()}
   @callback cancel_payment_intent(String.t()) :: :ok | {:error, term()}
+  @callback refund_payment_intent(String.t()) :: :ok | {:error, term()}
 
   def create_payment_intent(attrs) when is_map(attrs), do: adapter().create_payment_intent(attrs)
   def fetch_payment_intent(id) when is_binary(id), do: adapter().fetch_payment_intent(id)
   def cancel_payment_intent(id) when is_binary(id), do: adapter().cancel_payment_intent(id)
+  def refund_payment_intent(id) when is_binary(id), do: adapter().refund_payment_intent(id)
 
   def configured? do
     adapter() != Mithril.Stripe.Disabled and adapter().configured?()
@@ -30,6 +32,9 @@ defmodule Mithril.Stripe.Disabled do
 
   @impl true
   def cancel_payment_intent(_id), do: {:error, :payment_not_configured}
+
+  @impl true
+  def refund_payment_intent(_id), do: {:error, :payment_not_configured}
 
   def configured?, do: false
 end
@@ -66,6 +71,9 @@ defmodule Mithril.Stripe.Test do
 
   @impl true
   def cancel_payment_intent(_id), do: :ok
+
+  @impl true
+  def refund_payment_intent(_id), do: :ok
 
   def configured?, do: true
 
@@ -151,6 +159,27 @@ defmodule Mithril.Stripe.HTTP do
       case Req.post(url, auth: {:bearer, secret}, receive_timeout: 8_000) do
         {:ok, %{status: status}} when status in 200..299 -> :ok
         _ -> {:error, :provider_unavailable}
+      end
+    end
+  end
+
+  @impl true
+  def refund_payment_intent(payment_intent_id) do
+    with {:ok, secret} <- secret_key() do
+      body = URI.encode_query(%{"payment_intent" => payment_intent_id})
+
+      case Req.post("#{@api_url}/refunds",
+             auth: {:bearer, secret},
+             body: body,
+             headers: [
+               {"content-type", "application/x-www-form-urlencoded"},
+               {"idempotency-key", "stale-intent-refund-#{payment_intent_id}"}
+             ],
+             receive_timeout: 15_000
+           ) do
+        {:ok, %{status: status}} when status in 200..299 -> :ok
+        {:ok, %{status: status, body: body}} -> {:error, {:provider, status, stripe_message(body)}}
+        {:error, _} -> {:error, :provider_unavailable}
       end
     end
   end
