@@ -5,7 +5,7 @@ defmodule Mithril.DirectPaystackReturn do
   """
 
   @default_scheme "instaclean"
-  @scheme_re ~r/^[a-zA-Z0-9.-]+$/
+  @allowed_schemes MapSet.new(["instaclean", "instaclean-preview"])
 
   @spec valid_booking_id?(String.t()) :: boolean()
   def valid_booking_id?(id) when is_binary(id) do
@@ -17,7 +17,7 @@ defmodule Mithril.DirectPaystackReturn do
 
   def valid_booking_id?(_), do: false
 
-  @spec normalize_scheme(String.t() | nil) :: String.t()
+  @spec normalize_scheme(term()) :: String.t()
   def normalize_scheme(nil), do: @default_scheme
 
   def normalize_scheme(scheme) when is_binary(scheme) do
@@ -26,10 +26,15 @@ defmodule Mithril.DirectPaystackReturn do
     |> String.trim_trailing(":")
     |> String.trim_trailing("/")
     |> case do
-      "" -> @default_scheme
-      normalized -> if Regex.match?(@scheme_re, normalized), do: normalized, else: @default_scheme
+      "" ->
+        @default_scheme
+
+      normalized ->
+        if MapSet.member?(@allowed_schemes, normalized), do: normalized, else: @default_scheme
     end
   end
+
+  def normalize_scheme(_), do: @default_scheme
 
   @spec build_deep_link(String.t(), keyword()) :: String.t()
   def build_deep_link(booking_id, opts \\ []) when is_binary(booking_id) do
@@ -45,7 +50,8 @@ defmodule Mithril.DirectPaystackReturn do
   end
 
   @spec resolve_from_query(String.t(), map()) :: String.t()
-  def resolve_from_query(booking_id, query_params) when is_binary(booking_id) and is_map(query_params) do
+  def resolve_from_query(booking_id, query_params)
+      when is_binary(booking_id) and is_map(query_params) do
     reference =
       query_params["reference"] ||
         query_params["trxref"]
