@@ -11,6 +11,36 @@ defmodule Mithril.StripeBookingPayments do
   @poll_delays_ms [100, 150, 200, 250, 300, 400]
   @settled_statuses ~w(paid post_paid refunded partially_refunded)
 
+  @spec options(String.t(), map()) :: {:ok, map()}
+  def options(user_id, body) when is_binary(user_id) and is_map(body) do
+    client_platform =
+      optional_string(body, "client_platform") || optional_string(body, "clientPlatform")
+
+    result =
+      with {:ok, booking_id} <- required_uuid(body, "booking_id"),
+           {:ok, customer_id} <- dump_uuid(user_id),
+           {:ok, booking_uuid} <- dump_uuid(booking_id),
+           {:ok, booking_meta} <- load_booking_meta(customer_id, booking_uuid),
+           {:ok, :payable} <- ensure_not_settled(booking_meta.payment_status),
+           {:ok, snapshot} <- payable_snapshot(user_id, booking_uuid, booking_meta.specialty_slug),
+           {:ok, subscription_activatable} <- subscription_gate(customer_id, booking_meta) do
+        StripeCheckout.availability(
+          client_platform: client_platform,
+          subscription_activatable: subscription_activatable,
+          amount_minor: snapshot.amount_minor
+        )
+      else
+        _ -> %{stripe_available: false, reason: "booking_unavailable"}
+      end
+
+    {:ok,
+     %{
+       paystack_available: true,
+       stripe_available: result.stripe_available,
+       stripe_unavailable_reason: result.reason
+     }}
+  end
+
   @spec initialize(String.t(), map()) :: {:ok, map()} | {:error, term()}
   def initialize(user_id, body) when is_binary(user_id) and is_map(body) do
     with :ok <- ensure_stripe_configured(),
