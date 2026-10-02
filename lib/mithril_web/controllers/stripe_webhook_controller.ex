@@ -26,7 +26,9 @@ defmodule MithrilWeb.StripeWebhookController do
         conn |> put_status(:unauthorized) |> json(%{error: "Invalid webhook signature"})
 
       {:error, :not_configured} ->
-        conn |> put_status(:service_unavailable) |> json(%{error: "Missing STRIPE_WEBHOOK_SECRET"})
+        conn
+        |> put_status(:service_unavailable)
+        |> json(%{error: "Missing STRIPE_WEBHOOK_SECRET"})
 
       {:error, reason}
       when reason in [:invalid_json, :invalid_payload] ->
@@ -40,7 +42,9 @@ defmodule MithrilWeb.StripeWebhookController do
         conn |> put_status(:bad_gateway) |> json(%{error: "Stripe refund unavailable"})
 
       {:error, :database_unavailable} ->
-        conn |> put_status(:internal_server_error) |> json(%{error: "Failed to persist Stripe webhook"})
+        conn
+        |> put_status(:internal_server_error)
+        |> json(%{error: "Failed to persist Stripe webhook"})
     end
   end
 end
