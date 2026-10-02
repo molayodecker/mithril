@@ -48,7 +48,8 @@ defmodule Mithril.Stripe.Test do
       id: "pi_test_#{reference}",
       client_secret: "pi_test_secret_#{reference}",
       amount: Map.get(form_params, :amount) || Map.get(form_params, "amount"),
-      currency: Map.get(form_params, :currency) || Map.get(form_params, "currency")
+      currency: Map.get(form_params, :currency) || Map.get(form_params, "currency"),
+      status: "requires_payment_method"
     }
 
     put_intent(record.id, record)
@@ -102,7 +103,8 @@ defmodule Mithril.Stripe.HTTP do
              id: body["id"],
              client_secret: body["client_secret"],
              amount: body["amount"],
-             currency: body["currency"]
+             currency: body["currency"],
+             status: body["status"]
            }}
 
         {:ok, %{status: status, body: body}} ->
@@ -159,7 +161,7 @@ defmodule Mithril.Stripe.HTTP do
 
   defp encode_form(params) when is_map(params) do
     params
-    |> Enum.flat_map(&flatten_form/2)
+    |> Enum.flat_map(fn entry -> flatten_form(entry, "") end)
     |> URI.encode_query()
   end
 
