@@ -84,7 +84,7 @@ stripe_checkout_env_gate =
     "" -> :unset
     value when value in ~w(false 0 off) -> :off
     value when value in ~w(true 1 on) -> :on
-    _ -> :unset
+    _ -> :off
   end
 
 config :mithril, :stripe_booking_checkout_env_gate, stripe_checkout_env_gate
@@ -155,6 +155,10 @@ end
 if stripe_secret = System.get_env("STRIPE_SECRET_KEY") do
   config :mithril, :stripe_secret_key, stripe_secret
   config :mithril, :stripe_adapter, Mithril.Stripe.HTTP
+end
+
+if stripe_webhook_secret = System.get_env("STRIPE_WEBHOOK_SECRET") do
+  config :mithril, :stripe_webhook_secret, String.trim(stripe_webhook_secret)
 end
 
 if google_maps_key = System.get_env("GOOGLE_MAPS_API_KEY") do
