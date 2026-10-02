@@ -70,10 +70,10 @@ defmodule Mithril.StripeCheckout do
   end
 
   defp reconciliation_configured? do
-    Application.get_env(:mithril, :stripe_webhook_secret, "")
-    |> to_string()
-    |> String.trim()
-    |> Kernel.!=( "")
+    case Application.get_env(:mithril, :stripe_webhook_secret) do
+      secret when is_binary(secret) -> String.trim(secret) != ""
+      _ -> false
+    end
   end
 
   defp enabled_by_release_gate? do
