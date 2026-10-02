@@ -814,6 +814,7 @@ defmodule Mithril.StripeBookingPayments do
 
   defp map_atom_error(:bad_request), do: {:status, 400, %{error: "Invalid request"}}
   defp map_atom_error(:not_payable), do: {:status, 400, %{error: "Booking has no payable amount"}}
+
   defp map_atom_error(:snapshot_failed),
     do: {:status, 502, %{error: "Failed to load payable booking snapshot"}}
 
@@ -822,5 +823,6 @@ defmodule Mithril.StripeBookingPayments do
 
   defp map_atom_error(:database_unavailable),
     do: {:status, 502, %{error: "Failed to prepare Stripe checkout"}}
+
   defp map_atom_error(reason), do: {:status, 500, %{error: Atom.to_string(reason)}}
 end
