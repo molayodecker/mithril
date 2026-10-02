@@ -178,9 +178,14 @@ defmodule Mithril.Stripe.HTTP do
              ],
              receive_timeout: 15_000
            ) do
-        {:ok, %{status: status}} when status in 200..299 -> :ok
-        {:ok, %{status: status, body: body}} -> {:error, {:provider, status, stripe_message(body)}}
-        {:error, _} -> {:error, :provider_unavailable}
+        {:ok, %{status: status}} when status in 200..299 ->
+          :ok
+
+        {:ok, %{status: status, body: body}} ->
+          {:error, {:provider, status, stripe_message(body)}}
+
+        {:error, _} ->
+          {:error, :provider_unavailable}
       end
     end
   end
