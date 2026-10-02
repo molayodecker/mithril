@@ -29,6 +29,7 @@ defmodule MithrilWeb.Router do
     get "/ready", ReadyController, :show
     post "/webhooks/sumsub", SumsubWebhookController, :create
     post "/webhooks/paystack", PaystackWebhookController, :create
+    post "/webhooks/stripe", StripeWebhookController, :create
   end
 
   scope "/", MithrilWeb do
