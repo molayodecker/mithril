@@ -10,6 +10,7 @@ defmodule Mithril.StripeChargeCurrency do
   def presentment_charge(params) when is_map(params) do
     booking_amount_minor =
       positive_minor(params[:booking_amount_minor] || params["booking_amount_minor"])
+
     booking_currency =
       (params[:booking_currency] || params["booking_currency"] || @booking_source_currency)
       |> to_string()
