@@ -80,7 +80,10 @@ end
 config :mithril, :direct_client_bookings, truthy_env?.("DIRECT_CLIENT_BOOKINGS")
 
 stripe_checkout_env_gate =
-  case System.get_env("STRIPE_BOOKING_CHECKOUT_ENABLED") |> to_string() |> String.trim() |> String.downcase() do
+  case System.get_env("STRIPE_BOOKING_CHECKOUT_ENABLED")
+       |> to_string()
+       |> String.trim()
+       |> String.downcase() do
     "" -> :unset
     value when value in ~w(false 0 off) -> :off
     value when value in ~w(true 1 on) -> :on
