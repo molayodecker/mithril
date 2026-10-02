@@ -42,11 +42,13 @@ defmodule Mithril.Stripe.Test do
   def create_payment_intent(attrs) do
     reference = Map.fetch!(attrs, :reference)
 
+    form_params = Map.get(attrs, :form_params, %{})
+
     record = %{
       id: "pi_test_#{reference}",
       client_secret: "pi_test_secret_#{reference}",
-      amount: Map.get(attrs, :amount),
-      currency: Map.get(attrs, :currency)
+      amount: Map.get(form_params, :amount) || Map.get(form_params, "amount"),
+      currency: Map.get(form_params, :currency) || Map.get(form_params, "currency")
     }
 
     put_intent(record.id, record)
