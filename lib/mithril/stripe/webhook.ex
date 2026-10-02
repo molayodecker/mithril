@@ -20,7 +20,8 @@ defmodule Mithril.Stripe.Webhook do
       end
     else
       {:error, %Jason.DecodeError{}} -> {:error, :invalid_json}
-      {:error, reason} -> {:error, reason}
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -39,10 +40,14 @@ defmodule Mithril.Stripe.Webhook do
            settle(payment_intent_id, amount_minor, currency, metadata) do
       {:ok, Map.put(result, :event, "payment_intent.succeeded")}
     else
-      false -> {:error, :invalid_payload}
+      false ->
+        {:error, :invalid_payload}
+
       {:error, :stale_attempt} ->
         case Stripe.refund_payment_intent(payment_intent_id) do
-          :ok -> {:ok, %{event: "payment_intent.succeeded", refunded: true, settled: false}}
+          :ok ->
+            {:ok, %{event: "payment_intent.succeeded", refunded: true, settled: false}}
+
           {:error, reason} ->
             Logger.error("Stripe stale PaymentIntent refund failed: #{inspect(reason)}")
             {:error, :provider_unavailable}
@@ -86,8 +91,12 @@ defmodule Mithril.Stripe.Webhook do
       end
     end)
     |> case do
-      {:ok, result} -> {:ok, result}
-      {:error, reason} when is_atom(reason) -> {:error, reason}
+      {:ok, result} ->
+        {:ok, result}
+
+      {:error, reason} when is_atom(reason) ->
+        {:error, reason}
+
       {:error, error} ->
         Logger.error("Stripe webhook database error: #{inspect(error)}")
         {:error, :database_unavailable}
@@ -108,8 +117,21 @@ defmodule Mithril.Stripe.Webhook do
            """,
            [payment_intent_id]
          ) do
-      {:ok, %{rows: [[attempt_id, booking_uuid, reference, state, amount_minor, currency,
-                      payment_status, booking_reference]]}} ->
+      {:ok,
+       %{
+         rows: [
+           [
+             attempt_id,
+             booking_uuid,
+             reference,
+             state,
+             amount_minor,
+             currency,
+             payment_status,
+             booking_reference
+           ]
+         ]
+       }} ->
         %{
           attempt_id: attempt_id,
           booking_uuid: booking_uuid,
