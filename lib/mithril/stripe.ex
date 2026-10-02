@@ -136,7 +136,8 @@ defmodule Mithril.Stripe.HTTP do
              id: body["id"],
              client_secret: body["client_secret"],
              amount: body["amount"],
-             currency: body["currency"]
+             currency: body["currency"],
+             status: body["status"]
            }}
 
         {:ok, %{status: 404}} ->
@@ -195,8 +196,10 @@ defmodule Mithril.Stripe.HTTP do
   end
 
   defp flatten_form({key, value}, prefix) when is_map(value) do
-    Enum.flat_map(value, fn {nested_key, nested_value} ->
-      flatten_form({nested_key, nested_value}, "#{prefix}[#{key}]")
+    nested_prefix = if prefix == "", do: to_string(key), else: "#{prefix}[#{key}]"
+
+    Enum.flat_map(value, fn entry ->
+      flatten_form(entry, nested_prefix)
     end)
   end
 
