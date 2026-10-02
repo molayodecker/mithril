@@ -34,7 +34,7 @@ defmodule Mithril.StripeChargeCurrency do
            }}
         end
 
-      true ->
+      booking_currency == @booking_source_currency ->
         with {:ok, converted} <- convert_ghs_minor(booking_amount_minor, usd_per_ghs) do
           if converted < @usd_minimum_minor do
             {:error, "Amount is too small for card checkout. Please pay with Mobile Money."}
@@ -49,6 +49,9 @@ defmodule Mithril.StripeChargeCurrency do
              }}
           end
         end
+
+      true ->
+        {:error, "Card checkout does not support this booking currency. Please use another payment method."}
     end
   end
 
