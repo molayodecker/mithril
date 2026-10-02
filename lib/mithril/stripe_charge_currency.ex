@@ -8,7 +8,8 @@ defmodule Mithril.StripeChargeCurrency do
 
   @spec presentment_charge(map()) :: {:ok, map()} | {:error, String.t()}
   def presentment_charge(params) when is_map(params) do
-    booking_amount_minor = positive_minor(params[:booking_amount_minor] || params["booking_amount_minor"])
+    booking_amount_minor =
+      positive_minor(params[:booking_amount_minor] || params["booking_amount_minor"])
     booking_currency =
       (params[:booking_currency] || params["booking_currency"] || @booking_source_currency)
       |> to_string()
@@ -51,7 +52,8 @@ defmodule Mithril.StripeChargeCurrency do
         end
 
       true ->
-        {:error, "Card checkout does not support this booking currency. Please use another payment method."}
+        {:error,
+         "Card checkout does not support this booking currency. Please use another payment method."}
     end
   end
 
