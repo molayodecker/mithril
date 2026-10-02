@@ -34,6 +34,35 @@ defmodule Mithril.BookingCheckoutOptionsTest do
     assert body.stripe_unavailable_reason == "stripe_disabled"
   end
 
+  test "shows Stripe for native clients when configured and enabled" do
+    Application.put_env(:mithril, :stripe_booking_checkout_env_gate, :on)
+    Application.put_env(:mithril, :stripe_secret_key, "sk_test")
+    user_id = Ecto.UUID.generate()
+
+    assert {:ok, body} =
+             MobileFunctions.invoke(user_id, "booking-checkout-options", %{
+               "client_platform" => "ios"
+             })
+
+    assert body.paystack_available == true
+    assert body.stripe_available == true
+    assert is_nil(body.stripe_unavailable_reason)
+  end
+
+  test "hides Stripe for web clients even when configured and enabled" do
+    Application.put_env(:mithril, :stripe_booking_checkout_env_gate, :on)
+    Application.put_env(:mithril, :stripe_secret_key, "sk_test")
+    user_id = Ecto.UUID.generate()
+
+    assert {:ok, body} =
+             MobileFunctions.invoke(user_id, "booking-checkout-options", %{
+               "clientPlatform" => "web"
+             })
+
+    assert body.stripe_available == false
+    assert body.stripe_unavailable_reason == "web_unsupported"
+  end
+
   test "hides Stripe when the env gate is unset and PostHog has no project key" do
     Application.put_env(:mithril, :stripe_booking_checkout_env_gate, :unset)
     Application.put_env(:mithril, :stripe_secret_key, "sk_test")
