@@ -19,7 +19,9 @@ defmodule Mithril.Stripe.Webhook do
         _ -> {:ok, %{event: event_type, ignored: true}}
       end
     else
-      {:error, %Jason.DecodeError{}} -> {:error, :invalid_json}
+      {:error, %Jason.DecodeError{}} ->
+        {:error, :invalid_json}
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -53,7 +55,8 @@ defmodule Mithril.Stripe.Webhook do
             {:error, :provider_unavailable}
         end
 
-      {:error, reason} -> {:error, reason}
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
