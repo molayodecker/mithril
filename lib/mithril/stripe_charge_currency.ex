@@ -10,7 +10,7 @@ defmodule Mithril.StripeChargeCurrency do
   def presentment_charge(params) when is_map(params) do
     booking_amount_minor = positive_minor(params[:booking_amount_minor] || params["booking_amount_minor"])
     booking_currency =
-      params[:booking_currency] || params["booking_currency"] || @booking_source_currency
+      (params[:booking_currency] || params["booking_currency"] || @booking_source_currency)
       |> to_string()
       |> String.trim()
       |> String.downcase()
@@ -164,7 +164,7 @@ defmodule Mithril.StripeChargeCurrency do
     case Req.get(url, receive_timeout: 8_000) do
       {:ok, %{status: status, body: payload}} when status in 200..299 ->
         rate =
-          get_in(payload, ["rates", "USD"]) || get_in(payload, ["rates", "usd"])
+          (get_in(payload, ["rates", "USD"]) || get_in(payload, ["rates", "usd"]))
           |> positive_rate()
 
         if rate, do: {:ok, rate}, else: {:error, :public_rate_unavailable}
