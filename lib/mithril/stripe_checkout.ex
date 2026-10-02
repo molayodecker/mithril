@@ -3,9 +3,17 @@ defmodule Mithril.StripeCheckout do
 
   alias Mithril.Posthog
 
-  @spec options() :: map()
-  def options do
-    {stripe_available, reason} = stripe_availability(nil, false, 0)
+  @spec options(keyword()) :: map()
+  def options(opts \\ []) when is_list(opts) do
+    client_platform = Keyword.get(opts, :client_platform)
+
+    {stripe_available, reason} =
+      cond do
+        not configured?() -> {false, "stripe_disabled"}
+        not enabled_by_release_gate?() -> {false, "stripe_disabled"}
+        web_platform?(client_platform) -> {false, "web_unsupported"}
+        true -> {true, nil}
+      end
 
     %{
       paystack_available: true,
