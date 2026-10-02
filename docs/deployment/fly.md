@@ -149,6 +149,25 @@ fly mpg attach <cluster-id> -a instaclean-mithril -d fly-db -u fly-user --variab
 
 Never commit these values to git.
 
+### Stripe booking checkout (Payment Sheet)
+
+Card checkout uses `POST /mobile/functions/initialize-stripe-booking-payment`. Mithril reads:
+
+- `STRIPE_SECRET_KEY` — required for PaymentIntent creation (test key on staging, live key on production).
+- `STRIPE_BOOKING_CHECKOUT_ENABLED` — optional tri-state override (`true` / `false`; unset = PostHog `booking_stripe_checkout_v1`).
+
+Set secrets on Fly (do not commit keys):
+
+```bash
+export STRIPE_SECRET_KEY='sk_test_...'
+bash scripts/set_fly_stripe_secrets.sh staging
+
+export STRIPE_SECRET_KEY='sk_live_...'
+bash scripts/set_fly_stripe_secrets.sh production
+```
+
+Staging already has `STRIPE_BOOKING_CHECKOUT_ENABLED=true` in many environments; production usually leaves that unset and relies on PostHog project `514495`.
+
 ## 4. Configure the production API domain
 
 Attach the hostname to the Fly app:

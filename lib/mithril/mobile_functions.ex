@@ -1,11 +1,13 @@
 defmodule Mithril.MobileFunctions do
   @moduledoc false
 
+  alias Mithril.MobileFunctions.BookingCheckoutOptions
   alias Mithril.MobileFunctions.CancelSubscription
   alias Mithril.MobileFunctions.ClaimJob
   alias Mithril.MobileFunctions.ConnectPropertyCalendar
   alias Mithril.MobileFunctions.CreateJobAndNotify
   alias Mithril.MobileFunctions.DeletePropertyMedia
+  alias Mithril.MobileFunctions.InitializeStripeBookingPayment
   alias Mithril.MobileFunctions.NotifyBookingRescheduled
   alias Mithril.MobileFunctions.NotifyPaymentFailureOps
   alias Mithril.MobileFunctions.Paystack
@@ -55,6 +57,12 @@ defmodule Mithril.MobileFunctions do
 
   def invoke(user_id, "create-job-and-notify", body) when is_map(body),
     do: CreateJobAndNotify.call(user_id, body)
+
+  def invoke(user_id, "booking-checkout-options", body) when is_map(body),
+    do: BookingCheckoutOptions.call(user_id, body)
+
+  def invoke(user_id, "initialize-stripe-booking-payment", body) when is_map(body),
+    do: InitializeStripeBookingPayment.call(user_id, body)
 
   def invoke(user_id, "uber-transportation-release-gate", body) when is_map(body),
     do: UberTransportationReleaseGate.call(user_id, body)

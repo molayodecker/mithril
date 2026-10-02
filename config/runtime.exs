@@ -78,7 +78,16 @@ if config_env() != :test do
 end
 
 config :mithril, :direct_client_bookings, truthy_env?.("DIRECT_CLIENT_BOOKINGS")
-config :mithril, :stripe_booking_checkout_enabled, truthy_env?.("STRIPE_BOOKING_CHECKOUT_ENABLED")
+
+stripe_checkout_env_gate =
+  case System.get_env("STRIPE_BOOKING_CHECKOUT_ENABLED") |> to_string() |> String.trim() |> String.downcase() do
+    "" -> :unset
+    value when value in ~w(false 0 off) -> :off
+    value when value in ~w(true 1 on) -> :on
+    _ -> :unset
+  end
+
+config :mithril, :stripe_booking_checkout_env_gate, stripe_checkout_env_gate
 
 if parity_token = System.get_env("MITHRIL_PARITY_TOKEN") do
   config :mithril, :parity_token, parity_token
@@ -141,6 +150,11 @@ end
 if paystack_secret = System.get_env("PAYSTACK_SECRET_KEY") do
   config :mithril, :paystack_secret_key, paystack_secret
   config :mithril, :paystack_adapter, Mithril.Paystack.HTTP
+end
+
+if stripe_secret = System.get_env("STRIPE_SECRET_KEY") do
+  config :mithril, :stripe_secret_key, stripe_secret
+  config :mithril, :stripe_adapter, Mithril.Stripe.HTTP
 end
 
 if google_maps_key = System.get_env("GOOGLE_MAPS_API_KEY") do
