@@ -78,8 +78,12 @@ defmodule Mithril.StripeCheckout do
 
   defp enabled_by_release_gate? do
     case Application.get_env(:mithril, :stripe_booking_checkout_env_gate, :unset) do
-      :off -> false
-      :on -> true
+      :off ->
+        false
+
+      :on ->
+        true
+
       :unset ->
         Posthog.fetch_boolean_flag(
           Posthog.booking_stripe_checkout_flag(),
