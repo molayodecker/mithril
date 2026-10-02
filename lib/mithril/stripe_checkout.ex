@@ -10,6 +10,7 @@ defmodule Mithril.StripeCheckout do
     {stripe_available, reason} =
       cond do
         not configured?() -> {false, "stripe_disabled"}
+        not reconciliation_configured?() -> {false, "stripe_disabled"}
         not enabled_by_release_gate?() -> {false, "stripe_disabled"}
         web_platform?(client_platform) -> {false, "web_unsupported"}
         true -> {true, nil}
@@ -24,7 +25,7 @@ defmodule Mithril.StripeCheckout do
 
   @spec checkout_enabled?() :: boolean()
   def checkout_enabled? do
-    configured?() and enabled_by_release_gate?()
+    configured?() and reconciliation_configured?() and enabled_by_release_gate?()
   end
 
   @spec availability(keyword()) :: %{stripe_available: boolean(), reason: String.t() | nil}
@@ -42,6 +43,9 @@ defmodule Mithril.StripeCheckout do
   defp stripe_availability(client_platform, subscription_activatable, amount_minor) do
     cond do
       not configured?() ->
+        {false, "stripe_disabled"}
+
+      not reconciliation_configured?() ->
         {false, "stripe_disabled"}
 
       not enabled_by_release_gate?() ->
@@ -63,6 +67,13 @@ defmodule Mithril.StripeCheckout do
 
   defp configured? do
     stripe_secret_key() != ""
+  end
+
+  defp reconciliation_configured? do
+    Application.get_env(:mithril, :stripe_webhook_secret, "")
+    |> to_string()
+    |> String.trim()
+    |> Kernel.!=( "")
   end
 
   defp enabled_by_release_gate? do
