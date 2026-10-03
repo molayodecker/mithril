@@ -22,3 +22,6 @@ mithril-*.tar
 # Test / tooling
 /test-results/
 /.artifacts/
+
+# Supabase CLI (link state under .temp; not project config)
+/supabase/.temp/

@@ -71,7 +71,7 @@ defmodule Mithril.SupportOps do
       false
     else
       emails
-      |> Enum.map(fn email ->
+      |> Enum.any?(fn email ->
         case Req.post(
                "https://api.resend.com/emails",
                json: %{
@@ -86,7 +86,6 @@ defmodule Mithril.SupportOps do
           _ -> false
         end
       end)
-      |> Enum.any?()
     end
   end
 

@@ -8,6 +8,7 @@ kill_timeout = 30
 
 [env]
   PHX_HOST = "api.tryinstaclean.com"
+  # PostHog project 514495. The project API key is a secret. Stripe stays off there.
   PORT = "4000"
   POOL_SIZE = "5"
   DATABASE_BACKEND = "fly"

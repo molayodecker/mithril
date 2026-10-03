@@ -15,6 +15,7 @@ kill_timeout = 30
   SUMSUB_WORKER_LEVEL_NAME = "id-and-liveness"
   # Mobile review submit creates bookings through POST /direct/bookings.
   DIRECT_CLIENT_BOOKINGS = "true"
+  # PostHog project 514497 (Instaclean-mobile-preview). The project API key is a secret.
 
 [http_service]
   internal_port = 4000

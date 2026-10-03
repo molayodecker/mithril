@@ -810,7 +810,9 @@ defmodule Mithril.StripeBookingPayments do
 
   defp amount_to_integer(_), do: 0
 
-  defp dump_uuid(value) when is_binary(value), do: Ecto.UUID.dump(value)
+  defp dump_uuid(value) do
+    if is_binary(value), do: Ecto.UUID.dump(value), else: :error
+  end
 
   defp map_atom_error(:bad_request), do: {:status, 400, %{error: "Invalid request"}}
   defp map_atom_error(:not_payable), do: {:status, 400, %{error: "Booking has no payable amount"}}
