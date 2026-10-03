@@ -6,9 +6,16 @@ defmodule Mithril.Posthog do
 
   @booking_uber_transportation_flag "booking_uber_transportation_v1"
   @uber_release_gate_distinct_id "instaclean-uber-transportation-release-gate"
+  @booking_stripe_checkout_flag "booking_stripe_checkout_v1"
+  # Non-user id so the release check does not send a customer identity.
+  # Staging PostHog project is 514497. Production is 514495.
+  # POSTHOG_PROJECT_API_KEY selects the project.
+  @stripe_release_gate_distinct_id "instaclean-stripe-checkout-release-gate"
 
   def booking_uber_transportation_flag, do: @booking_uber_transportation_flag
   def uber_release_gate_distinct_id, do: @uber_release_gate_distinct_id
+  def booking_stripe_checkout_flag, do: @booking_stripe_checkout_flag
+  def stripe_release_gate_distinct_id, do: @stripe_release_gate_distinct_id
 
   @spec fetch_boolean_flag(String.t(), String.t(), keyword()) :: boolean()
   def fetch_boolean_flag(flag_key, distinct_id, opts \\ [])

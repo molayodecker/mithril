@@ -8,7 +8,7 @@ config :mithril,
   auth_access_ttl: 3600,
   auth_refresh_ttl: 60 * 60 * 24 * 30,
   direct_client_bookings: false,
-  stripe_booking_checkout_enabled: false
+  stripe_booking_checkout_env_gate: :unset
 
 config :mithril, MithrilWeb.Endpoint,
   url: [host: "localhost"],
