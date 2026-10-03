@@ -27,16 +27,11 @@ defmodule Mithril.PropertyCalendar.IcalSync do
 
   @spec import_feed(map(), String.t()) :: :ok | {:error, String.t()}
   def import_feed(feed, ics_text) do
-    try do
-      with {:ok, parsed} <- IcalParser.parse_events(ics_text),
-           :ok <- credible_feed?(parsed, feed["id"]),
-           :ok <- upsert_events(feed, parsed),
-           :ok <- TurnoverOpportunities.recompute(feed) do
-        :ok
-      end
-    rescue
-      error in [Postgrex.Error, DBConnection.ConnectionError] ->
-        {:error, "calendar_sync_database_error: #{Exception.message(error)}"}
+    with {:ok, parsed} <- IcalParser.parse_events(ics_text),
+         :ok <- credible_feed?(parsed, feed["id"]),
+         :ok <- upsert_events(feed, parsed),
+         :ok <- TurnoverOpportunities.recompute(feed) do
+      :ok
     end
   end
 
@@ -48,41 +43,44 @@ defmodule Mithril.PropertyCalendar.IcalSync do
   end
 
   defp prior_event_count(feed_id) do
-    %{rows: [[count]]} =
-      Repo.query!(
-        """
-        SELECT count(*)::int FROM public.property_calendar_events
-        WHERE calendar_feed_id = $1::uuid AND cancelled_at IS NULL
-        """,
-        [feed_id]
-      )
-
-    count
+    case Repo.query(
+           """
+           SELECT count(*)::int FROM public.property_calendar_events
+           WHERE calendar_feed_id = $1::uuid AND cancelled_at IS NULL
+           """,
+           [feed_id]
+         ) do
+      {:ok, %{rows: [[count]]}} -> count
+      _ -> 0
+    end
   end
 
   defp upsert_events(feed, parsed) do
     now = DateTime.utc_now() |> DateTime.to_iso8601()
 
-    %{rows: rows} =
-      Repo.query!(
-        """
-        SELECT id, external_uid, external_sequence, raw_event_hash, missing_sync_count, status
-        FROM public.property_calendar_events WHERE calendar_feed_id = $1::uuid
-        """,
-        [feed["id"]]
-      )
-
     existing =
-      Map.new(rows, fn [id, uid, seq, hash, missing, status] ->
-        {uid,
-         %{
-           id: id,
-           sequence: seq,
-           raw_event_hash: hash,
-           missing_sync_count: missing,
-           status: status
-         }}
-      end)
+      case Repo.query(
+             """
+             SELECT id, external_uid, external_sequence, raw_event_hash, missing_sync_count, status
+             FROM public.property_calendar_events WHERE calendar_feed_id = $1::uuid
+             """,
+             [feed["id"]]
+           ) do
+        {:ok, %{rows: rows}} ->
+          Map.new(rows, fn [id, uid, seq, hash, missing, status] ->
+            {uid,
+             %{
+               id: id,
+               sequence: seq,
+               raw_event_hash: hash,
+               missing_sync_count: missing,
+               status: status
+             }}
+          end)
+
+        _ ->
+          %{}
+      end
 
     seen_uids =
       Enum.reduce(parsed, MapSet.new(), fn event, seen_acc ->
@@ -92,7 +90,7 @@ defmodule Mithril.PropertyCalendar.IcalSync do
         if apply_incoming?(existing_row, event.sequence, raw_hash) do
           {starts_at, ends_at} = resolve_window(event, feed)
 
-          Repo.query!(
+          Repo.query(
             """
             INSERT INTO public.property_calendar_events (
               calendar_feed_id, property_id, external_uid, external_sequence, status,
@@ -146,7 +144,7 @@ defmodule Mithril.PropertyCalendar.IcalSync do
         next_missing = (row.missing_sync_count || 0) + 1
 
         if next_missing >= @missing_threshold do
-          Repo.query!(
+          Repo.query(
             """
             UPDATE public.property_calendar_events
             SET status = 'cancelled', cancelled_at = $2::timestamptz,
@@ -156,7 +154,7 @@ defmodule Mithril.PropertyCalendar.IcalSync do
             [row.id, now, next_missing]
           )
         else
-          Repo.query!(
+          Repo.query(
             "UPDATE public.property_calendar_events SET missing_sync_count = $2, updated_at = $3::timestamptz WHERE id = $1::uuid",
             [row.id, next_missing, now]
           )
@@ -185,8 +183,8 @@ defmodule Mithril.PropertyCalendar.IcalSync do
     checkin = feed["default_checkin_time"] || "15:00:00"
     checkout = feed["default_checkout_time"] || "11:00:00"
 
-    starts_at = resolve_instant(event.dtstart, timezone, checkin)
-    ends_at = resolve_instant(event.dtend, timezone, checkout)
+    starts_at = resolve_instant(event.dtstart, timezone, checkout)
+    ends_at = resolve_instant(event.dtend, timezone, checkin)
     {starts_at, ends_at}
   end
 

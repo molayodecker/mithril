@@ -761,6 +761,7 @@ defmodule Mithril.DirectBookings do
         :unpaid -> {~w(pending confirmed), ~w(pending failed)}
       end
 
+    # status is the booking_status enum. Comparing it to text[] is 42883.
     case Repo.query(
            """
            UPDATE public.bookings
@@ -785,7 +786,7 @@ defmodule Mithril.DirectBookings do
                updated_at = now()
            WHERE id = $1
              AND customer_id = $6
-             AND status = ANY($7::text[])
+             AND status::text = ANY($7::text[])
              AND payment_status = ANY($8::text[])
              AND subscription_id IS NULL
            RETURNING id

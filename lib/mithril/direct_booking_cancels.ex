@@ -298,6 +298,7 @@ defmodule Mithril.DirectBookingCancels do
   end
 
   defp mark_cancelled(booking_id, customer_id, actor, tier, reason) do
+    # status is the booking_status enum. Comparing it to text[] is 42883.
     case Repo.query(
            """
            UPDATE public.bookings
@@ -311,7 +312,7 @@ defmodule Mithril.DirectBookingCancels do
                updated_at = now()
            WHERE id = $1
              AND customer_id = $7
-             AND status = ANY($8::text[])
+             AND status::text = ANY($8::text[])
            RETURNING id
            """,
            [
