@@ -36,6 +36,19 @@ Local metrics:       http://localhost:9091/metrics
 # api.tryinstaclean.com or dev.tryinstaclean.com. Sign in to Grafana
 # with the Fly account for the personal org. Mithril does not host Grafana.
 
+## Stripe test cards (test-mode keys only)
+Use any future expiry (e.g. 12/34). CVC is any 3 digits (4 for Amex). ZIP can be anything.
+Docs: https://docs.stripe.com/testing
+
+Success Visa:        4242 4242 4242 4242
+Success Mastercard:  5555 5555 5555 4444
+Success Amex:        3782 822463 10005
+Decline generic:     4000 0000 0000 0002
+Decline no funds:    4000 0000 0000 9995
+Decline expired:     4000 0000 0000 0069
+Decline bad CVC:     4000 0000 0000 0127
+3D Secure required:  4000 0000 0000 3220
+
 ## Related sites
 Website:             https://tryinstaclean.com
 Direct:              https://direct.tryinstaclean.com

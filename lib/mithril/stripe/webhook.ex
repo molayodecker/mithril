@@ -29,7 +29,8 @@ defmodule Mithril.Stripe.Webhook do
 
   def handle(_, _), do: {:error, :invalid_payload}
 
-  defp reconcile_succeeded(intent) do
+  @doc false
+  def reconcile_succeeded(intent) when is_map(intent) do
     payment_intent_id = string(intent["id"])
     amount_minor = integer(intent["amount_received"] || intent["amount"])
     currency = intent["currency"] |> string() |> String.downcase()
@@ -73,6 +74,12 @@ defmodule Mithril.Stripe.Webhook do
             attempt.state in ["superseded", "failed"] ->
               Repo.rollback(:stale_attempt)
 
+            attempt.booking_status == "cancelled" and attempt.state != "paid" ->
+              Repo.rollback(:stale_attempt)
+
+            settled?(attempt.payment_status) and attempt.payment_method != "stripe" ->
+              Repo.rollback(:stale_attempt)
+
             settled?(attempt.payment_status) and attempt.booking_reference == attempt.reference ->
               mark_attempt_paid!(attempt.attempt_id)
               %{already_paid: true, settled: true, reference: attempt.reference}
@@ -110,7 +117,7 @@ defmodule Mithril.Stripe.Webhook do
     case Repo.query(
            """
            SELECT pa.id, pa.booking_id, pa.reference, pa.status, pa.amount_minor, pa.currency,
-                  b.payment_status, b.reference
+                  b.payment_status, b.payment_method, b.reference, b.status::text
            FROM public.payment_attempts pa
            JOIN public.bookings b ON b.id = pa.booking_id
            WHERE pa.provider = 'stripe'
@@ -131,7 +138,9 @@ defmodule Mithril.Stripe.Webhook do
              amount_minor,
              currency,
              payment_status,
-             booking_reference
+             payment_method,
+             booking_reference,
+             booking_status
            ]
          ]
        }} ->
@@ -144,7 +153,13 @@ defmodule Mithril.Stripe.Webhook do
           amount_minor: amount_to_integer(amount_minor),
           currency: currency |> to_string() |> String.downcase(),
           payment_status: payment_status |> to_string() |> String.downcase(),
-          booking_reference: booking_reference
+          payment_method:
+            payment_method
+            |> to_string()
+            |> String.trim()
+            |> String.downcase(),
+          booking_reference: booking_reference,
+          booking_status: booking_status |> to_string() |> String.downcase()
         }
 
       {:ok, %{rows: []}} ->

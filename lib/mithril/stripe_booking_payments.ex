@@ -7,6 +7,7 @@ defmodule Mithril.StripeBookingPayments do
   alias Mithril.Stripe
   alias Mithril.StripeChargeCurrency
   alias Mithril.StripeCheckout
+  alias Mithril.Stripe.Webhook, as: StripeWebhook
 
   @poll_delays_ms [100, 150, 200, 250, 300, 400]
   @settled_statuses ~w(paid post_paid refunded partially_refunded)
@@ -69,6 +70,204 @@ defmodule Mithril.StripeBookingPayments do
       {:error, reason} when is_atom(reason) -> {:error, map_atom_error(reason)}
     end
   end
+
+  @spec verify_payment_intent(String.t(), map()) :: {:ok, map()} | {:error, term()}
+  def verify_payment_intent(user_id, body) when is_binary(user_id) and is_map(body) do
+    with :ok <- ensure_stripe_configured(),
+         {:ok, booking_id} <- required_uuid(body, "booking_id"),
+         {:ok, customer_id} <- dump_uuid(user_id),
+         {:ok, booking_uuid} <- dump_uuid(booking_id),
+         {:ok, _payment_status} <- load_booking_payment_status(customer_id, booking_uuid) do
+      verify_open_booking_payment(booking_uuid, body)
+    else
+      {:error, {:status, _, _} = error} -> {:error, error}
+      {:error, :not_found} -> {:error, {:status, 404, %{error: "Booking not found"}}}
+      {:error, reason} when is_atom(reason) -> {:error, map_verify_error(reason)}
+    end
+  end
+
+  defp verify_open_booking_payment(booking_uuid, body) do
+    reference = optional_string(body, "reference")
+
+    client_payment_intent_id =
+      optional_string(body, "payment_intent_id") || optional_string(body, "paymentIntentId")
+
+    with {:ok, payment_intent_id} <-
+           resolve_stripe_payment_intent_id(
+             booking_uuid,
+             reference,
+             client_payment_intent_id
+           ) do
+      if payment_intent_id in [nil, ""] do
+        {:ok, %{ok: true, data: %{verified: false, status: "missing"}}}
+      else
+        reconcile_stripe_payment_intent(payment_intent_id)
+      end
+    end
+  end
+
+  defp reconcile_stripe_payment_intent(payment_intent_id) do
+    case Stripe.fetch_payment_intent(payment_intent_id) do
+      {:ok, payment_intent} ->
+        status = payment_intent[:status] || payment_intent["status"]
+
+        if status != "succeeded" do
+          {:ok,
+           %{
+             ok: true,
+             data: %{
+               verified: false,
+               status: to_string(status || "unknown"),
+               payment_intent_id: payment_intent_id
+             }
+           }}
+        else
+          intent_for_settle = payment_intent_to_webhook_object(payment_intent)
+
+          case StripeWebhook.reconcile_succeeded(intent_for_settle) do
+            {:ok, %{refunded: true}} ->
+              {:ok,
+               %{
+                 ok: true,
+                 data: %{
+                   verified: false,
+                   status: "refunded_duplicate",
+                   payment_intent_id: payment_intent_id
+                 }
+               }}
+
+            {:ok, %{already_paid: true}} ->
+              {:ok,
+               %{
+                 ok: true,
+                 data: %{
+                   verified: true,
+                   status: "succeeded",
+                   payment_intent_id: payment_intent_id,
+                   paid_via_webhook: true
+                 }
+               }}
+
+            {:ok, %{settled: true}} ->
+              {:ok,
+               %{
+                 ok: true,
+                 data: %{
+                   verified: true,
+                   status: "succeeded",
+                   payment_intent_id: payment_intent_id,
+                   paid_via_webhook: false
+                 }
+               }}
+
+            {:ok, %{ignored: true}} ->
+              {:ok,
+               %{
+                 ok: true,
+                 data: %{
+                   verified: false,
+                   status: "missing",
+                   payment_intent_id: payment_intent_id
+                 }
+               }}
+
+            {:error, :provider_unavailable} ->
+              {:error, {:status, 502, %{error: "Payment verification failed"}}}
+
+            {:error, reason} ->
+              Logger.error("Stripe verify reconcile failed: #{inspect(reason)}")
+              {:error, {:status, 502, %{error: "Payment verification failed"}}}
+          end
+        end
+
+      {:error, :not_found} ->
+        {:error, {:status, 404, %{error: "Payment not found"}}}
+
+      {:error, _} ->
+        {:error, {:status, 502, %{error: "Payment verification failed"}}}
+    end
+  end
+
+  defp payment_intent_to_webhook_object(payment_intent) when is_map(payment_intent) do
+    %{
+      "id" => Map.get(payment_intent, :id) || Map.get(payment_intent, "id"),
+      "amount_received" =>
+        Map.get(payment_intent, :amount_received) || Map.get(payment_intent, "amount_received") ||
+          Map.get(payment_intent, :amount) || Map.get(payment_intent, "amount"),
+      "amount" => Map.get(payment_intent, :amount) || Map.get(payment_intent, "amount"),
+      "currency" => Map.get(payment_intent, :currency) || Map.get(payment_intent, "currency"),
+      "metadata" =>
+        Map.get(payment_intent, :metadata) || Map.get(payment_intent, "metadata") || %{}
+    }
+  end
+
+  defp load_booking_payment_status(customer_id, booking_uuid) do
+    case Repo.query(
+           """
+           SELECT payment_status
+           FROM public.bookings
+           WHERE id = $1 AND customer_id = $2
+           LIMIT 1
+           """,
+           [booking_uuid, customer_id]
+         ) do
+      {:ok, %{rows: [[payment_status]]}} ->
+        {:ok, payment_status |> to_string() |> String.downcase()}
+
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        Logger.error("Stripe verify booking lookup failed: #{inspect(error)}")
+        {:error, :database_unavailable}
+    end
+  end
+
+  defp resolve_stripe_payment_intent_id(booking_uuid, reference, payment_intent_id) do
+    {filters, params} =
+      {["booking_id = $1", "provider = 'stripe'", "stripe_payment_intent_id IS NOT NULL"],
+       [booking_uuid]}
+
+    {filters, params} =
+      if is_binary(reference) and reference != "" do
+        {filters ++ ["reference = $#{length(params) + 1}"], params ++ [reference]}
+      else
+        {filters, params}
+      end
+
+    {filters, params} =
+      if is_binary(payment_intent_id) and payment_intent_id != "" do
+        {filters ++ ["stripe_payment_intent_id = $#{length(params) + 1}"],
+         params ++ [payment_intent_id]}
+      else
+        {filters, params}
+      end
+
+    sql = """
+    SELECT stripe_payment_intent_id
+    FROM public.payment_attempts
+    WHERE #{Enum.join(filters, "\n  AND ")}
+    ORDER BY created_at DESC
+    LIMIT 1
+    """
+
+    case Repo.query(sql, params) do
+      {:ok, %{rows: [[resolved_id]]}} when is_binary(resolved_id) ->
+        {:ok, String.trim(resolved_id)}
+
+      {:ok, %{rows: []}} ->
+        {:ok, nil}
+
+      {:error, error} ->
+        Logger.error("Stripe verify payment-attempt lookup failed: #{inspect(error)}")
+        {:error, :database_unavailable}
+    end
+  end
+
+  defp map_verify_error(:bad_request), do: {:status, 400, %{error: "Invalid request"}}
+
+  defp map_verify_error(:database_unavailable),
+    do: {:status, 502, %{error: "Payment verification failed"}}
 
   defp ensure_stripe_configured do
     if Stripe.configured?(),
