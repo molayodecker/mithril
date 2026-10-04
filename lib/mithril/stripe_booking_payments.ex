@@ -77,16 +77,8 @@ defmodule Mithril.StripeBookingPayments do
          {:ok, booking_id} <- required_uuid(body, "booking_id"),
          {:ok, customer_id} <- dump_uuid(user_id),
          {:ok, booking_uuid} <- dump_uuid(booking_id),
-         {:ok, payment_status} <- load_booking_payment_status(customer_id, booking_uuid) do
-      if settled_payment_status?(payment_status) do
-        {:ok,
-         %{
-           ok: true,
-           data: %{verified: true, status: "succeeded", paid_via_webhook: true}
-         }}
-      else
-        verify_open_booking_payment(booking_uuid, body)
-      end
+         {:ok, _payment_status} <- load_booking_payment_status(customer_id, booking_uuid) do
+      verify_open_booking_payment(booking_uuid, body)
     else
       {:error, {:status, _, _} = error} -> {:error, error}
       {:error, :not_found} -> {:error, {:status, 404, %{error: "Booking not found"}}}
@@ -100,13 +92,17 @@ defmodule Mithril.StripeBookingPayments do
     client_payment_intent_id =
       optional_string(body, "payment_intent_id") || optional_string(body, "paymentIntentId")
 
-    payment_intent_id =
-      resolve_stripe_payment_intent_id(booking_uuid, reference, client_payment_intent_id)
-
-    if payment_intent_id in [nil, ""] do
-      {:ok, %{ok: true, data: %{verified: false, status: "missing"}}}
-    else
-      reconcile_stripe_payment_intent(payment_intent_id)
+    with {:ok, payment_intent_id} <-
+           resolve_stripe_payment_intent_id(
+             booking_uuid,
+             reference,
+             client_payment_intent_id
+           ) do
+      if payment_intent_id in [nil, ""] do
+        {:ok, %{ok: true, data: %{verified: false, status: "missing"}}}
+      else
+        reconcile_stripe_payment_intent(payment_intent_id)
+      end
     end
   end
 
@@ -257,15 +253,16 @@ defmodule Mithril.StripeBookingPayments do
 
     case Repo.query(sql, params) do
       {:ok, %{rows: [[resolved_id]]}} when is_binary(resolved_id) ->
-        String.trim(resolved_id)
+        {:ok, String.trim(resolved_id)}
 
-      _ ->
-        nil
+      {:ok, %{rows: []}} ->
+        {:ok, nil}
+
+      {:error, error} ->
+        Logger.error("Stripe verify payment-attempt lookup failed: #{inspect(error)}")
+        {:error, :database_unavailable}
     end
   end
-
-  defp settled_payment_status?(status) when is_binary(status), do: status in @settled_statuses
-  defp settled_payment_status?(_), do: false
 
   defp map_verify_error(:bad_request), do: {:status, 400, %{error: "Invalid request"}}
 
