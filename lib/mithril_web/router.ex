@@ -134,7 +134,7 @@ defmodule MithrilWeb.Router do
     get "/bookings/:id/cancellation-policy", DirectOperationsController, :cancellation_policy
     post "/bookings/:id/refund-request", DirectOperationsController, :request_refund
     post "/bookings/:id/cancel", DirectBookingController, :cancel
-    post "/bookings/:id/release-unpaid", DirectBookingController, :release_unpaid
+    post "/bookings/:id/replace-unpaid", DirectBookingController, :replace_unpaid
     post "/bookings/:id/reschedule", DirectBookingController, :reschedule
     post "/bookings/:id/payment", DirectBookingController, :initialize_payment
     post "/bookings/:id/payment/verify", DirectBookingController, :verify_payment
