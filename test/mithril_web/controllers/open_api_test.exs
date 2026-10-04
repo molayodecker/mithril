@@ -14,6 +14,7 @@ defmodule MithrilWeb.OpenApiTest do
     assert spec["paths"]["/direct/placements"]["post"]
     assert spec["paths"]["/direct/bookings"]["get"]
     assert spec["paths"]["/direct/bookings"]["post"]
+
     assert spec["paths"]["/direct/booking-categories"]["get"]["operationId"] ==
              "direct.listBookingCategories"
 
