@@ -274,6 +274,7 @@ defmodule Mithril.DirectBookingsTest do
     end)
 
     customer_id = Ecto.UUID.generate()
+
     booking_id =
       insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "pending")
 
