@@ -10,6 +10,9 @@ WhatsApp alias:      https://api.tryinstaclean.com/functions/v1/join-as-cleaner-
 Health:              https://api.tryinstaclean.com/health
 Ready:               https://api.tryinstaclean.com/ready
 OpenAPI:             https://api.tryinstaclean.com/openapi.json
+OpenAPI docs:        https://openapi.tryinstaclean.com/ (Swagger UI)
+OpenAPI Redoc:       https://openapi.tryinstaclean.com/redoc
+OpenAPI mirror:      https://api.tryinstaclean.com/docs
 
 ## Staging
 API:                 https://dev.tryinstaclean.com
@@ -21,6 +24,9 @@ WhatsApp alias:      https://dev.tryinstaclean.com/functions/v1/join-as-cleaner-
 Health:              https://dev.tryinstaclean.com/health
 Ready:               https://dev.tryinstaclean.com/ready
 OpenAPI:             https://dev.tryinstaclean.com/openapi.json
+OpenAPI docs:        https://openapi-stage.tryinstaclean.com/ (Swagger UI)
+OpenAPI Redoc:       https://openapi-stage.tryinstaclean.com/redoc
+OpenAPI mirror:      https://dev.tryinstaclean.com/docs
 
 ## Preview
 API:                 https://instaclean-mithril-preview.fly.dev

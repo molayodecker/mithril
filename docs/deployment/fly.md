@@ -187,6 +187,40 @@ fly certs check api.tryinstaclean.com -a instaclean-mithril
 
 Do not remove the default `instaclean-mithril.fly.dev` hostname; it remains a useful direct Fly fallback.
 
+## 4b. OpenAPI documentation hostnames
+
+Mithril serves interactive docs on dedicated hostnames (Swagger UI at `/`, Redoc at `/redoc`). The JSON contract remains at `/openapi.json` on the API hostnames (`api.tryinstaclean.com`, `dev.tryinstaclean.com`). Mirrors on the API hosts: `/docs` and `/docs/redoc`.
+
+| Environment | Docs hostname | Fly app | CNAME target |
+|-------------|---------------|---------|--------------|
+| Production | `openapi.tryinstaclean.com` | `instaclean-mithril` | `instaclean-mithril.fly.dev` |
+| Staging | `openapi-stage.tryinstaclean.com` | `instaclean-mithril-staging` | `instaclean-mithril-staging.fly.dev` |
+
+From the mithril repo:
+
+```bash
+bash scripts/setup_openapi_docs_dns.sh
+```
+
+In Cloudflare (or your DNS provider), create DNS records. Fly prints the exact targets:
+
+```bash
+fly certs setup openapi.tryinstaclean.com -a instaclean-mithril
+fly certs setup openapi-stage.tryinstaclean.com -a instaclean-mithril-staging
+```
+
+Prefer the **CNAME** option from that output (per-app hostname like `pekw5zk.instaclean-mithril.fly.dev`), or use the **A / AAAA** records Fly recommends.
+
+Use **DNS only** (grey cloud) while Fly provisions TLS, unless you also add Fly’s `_fly-ownership` TXT records from `fly certs setup`.
+
+After deploy:
+
+```bash
+curl -sI https://openapi.tryinstaclean.com/ | head -1
+curl -sI https://openapi-stage.tryinstaclean.com/redoc | head -1
+curl -s https://api.tryinstaclean.com/docs | head -c 80
+```
+
 ## 5. Deploy Mithril
 
 ```bash

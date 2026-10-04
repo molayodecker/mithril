@@ -22,6 +22,36 @@ defmodule MithrilWeb.Router do
     plug :accepts, ["html", "xml", "json"]
   end
 
+  pipeline :open_api_docs_site do
+    plug MithrilWeb.Plugs.OpenApiDocsHost
+    plug OpenApiSpex.Plug.PutApiSpec, module: MithrilWeb.ApiSpec
+  end
+
+  pipeline :open_api_browser_docs do
+    plug :accepts, ["html"]
+    plug OpenApiSpex.Plug.PutApiSpec, module: MithrilWeb.ApiSpec
+  end
+
+  scope "/" do
+    pipe_through :open_api_docs_site
+
+    get "/", OpenApiSpex.Plug.SwaggerUI,
+      path: "/openapi.json",
+      display_operation_id: true
+
+    get "/redoc", MithrilWeb.OpenApiDocsController, :redoc
+  end
+
+  scope "/" do
+    pipe_through :open_api_browser_docs
+
+    get "/docs", OpenApiSpex.Plug.SwaggerUI,
+      path: "/openapi.json",
+      display_operation_id: true
+
+    get "/docs/redoc", MithrilWeb.OpenApiDocsController, :redoc
+  end
+
   scope "/", MithrilWeb do
     pipe_through :api
 
