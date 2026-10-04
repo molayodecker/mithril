@@ -74,7 +74,7 @@ defmodule Mithril.Stripe.Webhook do
             attempt.state in ["superseded", "failed"] ->
               Repo.rollback(:stale_attempt)
 
-            attempt.booking_status == "cancelled" ->
+            attempt.booking_status == "cancelled" and attempt.state != "paid" ->
               Repo.rollback(:stale_attempt)
 
             settled?(attempt.payment_status) and attempt.payment_method != "stripe" ->
