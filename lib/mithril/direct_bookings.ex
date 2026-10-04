@@ -342,7 +342,6 @@ defmodule Mithril.DirectBookings do
 
   defp paid_payment_status?(_), do: false
 
-
   def list_bookings(user_id) do
     with {:ok, customer_id} <- dump_uuid(user_id),
          {:ok, result} <-
