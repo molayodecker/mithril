@@ -72,8 +72,12 @@ defmodule Mithril.DirectBookingCancels do
                        """,
                        [bid, customer_id, ["pending", "confirmed"], ["pending", "failed"]]
                      ) do
-                  {:ok, %{rows: [[id]]}} -> %{id: id, status: "cancelled"}
-                  {:ok, %{rows: []}} -> Repo.rollback(:cancel_conflict)
+                  {:ok, %{rows: [[id]]}} ->
+                    %{id: id, status: "cancelled"}
+
+                  {:ok, %{rows: []}} ->
+                    Repo.rollback(:cancel_conflict)
+
                   {:error, error} ->
                     case database_error(error) do
                       {:error, reason} -> Repo.rollback(reason)
