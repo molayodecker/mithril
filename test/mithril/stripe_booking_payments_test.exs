@@ -91,6 +91,37 @@ defmodule Mithril.StripeBookingPaymentsTest do
     assert booking_payment_status!(booking_id) == "pending"
   end
 
+  test "keeps an already-reconciled Stripe payment idempotent after later cancellation" do
+    customer_id = Ecto.UUID.generate()
+    booking_id = insert_booking!(customer_id, "ref-stripe-paid")
+    insert_attempt!(booking_id, "ref-stripe-paid", "pi_stripe_paid")
+    put_succeeded_intent!("pi_stripe_paid", booking_id, "ref-stripe-paid")
+
+    assert {:ok, %{ok: true, data: first}} =
+             StripeBookingPayments.verify_payment_intent(customer_id, %{
+               "booking_id" => booking_id,
+               "payment_intent_id" => "pi_stripe_paid"
+             })
+
+    assert first.verified == true
+    assert booking_payment_status!(booking_id) == "paid"
+
+    Repo.query!(
+      "UPDATE public.bookings SET status = 'cancelled' WHERE id = $1",
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:ok, %{ok: true, data: replay}} =
+             StripeBookingPayments.verify_payment_intent(customer_id, %{
+               "booking_id" => booking_id,
+               "payment_intent_id" => "pi_stripe_paid"
+             })
+
+    assert replay.verified == true
+    assert replay.status == "succeeded"
+    assert booking_payment_status!(booking_id) == "paid"
+  end
+
   test "refunds a late Stripe success when Paystack already settled the booking" do
     customer_id = Ecto.UUID.generate()
     booking_id = insert_booking!(customer_id, "ref-paystack")
