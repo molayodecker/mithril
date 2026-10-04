@@ -51,9 +51,12 @@ defmodule Mithril.StripeBookingPaymentsTest do
 
     insert_attempt!(booking_id, "ref-paid", "pi_paid")
     insert_attempt!(other_booking_id, "ref-other", "pi_other")
-    Repo.query!("UPDATE public.bookings SET payment_status = 'paid', payment_method = 'paystack' WHERE id = $1", [
-      Ecto.UUID.dump!(booking_id)
-    ])
+    Repo.query!(
+      "UPDATE public.bookings SET payment_status = 'paid', payment_method = 'paystack' WHERE id = $1",
+      [
+        Ecto.UUID.dump!(booking_id)
+      ]
+    )
 
     assert {:ok, %{ok: true, data: data}} =
              StripeBookingPayments.verify_payment_intent(customer_id, %{
