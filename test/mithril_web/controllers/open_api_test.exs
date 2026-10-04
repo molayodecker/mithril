@@ -14,6 +14,11 @@ defmodule MithrilWeb.OpenApiTest do
     assert spec["paths"]["/direct/placements"]["post"]
     assert spec["paths"]["/direct/bookings"]["get"]
     assert spec["paths"]["/direct/bookings"]["post"]
+
+    assert spec["paths"]["/direct/booking-categories"]["get"]["operationId"] ==
+             "direct.listBookingCategories"
+
+    refute is_binary(spec["paths"]["/direct/booking-categories"]["get"])
     assert spec["paths"]["/direct/bookings/{id}/cancel"]["post"]
     assert spec["paths"]["/direct/bookings/{id}/reschedule"]["post"]
     assert spec["paths"]["/direct/bookings/{id}/cancellation-policy"]["get"]
