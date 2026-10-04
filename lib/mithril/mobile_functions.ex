@@ -8,6 +8,7 @@ defmodule Mithril.MobileFunctions do
   alias Mithril.MobileFunctions.CreateJobAndNotify
   alias Mithril.MobileFunctions.DeletePropertyMedia
   alias Mithril.MobileFunctions.InitializeStripeBookingPayment
+  alias Mithril.MobileFunctions.StripeVerifyPaymentIntent
   alias Mithril.MobileFunctions.NotifyBookingRescheduled
   alias Mithril.MobileFunctions.NotifyPaymentFailureOps
   alias Mithril.MobileFunctions.Paystack
@@ -63,6 +64,9 @@ defmodule Mithril.MobileFunctions do
 
   def invoke(user_id, "initialize-stripe-booking-payment", body) when is_map(body),
     do: InitializeStripeBookingPayment.call(user_id, body)
+
+  def invoke(user_id, "stripe-verify-payment-intent", body) when is_map(body),
+    do: StripeVerifyPaymentIntent.call(user_id, body)
 
   def invoke(user_id, "uber-transportation-release-gate", body) when is_map(body),
     do: UberTransportationReleaseGate.call(user_id, body)

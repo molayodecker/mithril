@@ -15,6 +15,7 @@ defmodule Mithril.MobileGateway do
     create-job-and-notify
     delete-property-media
     initialize-stripe-booking-payment
+    stripe-verify-payment-intent
     notify-booking-rescheduled
     notify-payment-failure-ops
     paystack-create-transfer-recipient

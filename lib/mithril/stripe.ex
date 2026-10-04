@@ -136,8 +136,10 @@ defmodule Mithril.Stripe.HTTP do
              id: body["id"],
              client_secret: body["client_secret"],
              amount: body["amount"],
+             amount_received: body["amount_received"],
              currency: body["currency"],
-             status: body["status"]
+             status: body["status"],
+             metadata: if(is_map(body["metadata"]), do: body["metadata"], else: %{})
            }}
 
         {:ok, %{status: 404}} ->

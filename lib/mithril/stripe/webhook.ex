@@ -29,7 +29,8 @@ defmodule Mithril.Stripe.Webhook do
 
   def handle(_, _), do: {:error, :invalid_payload}
 
-  defp reconcile_succeeded(intent) do
+  @doc false
+  def reconcile_succeeded(intent) when is_map(intent) do
     payment_intent_id = string(intent["id"])
     amount_minor = integer(intent["amount_received"] || intent["amount"])
     currency = intent["currency"] |> string() |> String.downcase()
