@@ -104,6 +104,6 @@ defmodule MithrilWeb.OpenApiDocsTest do
     assert %{"bearerAuth" => []} in direct.security
     assert %{"directToken" => [], "directUserId" => []} in direct.security
 
-    assert spec.paths["/auth/login"].post.security == []
+    refute Map.has_key?(spec.paths, "/auth/login")
   end
 end
