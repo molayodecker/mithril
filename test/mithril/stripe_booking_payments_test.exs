@@ -43,6 +43,29 @@ defmodule Mithril.StripeBookingPaymentsTest do
     assert booking_payment_status!(attacker_booking) == "pending"
   end
 
+  test "does not report Stripe success for an already-paid booking with a foreign intent" do
+    customer_id = Ecto.UUID.generate()
+    other_customer_id = Ecto.UUID.generate()
+    booking_id = insert_booking!(customer_id, "ref-paid")
+    other_booking_id = insert_booking!(other_customer_id, "ref-other")
+
+    insert_attempt!(booking_id, "ref-paid", "pi_paid")
+    insert_attempt!(other_booking_id, "ref-other", "pi_other")
+    Repo.query!("UPDATE public.bookings SET payment_status = 'paid', payment_method = 'paystack' WHERE id = $1", [
+      Ecto.UUID.dump!(booking_id)
+    ])
+
+    assert {:ok, %{ok: true, data: data}} =
+             StripeBookingPayments.verify_payment_intent(customer_id, %{
+               "booking_id" => booking_id,
+               "payment_intent_id" => "pi_other"
+             })
+
+    assert data.verified == false
+    assert data.status == "missing"
+    assert booking_payment_status!(booking_id) == "paid"
+  end
+
   test "settles the caller's booking when the supplied payment intent belongs to it" do
     customer_id = Ecto.UUID.generate()
     booking_id = insert_booking!(customer_id, "ref-own")
