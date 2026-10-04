@@ -53,6 +53,19 @@ defmodule Mithril.DirectBookings do
          )
          FROM public.service_categories sc
          WHERE (
+           NOT EXISTS (
+             SELECT 1
+             FROM public.service_types st
+             WHERE st.category_id = sc.id
+           )
+           OR EXISTS (
+             SELECT 1
+             FROM public.service_types st
+             WHERE st.category_id = sc.id
+               AND st.active = true
+           )
+         )
+         AND (
            CASE COALESCE(sc.slug, '')
              WHEN 'caregiving' THEN public.is_care_pet_catalog_visible()
              WHEN 'pet_care' THEN public.is_care_pet_catalog_visible()
