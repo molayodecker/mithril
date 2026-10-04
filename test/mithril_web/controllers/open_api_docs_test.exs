@@ -60,16 +60,16 @@ defmodule MithrilWeb.OpenApiDocsTest do
       |> options("/direct/bookings")
 
     assert conn.status == 204
+
     assert get_resp_header(conn, "access-control-allow-origin") == [
              "https://openapi.example.com"
            ]
 
-    assert "authorization" in
-             (get_resp_header(conn, "access-control-allow-headers")
-              |> List.first()
-              |> String.downcase()
-              |> String.split(",", trim: true)
-              |> Enum.map(&String.trim/1))
+    assert "authorization" in (get_resp_header(conn, "access-control-allow-headers")
+                               |> List.first()
+                               |> String.downcase()
+                               |> String.split(",", trim: true)
+                               |> Enum.map(&String.trim/1))
   end
 
   test "API responses expose CORS only to configured docs origins" do
