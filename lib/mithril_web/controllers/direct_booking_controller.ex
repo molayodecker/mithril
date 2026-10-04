@@ -141,9 +141,9 @@ defmodule MithrilWeb.DirectBookingController do
     respond(conn, DirectBookingCancels.cancel(user_id(conn), id, params))
   end
 
-  operation(:release_unpaid,
-    operation_id: "direct.releaseUnpaidBooking",
-    summary: "Atomically release a one-off booking only while it is still unpaid",
+  operation(:replace_unpaid,
+    operation_id: "direct.replaceUnpaidBooking",
+    summary: "Atomically replace a one-off booking only while it is still unpaid",
     parameters: [
       id: [
         in: :path,
@@ -152,11 +152,12 @@ defmodule MithrilWeb.DirectBookingController do
         description: "Booking ID"
       ]
     ],
-    responses: [ok: {"Released unpaid booking", "application/json", CancelBookingResponse}]
+    request_body: {"Replacement booking", "application/json", CreateBookingRequest, required: true},
+    responses: [ok: {"Replacement booking", "application/json", CreateBookingResponse}]
   )
 
-  def release_unpaid(conn, %{"id" => id}) do
-    respond(conn, DirectBookingCancels.release_unpaid_for_replacement(user_id(conn), id))
+  def replace_unpaid(conn, %{"id" => id} = params) do
+    respond(conn, DirectBookings.replace_unpaid_booking(user_id(conn), id, params))
   end
 
   operation(:reschedule,
