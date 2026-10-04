@@ -47,6 +47,40 @@ defmodule MithrilWeb.Schemas.DirectBooking do
     })
   end
 
+  defmodule BookingCategory do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectBookingCategory",
+      type: :object,
+      properties: %{
+        id: %Schema{type: :integer},
+        name: %Schema{type: :string},
+        icon: %Schema{type: :string, nullable: true},
+        slug: %Schema{type: :string, nullable: true},
+        weight: %Schema{type: :integer, minimum: 0},
+        description: %Schema{type: :string, nullable: true},
+        imageUrl: %Schema{type: :string, nullable: true},
+        iconScale: %Schema{type: :number, nullable: true}
+      },
+      required: [:id, :name]
+    })
+  end
+
+  defmodule BookingCategoriesResponse do
+    require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectBooking.BookingCategory
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectBookingCategoriesResponse",
+      type: :object,
+      properties: %{categories: %Schema{type: :array, items: BookingCategory}},
+      required: [:categories]
+    })
+  end
+
   defmodule CleanerListItem do
     require OpenApiSpex
     alias OpenApiSpex.Schema
