@@ -2,6 +2,7 @@ defmodule MithrilWeb.OpenApiDocsTest do
   use ExUnit.Case, async: true
 
   import Phoenix.ConnTest
+  import Plug.Conn
 
   @endpoint MithrilWeb.Endpoint
 
