@@ -189,7 +189,7 @@ Do not remove the default `instaclean-mithril.fly.dev` hostname; it remains a us
 
 ## 4b. OpenAPI documentation hostnames
 
-Mithril serves interactive docs on dedicated hostnames (Swagger UI at `/`, Redoc at `/redoc`). The JSON contract remains at `/openapi.json` on the API hostnames (`api.tryinstaclean.com`, `dev.tryinstaclean.com`). Mirrors on the API hosts: `/docs` and `/docs/redoc`.
+Mithril serves interactive docs on dedicated hostnames (Swagger UI at `/`, Redoc at `/redoc`). The JSON contract remains at `/openapi.json` on the API hostnames (`api.tryinstaclean.com`, `dev.tryinstaclean.com`). Mirrors on the API hosts: `/docs` and `/docs/redoc`. Each Fly app sets `OPEN_API_DOCS_HOST` to its own docs hostname so host filtering and browser CORS do not cross the production/staging boundary.
 
 | Environment | Docs hostname | Fly app | CNAME target |
 |-------------|---------------|---------|--------------|
