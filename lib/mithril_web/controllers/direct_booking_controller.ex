@@ -152,7 +152,8 @@ defmodule MithrilWeb.DirectBookingController do
         description: "Booking ID"
       ]
     ],
-    request_body: {"Replacement booking", "application/json", CreateBookingRequest, required: true},
+    request_body:
+      {"Replacement booking", "application/json", CreateBookingRequest, required: true},
     responses: [ok: {"Replacement booking", "application/json", CreateBookingResponse}]
   )
 
