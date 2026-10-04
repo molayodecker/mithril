@@ -97,7 +97,6 @@ defmodule Mithril.DirectBookingCancels do
       |> normalize_transaction()
     else
       :error -> {:error, :not_found}
-      {:error, reason} -> {:error, reason}
     end
   end
 
