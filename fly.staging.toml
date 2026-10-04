@@ -8,6 +8,7 @@ kill_timeout = 30
 
 [env]
   PHX_HOST = "dev.tryinstaclean.com"
+  OPEN_API_DOCS_HOST = "openapi-stage.tryinstaclean.com"
   PORT = "4000"
   POOL_SIZE = "5"
   DATABASE_BACKEND = "fly"

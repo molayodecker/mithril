@@ -3,6 +3,8 @@ defmodule MithrilWeb.Endpoint do
 
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
+  plug MithrilWeb.Plugs.OpenApiDocsHostGuard
+  plug MithrilWeb.Plugs.OpenApiDocsCors
 
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
