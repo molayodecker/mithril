@@ -69,6 +69,50 @@ defmodule Mithril.StripeBookingPaymentsTest do
     assert booking_payment_status!(booking_id) == "paid"
   end
 
+  test "refunds a succeeded Stripe intent when the booking was cancelled first" do
+    customer_id = Ecto.UUID.generate()
+    booking_id = insert_booking!(customer_id, "ref-cancelled")
+    insert_attempt!(booking_id, "ref-cancelled", "pi_cancelled")
+    put_succeeded_intent!("pi_cancelled", booking_id, "ref-cancelled")
+
+    Repo.query!(
+      "UPDATE public.bookings SET status = 'cancelled' WHERE id = $1",
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:ok, %{ok: true, data: data}} =
+             StripeBookingPayments.verify_payment_intent(customer_id, %{
+               "booking_id" => booking_id,
+               "payment_intent_id" => "pi_cancelled"
+             })
+
+    assert data.verified == false
+    assert data.status == "refunded_duplicate"
+    assert booking_payment_status!(booking_id) == "pending"
+  end
+
+  test "refunds a late Stripe success when Paystack already settled the booking" do
+    customer_id = Ecto.UUID.generate()
+    booking_id = insert_booking!(customer_id, "ref-paystack")
+    insert_attempt!(booking_id, "ref-paystack", "pi_paystack_duplicate")
+    put_succeeded_intent!("pi_paystack_duplicate", booking_id, "ref-paystack")
+
+    Repo.query!(
+      "UPDATE public.bookings SET payment_status = 'paid', payment_method = 'paystack' WHERE id = $1",
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:ok, %{ok: true, data: data}} =
+             StripeBookingPayments.verify_payment_intent(customer_id, %{
+               "booking_id" => booking_id,
+               "payment_intent_id" => "pi_paystack_duplicate"
+             })
+
+    assert data.verified == false
+    assert data.status == "refunded_duplicate"
+    assert booking_payment_status!(booking_id) == "paid"
+  end
+
   test "settles the caller's booking when the supplied payment intent belongs to it" do
     customer_id = Ecto.UUID.generate()
     booking_id = insert_booking!(customer_id, "ref-own")
@@ -118,8 +162,8 @@ defmodule Mithril.StripeBookingPaymentsTest do
 
     Repo.query!(
       """
-      INSERT INTO public.bookings (id, customer_id, payment_status, reference)
-      VALUES ($1, $2, 'pending', $3)
+      INSERT INTO public.bookings (id, customer_id, status, payment_status, reference)
+      VALUES ($1, $2, 'pending', 'pending', $3)
       """,
       [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(customer_id), reference]
     )
@@ -157,6 +201,7 @@ defmodule Mithril.StripeBookingPaymentsTest do
     CREATE TABLE public.bookings (
       id uuid PRIMARY KEY,
       customer_id uuid NOT NULL,
+      status text NOT NULL DEFAULT 'pending',
       payment_status text NOT NULL DEFAULT 'pending',
       payment_method text,
       reference text,
