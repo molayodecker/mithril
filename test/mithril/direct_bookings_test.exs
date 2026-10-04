@@ -131,7 +131,7 @@ defmodule Mithril.DirectBookingsTest do
     customer_id = Ecto.UUID.generate()
 
     booking_id =
-      insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "scheduled",
+      insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "pending",
         payment_status: "paid",
         reference: "T_release_guard_paid"
       )
@@ -139,7 +139,7 @@ defmodule Mithril.DirectBookingsTest do
     assert {:error, :already_paid} =
              DirectBookingCancels.release_unpaid_for_replacement(customer_id, booking_id)
 
-    assert [["scheduled", "paid"]] =
+    assert [["pending", "paid"]] =
              Repo.query!(
                "SELECT status, payment_status FROM public.bookings WHERE id = $1",
                [Ecto.UUID.dump!(booking_id)]
