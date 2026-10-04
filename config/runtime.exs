@@ -79,6 +79,13 @@ end
 
 config :mithril, :direct_client_bookings, truthy_env?.("DIRECT_CLIENT_BOOKINGS")
 
+if open_api_docs_host = System.get_env("OPEN_API_DOCS_HOST") do
+  case String.trim(open_api_docs_host) do
+    "" -> :ok
+    host -> config :mithril, :open_api_docs_hosts, [host]
+  end
+end
+
 stripe_checkout_env_gate =
   case System.get_env("STRIPE_BOOKING_CHECKOUT_ENABLED")
        |> to_string()
