@@ -105,49 +105,195 @@ defmodule Mithril.DirectBookingsTest do
     assert {:ok, []} = DirectBookings.list_bookings(Ecto.UUID.generate())
   end
 
-  test "atomically releases an unpaid one-off booking without creating a refund" do
-    customer_id = Ecto.UUID.generate()
+  test "atomically replaces an unpaid one-off booking and recovers the same result" do
+    previous = Application.get_env(:mithril, :direct_client_bookings, false)
+    Application.put_env(:mithril, :direct_client_bookings, true)
 
-    booking_id =
+    on_exit(fn ->
+      Application.put_env(:mithril, :direct_client_bookings, previous)
+    end)
+
+    customer_id = Ecto.UUID.generate()
+    cleaner_id = Ecto.UUID.generate()
+    key = "edit-" <> Ecto.UUID.generate()
+
+    old_id =
       insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "pending")
 
-    assert {:ok, %{id: ^booking_id, status: "cancelled"}} =
-             DirectBookingCancels.release_unpaid_for_replacement(customer_id, booking_id)
+    Repo.query!(
+      """
+      INSERT INTO public.users (id, email, status)
+      VALUES ($1, 'cleaner@example.com', 'active')
+      ON CONFLICT (id) DO NOTHING
+      """,
+      [Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_data (user_id, verified, status, hourly_rate, specialties)
+      VALUES ($1, true, 'active', 50, ARRAY['regular_cleaning'])
+      """,
+      [Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    params = %{
+      "serviceId" => 1,
+      "cleanerId" => cleaner_id,
+      "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 4)),
+      "scheduledTime" => "11:00",
+      "durationHours" => 3,
+      "address" => "Airport Residential, Accra",
+      "specialInstructions" => "Bring shoe covers",
+      "timezone" => "Africa/Accra",
+      "idempotencyKey" => key
+    }
+
+    assert {:ok, first} = DirectBookings.replace_unpaid_booking(customer_id, old_id, params)
+    refute first.id == old_id
 
     assert [["cancelled", "pending"]] =
              Repo.query!(
                "SELECT status, payment_status FROM public.bookings WHERE id = $1",
-               [Ecto.UUID.dump!(booking_id)]
+               [Ecto.UUID.dump!(old_id)]
              ).rows
 
-    assert [[0]] =
+    assert [["pending", "pending", "Airport Residential, Accra"]] =
              Repo.query!(
-               "SELECT count(*) FROM public.booking_refunds WHERE booking_id = $1",
-               [Ecto.UUID.dump!(booking_id)]
+               "SELECT status, payment_status, address FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(first.id)]
              ).rows
+
+    assert {:ok, retry} = DirectBookings.replace_unpaid_booking(customer_id, old_id, params)
+    assert retry.id == first.id
+
+    Repo.query!(
+      "UPDATE public.bookings SET payment_status = 'paid', status = 'confirmed' WHERE id = $1",
+      [Ecto.UUID.dump!(first.id)]
+    )
+
+    assert {:ok, paid_retry} = DirectBookings.replace_unpaid_booking(customer_id, old_id, params)
+    assert paid_retry.id == first.id
+    assert paid_retry.paymentStatus == "paid"
   end
 
-  test "atomic unpaid release refuses a paid booking without refund side effects" do
+  test "atomic unpaid replacement refuses a paid original without side effects" do
+    previous = Application.get_env(:mithril, :direct_client_bookings, false)
+    Application.put_env(:mithril, :direct_client_bookings, true)
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :direct_client_bookings, previous)
+    end)
+
     customer_id = Ecto.UUID.generate()
 
     booking_id =
       insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "pending",
         payment_status: "paid",
-        reference: "T_release_guard_paid"
+        reference: "T_replace_guard_paid"
       )
 
-    assert {:error, :already_paid} =
-             DirectBookingCancels.release_unpaid_for_replacement(customer_id, booking_id)
+    params = %{
+      "serviceId" => 1,
+      "cleanerId" => Ecto.UUID.generate(),
+      "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 4)),
+      "scheduledTime" => "11:00",
+      "durationHours" => 3,
+      "address" => "Labone, Accra",
+      "timezone" => "Africa/Accra",
+      "idempotencyKey" => "edit-" <> Ecto.UUID.generate()
+    }
 
-    assert [["pending", "paid"]] =
+    assert {:error, :already_paid} =
+             DirectBookings.replace_unpaid_booking(customer_id, booking_id, params)
+
+    assert [["pending", "paid", "T_replace_guard_paid"]] =
              Repo.query!(
-               "SELECT status, payment_status FROM public.bookings WHERE id = $1",
+               "SELECT status, payment_status, reference FROM public.bookings WHERE id = $1",
                [Ecto.UUID.dump!(booking_id)]
              ).rows
 
-    assert [[0]] =
+    assert [[1]] =
              Repo.query!(
-               "SELECT count(*) FROM public.booking_refunds WHERE booking_id = $1",
+               "SELECT count(*) FROM public.bookings WHERE customer_id = $1",
+               [Ecto.UUID.dump!(customer_id)]
+             ).rows
+  end
+
+  test "atomic unpaid replacement refuses an active payment checkout" do
+    previous = Application.get_env(:mithril, :direct_client_bookings, false)
+    Application.put_env(:mithril, :direct_client_bookings, true)
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :direct_client_bookings, previous)
+    end)
+
+    customer_id = Ecto.UUID.generate()
+
+    booking_id =
+      insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "pending",
+        reference: "T_replace_active"
+      )
+
+    Repo.query!(
+      """
+      INSERT INTO public.payment_attempts
+        (booking_id, reference, status, amount_minor, currency)
+      VALUES ($1, 'T_replace_active', 'ready', 19350, 'GHS')
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    params = %{
+      "serviceId" => 1,
+      "cleanerId" => Ecto.UUID.generate(),
+      "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 4)),
+      "scheduledTime" => "11:00",
+      "durationHours" => 3,
+      "address" => "Labone, Accra",
+      "timezone" => "Africa/Accra",
+      "idempotencyKey" => "edit-" <> Ecto.UUID.generate()
+    }
+
+    assert {:error, :payment_in_progress} =
+             DirectBookings.replace_unpaid_booking(customer_id, booking_id, params)
+
+    assert [["pending", "pending", "T_replace_active"]] =
+             Repo.query!(
+               "SELECT status, payment_status, reference FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+  end
+
+  test "atomic replacement rolls back the original when replacement creation fails" do
+    previous = Application.get_env(:mithril, :direct_client_bookings, false)
+    Application.put_env(:mithril, :direct_client_bookings, true)
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :direct_client_bookings, previous)
+    end)
+
+    customer_id = Ecto.UUID.generate()
+    booking_id =
+      insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "pending")
+
+    params = %{
+      "serviceId" => 1,
+      "cleanerId" => Ecto.UUID.generate(),
+      "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 4)),
+      "scheduledTime" => "11:00",
+      "durationHours" => 3,
+      "address" => "Labone, Accra",
+      "timezone" => "Africa/Accra",
+      "idempotencyKey" => "edit-" <> Ecto.UUID.generate()
+    }
+
+    assert {:error, :cleaner_unavailable} =
+             DirectBookings.replace_unpaid_booking(customer_id, booking_id, params)
+
+    assert [["pending", "pending"]] =
+             Repo.query!(
+               "SELECT status, payment_status FROM public.bookings WHERE id = $1",
                [Ecto.UUID.dump!(booking_id)]
              ).rows
   end
