@@ -95,18 +95,13 @@ defmodule Mithril.StripeBookingPayments do
   end
 
   defp verify_open_booking_payment(booking_uuid, body) do
-    payment_intent_id =
-      resolve_stripe_payment_intent_id(booking_uuid, optional_string(body, "reference"))
+    reference = optional_string(body, "reference")
 
-    body_payment_intent_id =
+    client_payment_intent_id =
       optional_string(body, "payment_intent_id") || optional_string(body, "paymentIntentId")
 
     payment_intent_id =
-      if is_binary(body_payment_intent_id) and body_payment_intent_id != "" do
-        body_payment_intent_id
-      else
-        payment_intent_id
-      end
+      resolve_stripe_payment_intent_id(booking_uuid, reference, client_payment_intent_id)
 
     if payment_intent_id in [nil, ""] do
       {:ok, %{ok: true, data: %{verified: false, status: "missing"}}}
@@ -205,7 +200,8 @@ defmodule Mithril.StripeBookingPayments do
           Map.get(payment_intent, :amount) || Map.get(payment_intent, "amount"),
       "amount" => Map.get(payment_intent, :amount) || Map.get(payment_intent, "amount"),
       "currency" => Map.get(payment_intent, :currency) || Map.get(payment_intent, "currency"),
-      "metadata" => Map.get(payment_intent, :metadata) || Map.get(payment_intent, "metadata") || %{}
+      "metadata" =>
+        Map.get(payment_intent, :metadata) || Map.get(payment_intent, "metadata") || %{}
     }
   end
 
@@ -231,40 +227,37 @@ defmodule Mithril.StripeBookingPayments do
     end
   end
 
-  defp resolve_stripe_payment_intent_id(booking_uuid, reference) do
-    {sql, params} =
+  defp resolve_stripe_payment_intent_id(booking_uuid, reference, payment_intent_id) do
+    {filters, params} =
+      {["booking_id = $1", "provider = 'stripe'", "stripe_payment_intent_id IS NOT NULL"],
+       [booking_uuid]}
+
+    {filters, params} =
       if is_binary(reference) and reference != "" do
-        {
-          """
-          SELECT stripe_payment_intent_id
-          FROM public.payment_attempts
-          WHERE booking_id = $1
-            AND provider = 'stripe'
-            AND stripe_payment_intent_id IS NOT NULL
-            AND reference = $2
-          ORDER BY created_at DESC
-          LIMIT 1
-          """,
-          [booking_uuid, reference]
-        }
+        {filters ++ ["reference = $#{length(params) + 1}"], params ++ [reference]}
       else
-        {
-          """
-          SELECT stripe_payment_intent_id
-          FROM public.payment_attempts
-          WHERE booking_id = $1
-            AND provider = 'stripe'
-            AND stripe_payment_intent_id IS NOT NULL
-          ORDER BY created_at DESC
-          LIMIT 1
-          """,
-          [booking_uuid]
-        }
+        {filters, params}
       end
 
+    {filters, params} =
+      if is_binary(payment_intent_id) and payment_intent_id != "" do
+        {filters ++ ["stripe_payment_intent_id = $#{length(params) + 1}"],
+         params ++ [payment_intent_id]}
+      else
+        {filters, params}
+      end
+
+    sql = """
+    SELECT stripe_payment_intent_id
+    FROM public.payment_attempts
+    WHERE #{Enum.join(filters, "\n  AND ")}
+    ORDER BY created_at DESC
+    LIMIT 1
+    """
+
     case Repo.query(sql, params) do
-      {:ok, %{rows: [[payment_intent_id]]}} when is_binary(payment_intent_id) ->
-        String.trim(payment_intent_id)
+      {:ok, %{rows: [[resolved_id]]}} when is_binary(resolved_id) ->
+        String.trim(resolved_id)
 
       _ ->
         nil
@@ -275,6 +268,7 @@ defmodule Mithril.StripeBookingPayments do
   defp settled_payment_status?(_), do: false
 
   defp map_verify_error(:bad_request), do: {:status, 400, %{error: "Invalid request"}}
+
   defp map_verify_error(:database_unavailable),
     do: {:status, 502, %{error: "Payment verification failed"}}
 
