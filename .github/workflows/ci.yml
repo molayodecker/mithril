@@ -60,13 +60,7 @@ jobs:
       - run: mix deps.get
       - name: Verify dependency lock is reproducible
         run: git diff --exit-code -- mix.lock
-      - name: Check formatting and print diff
-        run: |
-          if ! mix format --check-formatted; then
-            mix format test/mithril/direct_bookings_test.exs
-            git diff -- test/mithril/direct_bookings_test.exs
-            exit 1
-          fi
+      - run: mix format --check-formatted
       - run: mix compile --warnings-as-errors
       - name: Export OpenAPI contract
         env:
