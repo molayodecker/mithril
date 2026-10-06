@@ -13,6 +13,7 @@ defmodule MithrilWeb.DirectBookingController do
     CancelBookingRequest,
     CancelBookingResponse,
     RescheduleBookingRequest,
+    ReplaceUnpaidBookingRequest,
     BookingPriceResponse,
     BookingPricingRequest,
     BookingServicesResponse,
@@ -153,7 +154,7 @@ defmodule MithrilWeb.DirectBookingController do
       ]
     ],
     request_body:
-      {"Replacement booking", "application/json", CreateBookingRequest, required: true},
+      {"Replacement booking", "application/json", ReplaceUnpaidBookingRequest, required: true},
     responses: [ok: {"Replacement booking", "application/json", CreateBookingResponse}]
   )
 
