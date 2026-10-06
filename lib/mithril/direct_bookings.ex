@@ -219,7 +219,7 @@ defmodule Mithril.DirectBookings do
 
   defp replacement_idempotency_key(booking_id, key) do
     booking_scope = Base.encode16(booking_id, case: :lower)
-    digest = key |> :crypto.hash(:sha256) |> Base.url_encode64(padding: false)
+    digest = key |> then(&:crypto.hash(:sha256, &1)) |> Base.url_encode64(padding: false)
     "replace:#{booking_scope}:#{digest}"
   end
 
