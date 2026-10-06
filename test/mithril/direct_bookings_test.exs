@@ -200,6 +200,7 @@ defmodule Mithril.DirectBookingsTest do
 
     test "returns invalid_request for malformed replacement input" do
       customer_id = Ecto.UUID.generate()
+
       booking_id =
         insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "pending")
 
