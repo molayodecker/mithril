@@ -181,7 +181,8 @@ defmodule Mithril.DirectBookings do
     if client_bookings_enabled?() do
       with {:ok, customer_id} <- dump_uuid(user_id),
            {:ok, bid} <- dump_uuid(booking_id),
-           {:ok, input} <- validate_create_input(params) do
+           {:ok, input} <- validate_create_input(params),
+           :ok <- require_replacement_idempotency_key(input) do
         Repo.transaction(fn ->
           with {:ok, original} <- lock_unpaid_replacement_booking(customer_id, bid),
                :ok <- lock_booking_idempotency(customer_id, input.idempotency_key),
@@ -203,6 +204,12 @@ defmodule Mithril.DirectBookings do
       {:error, :client_bookings_disabled}
     end
   end
+
+  defp require_replacement_idempotency_key(%{idempotency_key: key})
+       when is_binary(key) and byte_size(key) > 0,
+       do: :ok
+
+  defp require_replacement_idempotency_key(_input), do: {:error, :invalid_idempotency_key}
 
   defp lock_unpaid_replacement_booking(customer_id, booking_id) do
     case Repo.query(
@@ -234,6 +241,9 @@ defmodule Mithril.DirectBookings do
 
   defp replacement_path(original, existing) do
     cond do
+      not is_nil(existing) and existing.id == original.id ->
+        {:error, :payment_conflict}
+
       original.status == "cancelled" and reusable_replacement?(existing) ->
         {:ok, :already_replaced}
 
