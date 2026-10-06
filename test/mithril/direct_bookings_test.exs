@@ -265,6 +265,85 @@ defmodule Mithril.DirectBookingsTest do
              ).rows
   end
 
+  test "atomic replacement requires an idempotency key" do
+    previous = Application.get_env(:mithril, :direct_client_bookings, false)
+    Application.put_env(:mithril, :direct_client_bookings, true)
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :direct_client_bookings, previous)
+    end)
+
+    customer_id = Ecto.UUID.generate()
+
+    booking_id =
+      insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "pending")
+
+    params = %{
+      "serviceId" => 1,
+      "cleanerId" => Ecto.UUID.generate(),
+      "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 4)),
+      "scheduledTime" => "11:00",
+      "durationHours" => 3,
+      "address" => "Labone, Accra",
+      "timezone" => "Africa/Accra"
+    }
+
+    assert {:error, :invalid_idempotency_key} =
+             DirectBookings.replace_unpaid_booking(customer_id, booking_id, params)
+
+    assert [["pending", "pending"]] =
+             Repo.query!(
+               "SELECT status, payment_status FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+  end
+
+  test "atomic replacement rejects an idempotency key belonging to the original booking" do
+    previous = Application.get_env(:mithril, :direct_client_bookings, false)
+    Application.put_env(:mithril, :direct_client_bookings, true)
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :direct_client_bookings, previous)
+    end)
+
+    customer_id = Ecto.UUID.generate()
+    key = "edit-" <> Ecto.UUID.generate()
+
+    booking_id =
+      insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "pending")
+
+    Repo.query!(
+      "UPDATE public.bookings SET idempotency_key = $2 WHERE id = $1",
+      [Ecto.UUID.dump!(booking_id), key]
+    )
+
+    params = %{
+      "serviceId" => 1,
+      "cleanerId" => Ecto.UUID.generate(),
+      "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 4)),
+      "scheduledTime" => "11:00",
+      "durationHours" => 3,
+      "address" => "Labone, Accra",
+      "timezone" => "Africa/Accra",
+      "idempotencyKey" => key
+    }
+
+    assert {:error, :payment_conflict} =
+             DirectBookings.replace_unpaid_booking(customer_id, booking_id, params)
+
+    assert [["pending", "pending"]] =
+             Repo.query!(
+               "SELECT status, payment_status FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert [[1]] =
+             Repo.query!(
+               "SELECT count(*) FROM public.bookings WHERE customer_id = $1",
+               [Ecto.UUID.dump!(customer_id)]
+             ).rows
+  end
+
   test "atomic replacement rolls back the original when replacement creation fails" do
     previous = Application.get_env(:mithril, :direct_client_bookings, false)
     Application.put_env(:mithril, :direct_client_bookings, true)
