@@ -25,6 +25,11 @@ defmodule MithrilWeb.CacheBodyReaderTest do
       path_info: ["webhooks", "sumsub"]
     }
 
+    stripe = %Plug.Conn{
+      adapter: {__MODULE__.OkAdapter, body},
+      path_info: ["webhooks", "stripe"]
+    }
+
     other = %Plug.Conn{adapter: {__MODULE__.OkAdapter, body}, path_info: ["health"]}
 
     assert {:ok, ^body, cached_paystack} = CacheBodyReader.read_body(paystack, [])
@@ -32,6 +37,9 @@ defmodule MithrilWeb.CacheBodyReaderTest do
 
     assert {:ok, ^body, cached_sumsub} = CacheBodyReader.read_body(sumsub, [])
     assert CacheBodyReader.body(cached_sumsub) == body
+
+    assert {:ok, ^body, cached_stripe} = CacheBodyReader.read_body(stripe, [])
+    assert CacheBodyReader.body(cached_stripe) == body
 
     assert {:ok, ^body, uncached} = CacheBodyReader.read_body(other, [])
     assert CacheBodyReader.body(uncached) == ""

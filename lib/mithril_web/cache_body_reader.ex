@@ -22,7 +22,7 @@ defmodule MithrilWeb.CacheBodyReader do
   end
 
   defp maybe_cache(%Plug.Conn{path_info: ["webhooks", name]} = conn, body)
-       when name in ["paystack", "sumsub"] do
+       when name in ["paystack", "stripe", "sumsub"] do
     update_in(conn.assigns[:raw_body], &[body | &1 || []])
   end
 
