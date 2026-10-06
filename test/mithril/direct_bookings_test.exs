@@ -1191,7 +1191,7 @@ defmodule Mithril.DirectBookingsTest do
       |> Ecto.UUID.dump!()
       |> Base.encode16(case: :lower)
 
-    digest = key |> :crypto.hash(:sha256) |> Base.url_encode64(padding: false)
+    digest = key |> then(&:crypto.hash(:sha256, &1)) |> Base.url_encode64(padding: false)
     "replace:#{booking_scope}:#{digest}"
   end
 
