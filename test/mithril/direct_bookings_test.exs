@@ -121,6 +121,7 @@ defmodule Mithril.DirectBookingsTest do
       Application.put_env(:mithril, :direct_client_bookings, false)
 
       customer_id = Ecto.UUID.generate()
+
       booking_id =
         insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "pending")
 
@@ -252,6 +253,7 @@ defmodule Mithril.DirectBookingsTest do
 
       assert {:ok, paid_retry} =
                DirectBookings.replace_unpaid_booking(customer_id, old_id, params)
+
       assert paid_retry.id == first.id
       assert paid_retry.paymentStatus == "paid"
     end
@@ -259,6 +261,7 @@ defmodule Mithril.DirectBookingsTest do
     test "replaces a confirmed but still unpaid booking" do
       customer_id = Ecto.UUID.generate()
       cleaner_id = Ecto.UUID.generate()
+
       old_id =
         insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "confirmed")
 
