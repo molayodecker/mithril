@@ -37,6 +37,10 @@ on:
         required: false
         type: boolean
         default: false
+    outputs:
+      deploy_sha:
+        description: Exact commit SHA deployed and verified
+        value: ${{ jobs.deploy.outputs.deploy_sha }}
 
 permissions:
   contents: read
@@ -51,9 +55,11 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: ${{ inputs.mark_staging_status && 'write' || 'read' }}
+      contents: read
       actions: read
       statuses: write
+    outputs:
+      deploy_sha: ${{ steps.record_sha.outputs.deploy_sha }}
     environment: ${{ inputs.environment_name }}
     env:
       FLY_APP: ${{ inputs.fly_app }}
@@ -94,8 +100,12 @@ jobs:
           fetch-depth: 0
 
       - name: Record deployment SHA
+        id: record_sha
         shell: bash
-        run: echo "DEPLOY_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+        run: |
+          deploy_sha="$(git rev-parse HEAD)"
+          echo "DEPLOY_SHA=$deploy_sha" >> "$GITHUB_ENV"
+          echo "deploy_sha=$deploy_sha" >> "$GITHUB_OUTPUT"
 
       - name: Confirm CI passed for this commit
         if: ${{ inputs.confirm_ci }}
@@ -250,23 +260,3 @@ jobs:
             -f context=mithril/staging \
             -f description="Mithril staging deployed and verified"
 
-      - name: Create staging deployment tag
-        if: ${{ inputs.mark_staging_status }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="staging/${DEPLOY_SHA}"
-          ref="refs/tags/${tag}"
-          if ! gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-            -f ref="${ref}" \
-            -f sha="${DEPLOY_SHA}" 2> /tmp/tag-error.txt; then
-            if grep -q 'Reference already exists' /tmp/tag-error.txt; then
-              echo "Tag ${tag} already exists."
-              exit 0
-            fi
-            cat /tmp/tag-error.txt
-            exit 1
-          fi
-          echo "Created tag ${tag}"
