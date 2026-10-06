@@ -37,6 +37,10 @@ on:
         required: false
         type: boolean
         default: false
+    outputs:
+      deploy_sha:
+        description: Exact commit SHA deployed and verified
+        value: ${{ jobs.deploy.outputs.deploy_sha }}
 
 permissions:
   contents: read
@@ -50,6 +54,12 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      statuses: write
+    outputs:
+      deploy_sha: ${{ steps.record_sha.outputs.deploy_sha }}
     environment: ${{ inputs.environment_name }}
     env:
       FLY_APP: ${{ inputs.fly_app }}
@@ -90,8 +100,12 @@ jobs:
           fetch-depth: 0
 
       - name: Record deployment SHA
+        id: record_sha
         shell: bash
-        run: echo "DEPLOY_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+        run: |
+          deploy_sha="$(git rev-parse HEAD)"
+          echo "DEPLOY_SHA=$deploy_sha" >> "$GITHUB_ENV"
+          echo "deploy_sha=$deploy_sha" >> "$GITHUB_OUTPUT"
 
       - name: Confirm CI passed for this commit
         if: ${{ inputs.confirm_ci }}
@@ -245,3 +259,4 @@ jobs:
             -f state=success \
             -f context=mithril/staging \
             -f description="Mithril staging deployed and verified"
+
