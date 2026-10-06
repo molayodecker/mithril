@@ -13,6 +13,7 @@ defmodule MithrilWeb.DirectBookingController do
     CancelBookingRequest,
     CancelBookingResponse,
     RescheduleBookingRequest,
+    ReplaceUnpaidBookingRequest,
     BookingPriceResponse,
     BookingPricingRequest,
     BookingServicesResponse,
@@ -139,6 +140,26 @@ defmodule MithrilWeb.DirectBookingController do
 
   def cancel(conn, %{"id" => id} = params) do
     respond(conn, DirectBookingCancels.cancel(user_id(conn), id, params))
+  end
+
+  operation(:replace_unpaid,
+    operation_id: "direct.replaceUnpaidBooking",
+    summary: "Atomically replace a one-off booking only while it is still unpaid",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Booking ID"
+      ]
+    ],
+    request_body:
+      {"Replacement booking", "application/json", ReplaceUnpaidBookingRequest, required: true},
+    responses: [ok: {"Replacement booking", "application/json", CreateBookingResponse}]
+  )
+
+  def replace_unpaid(conn, %{"id" => id} = params) do
+    respond(conn, DirectBookings.replace_unpaid_booking(user_id(conn), id, params))
   end
 
   operation(:reschedule,

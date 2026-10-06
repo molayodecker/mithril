@@ -278,6 +278,67 @@ defmodule Mithril.DirectPayments do
   end
 
   defp reserve_attempt(booking) do
+    Repo.transaction(fn ->
+      with :ok <- lock_booking_for_payment_attempt(booking),
+           {:ok, attempt} <- reserve_attempt_locked(booking) do
+        attempt
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, attempt} -> {:ok, attempt}
+      {:error, reason} when is_atom(reason) -> {:error, reason}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp lock_booking_for_payment_attempt(booking) do
+    case Repo.query(
+           """
+           SELECT status::text,
+                  payment_status::text,
+                  COALESCE(final_amount_minor, total_price)::bigint,
+                  upper(COALESCE(currency, 'GHS'))
+           FROM public.bookings
+           WHERE id = $1
+             AND customer_id = $2
+           FOR UPDATE
+           """,
+           [booking.uuid, booking.customer_uuid]
+         ) do
+      {:ok, %{rows: [[status, payment_status, amount_minor, currency]]}} ->
+        current_payment_status = String.downcase(to_string(payment_status || ""))
+
+        cond do
+          current_payment_status in ["paid", "post_paid", "refunded", "partially_refunded"] ->
+            {:error, :already_paid}
+
+          status != booking.booking_status ->
+            {:error, :payment_not_payable}
+
+          current_payment_status not in ["pending", "failed"] ->
+            {:error, :payment_not_payable}
+
+          amount_to_integer(amount_minor) != booking.amount_minor ->
+            {:error, :payment_not_payable}
+
+          normalize_currency(currency) != booking.currency ->
+            {:error, :payment_not_payable}
+
+          true ->
+            :ok
+        end
+
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp reserve_attempt_locked(booking) do
     fingerprint = "direct:#{booking.id}:#{booking.amount_minor}:#{booking.currency}"
 
     case Repo.query(

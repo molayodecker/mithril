@@ -213,6 +213,41 @@ defmodule MithrilWeb.Schemas.DirectBooking do
     })
   end
 
+  defmodule ReplaceUnpaidBookingRequest do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectReplaceUnpaidBookingRequest",
+      type: :object,
+      properties: %{
+        serviceId: %Schema{type: :integer, minimum: 1},
+        cleanerId: %Schema{type: :string, format: :uuid},
+        scheduledDate: %Schema{type: :string, format: :date},
+        scheduledTime: %Schema{type: :string, example: "09:00"},
+        durationHours: %Schema{type: :number, minimum: 0},
+        address: %Schema{type: :string, minLength: 3, maxLength: 500},
+        specialInstructions: %Schema{type: :string, nullable: true, maxLength: 4000},
+        timezone: %Schema{type: :string, default: "Africa/Accra"},
+        idempotencyKey: %Schema{
+          type: :string,
+          minLength: 8,
+          maxLength: 128,
+          description: "Required replacement intent key reused across retries"
+        }
+      },
+      required: [
+        :serviceId,
+        :cleanerId,
+        :scheduledDate,
+        :scheduledTime,
+        :durationHours,
+        :address,
+        :idempotencyKey
+      ]
+    })
+  end
+
   defmodule RescheduleBookingRequest do
     require OpenApiSpex
     alias OpenApiSpex.Schema

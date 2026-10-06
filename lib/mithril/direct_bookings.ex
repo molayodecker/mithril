@@ -177,6 +177,193 @@ defmodule Mithril.DirectBookings do
     end
   end
 
+  def replace_unpaid_booking(user_id, booking_id, params) when is_map(params) do
+    if client_bookings_enabled?() do
+      with {:ok, customer_id} <- dump_uuid(user_id),
+           {:ok, bid} <- dump_uuid(booking_id),
+           {:ok, input} <- validate_create_input(params),
+           :ok <- require_replacement_idempotency_key(input) do
+        replacement_input = %{
+          input
+          | idempotency_key: replacement_idempotency_key(bid, input.idempotency_key)
+        }
+
+        Repo.transaction(fn ->
+          with {:ok, original} <- lock_unpaid_replacement_booking(customer_id, bid),
+               :ok <- lock_booking_idempotency(customer_id, replacement_input.idempotency_key),
+               {:ok, existing} <-
+                 find_idempotent_booking(customer_id, replacement_input.idempotency_key),
+               {:ok, path} <- replacement_path(original, existing),
+               {:ok, result} <-
+                 execute_unpaid_replacement(path, customer_id, bid, replacement_input, existing) do
+            result
+          else
+            {:error, reason} -> Repo.rollback(reason)
+          end
+        end)
+        |> normalize_transaction()
+      else
+        :error -> {:error, :not_found}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      {:error, :client_bookings_disabled}
+    end
+  end
+
+  defp require_replacement_idempotency_key(%{idempotency_key: key})
+       when is_binary(key) and byte_size(key) > 0,
+       do: :ok
+
+  defp require_replacement_idempotency_key(_input), do: {:error, :invalid_idempotency_key}
+
+  defp replacement_idempotency_key(booking_id, key) do
+    booking_scope = Base.encode16(booking_id, case: :lower)
+    digest = key |> then(&:crypto.hash(:sha256, &1)) |> Base.url_encode64(padding: false)
+    "replace:#{booking_scope}:#{digest}"
+  end
+
+  defp lock_unpaid_replacement_booking(customer_id, booking_id) do
+    case Repo.query(
+           """
+           SELECT id::text, status::text, payment_status::text, subscription_id, reference
+           FROM public.bookings
+           WHERE id = $1 AND customer_id = $2
+           FOR UPDATE
+           """,
+           [booking_id, customer_id]
+         ) do
+      {:ok, %{rows: [[id, status, payment_status, subscription_id, reference]]}} ->
+        {:ok,
+         %{
+           id: id,
+           status: status,
+           payment_status: payment_status,
+           subscription_id: subscription_id,
+           reference: reference
+         }}
+
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp replacement_path(original, existing) do
+    cond do
+      not is_nil(existing) and existing.id == original.id ->
+        {:error, :payment_conflict}
+
+      original.status == "cancelled" and reusable_replacement?(existing) ->
+        {:ok, :already_replaced}
+
+      paid_payment_status?(original.payment_status) ->
+        {:error, :already_paid}
+
+      not is_nil(original.subscription_id) ->
+        {:error, :not_cancellable}
+
+      original.status not in ["pending", "confirmed"] ->
+        {:error, :not_cancellable}
+
+      not is_nil(existing) and not reusable_replacement?(existing) ->
+        {:error, :payment_conflict}
+
+      true ->
+        {:ok, :replace}
+    end
+  end
+
+  defp execute_unpaid_replacement(:already_replaced, _customer_id, _booking_id, _input, existing),
+    do: {:ok, existing}
+
+  defp execute_unpaid_replacement(:replace, customer_id, booking_id, input, existing) do
+    with :ok <- ensure_no_active_payment_attempts(booking_id),
+         :ok <- cancel_original_for_replacement(customer_id, booking_id) do
+      if reusable_replacement?(existing) do
+        {:ok, existing}
+      else
+        create_booking_locked(customer_id, input)
+      end
+    end
+  end
+
+  defp ensure_no_active_payment_attempts(booking_id) do
+    case Repo.query(
+           """
+           SELECT EXISTS(
+             SELECT 1
+             FROM public.payment_attempts
+             WHERE booking_id = $1
+               AND status IN ('initializing', 'ready')
+           )
+           """,
+           [booking_id]
+         ) do
+      {:ok, %{rows: [[false]]}} -> :ok
+      {:ok, %{rows: [[true]]}} -> {:error, :payment_in_progress}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp cancel_original_for_replacement(customer_id, booking_id) do
+    case Repo.query(
+           """
+           UPDATE public.bookings
+           SET status = 'cancelled',
+               cancelled_at = now(),
+               cancellation_reason = 'Replaced while updating this unpaid booking',
+               cancellation_reason_code = 'customer_edit_replaced',
+               reference = NULL,
+               updated_at = now()
+           WHERE id = $1
+             AND customer_id = $2
+             AND subscription_id IS NULL
+             AND status::text = ANY($3::text[])
+             AND (payment_status IS NULL OR payment_status::text = ANY($4::text[]))
+           RETURNING id
+           """,
+           [booking_id, customer_id, ["pending", "confirmed"], ["pending", "failed"]]
+         ) do
+      {:ok, %{rows: [[_id]]}} -> :ok
+      {:ok, %{rows: []}} -> {:error, :cancel_conflict}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp create_booking_locked(customer_id, input) do
+    with {:ok, service} <- service_details(input.service_id),
+         :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
+         {:ok, pricing} <- compute_pricing(input),
+         :ok <- validate_timeslot(input, pricing),
+         :ok <- validate_cleaner_availability(input, pricing, nil),
+         :ok <- ensure_customer_profile(customer_id),
+         {:ok, booking_id} <- insert_booking(customer_id, input, pricing, service.name) do
+      {:ok,
+       %{
+         id: booking_id,
+         status: "pending",
+         paymentStatus: "pending",
+         amountMinor: pricing["finalAmountMinor"],
+         currency: pricing["currency"] || "GHS"
+       }}
+    end
+  end
+
+  defp reusable_replacement?(nil), do: false
+
+  defp reusable_replacement?(replacement) do
+    replacement.status not in ["cancelled", "completed"]
+  end
+
+  defp paid_payment_status?(status) when is_binary(status) do
+    String.downcase(status) in ["paid", "succeeded", "refunded", "partially_refunded"]
+  end
+
+  defp paid_payment_status?(_), do: false
+
   def list_bookings(user_id) do
     with {:ok, customer_id} <- dump_uuid(user_id),
          {:ok, result} <-
