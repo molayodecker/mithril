@@ -183,13 +183,19 @@ defmodule Mithril.DirectBookings do
            {:ok, bid} <- dump_uuid(booking_id),
            {:ok, input} <- validate_create_input(params),
            :ok <- require_replacement_idempotency_key(input) do
+        replacement_input = %{
+          input
+          | idempotency_key: replacement_idempotency_key(bid, input.idempotency_key)
+        }
+
         Repo.transaction(fn ->
           with {:ok, original} <- lock_unpaid_replacement_booking(customer_id, bid),
-               :ok <- lock_booking_idempotency(customer_id, input.idempotency_key),
-               {:ok, existing} <- find_idempotent_booking(customer_id, input.idempotency_key),
+               :ok <- lock_booking_idempotency(customer_id, replacement_input.idempotency_key),
+               {:ok, existing} <-
+                 find_idempotent_booking(customer_id, replacement_input.idempotency_key),
                {:ok, path} <- replacement_path(original, existing),
                {:ok, result} <-
-                 execute_unpaid_replacement(path, customer_id, bid, input, existing) do
+                 execute_unpaid_replacement(path, customer_id, bid, replacement_input, existing) do
             result
           else
             {:error, reason} -> Repo.rollback(reason)
@@ -210,6 +216,12 @@ defmodule Mithril.DirectBookings do
        do: :ok
 
   defp require_replacement_idempotency_key(_input), do: {:error, :invalid_idempotency_key}
+
+  defp replacement_idempotency_key(booking_id, key) do
+    booking_scope = Base.encode16(booking_id, case: :lower)
+    digest = key |> :crypto.hash(:sha256) |> Base.url_encode64(padding: false)
+    "replace:#{booking_scope}:#{digest}"
+  end
 
   defp lock_unpaid_replacement_booking(customer_id, booking_id) do
     case Repo.query(
