@@ -199,7 +199,8 @@ defmodule Mithril.DirectBookingsTest do
 
     test "returns invalid_request for malformed replacement input" do
       customer_id = Ecto.UUID.generate()
-      booking_id = insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "pending")
+      booking_id =
+        insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "pending")
 
       assert {:error, :invalid_request} =
                DirectBookings.replace_unpaid_booking(customer_id, booking_id, %{
@@ -249,7 +250,8 @@ defmodule Mithril.DirectBookingsTest do
         [Ecto.UUID.dump!(first.id)]
       )
 
-      assert {:ok, paid_retry} = DirectBookings.replace_unpaid_booking(customer_id, old_id, params)
+      assert {:ok, paid_retry} =
+               DirectBookings.replace_unpaid_booking(customer_id, old_id, params)
       assert paid_retry.id == first.id
       assert paid_retry.paymentStatus == "paid"
     end
