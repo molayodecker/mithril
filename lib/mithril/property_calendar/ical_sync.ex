@@ -59,7 +59,7 @@ defmodule Mithril.PropertyCalendar.IcalSync do
   end
 
   defp upsert_events(feed, parsed) do
-    now = DateTime.utc_now() |> DateTime.to_iso8601()
+    now = DateTime.utc_now()
 
     existing =
       case Repo.query(
@@ -101,8 +101,8 @@ defmodule Mithril.PropertyCalendar.IcalSync do
               cancelled_at, updated_at
             ) VALUES (
               $1::uuid, $2::uuid, $3, $4, $5,
-              CASE WHEN $12::boolean THEN $6::timestamptz ELSE $6::timestamp AT TIME ZONE $14::text END,
-              CASE WHEN $13::boolean THEN $7::timestamptz ELSE $7::timestamp AT TIME ZONE $14::text END,
+              COALESCE($6::timestamptz, $12::timestamp AT TIME ZONE $14::text),
+              COALESCE($7::timestamptz, $13::timestamp AT TIME ZONE $14::text),
               $8, $9, $10::timestamptz, 0, $11, $10::timestamptz
             )
             ON CONFLICT (calendar_feed_id, external_uid) DO UPDATE SET
@@ -123,14 +123,14 @@ defmodule Mithril.PropertyCalendar.IcalSync do
               event.uid,
               event.sequence,
               event.status,
-              starts_at.value,
-              ends_at.value,
+              starts_at.utc,
+              ends_at.utc,
               event.summary,
               raw_hash,
               now,
               if(event.status == "cancelled", do: now, else: nil),
-              starts_at.utc?,
-              ends_at.utc?,
+              starts_at.local,
+              ends_at.local,
               feed["timezone"] || "Africa/Accra"
             ]
           )
@@ -196,25 +196,27 @@ defmodule Mithril.PropertyCalendar.IcalSync do
   end
 
   defp resolve_instant(%{kind: "date", date_part: date_part}, default_time) do
-    %{value: "#{format_date(date_part)} #{default_time}", utc?: false}
+    %{utc: nil, local: parse_naive_datetime!(date_part, default_time)}
   end
 
   defp resolve_instant(%{kind: "utc", date_part: date_part, time_part: time_part}, _default) do
-    %{
-      value: "#{format_date(date_part)}T#{format_time(time_part)}Z",
-      utc?: true
-    }
+    {:ok, datetime, 0} =
+      DateTime.from_iso8601("#{format_date(date_part)}T#{format_time(time_part)}Z")
+
+    %{utc: datetime, local: nil}
   end
 
   defp resolve_instant(%{kind: "local", date_part: date_part, time_part: time_part}, _default) do
-    %{
-      value: "#{format_date(date_part)} #{format_time(time_part)}",
-      utc?: false
-    }
+    %{utc: nil, local: parse_naive_datetime!(date_part, format_time(time_part))}
   end
 
   defp resolve_instant(_, default_time) do
-    %{value: "1970-01-01 #{default_time}", utc?: false}
+    %{utc: nil, local: parse_naive_datetime!("19700101", default_time)}
+  end
+
+  defp parse_naive_datetime!(date_part, time) do
+    {:ok, datetime} = NaiveDateTime.from_iso8601("#{format_date(date_part)}T#{time}")
+    datetime
   end
 
   defp format_date(yyyymmdd) do
