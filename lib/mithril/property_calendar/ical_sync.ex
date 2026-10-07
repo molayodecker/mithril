@@ -16,6 +16,9 @@ defmodule Mithril.PropertyCalendar.IcalSync do
   def missing_sync_threshold, do: @missing_threshold
 
   @doc false
+  def resolve_window_for_test(event, feed), do: resolve_window(event, feed)
+
+  @doc false
   @spec credible_after_parse?([map()], non_neg_integer()) :: :ok | {:error, String.t()}
   def credible_after_parse?(parsed_events, prior_active_count) do
     if parsed_events == [] and prior_active_count > 0 do
