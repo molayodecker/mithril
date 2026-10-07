@@ -116,9 +116,8 @@ defmodule Mithril.PropertyCalendar.IcalSync do
   end
 
   defp persist_event(feed, event, raw_hash, now) do
-    {starts_at, ends_at} = resolve_window(event, feed)
-
-    case Repo.query(
+    with {:ok, {starts_at, ends_at}} <- resolve_window(event, feed) do
+      case Repo.query(
            """
            INSERT INTO public.property_calendar_events (
              calendar_feed_id, property_id, external_uid, external_sequence, status,
@@ -159,8 +158,9 @@ defmodule Mithril.PropertyCalendar.IcalSync do
              feed["timezone"] || "Africa/Accra"
            ]
          ) do
-      {:ok, _} -> :ok
-      {:error, _reason} -> {:error, "Failed to persist calendar event"}
+        {:ok, _} -> :ok
+        {:error, _reason} -> {:error, "Failed to persist calendar event"}
+      end
     end
   end
 
@@ -216,33 +216,40 @@ defmodule Mithril.PropertyCalendar.IcalSync do
     checkin = feed["default_checkin_time"] || "15:00:00"
     checkout = feed["default_checkout_time"] || "11:00:00"
 
-    starts_at = resolve_instant(event.dtstart, checkin)
-    ends_at = resolve_instant(event.dtend, checkout)
-    {starts_at, ends_at}
+    with {:ok, starts_at} <- resolve_instant(event.dtstart, checkin),
+         {:ok, ends_at} <- resolve_instant(event.dtend, checkout) do
+      {:ok, {starts_at, ends_at}}
+    end
   end
 
   defp resolve_instant(%{kind: "date", date_part: date_part}, default_time) do
-    %{utc: nil, local: parse_naive_datetime!(date_part, default_time)}
+    with {:ok, local} <- parse_naive_datetime(date_part, default_time) do
+      {:ok, %{utc: nil, local: local}}
+    end
   end
 
   defp resolve_instant(%{kind: "utc", date_part: date_part, time_part: time_part}, _default) do
-    {:ok, datetime, 0} =
-      DateTime.from_iso8601("#{format_date(date_part)}T#{format_time(time_part)}Z")
-
-    %{utc: datetime, local: nil}
+    case DateTime.from_iso8601("#{format_date(date_part)}T#{format_time(time_part)}Z") do
+      {:ok, datetime, 0} -> {:ok, %{utc: datetime, local: nil}}
+      _ -> {:error, "Invalid calendar event datetime"}
+    end
   end
 
   defp resolve_instant(%{kind: "local", date_part: date_part, time_part: time_part}, _default) do
-    %{utc: nil, local: parse_naive_datetime!(date_part, format_time(time_part))}
+    with {:ok, local} <- parse_naive_datetime(date_part, format_time(time_part)) do
+      {:ok, %{utc: nil, local: local}}
+    end
   end
 
-  defp resolve_instant(_, default_time) do
-    %{utc: nil, local: parse_naive_datetime!("19700101", default_time)}
-  end
+  defp resolve_instant(_, _default_time), do: {:error, "Invalid calendar event datetime"}
 
-  defp parse_naive_datetime!(date_part, time) do
-    {:ok, datetime} = NaiveDateTime.from_iso8601("#{format_date(date_part)}T#{time}")
-    datetime
+  defp parse_naive_datetime(date_part, time) do
+    case NaiveDateTime.from_iso8601("#{format_date(date_part)}T#{time}") do
+      {:ok, datetime} -> {:ok, datetime}
+      _ -> {:error, "Invalid calendar event datetime"}
+    end
+  rescue
+    MatchError -> {:error, "Invalid calendar event datetime"}
   end
 
   defp format_date(yyyymmdd) do
