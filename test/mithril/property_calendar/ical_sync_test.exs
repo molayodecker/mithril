@@ -38,7 +38,7 @@ defmodule Mithril.PropertyCalendar.IcalSyncTest do
                [nil, ~N[2026-10-10 15:00:00], "Africa/Accra"]
              )
 
-    assert converted == ~U[2026-10-10 15:00:00Z]
+    assert DateTime.compare(converted, ~U[2026-10-10 15:00:00Z]) == :eq
 
     assert {:ok, %{rows: [[utc_converted]]}} =
              Mithril.Repo.query(
@@ -46,7 +46,7 @@ defmodule Mithril.PropertyCalendar.IcalSyncTest do
                [~U[2026-10-10 15:00:00Z], nil, "Africa/Accra"]
              )
 
-    assert utc_converted == ~U[2026-10-10 15:00:00Z]
+    assert DateTime.compare(utc_converted, ~U[2026-10-10 15:00:00Z]) == :eq
   end
 
   test "all-day events apply check-in to DTSTART and checkout to DTEND" do
@@ -60,9 +60,19 @@ defmodule Mithril.PropertyCalendar.IcalSyncTest do
       "default_checkout_time" => "11:00:00"
     }
 
-    {starts_at, ends_at} = IcalSync.resolve_window_for_test(event, feed)
+    assert {:ok, {starts_at, ends_at}} = IcalSync.resolve_window_for_test(event, feed)
 
     assert starts_at == %{utc: nil, local: ~N[2026-10-10 15:00:00]}
     assert ends_at == %{utc: nil, local: ~N[2026-10-12 11:00:00]}
+  end
+
+  test "invalid calendar dates are rejected without raising" do
+    event = %{
+      dtstart: %{kind: "utc", date_part: "20260230", time_part: "150000"},
+      dtend: %{kind: "utc", date_part: "20260301", time_part: "110000"}
+    }
+
+    assert {:error, "Invalid calendar event datetime"} =
+             IcalSync.resolve_window_for_test(event, %{})
   end
 end
