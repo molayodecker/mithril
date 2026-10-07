@@ -17,20 +17,21 @@ defmodule Mithril.MobileFunctions.ConnectPropertyCalendar do
     with {:ok, fields} <- parse_body(body),
          {:ok, property} <- load_property(user_id, fields.property_id),
          timezone = effective_timezone(fields, property),
-         :ok <-
-           CalendarFeedSecurity.validate_feed_timing(%{
-             timezone: timezone,
-             default_checkin_time: fields.default_checkin_time,
-             default_checkout_time: fields.default_checkout_time
-           }),
+         {:ok, normalized_timezone} <- CalendarFeedSecurity.normalize_timezone(timezone),
          {:ok, encrypted} <- encrypt_feed(fields.feed_url),
          feed_hash = SecretCrypto.hash_token(fields.feed_url),
          {:ok, feed} <-
-           replace_active_feed(user_id, fields, encrypted, feed_hash, timezone) do
+           replace_active_feed(user_id, fields, encrypted, feed_hash, normalized_timezone) do
       {:ok, %{feed: feed}}
     else
-      {:error, {:status, status, body}} -> {:error, {:status, status, body}}
-      {:error, message} when is_binary(message) -> {:error, {:status, 400, %{error: message}}}
+      {:error, {:status, status, body}} ->
+        {:error, {:status, status, body}}
+
+      {:error, {:timezone_database, _reason}} ->
+        {:error, {:status, 502, %{error: "Failed to validate calendar timezone"}}}
+
+      {:error, message} when is_binary(message) ->
+        {:error, {:status, 400, %{error: message}}}
     end
   end
 

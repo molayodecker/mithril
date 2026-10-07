@@ -112,18 +112,40 @@ defmodule Mithril.CalendarFeedSecurity do
     end
   end
 
-  @spec validate_feed_timing(map()) :: :ok | {:error, String.t()}
+  @spec validate_feed_timing(map()) ::
+          :ok | {:error, String.t()} | {:error, {:timezone_database, term()}}
   def validate_feed_timing(%{
         timezone: timezone,
         default_checkin_time: checkin,
         default_checkout_time: checkout
       }) do
-    with :ok <- validate_timezone(timezone),
+    with {:ok, _normalized_timezone} <- normalize_timezone(timezone),
          {:ok, _} <- parse_feed_time(checkin, "15:00:00"),
          {:ok, _} <- parse_feed_time(checkout, "11:00:00") do
       :ok
     end
   end
+
+  @spec normalize_timezone(term()) ::
+          {:ok, String.t()} | {:error, String.t()} | {:error, {:timezone_database, term()}}
+  def normalize_timezone(timezone) when is_binary(timezone) do
+    trimmed = String.trim(timezone)
+
+    if trimmed == "" do
+      {:error, "Invalid timezone: #{timezone}"}
+    else
+      case Mithril.Repo.query(
+             "SELECT EXISTS (SELECT 1 FROM pg_timezone_names WHERE name = $1)",
+             [trimmed]
+           ) do
+        {:ok, %{rows: [[true]]}} -> {:ok, trimmed}
+        {:ok, _} -> {:error, "Invalid timezone: #{trimmed}"}
+        {:error, reason} -> {:error, {:timezone_database, reason}}
+      end
+    end
+  end
+
+  def normalize_timezone(timezone), do: {:error, "Invalid timezone: #{inspect(timezone)}"}
 
   defp fetch_with_redirects(_url, _provider, redirect_count)
        when redirect_count > @max_redirects do
@@ -253,12 +275,5 @@ defmodule Mithril.CalendarFeedSecurity do
     end
   rescue
     ArgumentError -> false
-  end
-
-  defp validate_timezone(timezone) when is_binary(timezone) do
-    case DateTime.now(timezone) do
-      {:ok, _} -> :ok
-      {:error, _} -> {:error, "Invalid timezone: #{timezone}"}
-    end
   end
 end
