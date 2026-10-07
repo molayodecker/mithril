@@ -255,22 +255,21 @@ defmodule Mithril.CalendarFeedSecurity do
     ArgumentError -> false
   end
 
-  # Mithril does not bundle tzdata (see booking_customer_reminder/schedule.ex). Validate
-  # IANA shape here; Postgres and iCal sync own authoritative timezone handling.
-  @iana_timezone_regex ~r/^[A-Za-z][A-Za-z0-9_+-]*(\/[A-Za-z][A-Za-z0-9_+-]*)+$/
-
+  # Mithril intentionally does not bundle tzdata. PostgreSQL already ships the IANA
+  # timezone database, so use it as the authoritative validator for feed timezones.
   defp validate_timezone(timezone) when is_binary(timezone) do
     trimmed = String.trim(timezone)
 
-    cond do
-      trimmed == "" ->
-        {:error, "Invalid timezone: #{timezone}"}
-
-      Regex.match?(@iana_timezone_regex, trimmed) ->
-        :ok
-
-      true ->
-        {:error, "Invalid timezone: #{trimmed}"}
+    if trimmed == "" do
+      {:error, "Invalid timezone: #{timezone}"}
+    else
+      case Mithril.Repo.query(
+             "SELECT EXISTS (SELECT 1 FROM pg_timezone_names WHERE name = $1)",
+             [trimmed]
+           ) do
+        {:ok, %{rows: [[true]]}} -> :ok
+        _ -> {:error, "Invalid timezone: #{trimmed}"}
+      end
     end
   end
 end
