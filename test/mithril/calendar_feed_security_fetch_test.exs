@@ -101,6 +101,11 @@ defmodule Mithril.CalendarFeedSecurityFetchTest do
              })
   end
 
+  test "normalize_timezone returns the trimmed persisted value" do
+    assert {:ok, "America/New_York"} =
+             CalendarFeedSecurity.normalize_timezone("  America/New_York  ")
+  end
+
   test "validate_feed_timing rejects malformed timezone" do
     assert {:error, "Invalid timezone: not-a-zone"} =
              CalendarFeedSecurity.validate_feed_timing(%{
