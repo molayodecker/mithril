@@ -103,7 +103,20 @@ defmodule Mithril.PropertyCalendar.IcalSync do
 
   defp persist_parsed_events(parsed, existing, feed, now) do
     Enum.reduce_while(parsed, {:ok, MapSet.new()}, fn event, {:ok, seen_acc} ->
-      raw_hash = :crypto.hash(:sha256, event.raw_hash_input) |> Base.encode16(case: :lower)
+      raw_hash =
+        :crypto.hash(
+          :sha256,
+          [
+            event.raw_hash_input,
+            "|timezone=",
+            feed["timezone"] || "Africa/Accra",
+            "|checkin=",
+            feed["default_checkin_time"] || "15:00:00",
+            "|checkout=",
+            feed["default_checkout_time"] || "11:00:00"
+          ]
+        )
+        |> Base.encode16(case: :lower)
       existing_row = Map.get(existing, event.uid)
 
       result =
