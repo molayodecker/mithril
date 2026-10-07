@@ -39,7 +39,7 @@ defmodule Mithril.PropertyCalendar.IcalSyncTest do
 
     {starts_at, ends_at} = IcalSync.resolve_window_for_test(event, feed)
 
-    assert starts_at == %{value: "2026-10-10 15:00:00", utc?: false}
-    assert ends_at == %{value: "2026-10-12 11:00:00", utc?: false}
+    assert starts_at == %{utc: nil, local: ~N[2026-10-10 15:00:00]}
+    assert ends_at == %{utc: nil, local: ~N[2026-10-12 11:00:00]}
   end
 end
