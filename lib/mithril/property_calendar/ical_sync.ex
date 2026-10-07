@@ -117,6 +117,7 @@ defmodule Mithril.PropertyCalendar.IcalSync do
           ]
         )
         |> Base.encode16(case: :lower)
+
       existing_row = Map.get(existing, event.uid)
 
       result =
