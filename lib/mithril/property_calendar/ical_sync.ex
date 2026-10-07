@@ -97,8 +97,10 @@ defmodule Mithril.PropertyCalendar.IcalSync do
               starts_at, ends_at, summary, raw_event_hash, last_seen_at, missing_sync_count,
               cancelled_at, updated_at
             ) VALUES (
-              $1::uuid, $2::uuid, $3, $4, $5, $6::timestamptz, $7::timestamptz, $8, $9, $10::timestamptz,
-              0, $11, $10::timestamptz
+              $1::uuid, $2::uuid, $3, $4, $5,
+              CASE WHEN $12::boolean THEN $6::timestamptz ELSE $6::timestamp AT TIME ZONE $14::text END,
+              CASE WHEN $13::boolean THEN $7::timestamptz ELSE $7::timestamp AT TIME ZONE $14::text END,
+              $8, $9, $10::timestamptz, 0, $11, $10::timestamptz
             )
             ON CONFLICT (calendar_feed_id, external_uid) DO UPDATE SET
               external_sequence = EXCLUDED.external_sequence,
@@ -118,12 +120,15 @@ defmodule Mithril.PropertyCalendar.IcalSync do
               event.uid,
               event.sequence,
               event.status,
-              starts_at,
-              ends_at,
+              starts_at.value,
+              ends_at.value,
               event.summary,
               raw_hash,
               now,
-              if(event.status == "cancelled", do: now, else: nil)
+              if(event.status == "cancelled", do: now, else: nil),
+              starts_at.utc?,
+              ends_at.utc?,
+              feed["timezone"] || "Africa/Accra"
             ]
           )
         end
@@ -179,44 +184,34 @@ defmodule Mithril.PropertyCalendar.IcalSync do
   end
 
   defp resolve_window(event, feed) do
-    timezone = feed["timezone"] || "Africa/Accra"
     checkin = feed["default_checkin_time"] || "15:00:00"
     checkout = feed["default_checkout_time"] || "11:00:00"
 
-    starts_at = resolve_instant(event.dtstart, timezone, checkout)
-    ends_at = resolve_instant(event.dtend, timezone, checkin)
+    starts_at = resolve_instant(event.dtstart, checkin)
+    ends_at = resolve_instant(event.dtend, checkout)
     {starts_at, ends_at}
   end
 
-  defp resolve_instant(%{kind: "date", date_part: date_part}, timezone, default_time) do
-    "#{format_date(date_part)} #{default_time}"
-    |> parse_local_datetime(timezone)
+  defp resolve_instant(%{kind: "date", date_part: date_part}, default_time) do
+    %{value: "#{format_date(date_part)} #{default_time}", utc?: false}
   end
 
-  defp resolve_instant(
-         %{kind: kind, date_part: date_part, time_part: time_part},
-         timezone,
-         _default
-       ) do
-    time = format_time(time_part)
-
-    instant =
-      if kind == "utc" do
-        DateTime.from_iso8601("#{format_date(date_part)}T#{time}Z")
-      else
-        parse_local_datetime("#{format_date(date_part)} #{time}", timezone)
-      end
-
-    case instant do
-      {:ok, dt, _} -> DateTime.to_iso8601(dt)
-      %DateTime{} = dt -> DateTime.to_iso8601(dt)
-      dt when is_binary(dt) -> dt
-      _ -> DateTime.utc_now() |> DateTime.to_iso8601()
-    end
+  defp resolve_instant(%{kind: "utc", date_part: date_part, time_part: time_part}, _default) do
+    %{
+      value: "#{format_date(date_part)}T#{format_time(time_part)}Z",
+      utc?: true
+    }
   end
 
-  defp resolve_instant(_, _timezone, _default) do
-    DateTime.utc_now() |> DateTime.to_iso8601()
+  defp resolve_instant(%{kind: "local", date_part: date_part, time_part: time_part}, _default) do
+    %{
+      value: "#{format_date(date_part)} #{format_time(time_part)}",
+      utc?: false
+    }
+  end
+
+  defp resolve_instant(_, default_time) do
+    %{value: "1970-01-01 #{default_time}", utc?: false}
   end
 
   defp format_date(yyyymmdd) do
@@ -232,20 +227,4 @@ defmodule Mithril.PropertyCalendar.IcalSync do
   end
 
   defp format_time(_), do: "00:00:00"
-
-  defp parse_local_datetime(naive, timezone) do
-    case NaiveDateTime.from_iso8601(String.replace(naive, " ", "T")) do
-      {:ok, naive_dt} ->
-        case Repo.query(
-               "SELECT $1::timestamp AT TIME ZONE $2",
-               [NaiveDateTime.to_iso8601(naive_dt), timezone]
-             ) do
-          {:ok, %{rows: [[%DateTime{} = dt]]}} -> DateTime.to_iso8601(dt)
-          _ -> DateTime.to_iso8601(DateTime.utc_now())
-        end
-
-      _ ->
-        DateTime.utc_now() |> DateTime.to_iso8601()
-    end
-  end
 end
