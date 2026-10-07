@@ -236,8 +236,11 @@ defmodule Mithril.PropertyCalendar.IcalSync do
   defp parse_local_datetime(naive, timezone) do
     case NaiveDateTime.from_iso8601(String.replace(naive, " ", "T")) do
       {:ok, naive_dt} ->
-        case DateTime.from_naive(naive_dt, timezone) do
-          {:ok, dt} -> DateTime.to_iso8601(dt)
+        case Repo.query(
+               "SELECT $1::timestamp AT TIME ZONE $2",
+               [NaiveDateTime.to_iso8601(naive_dt), timezone]
+             ) do
+          {:ok, %{rows: [[%DateTime{} = dt]]}} -> DateTime.to_iso8601(dt)
           _ -> DateTime.to_iso8601(DateTime.utc_now())
         end
 
