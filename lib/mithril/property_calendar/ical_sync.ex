@@ -31,10 +31,18 @@ defmodule Mithril.PropertyCalendar.IcalSync do
   @spec import_feed(map(), String.t()) :: :ok | {:error, String.t()}
   def import_feed(feed, ics_text) do
     with {:ok, parsed} <- IcalParser.parse_events(ics_text),
-         :ok <- credible_feed?(parsed, feed["id"]),
-         :ok <- upsert_events(feed, parsed),
-         :ok <- TurnoverOpportunities.recompute(feed) do
-      :ok
+         :ok <- credible_feed?(parsed, feed["id"]) do
+      case Repo.transaction(fn ->
+             with :ok <- upsert_events(feed, parsed),
+                  :ok <- TurnoverOpportunities.recompute(feed) do
+               :ok
+             else
+               {:error, reason} -> Repo.rollback(reason)
+             end
+           end) do
+        {:ok, :ok} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
