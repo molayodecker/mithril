@@ -39,9 +39,8 @@ defmodule Mithril.PropertyCalendar.IcalSync do
   end
 
   defp credible_feed?(parsed, feed_id) do
-    case credible_after_parse?(parsed, prior_event_count(feed_id)) do
-      :ok -> :ok
-      {:error, message} -> {:error, message}
+    with {:ok, prior_count} <- prior_event_count(feed_id) do
+      credible_after_parse?(parsed, prior_count)
     end
   end
 
@@ -53,41 +52,44 @@ defmodule Mithril.PropertyCalendar.IcalSync do
            """,
            [feed_id]
          ) do
-      {:ok, %{rows: [[count]]}} -> count
-      _ -> 0
+      {:ok, %{rows: [[count]]}} -> {:ok, count}
+      {:error, _reason} -> {:error, "Failed to inspect existing calendar events"}
     end
   end
 
   defp upsert_events(feed, parsed) do
     now = DateTime.utc_now()
 
-    existing =
-      case Repo.query(
-             """
-             SELECT id, external_uid, external_sequence, raw_event_hash, missing_sync_count, status
-             FROM public.property_calendar_events WHERE calendar_feed_id = $1::uuid
-             """,
-             [feed["id"]]
-           ) do
-        {:ok, %{rows: rows}} ->
-          Map.new(rows, fn [id, uid, seq, hash, missing, status] ->
-            {uid,
-             %{
-               id: id,
-               sequence: seq,
-               raw_event_hash: hash,
-               missing_sync_count: missing,
-               status: status
-             }}
-          end)
-
-        _ ->
-          %{}
-      end
-
-    with {:ok, seen_uids} <- persist_parsed_events(parsed, existing, feed, now) do
-      reconcile_missing(existing, seen_uids, now, feed["id"])
+    with {:ok, existing} <- load_existing_events(feed["id"]),
+         {:ok, seen_uids} <- persist_parsed_events(parsed, existing, feed, now),
+         :ok <- reconcile_missing(existing, seen_uids, now) do
       :ok
+    end
+  end
+
+  defp load_existing_events(feed_id) do
+    case Repo.query(
+           """
+           SELECT id, external_uid, external_sequence, raw_event_hash, missing_sync_count, status
+           FROM public.property_calendar_events WHERE calendar_feed_id = $1::uuid
+           """,
+           [feed_id]
+         ) do
+      {:ok, %{rows: rows}} ->
+        {:ok,
+         Map.new(rows, fn [id, uid, seq, hash, missing, status] ->
+           {uid,
+            %{
+              id: id,
+              sequence: seq,
+              raw_event_hash: hash,
+              missing_sync_count: missing,
+              status: status
+            }}
+         end)}
+
+      {:error, _reason} ->
+        {:error, "Failed to load existing calendar events"}
     end
   end
 
@@ -162,29 +164,34 @@ defmodule Mithril.PropertyCalendar.IcalSync do
     end
   end
 
-  defp reconcile_missing(existing, seen_uids, now, _feed_id) do
-    existing
-    |> Enum.each(fn {uid, row} ->
+  defp reconcile_missing(existing, seen_uids, now) do
+    Enum.reduce_while(existing, :ok, fn {uid, row}, :ok ->
       if MapSet.member?(seen_uids, uid) do
-        :ok
+        {:cont, :ok}
       else
         next_missing = (row.missing_sync_count || 0) + 1
 
-        if next_missing >= @missing_threshold do
-          Repo.query(
-            """
-            UPDATE public.property_calendar_events
-            SET status = 'cancelled', cancelled_at = $2::timestamptz,
-                missing_sync_count = $3, updated_at = $2::timestamptz
-            WHERE id = $1::uuid
-            """,
-            [row.id, now, next_missing]
-          )
-        else
-          Repo.query(
-            "UPDATE public.property_calendar_events SET missing_sync_count = $2, updated_at = $3::timestamptz WHERE id = $1::uuid",
-            [row.id, next_missing, now]
-          )
+        result =
+          if next_missing >= @missing_threshold do
+            Repo.query(
+              """
+              UPDATE public.property_calendar_events
+              SET status = 'cancelled', cancelled_at = $2::timestamptz,
+                  missing_sync_count = $3, updated_at = $2::timestamptz
+              WHERE id = $1::uuid
+              """,
+              [row.id, now, next_missing]
+            )
+          else
+            Repo.query(
+              "UPDATE public.property_calendar_events SET missing_sync_count = $2, updated_at = $3::timestamptz WHERE id = $1::uuid",
+              [row.id, next_missing, now]
+            )
+          end
+
+        case result do
+          {:ok, _} -> {:cont, :ok}
+          {:error, _reason} -> {:halt, {:error, "Failed to reconcile calendar events"}}
         end
       end
     end)
