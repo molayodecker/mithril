@@ -10,6 +10,7 @@ defmodule Mithril.CalendarFeedSecurityFetchTest do
   """
 
   setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Mithril.Repo)
     on_exit(fn -> Application.delete_env(:mithril, :calendar_feed_http_get) end)
     :ok
   end
