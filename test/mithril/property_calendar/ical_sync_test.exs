@@ -25,4 +25,21 @@ defmodule Mithril.PropertyCalendar.IcalSyncTest do
   test "missing sync threshold requires consecutive misses before cancel" do
     assert IcalSync.missing_sync_threshold() == 3
   end
+
+  test "all-day events apply check-in to DTSTART and checkout to DTEND" do
+    event = %{
+      dtstart: %{kind: "date", date_part: "20261010"},
+      dtend: %{kind: "date", date_part: "20261012"}
+    }
+
+    feed = %{
+      "default_checkin_time" => "15:00:00",
+      "default_checkout_time" => "11:00:00"
+    }
+
+    {starts_at, ends_at} = IcalSync.resolve_window_for_test(event, feed)
+
+    assert starts_at == %{value: "2026-10-10 15:00:00", utc?: false}
+    assert ends_at == %{value: "2026-10-12 11:00:00", utc?: false}
+  end
 end
