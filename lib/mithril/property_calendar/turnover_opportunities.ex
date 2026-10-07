@@ -20,7 +20,7 @@ defmodule Mithril.PropertyCalendar.TurnoverOpportunities do
            [feed["id"]]
          ) do
       {:ok, %{rows: rows}} ->
-        now = DateTime.utc_now() |> DateTime.to_iso8601()
+        now = DateTime.utc_now()
         minimum = feed["minimum_turnover_minutes"] || 180
 
         with :ok <-
@@ -87,9 +87,9 @@ defmodule Mithril.PropertyCalendar.TurnoverOpportunities do
              feed["property_id"],
              departing_id,
              arriving_id,
-             DateTime.to_iso8601(checkout_at),
-             if(next_checkin_at, do: DateTime.to_iso8601(next_checkin_at), else: nil),
-             DateTime.to_iso8601(suggestion.start_at),
+             checkout_at,
+             next_checkin_at,
+             suggestion.start_at,
              suggestion.duration_hours,
              suggestion.status,
              now
