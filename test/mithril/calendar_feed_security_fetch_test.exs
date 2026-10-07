@@ -78,6 +78,46 @@ defmodule Mithril.CalendarFeedSecurityFetchTest do
     assert {:error, "Feed request failed"} = CalendarFeedSecurity.fetch_feed_text(url, "airbnb")
   end
 
+  test "connect-property-calendar default timezone passes without Elixir tzdata" do
+    # Mobile hosts in Ghana store Africa/Accra on properties. Mithril does not bundle
+    # tzdata, so DateTime.now/1 cannot resolve this zone (connect used to 400 here).
+    assert {:error, :utc_only_time_zone_database} = DateTime.now("Africa/Accra")
+
+    assert :ok =
+             CalendarFeedSecurity.validate_feed_timing(%{
+               timezone: "Africa/Accra",
+               default_checkin_time: "15:00:00",
+               default_checkout_time: "11:00:00"
+             })
+  end
+
+  test "validate_feed_timing accepts trimmed IANA zones" do
+    assert :ok =
+             CalendarFeedSecurity.validate_feed_timing(%{
+               timezone: "  America/New_York  ",
+               default_checkin_time: "15:00:00",
+               default_checkout_time: "11:00:00"
+             })
+  end
+
+  test "validate_feed_timing rejects malformed timezone" do
+    assert {:error, "Invalid timezone: not-a-zone"} =
+             CalendarFeedSecurity.validate_feed_timing(%{
+               timezone: "not-a-zone",
+               default_checkin_time: "15:00:00",
+               default_checkout_time: "11:00:00"
+             })
+  end
+
+  test "validate_feed_timing rejects blank timezone" do
+    assert {:error, "Invalid timezone:    "} =
+             CalendarFeedSecurity.validate_feed_timing(%{
+               timezone: "   ",
+               default_checkin_time: "15:00:00",
+               default_checkout_time: "11:00:00"
+             })
+  end
+
   test "temporary fetch failure does not mutate local calendar data (sync layer skips import)" do
     url = "https://www.airbnb.com/calendar/ical/fail.ics"
 
