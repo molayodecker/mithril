@@ -109,6 +109,15 @@ defmodule Mithril.CalendarFeedSecurityFetchTest do
              })
   end
 
+  test "validate_feed_timing rejects unknown IANA-shaped timezone" do
+    assert {:error, "Invalid timezone: Africa/Definitely_Not_A_Zone"} =
+             CalendarFeedSecurity.validate_feed_timing(%{
+               timezone: "Africa/Definitely_Not_A_Zone",
+               default_checkin_time: "15:00:00",
+               default_checkout_time: "11:00:00"
+             })
+  end
+
   test "validate_feed_timing rejects blank timezone" do
     assert {:error, "Invalid timezone:    "} =
              CalendarFeedSecurity.validate_feed_timing(%{
