@@ -39,6 +39,14 @@ defmodule Mithril.PropertyCalendar.IcalSyncTest do
              )
 
     assert converted == ~U[2026-10-10 15:00:00Z]
+
+    assert {:ok, %{rows: [[utc_converted]]}} =
+             Mithril.Repo.query(
+               "SELECT COALESCE($1::timestamptz, $2::timestamp AT TIME ZONE $3::text)",
+               [~U[2026-10-10 15:00:00Z], nil, "Africa/Accra"]
+             )
+
+    assert utc_converted == ~U[2026-10-10 15:00:00Z]
   end
 
   test "all-day events apply check-in to DTSTART and checkout to DTEND" do
