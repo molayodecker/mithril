@@ -118,46 +118,46 @@ defmodule Mithril.PropertyCalendar.IcalSync do
   defp persist_event(feed, event, raw_hash, now) do
     with {:ok, {starts_at, ends_at}} <- resolve_window(event, feed) do
       case Repo.query(
-           """
-           INSERT INTO public.property_calendar_events (
-             calendar_feed_id, property_id, external_uid, external_sequence, status,
-             starts_at, ends_at, summary, raw_event_hash, last_seen_at, missing_sync_count,
-             cancelled_at, updated_at
-           ) VALUES (
-             $1::uuid, $2::uuid, $3, $4, $5,
-             COALESCE($6::timestamptz, $12::timestamp AT TIME ZONE $14::text),
-             COALESCE($7::timestamptz, $13::timestamp AT TIME ZONE $14::text),
-             $8, $9, $10::timestamptz, 0, $11, $10::timestamptz
-           )
-           ON CONFLICT (calendar_feed_id, external_uid) DO UPDATE SET
-             external_sequence = EXCLUDED.external_sequence,
-             status = EXCLUDED.status,
-             starts_at = EXCLUDED.starts_at,
-             ends_at = EXCLUDED.ends_at,
-             summary = EXCLUDED.summary,
-             raw_event_hash = EXCLUDED.raw_event_hash,
-             last_seen_at = EXCLUDED.last_seen_at,
-             missing_sync_count = 0,
-             cancelled_at = EXCLUDED.cancelled_at,
-             updated_at = EXCLUDED.updated_at
-           """,
-           [
-             feed["id"],
-             feed["property_id"],
-             event.uid,
-             event.sequence,
-             event.status,
-             starts_at.utc,
-             ends_at.utc,
-             event.summary,
-             raw_hash,
-             now,
-             if(event.status == "cancelled", do: now, else: nil),
-             starts_at.local,
-             ends_at.local,
-             feed["timezone"] || "Africa/Accra"
-           ]
-         ) do
+             """
+             INSERT INTO public.property_calendar_events (
+               calendar_feed_id, property_id, external_uid, external_sequence, status,
+               starts_at, ends_at, summary, raw_event_hash, last_seen_at, missing_sync_count,
+               cancelled_at, updated_at
+             ) VALUES (
+               $1::uuid, $2::uuid, $3, $4, $5,
+               COALESCE($6::timestamptz, $12::timestamp AT TIME ZONE $14::text),
+               COALESCE($7::timestamptz, $13::timestamp AT TIME ZONE $14::text),
+               $8, $9, $10::timestamptz, 0, $11, $10::timestamptz
+             )
+             ON CONFLICT (calendar_feed_id, external_uid) DO UPDATE SET
+               external_sequence = EXCLUDED.external_sequence,
+               status = EXCLUDED.status,
+               starts_at = EXCLUDED.starts_at,
+               ends_at = EXCLUDED.ends_at,
+               summary = EXCLUDED.summary,
+               raw_event_hash = EXCLUDED.raw_event_hash,
+               last_seen_at = EXCLUDED.last_seen_at,
+               missing_sync_count = 0,
+               cancelled_at = EXCLUDED.cancelled_at,
+               updated_at = EXCLUDED.updated_at
+             """,
+             [
+               feed["id"],
+               feed["property_id"],
+               event.uid,
+               event.sequence,
+               event.status,
+               starts_at.utc,
+               ends_at.utc,
+               event.summary,
+               raw_hash,
+               now,
+               if(event.status == "cancelled", do: now, else: nil),
+               starts_at.local,
+               ends_at.local,
+               feed["timezone"] || "Africa/Accra"
+             ]
+           ) do
         {:ok, _} -> :ok
         {:error, _reason} -> {:error, "Failed to persist calendar event"}
       end
