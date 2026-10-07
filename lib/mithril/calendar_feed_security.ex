@@ -276,5 +276,4 @@ defmodule Mithril.CalendarFeedSecurity do
   rescue
     ArgumentError -> false
   end
-
 end
