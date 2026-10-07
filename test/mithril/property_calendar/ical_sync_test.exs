@@ -3,6 +3,11 @@ defmodule Mithril.PropertyCalendar.IcalSyncTest do
 
   alias Mithril.PropertyCalendar.IcalSync
 
+  setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Mithril.Repo)
+    :ok
+  end
+
   test "apply_incoming_event? rejects stale sequence updates" do
     existing = %{sequence: 3, raw_event_hash: "abc"}
 
@@ -24,6 +29,16 @@ defmodule Mithril.PropertyCalendar.IcalSyncTest do
 
   test "missing sync threshold requires consecutive misses before cancel" do
     assert IcalSync.missing_sync_threshold() == 3
+  end
+
+  test "Postgrex encodes typed local calendar timestamps for timezone conversion" do
+    assert {:ok, %{rows: [[converted]]}} =
+             Mithril.Repo.query(
+               "SELECT COALESCE($1::timestamptz, $2::timestamp AT TIME ZONE $3::text)",
+               [nil, ~N[2026-10-10 15:00:00], "Africa/Accra"]
+             )
+
+    assert converted == ~U[2026-10-10 15:00:00Z]
   end
 
   test "all-day events apply check-in to DTSTART and checkout to DTEND" do
