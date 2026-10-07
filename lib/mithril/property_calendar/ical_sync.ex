@@ -111,9 +111,9 @@ defmodule Mithril.PropertyCalendar.IcalSync do
             "|timezone=",
             feed["timezone"] || "Africa/Accra",
             "|checkin=",
-            feed["default_checkin_time"] || "15:00:00",
+            hash_config_value(feed["default_checkin_time"] || "15:00:00"),
             "|checkout=",
-            feed["default_checkout_time"] || "11:00:00"
+            hash_config_value(feed["default_checkout_time"] || "11:00:00")
           ]
         )
         |> Base.encode16(case: :lower)
@@ -273,6 +273,10 @@ defmodule Mithril.PropertyCalendar.IcalSync do
   rescue
     MatchError -> {:error, "Invalid calendar event datetime"}
   end
+
+  defp hash_config_value(%Time{} = value), do: Time.to_iso8601(value)
+  defp hash_config_value(value) when is_binary(value), do: value
+  defp hash_config_value(value), do: to_string(value)
 
   defp format_date(yyyymmdd) do
     <<y::binary-size(4), m::binary-size(2), d::binary-size(2)>> = yyyymmdd
