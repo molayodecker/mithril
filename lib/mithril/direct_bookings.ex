@@ -200,7 +200,13 @@ defmodule Mithril.DirectBookings do
                  find_idempotent_booking(customer_id, replacement_input.idempotency_key),
                {:ok, path} <- replacement_path(original, existing),
                {:ok, result} <-
-                 execute_unpaid_replacement(path, customer_id, bid, merge_replacement_visit_details(replacement_input, original, params), existing) do
+                 execute_unpaid_replacement(
+                   path,
+                   customer_id,
+                   bid,
+                   merge_replacement_visit_details(replacement_input, original, params),
+                   existing
+                 ) do
             result
           else
             {:error, reason} -> Repo.rollback(reason)
@@ -241,10 +247,27 @@ defmodule Mithril.DirectBookings do
            """,
            [booking_id, customer_id]
          ) do
-      {:ok, %{rows: [[id, status, payment_status, subscription_id, reference,
-                      booking_for_self, site_contact_name, site_contact_phone,
-                      site_contact_relationship, property_type, occupant_present,
-                      requires_key_or_access_code, access_instructions, customer_contact_phone]]}} ->
+      {:ok,
+       %{
+         rows: [
+           [
+             id,
+             status,
+             payment_status,
+             subscription_id,
+             reference,
+             booking_for_self,
+             site_contact_name,
+             site_contact_phone,
+             site_contact_relationship,
+             property_type,
+             occupant_present,
+             requires_key_or_access_code,
+             access_instructions,
+             customer_contact_phone
+           ]
+         ]
+       }} ->
         {:ok,
          %{
            id: id,
