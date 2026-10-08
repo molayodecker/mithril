@@ -940,7 +940,10 @@ defmodule Mithril.DirectDispatch do
     end
   end
 
-  defp recurrence_interval(value) when value in ~w(weekly bi_weekly monthly), do: {:ok, value}
+  defp recurrence_interval(value)
+       when value in ~w(daily weekly bi_weekly monthly quarterly annually),
+       do: {:ok, value}
+
   defp recurrence_interval(_), do: :error
 
   defp occurrence_count(value) when is_integer(value) and value >= 2 and value <= 12,
@@ -955,9 +958,12 @@ defmodule Mithril.DirectDispatch do
 
   defp occurrence_count(_), do: :error
 
+  defp shift_recurrence(date, "daily", index), do: Date.add(date, index)
   defp shift_recurrence(date, "weekly", index), do: Date.add(date, 7 * index)
   defp shift_recurrence(date, "bi_weekly", index), do: Date.add(date, 14 * index)
   defp shift_recurrence(date, "monthly", index), do: Date.shift(date, month: index)
+  defp shift_recurrence(date, "quarterly", index), do: Date.shift(date, month: 3 * index)
+  defp shift_recurrence(date, "annually", index), do: Date.shift(date, year: index)
 
   defp iso_date(value) when is_binary(value), do: Date.from_iso8601(String.trim(value))
   defp iso_date(%Date{} = date), do: {:ok, date}

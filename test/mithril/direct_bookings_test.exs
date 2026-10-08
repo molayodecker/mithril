@@ -78,12 +78,183 @@ defmodule Mithril.DirectBookingsTest do
     assert {:ok, first} = DirectBookings.create_customer_booking(customer_id, params)
     assert {:ok, second} = DirectBookings.create_customer_booking(customer_id, params)
     assert first.id == second.id
+    refute Map.has_key?(first, :subscriptionId)
     assert first.amountMinor == second.amountMinor
 
     assert [[1]] =
              Repo.query!(
                "SELECT count(*) FROM public.bookings WHERE customer_id = $1 AND idempotency_key = $2",
                [Ecto.UUID.dump!(customer_id), idempotency_key]
+             ).rows
+  end
+
+  test "recurring checkout creates one pending subscription for each Paystack interval" do
+    previous = Application.get_env(:mithril, :direct_client_bookings, false)
+    Application.put_env(:mithril, :direct_client_bookings, true)
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :direct_client_bookings, previous)
+    end)
+
+    customer_id = Ecto.UUID.generate()
+    cleaner_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.users (id, email, status)
+      VALUES ($1, 'customer@example.com', 'active'),
+             ($2, 'cleaner@example.com', 'active')
+      """,
+      [Ecto.UUID.dump!(customer_id), Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_data (
+        user_id, verified, status, hourly_rate, specialties
+      ) VALUES ($1, true, 'active', 50, ARRAY['regular_cleaning'])
+      """,
+      [Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    for interval <- ~w(daily weekly monthly quarterly annually) do
+      params = %{
+        "serviceId" => 1,
+        "cleanerId" => cleaner_id,
+        "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 4)),
+        "scheduledTime" => "10:00",
+        "durationHours" => 3,
+        "address" => "Labone, Accra",
+        "timezone" => "Africa/Accra",
+        "idempotencyKey" => "recurring-#{interval}-#{Ecto.UUID.generate()}",
+        "recurrenceInterval" => interval
+      }
+
+      assert {:ok, created} = DirectBookings.create_customer_booking(customer_id, params)
+      assert created.subscriptionId =~ ~r/^[0-9a-f-]{36}$/
+
+      assert {:ok, retried} = DirectBookings.create_customer_booking(customer_id, params)
+      assert retried.id == created.id
+      assert retried.subscriptionId == created.subscriptionId
+
+      assert [[^interval, "pending", "paystack_plan", ^interval, scheduled_date, scheduled_date]] =
+               Repo.query!(
+                 """
+                 SELECT recurrence_interval, status, billing_mode, paystack_plan_interval,
+                        next_occurrence_date, recurrence_anchor_date
+                 FROM public.subscriptions
+                 WHERE id = $1::uuid
+                 """,
+                 [Ecto.UUID.dump!(created.subscriptionId)]
+               ).rows
+
+      assert scheduled_date == Date.add(Date.utc_today(), 4)
+
+      assert [[booking_interval, booking_subscription_id]] =
+               Repo.query!(
+                 """
+                 SELECT recurrence_interval, subscription_id::text
+                 FROM public.bookings
+                 WHERE id = $1::uuid
+                 """,
+                 [Ecto.UUID.dump!(created.id)]
+               ).rows
+
+      assert booking_interval == interval
+      assert booking_subscription_id == created.subscriptionId
+    end
+
+    assert [[5]] =
+             Repo.query!("SELECT count(*) FROM public.subscriptions", []).rows
+
+    for rejected <- ["hourly", "bi-weekly", "bi_weekly"] do
+      assert {:error, :invalid_request} =
+               DirectBookings.create_customer_booking(customer_id, %{
+                 "serviceId" => 1,
+                 "cleanerId" => cleaner_id,
+                 "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 4)),
+                 "scheduledTime" => "10:00",
+                 "durationHours" => 3,
+                 "address" => "Labone, Accra",
+                 "recurrenceInterval" => rejected
+               })
+    end
+  end
+
+  test "stores third-party contact, property, and access details on the booking" do
+    previous = Application.get_env(:mithril, :direct_client_bookings, false)
+    Application.put_env(:mithril, :direct_client_bookings, true)
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :direct_client_bookings, previous)
+    end)
+
+    customer_id = Ecto.UUID.generate()
+    cleaner_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.users (id, email, status)
+      VALUES ($1, 'customer-visit@example.com', 'active'),
+             ($2, 'cleaner-visit@example.com', 'active')
+      """,
+      [Ecto.UUID.dump!(customer_id), Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_data (
+        user_id, verified, status, hourly_rate, specialties
+      ) VALUES ($1, true, 'active', 50, ARRAY['regular_cleaning'])
+      """,
+      [Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    assert {:ok, with_access} =
+             DirectBookings.create_customer_booking(customer_id, %{
+               "serviceId" => 1,
+               "cleanerId" => cleaner_id,
+               "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 5)),
+               "scheduledTime" => "11:00",
+               "durationHours" => 3,
+               "address" => "Labone, Accra",
+               "timezone" => "Africa/Accra",
+               "idempotencyKey" => "visit-details-#{Ecto.UUID.generate()}",
+               "bookingForSelf" => false,
+               "siteContactName" => "Ama Mensah",
+               "siteContactPhone" => "+233200000001",
+               "siteContactRelationship" => "Tenant",
+               "propertyType" => "residential",
+               "occupantPresent" => true,
+               "requiresKeyOrAccessCode" => true,
+               "accessInstructions" => "Lockbox by the gate",
+               "customerContactPhone" => "+233200000002"
+             })
+
+    refute Map.has_key?(with_access, :subscriptionId)
+
+    assert [
+             [
+               false,
+               "Ama Mensah",
+               "+233200000001",
+               "Tenant",
+               "residential",
+               true,
+               true,
+               "Lockbox by the gate",
+               "+233200000002"
+             ]
+           ] =
+             Repo.query!(
+               """
+               SELECT booking_for_self, site_contact_name, site_contact_phone,
+                      site_contact_relationship, property_type, occupant_present,
+                      requires_key_or_access_code, access_instructions, customer_contact_phone
+               FROM public.bookings
+               WHERE id = $1::uuid
+               """,
+               [Ecto.UUID.dump!(with_access.id)]
              ).rows
   end
 
@@ -1191,16 +1362,6 @@ defmodule Mithril.DirectBookingsTest do
     assert message =~ "subscription"
   end
 
-  defp replacement_storage_key(booking_id, key) do
-    booking_scope =
-      booking_id
-      |> Ecto.UUID.dump!()
-      |> Base.encode16(case: :lower)
-
-    digest = key |> then(&:crypto.hash(:sha256, &1)) |> Base.url_encode64(padding: false)
-    "replace:#{booking_scope}:#{digest}"
-  end
-
   defp replacement_params(cleaner_id, overrides \\ []) do
     base = %{
       "serviceId" => 1,
@@ -1237,6 +1398,16 @@ defmodule Mithril.DirectBookingsTest do
     )
 
     :ok
+  end
+
+  defp replacement_storage_key(booking_id, key) do
+    booking_scope =
+      booking_id
+      |> Ecto.UUID.dump!()
+      |> Base.encode16(case: :lower)
+
+    digest = key |> then(&:crypto.hash(:sha256, &1)) |> Base.url_encode64(padding: false)
+    "replace:#{booking_scope}:#{digest}"
   end
 
   defp insert_booking!(customer_id, scheduled_date, scheduled_time, status, opts \\ []) do
@@ -1294,6 +1465,7 @@ defmodule Mithril.DirectBookingsTest do
     Repo.query!("DROP TABLE IF EXISTS public.booking_refunds CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.payment_attempts CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.bookings CASCADE")
+    Repo.query!("DROP TABLE IF EXISTS public.subscriptions CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.cleaner_availability_exceptions CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.cleaner_data CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.service_types CASCADE")
@@ -1406,6 +1578,16 @@ defmodule Mithril.DirectBookingsTest do
       supplies_allowance_minor integer,
       cleaner_earnings_minor integer,
       idempotency_key text,
+      recurrence_interval text,
+      booking_for_self boolean NOT NULL DEFAULT true,
+      requires_key_or_access_code boolean NOT NULL DEFAULT false,
+      site_contact_name text,
+      site_contact_phone text,
+      site_contact_relationship text,
+      property_type text,
+      occupant_present boolean,
+      access_instructions text,
+      customer_contact_phone text,
       created_at timestamptz NOT NULL DEFAULT now(),
       cancelled_at timestamptz,
       cancelled_by uuid,
@@ -1414,6 +1596,32 @@ defmodule Mithril.DirectBookingsTest do
       cancellation_reason text,
       cancellation_reason_code text,
       updated_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.subscriptions (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      customer_id uuid NOT NULL,
+      cleaner_id uuid,
+      service_id integer NOT NULL,
+      address text NOT NULL,
+      duration_hours numeric NOT NULL,
+      recurrence_interval text NOT NULL,
+      amount integer NOT NULL,
+      recurring_amount_minor integer,
+      first_charge_amount_minor integer,
+      pricing_version text,
+      currency text,
+      discount_type text,
+      discount_rate_bps integer,
+      status text NOT NULL DEFAULT 'pending',
+      next_occurrence_date date,
+      recurrence_anchor_date date,
+      scheduled_time time,
+      special_instructions text,
+      paystack_plan_interval text,
+      billing_mode text
     )
     """)
 
@@ -1490,7 +1698,10 @@ defmodule Mithril.DirectBookingsTest do
       is_weekend boolean,
       supplies_option text,
       supplies_allowance_minor integer,
-      cleaner_earnings_minor integer
+      cleaner_earnings_minor integer,
+      recurring_amount_minor integer,
+      first_charge_amount_minor integer,
+      discount_rate_bps integer
     )
     LANGUAGE sql AS $$
       SELECT
@@ -1504,13 +1715,16 @@ defmodule Mithril.DirectBookingsTest do
         19350,
         0,
         0,
-        0,
+        CASE WHEN p_is_recurring THEN 1500 ELSE 0 END,
         19350,
         false,
         false,
         'customer_provided',
         0,
-        15000
+        15000,
+        CASE WHEN p_is_recurring THEN 16448 ELSE NULL END,
+        CASE WHEN p_is_recurring THEN 19350 ELSE NULL END,
+        CASE WHEN p_is_recurring THEN 1500 ELSE NULL END
     $$
     """)
 

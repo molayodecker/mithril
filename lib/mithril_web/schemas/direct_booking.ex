@@ -125,7 +125,13 @@ defmodule MithrilWeb.Schemas.DirectBooking do
         cleanerId: %Schema{type: :string, format: :uuid},
         scheduledDate: %Schema{type: :string, format: :date},
         durationHours: %Schema{type: :number, minimum: 0},
-        timezone: %Schema{type: :string, default: "Africa/Accra"}
+        timezone: %Schema{type: :string, default: "Africa/Accra"},
+        recurrenceInterval: %Schema{
+          type: :string,
+          enum: ~w(daily weekly monthly quarterly annually),
+          nullable: true,
+          description: "Repeat schedule. Omit for a one-time visit."
+        }
       },
       required: [:serviceId, :cleanerId, :scheduledDate, :durationHours]
     })
@@ -155,7 +161,10 @@ defmodule MithrilWeb.Schemas.DirectBooking do
         isWeekend: %Schema{type: :boolean},
         suppliesOption: %Schema{type: :string},
         suppliesAllowanceMinor: %Schema{type: :integer},
-        cleanerEarningsMinor: %Schema{type: :integer, nullable: true}
+        cleanerEarningsMinor: %Schema{type: :integer, nullable: true},
+        recurringAmountMinor: %Schema{type: :integer, nullable: true},
+        firstChargeAmountMinor: %Schema{type: :integer, nullable: true},
+        discountRateBps: %Schema{type: :integer, nullable: true}
       },
       required: [
         :currency,
@@ -200,7 +209,27 @@ defmodule MithrilWeb.Schemas.DirectBooking do
           minLength: 8,
           maxLength: 128,
           description: "Per-booking intent key reused across retries"
-        }
+        },
+        recurrenceInterval: %Schema{
+          type: :string,
+          enum: ~w(daily weekly monthly quarterly annually),
+          nullable: true,
+          description:
+            "Paystack-native repeat schedule. Omit for a one-time visit. Creates a pending subscription for the first visit."
+        },
+        bookingForSelf: %Schema{type: :boolean, default: true},
+        siteContactName: %Schema{type: :string, nullable: true, maxLength: 120},
+        siteContactPhone: %Schema{type: :string, nullable: true, maxLength: 24},
+        siteContactRelationship: %Schema{type: :string, nullable: true, maxLength: 80},
+        propertyType: %Schema{
+          type: :string,
+          nullable: true,
+          enum: ~w(residential vacant_home office commercial airbnb_turnover post_construction)
+        },
+        occupantPresent: %Schema{type: :boolean, nullable: true},
+        requiresKeyOrAccessCode: %Schema{type: :boolean, default: false},
+        accessInstructions: %Schema{type: :string, nullable: true, maxLength: 2000},
+        customerContactPhone: %Schema{type: :string, nullable: true, maxLength: 24}
       },
       required: [
         :serviceId,
@@ -234,6 +263,24 @@ defmodule MithrilWeb.Schemas.DirectBooking do
           minLength: 8,
           maxLength: 128,
           description: "Required replacement intent key reused across retries"
+        },
+        bookingForSelf: %Schema{type: :boolean, default: true},
+        siteContactName: %Schema{type: :string, nullable: true, maxLength: 120},
+        siteContactPhone: %Schema{type: :string, nullable: true, maxLength: 24},
+        siteContactRelationship: %Schema{type: :string, nullable: true, maxLength: 80},
+        propertyType: %Schema{
+          type: :string,
+          nullable: true,
+          enum: ~w(residential vacant_home office commercial airbnb_turnover post_construction)
+        },
+        occupantPresent: %Schema{type: :boolean, nullable: true},
+        requiresKeyOrAccessCode: %Schema{type: :boolean, default: false},
+        accessInstructions: %Schema{type: :string, nullable: true, maxLength: 2000},
+        customerContactPhone: %Schema{type: :string, nullable: true, maxLength: 24},
+        recurrenceInterval: %Schema{
+          type: :string,
+          enum: ~w(daily weekly monthly quarterly annually),
+          nullable: true
         }
       },
       required: [
@@ -277,7 +324,13 @@ defmodule MithrilWeb.Schemas.DirectBooking do
         status: %Schema{type: :string},
         paymentStatus: %Schema{type: :string},
         amountMinor: %Schema{type: :integer},
-        currency: %Schema{type: :string}
+        currency: %Schema{type: :string},
+        subscriptionId: %Schema{
+          type: :string,
+          format: :uuid,
+          nullable: true,
+          description: "Pending subscription created for a recurring visit"
+        }
       },
       required: [:id, :status, :paymentStatus, :amountMinor, :currency]
     })

@@ -12,6 +12,9 @@ defmodule Mithril.DirectBookings do
   alias Mithril.Repo
 
   @default_timezone "Africa/Accra"
+  # Paystack plan intervals. Hourly and legacy bi-weekly stay unbookable.
+  @bookable_recurrence_intervals ~w(daily weekly monthly quarterly annually)
+  @property_types ~w(residential vacant_home office commercial airbnb_turnover post_construction)
 
   def list_services do
     # `service_types.duration` is a display string like "2 hours", so it cannot
@@ -154,14 +157,16 @@ defmodule Mithril.DirectBookings do
                  :ok <- validate_timeslot(input, pricing),
                  :ok <- validate_cleaner_availability(input, pricing, nil),
                  :ok <- ensure_customer_profile(customer_id),
-                 {:ok, booking_id} <- insert_booking(customer_id, input, pricing, service.name) do
-              %{
-                id: booking_id,
-                status: "pending",
-                paymentStatus: "pending",
-                amountMinor: pricing["finalAmountMinor"],
-                currency: pricing["currency"] || "GHS"
-              }
+                 {:ok, booking_id, subscription_id} <-
+                   insert_booking(customer_id, input, pricing, service.name) do
+              booking_result(
+                booking_id,
+                "pending",
+                "pending",
+                pricing["finalAmountMinor"],
+                pricing["currency"],
+                subscription_id
+              )
             else
               {:error, reason} -> Repo.rollback(reason)
             end
@@ -340,15 +345,17 @@ defmodule Mithril.DirectBookings do
          :ok <- validate_timeslot(input, pricing),
          :ok <- validate_cleaner_availability(input, pricing, nil),
          :ok <- ensure_customer_profile(customer_id),
-         {:ok, booking_id} <- insert_booking(customer_id, input, pricing, service.name) do
+         {:ok, booking_id, subscription_id} <-
+           insert_booking(customer_id, input, pricing, service.name) do
       {:ok,
-       %{
-         id: booking_id,
-         status: "pending",
-         paymentStatus: "pending",
-         amountMinor: pricing["finalAmountMinor"],
-         currency: pricing["currency"] || "GHS"
-       }}
+       booking_result(
+         booking_id,
+         "pending",
+         "pending",
+         pricing["finalAmountMinor"],
+         pricing["currency"],
+         subscription_id
+       )}
     end
   end
 
@@ -490,15 +497,18 @@ defmodule Mithril.DirectBookings do
              'isWeekend', p.is_weekend,
              'suppliesOption', p.supplies_option,
              'suppliesAllowanceMinor', p.supplies_allowance_minor,
-             'cleanerEarningsMinor', p.cleaner_earnings_minor
+             'cleanerEarningsMinor', p.cleaner_earnings_minor,
+             'recurringAmountMinor', p.recurring_amount_minor,
+             'firstChargeAmountMinor', p.first_charge_amount_minor,
+             'discountRateBps', p.discount_rate_bps
            )
            FROM public.compute_booking_pricing(
              p_service_id => $1::integer,
              p_duration_hours_raw => $2::numeric,
              p_scheduled_date => $3::date,
              p_service_timezone => $4::text,
-             p_recurrence_interval => NULL,
-             p_is_recurring => false,
+             p_recurrence_interval => $6::text,
+             p_is_recurring => $7::boolean,
              p_include_booking_cover => true,
              p_supplies_option => 'customer_provided'::text,
              p_cleaner_id => $5::uuid,
@@ -513,7 +523,9 @@ defmodule Mithril.DirectBookings do
              decimal_hours(input.duration_hours),
              input.scheduled_date,
              input.timezone,
-             input.cleaner_id
+             input.cleaner_id,
+             Map.get(input, :recurrence_interval),
+             is_binary(Map.get(input, :recurrence_interval))
            ]
          ) do
       {:ok, %{rows: [[pricing]]}} ->
@@ -676,7 +688,8 @@ defmodule Mithril.DirectBookings do
                   status::text,
                   payment_status::text,
                   COALESCE(final_amount_minor, total_price)::bigint,
-                  COALESCE(currency, 'GHS')
+                  COALESCE(currency, 'GHS'),
+                  subscription_id::text
            FROM public.bookings
            WHERE customer_id = $1
              AND idempotency_key = $2
@@ -684,15 +697,8 @@ defmodule Mithril.DirectBookings do
            """,
            [customer_id, idempotency_key]
          ) do
-      {:ok, %{rows: [[id, status, payment_status, amount_minor, currency]]}} ->
-        {:ok,
-         %{
-           id: id,
-           status: status,
-           paymentStatus: payment_status,
-           amountMinor: amount_minor,
-           currency: currency
-         }}
+      {:ok, %{rows: [[id, status, payment_status, amount_minor, currency, subscription_id]]}} ->
+        {:ok, booking_result(id, status, payment_status, amount_minor, currency, subscription_id)}
 
       {:ok, %{rows: []}} ->
         {:ok, nil}
@@ -716,7 +722,100 @@ defmodule Mithril.DirectBookings do
     end
   end
 
+  defp booking_result(id, status, payment_status, amount_minor, currency, subscription_id) do
+    result = %{
+      id: id,
+      status: status,
+      paymentStatus: payment_status,
+      amountMinor: amount_minor,
+      currency: currency || "GHS"
+    }
+
+    if is_binary(subscription_id) and subscription_id != "" do
+      Map.put(result, :subscriptionId, subscription_id)
+    else
+      result
+    end
+  end
+
+  defp maybe_insert_subscription(_customer_id, %{recurrence_interval: interval}, _pricing)
+       when interval in [nil, ""],
+       do: {:ok, nil}
+
+  defp maybe_insert_subscription(customer_id, %{recurrence_interval: interval} = input, pricing)
+       when interval in @bookable_recurrence_intervals do
+    recurring_minor = positive_minor(pricing["recurringAmountMinor"])
+    first_minor = positive_minor(pricing["firstChargeAmountMinor"] || pricing["finalAmountMinor"])
+
+    if is_nil(recurring_minor) or is_nil(first_minor) do
+      {:error, :pricing_unavailable}
+    else
+      insert_pending_subscription(customer_id, input, pricing, recurring_minor, first_minor)
+    end
+  end
+
+  defp insert_pending_subscription(customer_id, input, pricing, recurring_minor, first_minor) do
+    case Repo.query(
+           """
+           INSERT INTO public.subscriptions (
+             customer_id,
+             cleaner_id,
+             service_id,
+             address,
+             duration_hours,
+             recurrence_interval,
+             amount,
+             recurring_amount_minor,
+             first_charge_amount_minor,
+             pricing_version,
+             currency,
+             discount_type,
+             discount_rate_bps,
+             status,
+             next_occurrence_date,
+             recurrence_anchor_date,
+             scheduled_time,
+             special_instructions,
+             paystack_plan_interval,
+             billing_mode
+           ) VALUES (
+             $1, $2, $3, $4, $5::numeric, $6, $7, $7, $8, $9, $10,
+             $6, $11, 'pending', $12::date, $12::date, $13::time, NULLIF($14::text, ''),
+             $6, 'paystack_plan'
+           )
+           RETURNING id::text
+           """,
+           [
+             customer_id,
+             input.cleaner_id,
+             input.service_id,
+             input.address,
+             decimal_hours(pricing["durationHours"] || input.duration_hours),
+             input.recurrence_interval,
+             recurring_minor,
+             first_minor,
+             pricing["pricingVersion"],
+             pricing["currency"] || "GHS",
+             non_negative_integer(pricing["discountRateBps"]),
+             input.scheduled_date,
+             input.scheduled_time,
+             input.special_instructions || ""
+           ]
+         ) do
+      {:ok, %{rows: [[id]]}} -> {:ok, id}
+      {:error, error} -> database_error(error)
+    end
+  end
+
   defp insert_booking(customer_id, input, pricing, service_name) do
+    with {:ok, subscription_id} <- maybe_insert_subscription(customer_id, input, pricing),
+         {:ok, booking_id} <-
+           insert_booking_row(customer_id, input, pricing, service_name, subscription_id) do
+      {:ok, booking_id, subscription_id}
+    end
+  end
+
+  defp insert_booking_row(customer_id, input, pricing, service_name, subscription_id) do
     case Repo.query(
            """
            INSERT INTO public.bookings (
@@ -751,13 +850,27 @@ defmodule Mithril.DirectBookings do
              status,
              payment_status,
              timezone,
-             idempotency_key
+             idempotency_key,
+             subscription_id,
+             recurrence_interval,
+             booking_for_self,
+             site_contact_name,
+             site_contact_phone,
+             site_contact_relationship,
+             property_type,
+             occupant_present,
+             requires_key_or_access_code,
+             access_instructions,
+             customer_contact_phone
            ) VALUES (
              $1, $2, $3, $4, $5::date, $6::time, $7, $7, $8,
              NULLIF($9::text, ''), $10::numeric, $11::integer, $12::integer,
              $13::integer, $14::integer, $15::integer,
              $16, $17, $18, $19, $20, 0, true, $21, $22, $23,
-             $24::integer, $25::integer, 'pending', 'pending', $26, $27
+             $24::integer, $25::integer, 'pending', 'pending', $26, $27,
+             $28::uuid, NULLIF($29::text, ''),
+             $30, NULLIF($31::text, ''), NULLIF($32::text, ''), NULLIF($33::text, ''),
+             NULLIF($34::text, ''), $35, $36, NULLIF($37::text, ''), NULLIF($38::text, '')
            )
            RETURNING id::text
            """,
@@ -788,7 +901,18 @@ defmodule Mithril.DirectBookings do
              pricing["suppliesAllowanceMinor"] || 0,
              pricing["cleanerEarningsMinor"],
              input.timezone,
-             input.idempotency_key
+             input.idempotency_key,
+             dump_optional_uuid(subscription_id),
+             Map.get(input, :recurrence_interval),
+             Map.get(input, :booking_for_self, true),
+             blank_to_nil(Map.get(input, :site_contact_name)),
+             blank_to_nil(Map.get(input, :site_contact_phone)),
+             blank_to_nil(Map.get(input, :site_contact_relationship)),
+             blank_to_nil(Map.get(input, :property_type)),
+             Map.get(input, :occupant_present),
+             Map.get(input, :requires_key_or_access_code, false),
+             blank_to_nil(Map.get(input, :access_instructions)),
+             blank_to_nil(Map.get(input, :customer_contact_phone))
            ]
          ) do
       {:ok, %{rows: [[id]]}} ->
@@ -1157,14 +1281,16 @@ defmodule Mithril.DirectBookings do
     with {:ok, service_id} <- positive_integer(params["serviceId"]),
          {:ok, cleaner_id} <- required_uuid(params["cleanerId"]),
          {:ok, scheduled_date} <- iso_date(params["scheduledDate"]),
-         {:ok, duration_hours} <- positive_number(params["durationHours"]) do
+         {:ok, duration_hours} <- positive_number(params["durationHours"]),
+         {:ok, recurrence_interval} <- optional_recurrence_interval(params["recurrenceInterval"]) do
       {:ok,
        %{
          service_id: service_id,
          cleaner_id: cleaner_id,
          scheduled_date: scheduled_date,
          duration_hours: duration_hours,
-         timezone: normalize_timezone(params["timezone"])
+         timezone: normalize_timezone(params["timezone"]),
+         recurrence_interval: recurrence_interval
        }}
     else
       _ -> {:error, :invalid_request}
@@ -1175,18 +1301,156 @@ defmodule Mithril.DirectBookings do
     with {:ok, input} <- validate_pricing_input(params),
          {:ok, scheduled_time} <- iso_time(params["scheduledTime"]),
          {:ok, address} <- required_text(params["address"], 3, 500),
-         {:ok, idempotency_key} <- optional_idempotency_key(params["idempotencyKey"]) do
+         {:ok, idempotency_key} <- optional_idempotency_key(params["idempotencyKey"]),
+         {:ok, visit} <- visit_details(params) do
       {:ok,
        Map.merge(input, %{
          scheduled_time: scheduled_time,
          address: address,
          special_instructions: optional_text(params["specialInstructions"], 4_000),
          idempotency_key: idempotency_key
-       })}
+       })
+       |> Map.merge(visit)}
     else
       _ -> {:error, :invalid_request}
     end
   end
+
+  defp visit_details(params) do
+    with {:ok, booking_for_self} <- boolean_param(params["bookingForSelf"], true),
+         {:ok, requires_key} <- boolean_param(params["requiresKeyOrAccessCode"], false),
+         {:ok, occupant_present} <- optional_boolean(params["occupantPresent"]),
+         {:ok, property_type} <- optional_property_type(params["propertyType"]),
+         {:ok, customer_contact_phone} <- optional_phone(params["customerContactPhone"]),
+         {:ok, site_contact} <- site_contact(params, booking_for_self) do
+      access_instructions =
+        if requires_key, do: optional_text(params["accessInstructions"], 2_000), else: nil
+
+      {:ok,
+       %{
+         booking_for_self: booking_for_self,
+         requires_key_or_access_code: requires_key,
+         occupant_present: occupant_present,
+         property_type: property_type,
+         customer_contact_phone: customer_contact_phone,
+         access_instructions: access_instructions,
+         site_contact_name: site_contact.name,
+         site_contact_phone: site_contact.phone,
+         site_contact_relationship: site_contact.relationship
+       }}
+    else
+      _ -> {:error, :invalid_request}
+    end
+  end
+
+  defp site_contact(_params, true) do
+    {:ok, %{name: nil, phone: nil, relationship: nil}}
+  end
+
+  defp site_contact(params, false) do
+    with {:ok, name} <- required_text(params["siteContactName"], 2, 120),
+         {:ok, phone} <- required_text(params["siteContactPhone"], 8, 24) do
+      {:ok,
+       %{
+         name: name,
+         phone: phone,
+         relationship: optional_text(params["siteContactRelationship"], 80)
+       }}
+    else
+      _ -> :error
+    end
+  end
+
+  defp boolean_param(nil, default), do: {:ok, default}
+  defp boolean_param(value, _default) when is_boolean(value), do: {:ok, value}
+  defp boolean_param("true", _default), do: {:ok, true}
+  defp boolean_param("false", _default), do: {:ok, false}
+  defp boolean_param(_, _), do: :error
+
+  defp optional_boolean(nil), do: {:ok, nil}
+  defp optional_boolean(value) when is_boolean(value), do: {:ok, value}
+  defp optional_boolean("true"), do: {:ok, true}
+  defp optional_boolean("false"), do: {:ok, false}
+  defp optional_boolean(_), do: :error
+
+  defp optional_property_type(nil), do: {:ok, nil}
+  defp optional_property_type(""), do: {:ok, nil}
+
+  defp optional_property_type(value) when is_binary(value) do
+    type = value |> String.trim() |> String.downcase()
+
+    cond do
+      type == "" -> {:ok, nil}
+      type in @property_types -> {:ok, type}
+      true -> :error
+    end
+  end
+
+  defp optional_property_type(_), do: :error
+
+  defp optional_phone(nil), do: {:ok, nil}
+  defp optional_phone(""), do: {:ok, nil}
+
+  defp optional_phone(value) when is_binary(value) do
+    phone = String.trim(value)
+
+    cond do
+      phone == "" -> {:ok, nil}
+      String.length(phone) >= 8 and String.length(phone) <= 24 -> {:ok, phone}
+      true -> :error
+    end
+  end
+
+  defp optional_phone(_), do: :error
+
+  defp blank_to_nil(nil), do: nil
+
+  defp blank_to_nil(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp blank_to_nil(_), do: nil
+
+  defp optional_recurrence_interval(nil), do: {:ok, nil}
+
+  defp optional_recurrence_interval(value) when is_binary(value) do
+    interval = value |> String.trim() |> String.downcase()
+
+    cond do
+      interval == "" -> {:ok, nil}
+      interval in @bookable_recurrence_intervals -> {:ok, interval}
+      true -> :error
+    end
+  end
+
+  defp optional_recurrence_interval(_), do: :error
+
+  defp positive_minor(value) when is_integer(value) and value > 0, do: value
+
+  defp positive_minor(value) when is_float(value) do
+    integer = round(value)
+    if integer > 0, do: integer, else: nil
+  end
+
+  defp positive_minor(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {integer, ""} when integer > 0 -> integer
+      _ -> nil
+    end
+  end
+
+  defp positive_minor(%Decimal{} = value) do
+    integer = Decimal.to_integer(value)
+    if integer > 0, do: integer, else: nil
+  end
+
+  defp positive_minor(_), do: nil
+
+  defp non_negative_integer(value) when is_integer(value) and value >= 0, do: value
+  defp non_negative_integer(_), do: 0
 
   defp optional_idempotency_key(nil), do: {:ok, nil}
 
@@ -1301,6 +1565,15 @@ defmodule Mithril.DirectBookings do
 
   defp dump_uuid(value) when is_binary(value), do: Ecto.UUID.dump(value)
   defp dump_uuid(_), do: :error
+
+  defp dump_optional_uuid(value) when is_binary(value) and value != "" do
+    case Ecto.UUID.dump(value) do
+      {:ok, dumped} -> dumped
+      :error -> nil
+    end
+  end
+
+  defp dump_optional_uuid(_), do: nil
 
   defp normalize_transaction({:ok, value}), do: {:ok, value}
   defp normalize_transaction({:error, reason}), do: {:error, reason}
