@@ -40,6 +40,7 @@ defmodule Mithril.DirectBookingCancels do
   defp persist_cancel(customer_id, booking_id, reason, actor) do
     Repo.transaction(fn ->
       with {:ok, booking} <- lock_owned_booking(customer_id, booking_id),
+           :ok <- ensure_standalone_booking(booking),
            :ok <- ensure_cancellable_or_replay(booking),
            {:ok, existing} <- existing_refund(booking_id, customer_id) do
         cond do
@@ -88,6 +89,13 @@ defmodule Mithril.DirectBookingCancels do
     |> normalize_transaction()
   end
 
+  # A recurring booking cannot be cancelled independently of its subscription.
+  # Reject before any booking mutation or refund is attempted.
+  defp ensure_standalone_booking(%{subscription_id: id}) when not is_nil(id),
+    do: {:error, {:not_cancellable, "Cancel this recurring service through your subscription instead."}}
+
+  defp ensure_standalone_booking(_booking), do: :ok
+
   defp ensure_cancellable_or_replay(booking) do
     if booking.status == "cancelled" do
       :ok
@@ -128,6 +136,7 @@ defmodule Mithril.DirectBookingCancels do
              scheduled_time,
              COALESCE(final_amount_minor, total_price) AS amount_minor,
              COALESCE(currency, 'GHS') AS currency,
+             subscription_id::text,
              NULLIF(btrim(reference), '') AS reference,
              COALESCE(
                NULLIF(btrim(to_jsonb(b)->>'timezone_name'), ''),
@@ -159,6 +168,7 @@ defmodule Mithril.DirectBookingCancels do
          scheduled_time,
          amount_minor,
          currency,
+         subscription_id,
          reference,
          timezone
        ]) do
@@ -176,6 +186,7 @@ defmodule Mithril.DirectBookingCancels do
       local_today: local_today,
       amount_minor: amount_to_integer(amount_minor),
       currency: currency || "GHS",
+      subscription_id: subscription_id,
       reference: reference
     }
   end
