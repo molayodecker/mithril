@@ -200,7 +200,7 @@ defmodule Mithril.DirectBookings do
                  find_idempotent_booking(customer_id, replacement_input.idempotency_key),
                {:ok, path} <- replacement_path(original, existing),
                {:ok, result} <-
-                 execute_unpaid_replacement(path, customer_id, bid, replacement_input, existing) do
+                 execute_unpaid_replacement(path, customer_id, bid, merge_replacement_visit_details(replacement_input, original, params), existing) do
             result
           else
             {:error, reason} -> Repo.rollback(reason)
@@ -231,21 +231,38 @@ defmodule Mithril.DirectBookings do
   defp lock_unpaid_replacement_booking(customer_id, booking_id) do
     case Repo.query(
            """
-           SELECT id::text, status::text, payment_status::text, subscription_id, reference
+           SELECT id::text, status::text, payment_status::text, subscription_id, reference,
+                  booking_for_self, site_contact_name, site_contact_phone,
+                  site_contact_relationship, property_type, occupant_present,
+                  requires_key_or_access_code, access_instructions, customer_contact_phone
            FROM public.bookings
            WHERE id = $1 AND customer_id = $2
            FOR UPDATE
            """,
            [booking_id, customer_id]
          ) do
-      {:ok, %{rows: [[id, status, payment_status, subscription_id, reference]]}} ->
+      {:ok, %{rows: [[id, status, payment_status, subscription_id, reference,
+                      booking_for_self, site_contact_name, site_contact_phone,
+                      site_contact_relationship, property_type, occupant_present,
+                      requires_key_or_access_code, access_instructions, customer_contact_phone]]}} ->
         {:ok,
          %{
            id: id,
            status: status,
            payment_status: payment_status,
            subscription_id: subscription_id,
-           reference: reference
+           reference: reference,
+           visit: %{
+             booking_for_self: booking_for_self,
+             site_contact_name: site_contact_name,
+             site_contact_phone: site_contact_phone,
+             site_contact_relationship: site_contact_relationship,
+             property_type: property_type,
+             occupant_present: occupant_present,
+             requires_key_or_access_code: requires_key_or_access_code,
+             access_instructions: access_instructions,
+             customer_contact_phone: customer_contact_phone
+           }
          }}
 
       {:ok, %{rows: []}} ->
@@ -254,6 +271,30 @@ defmodule Mithril.DirectBookings do
       {:error, error} ->
         database_error(error)
     end
+  end
+
+  # A schedule/cleaner edit must not erase the original on-site contact or access notes.
+  # Explicit values, including nil/false, are respected when supplied by the client.
+  defp merge_replacement_visit_details(input, original, params) do
+    mapping = %{
+      "bookingForSelf" => :booking_for_self,
+      "siteContactName" => :site_contact_name,
+      "siteContactPhone" => :site_contact_phone,
+      "siteContactRelationship" => :site_contact_relationship,
+      "propertyType" => :property_type,
+      "occupantPresent" => :occupant_present,
+      "requiresKeyOrAccessCode" => :requires_key_or_access_code,
+      "accessInstructions" => :access_instructions,
+      "customerContactPhone" => :customer_contact_phone
+    }
+
+    Enum.reduce(mapping, input, fn {key, field}, acc ->
+      if Map.has_key?(params, key) do
+        acc
+      else
+        Map.put(acc, field, original.visit[field])
+      end
+    end)
   end
 
   defp replacement_path(original, existing) do
