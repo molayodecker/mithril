@@ -92,7 +92,9 @@ defmodule Mithril.DirectBookingCancels do
   # A recurring booking cannot be cancelled independently of its subscription.
   # Reject before any booking mutation or refund is attempted.
   defp ensure_standalone_booking(%{subscription_id: id}) when not is_nil(id),
-    do: {:error, {:not_cancellable, "Cancel this recurring service through your subscription instead."}}
+    do:
+      {:error,
+       {:not_cancellable, "Cancel this recurring service through your subscription instead."}}
 
   defp ensure_standalone_booking(_booking), do: :ok
 
