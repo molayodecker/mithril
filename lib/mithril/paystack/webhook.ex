@@ -232,7 +232,9 @@ defmodule Mithril.Paystack.Webhook do
           {:error, error} -> Repo.rollback(error)
         end
       else
-        _ -> Repo.rollback(:payment_incomplete)
+        # Successful payment must remain settled even when Paystack did not grant
+        # a reusable authorization. The subscription remains pending.
+        _ -> :ok
       end
     end
 
