@@ -38,7 +38,7 @@ defmodule Mithril.DirectPayments do
          {:ok, attempt} <- verifiable_attempt(booking, params),
          {:ok, receipt} <- Paystack.verify(attempt.reference),
          :ok <- verify_receipt(attempt, receipt),
-         {:ok, booking_status} <- mark_paid(bid, attempt) do
+         {:ok, booking_status} <- mark_paid(bid, attempt, receipt) do
       {:ok,
        %{
          id: booking_id,
@@ -152,7 +152,7 @@ defmodule Mithril.DirectPayments do
           "success" ->
             case assert_successful_payment(attempt, receipt) do
               :ok ->
-                with {:ok, _booking_status} <- mark_paid(booking.uuid, attempt) do
+                with {:ok, _booking_status} <- mark_paid(booking.uuid, attempt, receipt) do
                   {:error, :already_paid}
                 end
 
@@ -782,7 +782,7 @@ defmodule Mithril.DirectPayments do
     end
   end
 
-  defp mark_paid(booking_id, attempt) do
+  defp mark_paid(booking_id, attempt, receipt) do
     Repo.transaction(fn ->
       with {:ok, %{rows: [[booking_status, payment_status, booking_reference]]}} <-
              Repo.query(
@@ -816,7 +816,8 @@ defmodule Mithril.DirectPayments do
                RETURNING id
                """,
                [booking_id, attempt.reference]
-             ) do
+             ),
+           :ok <- Mithril.Paystack.Webhook.reconcile_verified_first_charge!(booking_id, receipt) do
         booking_status
       else
         {:ok, %{rows: []}} -> Repo.rollback(:payment_reference_mismatch)
