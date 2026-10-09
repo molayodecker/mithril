@@ -122,7 +122,9 @@ defmodule Mithril.Paystack.HTTP do
            %{
              authorization_url: data["authorization_url"],
              access_code: data["access_code"],
-             reference: data["reference"]
+             reference: data["reference"],
+             metadata: data["metadata"],
+             authorization: data["authorization"]
            }}
 
         {:ok, %{status: status, body: body}} ->
