@@ -189,6 +189,15 @@ defmodule MithrilWeb.Router do
     get "/admin/customers", DirectDispatchController, :list_admin_customers
     get "/admin/app-update-policy", DirectAdminAppUpdatePolicyController, :index
     post "/admin/app-update-policy", DirectAdminAppUpdatePolicyController, :save
+    get "/admin/services", DirectAdminServicesController, :index
+    get "/admin/services/:id", DirectAdminServicesController, :show
+    post "/admin/services/:id", DirectAdminServicesController, :update
+    get "/admin/promotion-codes", DirectAdminPromotionsController, :index
+    get "/admin/reports/summary", DirectAdminReportsController, :summary
+    get "/admin/service-areas", DirectAdminServiceAreasController, :index
+    get "/admin/payouts", DirectAdminPayoutsController, :index
+    get "/admin/reviews", DirectAdminReviewsController, :index
+    get "/admin/team", DirectAdminTeamController, :index
     get "/admin/notifications", DirectAdminNotificationsController, :index
     get "/admin/notification-targets", DirectAdminNotificationsController, :search
 
