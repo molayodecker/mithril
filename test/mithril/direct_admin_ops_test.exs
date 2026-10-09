@@ -80,13 +80,15 @@ defmodule Mithril.DirectAdminOpsTest do
       reference text NOT NULL,
       status text NOT NULL DEFAULT 'pending',
       error_message text,
-      created_at timestamptz NOT NULL DEFAULT timezone('utc', now())
+      created_at timestamptz NOT NULL DEFAULT timezone('utc', now()),
+      updated_at timestamptz NOT NULL DEFAULT timezone('utc', now())
     )
     """)
 
     Repo.query!("""
     CREATE TABLE public.payout_methods (
       user_id uuid NOT NULL,
+      recipient_code text DEFAULT 'RCP',
       bank_name text,
       masked_account text,
       account_name text,
