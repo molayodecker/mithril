@@ -98,11 +98,21 @@ defmodule Mithril.WalletCreditNotifications do
            WHERE lower(coalesce(t.type, '')) = 'credit'
              AND t.withdrawal_request_id IS NULL
              AND coalesce(t.amount_subunit, 0) > 0
-             AND NOT EXISTS (
-               SELECT 1
-               FROM public.notifications n
-               WHERE n.user_id = w.user_id
-                 AND n.dedupe_key = 'wallet_credit:' || t.id::text
+             AND t.created_at >= (
+               SELECT activated_at FROM public.wallet_credit_notification_settings WHERE id = true
+             )
+             AND (
+               NOT EXISTS (
+                 SELECT 1 FROM public.notifications n
+                 WHERE n.user_id = w.user_id
+                   AND n.dedupe_key = 'wallet_credit:' || t.id::text
+               )
+               OR EXISTS (
+                 SELECT 1 FROM public.wallet_credit_whatsapp_delivery d
+                 WHERE d.transaction_id = t.id
+                   AND d.sent_at IS NULL
+                   AND d.next_attempt_at <= now()
+               )
              )
            ORDER BY t.created_at ASC NULLS LAST
            LIMIT $1
@@ -138,15 +148,55 @@ defmodule Mithril.WalletCreditNotifications do
     body = message(credit.amount_subunit, credit.currency, credit.booking_id)
 
     case insert_inbox(credit, body) do
-      :inserted ->
-        sender.(Map.put(credit, :message, body))
-        :ok
-
-      :duplicate ->
-        :ok
+      result when result in [:inserted, :duplicate] ->
+        maybe_send_whatsapp(credit, body, sender)
 
       :error ->
         :ok
+    end
+  end
+
+  # A lease prevents overlapping sweeps from sending the same WhatsApp.
+  # The inbox and outbound delivery state are intentionally independent.
+  defp maybe_send_whatsapp(credit, body, sender) do
+    with {:ok, transaction_id} <- Ecto.UUID.dump(credit.transaction_id),
+         {:ok, %{rows: [[_]]}} <-
+           Repo.query(
+             """
+             INSERT INTO public.wallet_credit_whatsapp_delivery
+               (transaction_id, next_attempt_at)
+             VALUES ($1::uuid, now() + interval '5 minutes')
+             ON CONFLICT (transaction_id) DO UPDATE
+               SET next_attempt_at = now() + interval '5 minutes'
+             WHERE wallet_credit_whatsapp_delivery.sent_at IS NULL
+               AND wallet_credit_whatsapp_delivery.next_attempt_at <= now()
+             RETURNING transaction_id
+             """,
+             [transaction_id]
+           ) do
+      result = sender.(Map.put(credit, :message, body))
+
+      if result in [:sent, :ok] or match?({:ok, _}, result) do
+        case Repo.query(
+               """
+               UPDATE public.wallet_credit_whatsapp_delivery
+               SET sent_at = now()
+               WHERE transaction_id = $1::uuid AND sent_at IS NULL
+               """,
+               [transaction_id]
+             ) do
+          {:ok, _} -> :ok
+          {:error, error} -> Logger.warning("wallet credit WhatsApp receipt failed: #{inspect(error)}")
+        end
+      end
+
+      :ok
+    else
+      {:ok, %{rows: []}} -> :ok
+      {:error, error} ->
+        Logger.warning("wallet credit WhatsApp queue failed: #{inspect(error)}")
+        :ok
+      :error -> :ok
     end
   end
 
