@@ -1,6 +1,7 @@
 defmodule Mithril.Notifications.Outbound do
   @moduledoc false
 
+  alias Mithril.Auth.Phone
   alias Mithril.Auth.SMS
 
   def deliver(body) when is_map(body) do
@@ -71,11 +72,11 @@ defmodule Mithril.Notifications.Outbound do
 
     content_sid =
       present(body["whatsappContentSid"]) ||
-        if(template == "booking_reminder", do: env(:twilio_template_booking_reminder), else: nil)
+        template_content_sid(template)
 
     from = whatsapp_address(env(:twilio_whatsapp_from))
 
-    if sid == nil or token == nil or content_sid == nil or from == nil do
+    if sid == nil or token == nil or content_sid == nil or from == nil or whatsapp_address(phone) == nil do
       false
     else
       url = "https://api.twilio.com/2010-04-01/Accounts/#{sid}/Messages.json"
@@ -98,15 +99,20 @@ defmodule Mithril.Notifications.Outbound do
   @doc false
   def whatsapp_address(nil), do: nil
 
-  def whatsapp_address(value) do
-    value = String.trim(value)
+  def whatsapp_address(value) when is_binary(value) do
+    number = String.replace(value, ~r/^whatsapp:/i, "")
 
-    cond do
-      value == "" -> nil
-      String.starts_with?(String.downcase(value), "whatsapp:") -> value
-      true -> "whatsapp:#{value}"
+    case Phone.normalize(number) do
+      {:ok, normalized} -> "whatsapp:#{normalized}"
+      :error -> nil
     end
   end
+
+  defp template_content_sid("booking_reminder"), do: env(:twilio_template_booking_reminder)
+  defp template_content_sid("review_request"), do: env(:twilio_template_review_request)
+  defp template_content_sid("cleaner_en_route"), do: env(:twilio_template_cleaner_en_route)
+  defp template_content_sid("cleaner_arrived"), do: env(:twilio_template_cleaner_arrived)
+  defp template_content_sid(_), do: nil
 
   defp content_variables(variables) do
     %{
