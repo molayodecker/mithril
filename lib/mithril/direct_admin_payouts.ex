@@ -42,18 +42,18 @@ defmodule Mithril.DirectAdminPayouts do
              'pendingCount', COALESCE((
                SELECT count(*)::integer
                FROM public.cleaner_payouts cp
-               WHERE lower(cp.status) = ANY($1::text[])
+               WHERE lower(cp.status::text) = ANY($1::text[])
              ), 0),
              'pendingMinor', COALESCE((
                SELECT sum(cp.amount)::bigint
                FROM public.cleaner_payouts cp
-               WHERE lower(cp.status) = ANY($1::text[])
+               WHERE lower(cp.status::text) = ANY($1::text[])
              ), 0),
              'paidThisWeekMinor', COALESCE((
                SELECT sum(cp.amount)::bigint
                FROM public.cleaner_payouts cp
-               WHERE lower(cp.status) IN ('success', 'paid', 'completed')
-                 AND cp.created_at >= date_trunc('week', timezone('Africa/Accra', now()))
+               WHERE lower(cp.status::text) IN ('success', 'paid', 'completed')
+                 AND cp.updated_at >= (date_trunc('week', timezone('Africa/Accra', now())) AT TIME ZONE 'Africa/Accra')
              ), 0)
            )
            """,
@@ -71,16 +71,16 @@ defmodule Mithril.DirectAdminPayouts do
           {"", []}
 
         "pending" ->
-          {"AND lower(cp.status) = ANY($1::text[])", [@pending_statuses]}
+          {"AND lower(cp.status::text) = ANY($1::text[])", [@pending_statuses]}
 
         "paid" ->
-          {"AND lower(cp.status) IN ('success', 'paid', 'completed')", []}
+          {"AND lower(cp.status::text) IN ('success', 'paid', 'completed')", []}
 
         "failed" ->
-          {"AND lower(cp.status) IN ('failed', 'reversed')", []}
+          {"AND lower(cp.status::text) IN ('failed', 'reversed')", []}
 
         _ ->
-          {"AND lower(cp.status) = $1", [status_filter]}
+          {"AND lower(cp.status::text) = $1", [status_filter]}
       end
 
     case Repo.query(
@@ -112,9 +112,8 @@ defmodule Mithril.DirectAdminPayouts do
              SELECT pm.bank_name, pm.masked_account, pm.account_name
              FROM public.payout_methods pm
              WHERE pm.user_id = cp.user_id
-             ORDER BY COALESCE(pm.is_primary, false) DESC,
-                      COALESCE(pm.is_default, false) DESC,
-                      pm.updated_at DESC NULLS LAST
+               AND pm.recipient_code = cp.recipient_code
+             ORDER BY pm.updated_at DESC NULLS LAST
              LIMIT 1
            ) pm ON true
            LEFT JOIN LATERAL (
