@@ -1,6 +1,7 @@
 defmodule Mithril.Notifications.Outbound do
   @moduledoc false
 
+  alias Mithril.Auth.Phone
   alias Mithril.Auth.SMS
 
   def deliver(body) when is_map(body) do
@@ -71,15 +72,16 @@ defmodule Mithril.Notifications.Outbound do
 
     content_sid =
       present(body["whatsappContentSid"]) ||
-        if(template == "booking_reminder", do: env(:twilio_template_booking_reminder), else: nil)
+        template_content_sid(template)
 
-    from = env(:twilio_whatsapp_from)
+    from = whatsapp_address(env(:twilio_whatsapp_from))
 
-    if sid == nil or token == nil or content_sid == nil or from == nil do
+    if sid == nil or token == nil or content_sid == nil or from == nil or
+         whatsapp_address(phone) == nil do
       false
     else
       url = "https://api.twilio.com/2010-04-01/Accounts/#{sid}/Messages.json"
-      to = if String.starts_with?(phone, "whatsapp:"), do: phone, else: "whatsapp:#{phone}"
+      to = whatsapp_address(phone)
 
       fields = [
         To: to,
@@ -94,6 +96,24 @@ defmodule Mithril.Notifications.Outbound do
       end
     end
   end
+
+  @doc false
+  def whatsapp_address(nil), do: nil
+
+  def whatsapp_address(value) when is_binary(value) do
+    number = String.replace(value, ~r/^whatsapp:/i, "")
+
+    case Phone.normalize(number) do
+      {:ok, normalized} -> "whatsapp:#{normalized}"
+      :error -> nil
+    end
+  end
+
+  defp template_content_sid("booking_reminder"), do: env(:twilio_template_booking_reminder)
+  defp template_content_sid("review_request"), do: env(:twilio_template_review_request)
+  defp template_content_sid("cleaner_en_route"), do: env(:twilio_template_cleaner_en_route)
+  defp template_content_sid("cleaner_arrived"), do: env(:twilio_template_cleaner_arrived)
+  defp template_content_sid(_), do: nil
 
   defp content_variables(variables) do
     %{
@@ -140,6 +160,34 @@ defmodule Mithril.Notifications.Outbound do
     "Instaclean: New booking for #{customer} · #{date}#{tail}"
   end
 
+  defp message_body("cleaner_en_route", variables) do
+    cleaner = present(variables["cleanerName"]) || "Your Instaclean professional"
+    booking = present(variables["bookingId"])
+    reference = if booking, do: " (booking #{booking})", else: ""
+    "#{cleaner} is on the way#{reference}. Track your booking in the Instaclean app."
+  end
+
+  defp message_body("cleaner_arrived", variables) do
+    cleaner = present(variables["cleanerName"]) || "Your Instaclean professional"
+    address = present(variables["address"])
+    destination = if address, do: " at #{address}", else: ""
+    "#{cleaner} has arrived#{destination}. Check your Instaclean booking."
+  end
+
+  defp message_body("cleaner_milestone_support", variables) do
+    cleaner = present(variables["cleanerName"]) || "A cleaner"
+    customer = present(variables["customerName"]) || "a customer"
+
+    label =
+      present(variables["milestoneLabel"]) || present(variables["milestone"]) || "updated status"
+
+    booking = present(variables["bookingId"]) || "unknown"
+    email = present(variables["customerEmail"]) || "unavailable"
+    phone = present(variables["customerPhone"]) || "unavailable"
+
+    "#{cleaner} marked #{label} for booking #{booking} (customer: #{customer}; email: #{email}; phone: #{phone})."
+  end
+
   defp message_body("review_request", variables) do
     cleaner = present(variables["cleanerName"]) || "your cleaner"
     review_url = present(variables["reviewUrl"])
@@ -155,6 +203,9 @@ defmodule Mithril.Notifications.Outbound do
   defp subject("payment_received"), do: "Instaclean payment receipt"
   defp subject("cleaner_assigned"), do: "Your Instaclean professional is assigned"
   defp subject("new_booking"), do: "New Instaclean booking"
+  defp subject("cleaner_en_route"), do: "Your Instaclean professional is on the way"
+  defp subject("cleaner_arrived"), do: "Your Instaclean professional has arrived"
+  defp subject("cleaner_milestone_support"), do: "Instaclean booking status update"
   defp subject("review_request"), do: "How was your clean?"
   defp subject(_), do: "Instaclean"
 
