@@ -1461,7 +1461,8 @@ defmodule Mithril.DirectBookings do
 
   defp validate_turnover_context(customer_id, input, pricing) do
     with :ok <- validate_turnover_ownership(customer_id, input),
-         :ok <- validate_turnover_window(input, pricing) do
+         :ok <- validate_turnover_window(input, pricing),
+         :ok <- validate_opportunity_window(customer_id, input, pricing) do
       :ok
     end
   end
@@ -1520,6 +1521,57 @@ defmodule Mithril.DirectBookings do
              finish_at <- DateTime.add(start_at, round(hours * 3600), :second),
              true <- is_nil(checkout) or DateTime.compare(start_at, checkout) != :lt,
              true <- is_nil(checkin) or DateTime.compare(finish_at, checkin) != :gt do
+          :ok
+        else
+          _ -> {:error, :invalid_request}
+        end
+    end
+  end
+
+  defp validate_opportunity_window(_customer_id, %{turnover_opportunity_id: nil}, _pricing),
+    do: :ok
+
+  defp validate_opportunity_window(customer_id, input, pricing) do
+    case Repo.query(
+           """
+           SELECT o.checkout_at, o.next_checkin_at
+           FROM public.turnover_opportunities o
+           JOIN public.properties p ON p.id = o.property_id
+           WHERE o.id = $1::uuid
+             AND p.owner_id = $2::uuid
+             AND ($3::uuid IS NULL OR o.property_id = $3::uuid)
+           """,
+           [input.turnover_opportunity_id, customer_id, input.property_id]
+         ) do
+      {:ok, %{rows: [[checkout, checkin]]}} ->
+        validate_window_bounds(input, pricing, checkout, checkin)
+
+      {:ok, _} ->
+        {:error, :invalid_request}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp validate_window_bounds(input, pricing, checkout, checkin) do
+    cond do
+      is_nil(checkout) or is_nil(checkin) ->
+        {:error, :invalid_request}
+
+      DateTime.compare(checkout, checkin) != :lt ->
+        {:error, :invalid_request}
+
+      true ->
+        start_at = scheduled_at(input.scheduled_date, input.scheduled_time, input.timezone)
+        duration = pricing["durationHours"] || input.duration_hours
+
+        with %DateTime{} = start_at <- start_at,
+             {hours, _} <- Float.parse(to_string(duration)),
+             true <- hours > 0,
+             finish_at <- DateTime.add(start_at, round(hours * 3600), :second),
+             true <- DateTime.compare(start_at, checkout) != :lt,
+             true <- DateTime.compare(finish_at, checkin) != :gt do
           :ok
         else
           _ -> {:error, :invalid_request}
