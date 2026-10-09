@@ -903,8 +903,33 @@ defmodule Mithril.DirectBookings do
   defp insert_booking(customer_id, input, pricing, service_name) do
     with {:ok, subscription_id} <- maybe_insert_subscription(customer_id, input, pricing),
          {:ok, booking_id} <-
-           insert_booking_row(customer_id, input, pricing, service_name, subscription_id) do
+           insert_booking_row(customer_id, input, pricing, service_name, subscription_id),
+         :ok <- claim_turnover_opportunity(customer_id, input, booking_id) do
       {:ok, booking_id, subscription_id}
+    end
+  end
+
+  defp claim_turnover_opportunity(_customer_id, %{turnover_opportunity_id: nil}, _booking_id),
+    do: :ok
+
+  defp claim_turnover_opportunity(customer_id, input, booking_id) do
+    case Repo.query(
+           """
+           UPDATE public.turnover_opportunities o
+           SET booking_id = $2::uuid, status = 'booked', updated_at = now()
+           FROM public.properties p
+           WHERE o.id = $1::uuid
+             AND p.id = o.property_id
+             AND p.owner_id = $3::uuid
+             AND (o.booking_id IS NULL OR o.booking_id = $2::uuid)
+             AND o.status IN ('needs_review', 'ready_to_book', 'conflict', 'booked')
+           RETURNING o.id
+           """,
+           [input.turnover_opportunity_id, booking_id, customer_id]
+         ) do
+      {:ok, %{num_rows: 1}} -> :ok
+      {:ok, _} -> {:error, :invalid_request}
+      {:error, error} -> database_error(error)
     end
   end
 
