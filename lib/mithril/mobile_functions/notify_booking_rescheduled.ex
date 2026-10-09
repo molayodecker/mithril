@@ -189,19 +189,19 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
 
       if channel do
         SendNotification.invoke_mobile(%{
-        "template" => "booking_rescheduled",
-        "channel" => channel,
-        "email" => email,
-        "phone" => phone,
-        "userId" => user_id,
-        "bookingId" => booking_id,
-        "variables" => %{
-          "message" => message,
-          "newDate" => new_label,
-          "oldDate" => old_label,
-          "bookingId" => booking_id
-        }
-      })
+          "template" => "booking_rescheduled",
+          "channel" => channel,
+          "email" => email,
+          "phone" => phone,
+          "userId" => user_id,
+          "bookingId" => booking_id,
+          "variables" => %{
+            "message" => message,
+            "newDate" => new_label,
+            "oldDate" => old_label,
+            "bookingId" => booking_id
+          }
+        })
       end
     end
 
@@ -209,7 +209,10 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
   end
 
   defp recipient_contact(user_id) do
-    case Repo.query("SELECT email, phone FROM public.users WHERE id = $1::uuid LIMIT 1", [DbUuid.dump!(user_id)]) do
+    case Repo.query(
+           "SELECT email, phone FROM public.users WHERE id = $1::uuid LIMIT 1",
+           [DbUuid.dump!(user_id)]
+         ) do
       {:ok, %{rows: [[email, phone]]}} -> {nonempty(email), nonempty(phone)}
       _ -> {nil, nil}
     end
