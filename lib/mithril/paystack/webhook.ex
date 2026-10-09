@@ -194,6 +194,24 @@ defmodule Mithril.Paystack.Webhook do
 
   # A first charge is not a renewal until its reusable authorization is stored.
   # The booking association is checked in SQL; webhook metadata alone is never trusted.
+  @doc false
+  def reconcile_verified_first_charge!(booking_uuid, receipt) do
+    metadata = Map.get(receipt, :metadata) || %{}
+    authorization = Map.get(receipt, :authorization) || %{}
+
+    # The verified payment reference and amount are checked by the caller.
+    activate_first_charge!(%{booking_uuid: booking_uuid}, %{
+      metadata: stringify_keys(metadata),
+      authorization: stringify_keys(authorization)
+    })
+  end
+
+  defp stringify_keys(map) when is_map(map) do
+    Map.new(map, fn {key, value} -> {to_string(key), value} end)
+  end
+
+  defp stringify_keys(_), do: %{}
+
   defp activate_first_charge!(attempt, event) do
     metadata = event.metadata
     authorization = event.authorization
