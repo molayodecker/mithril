@@ -170,8 +170,10 @@ defmodule Mithril.Notifications.Outbound do
   defp message_body("cleaner_milestone_support", variables) do
     cleaner = present(variables["cleanerName"]) || "A cleaner"
     customer = present(variables["customerName"]) || "a customer"
+
     label =
       present(variables["milestoneLabel"]) || present(variables["milestone"]) || "updated status"
+
     booking = present(variables["bookingId"]) || "unknown"
     email = present(variables["customerEmail"]) || "unavailable"
     phone = present(variables["customerPhone"]) || "unavailable"
