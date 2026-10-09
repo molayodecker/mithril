@@ -138,7 +138,8 @@ defmodule Mithril.DirectAdminServices do
       patch = %{
         name: name,
         description: description,
-        description_present: Map.has_key?(params, "description") or Map.has_key?(params, :description),
+        description_present:
+          Map.has_key?(params, "description") or Map.has_key?(params, :description),
         active: active,
         price: price,
         minimum_duration_hours: min_hours,
