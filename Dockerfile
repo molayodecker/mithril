@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1
 
-FROM hexpm/elixir:1.20.4-erlang-28.5.0.6-alpine-3.24.1 AS build
+ARG ELIXIR_BASE_IMAGE=hexpm/elixir:1.20.4-erlang-28.5.0.6-alpine-3.24.1
+ARG ALPINE_BASE_IMAGE=alpine:3.24.1
+FROM ${ELIXIR_BASE_IMAGE} AS build
 
 RUN apk add --no-cache build-base git
 
@@ -19,7 +21,7 @@ COPY lib lib
 RUN mix compile
 RUN mix release
 
-FROM alpine:3.24.1 AS runtime
+FROM ${ALPINE_BASE_IMAGE} AS runtime
 
 RUN apk add --no-cache ca-certificates libstdc++ ncurses-libs openssl
 
