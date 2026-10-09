@@ -239,17 +239,6 @@ jobs:
           print(f"Verified {len(spec['paths'])} API paths at {os.environ['OPENAPI_URL']}")
           PY
 
-      - name: Mark staging deployment successful
-        if: ${{ inputs.mark_staging_status }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$DEPLOY_SHA" \
-            -f state=success \
-            -f context=mithril/staging \
-            -f description="Mithril staging deployed and verified"
-
       - name: Create or verify staging deployment tag
         if: ${{ inputs.mark_staging_status }}
         env:
@@ -289,3 +278,15 @@ jobs:
             echo "Tag creation failed or raced; checking for the expected ref."
             verify_existing_tag
           fi
+
+      - name: Mark staging deployment successful
+        if: ${{ inputs.mark_staging_status }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$DEPLOY_SHA" \
+            -f state=success \
+            -f context=mithril/staging \
+            -f description="Mithril staging deployed and verified"
+
