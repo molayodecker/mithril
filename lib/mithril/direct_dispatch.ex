@@ -574,7 +574,31 @@ defmodule Mithril.DirectDispatch do
     end
   end
 
-  defp search_customers(""), do: {:ok, %{rows: []}}
+  defp search_customers("") do
+    Repo.query("""
+    SELECT jsonb_build_object(
+      'userId', u.id,
+      'name', COALESCE(
+        NULLIF(btrim(p.fullname), ''),
+        NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
+        u.email,
+        u.phone,
+        'Customer'
+      ),
+      'email', u.email,
+      'phone', u.phone
+    )
+    FROM public.users u
+    LEFT JOIN public.profiles p ON p.id = u.id
+    WHERE EXISTS (
+      SELECT 1 FROM public.bookings b WHERE b.customer_id = u.id
+    )
+    ORDER BY (
+      SELECT max(b.created_at) FROM public.bookings b WHERE b.customer_id = u.id
+    ) DESC NULLS LAST
+    LIMIT 50
+    """)
+  end
 
   defp search_customers(search) do
     like = "%#{String.downcase(search)}%"
