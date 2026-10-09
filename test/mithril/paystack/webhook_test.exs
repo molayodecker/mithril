@@ -703,6 +703,8 @@ defmodule Mithril.Paystack.WebhookTest do
       payment_status text NOT NULL DEFAULT 'pending',
       payment_method text,
       reference text,
+      subscription_id uuid,
+      scheduled_date date,
       final_amount_minor bigint NOT NULL,
       currency text NOT NULL DEFAULT 'GHS',
       created_at timestamptz NOT NULL DEFAULT now(),
