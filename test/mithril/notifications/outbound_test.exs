@@ -55,6 +55,9 @@ defmodule Mithril.Notifications.OutboundTest do
   test "whatsapp sender accepts the Instaclean E.164 form and an existing scheme" do
     assert Outbound.whatsapp_address("+233246326939") == "whatsapp:+233246326939"
     assert Outbound.whatsapp_address("whatsapp:+233246326939") == "whatsapp:+233246326939"
+    assert Outbound.whatsapp_address("0241234567") == "whatsapp:+233241234567"
+    assert Outbound.whatsapp_address("whatsapp:0241234567") == "whatsapp:+233241234567"
+    assert Outbound.whatsapp_address("invalid") == nil
     assert Outbound.whatsapp_address(nil) == nil
   end
 
