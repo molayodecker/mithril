@@ -5,7 +5,21 @@ defmodule MithrilWeb.SendNotificationController do
 
   def create(conn, params) do
     if authorized?(conn) do
-      json(conn, Outbound.deliver(params))
+      result = Outbound.deliver(params)
+      recipient_requested? =
+        Enum.any?(["email", "phone"], fn key ->
+          is_binary(params[key]) and String.trim(params[key]) != ""
+        end)
+
+      delivered? = Enum.any?(["emailSent", "smsSent", "whatsappSent"], &result[&1])
+
+      if recipient_requested? and not delivered? do
+        conn
+        |> put_status(:bad_gateway)
+        |> json(Map.put(result, "error", "Notification delivery failed"))
+      else
+        json(conn, result)
+      end
     else
       conn
       |> put_status(:unauthorized)
