@@ -620,7 +620,14 @@ defmodule Mithril.Paystack.WebhookTest do
       raise "Refusing to recreate Paystack fixtures; expected mithril_test, got #{inspect(database)}"
     end
 
-    for table <- ["cleaner_payouts", "booking_refunds", "payment_attempts", "bookings", "subscriptions", "users"] do
+    for table <- [
+          "cleaner_payouts",
+          "booking_refunds",
+          "payment_attempts",
+          "bookings",
+          "subscriptions",
+          "users"
+        ] do
       Repo.query!("DROP TABLE IF EXISTS public.#{table} CASCADE")
     end
 
