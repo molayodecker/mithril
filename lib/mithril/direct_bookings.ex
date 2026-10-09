@@ -524,6 +524,7 @@ defmodule Mithril.DirectBookings do
              schedule <- merge_reschedule_schedule(path, booking, input),
              :ok <- ensure_future_schedule(schedule),
              {:ok, pricing} <- reschedule_pricing(path, booking, schedule),
+             :ok <- validate_reschedule_turnover(booking, schedule, pricing),
              :ok <- validate_timeslot(schedule, pricing),
              :ok <- validate_cleaner_availability(schedule, pricing, bid),
              :ok <- apply_reschedule(path, booking, schedule, pricing, customer_id) do
@@ -1052,7 +1053,8 @@ defmodule Mithril.DirectBookings do
                NULLIF(btrim(to_jsonb(b)->>'timezone_name'), ''),
                NULLIF(btrim(to_jsonb(b)->>'timezone'), ''),
                'Africa/Accra'
-             ) AS timezone
+             ) AS timezone,
+             turnover_guest_checkout_at, turnover_next_checkin_at, turnover_opportunity_id, property_id
            FROM public.bookings b
            WHERE id = $1 AND customer_id = $2
            FOR UPDATE
@@ -1081,7 +1083,11 @@ defmodule Mithril.DirectBookings do
          scheduled_time,
          duration_hours,
          amount_minor,
-         timezone
+         timezone,
+         turnover_guest_checkout_at,
+         turnover_next_checkin_at,
+         turnover_opportunity_id,
+         property_id
        ]) do
     %{
       id: id,
@@ -1094,7 +1100,11 @@ defmodule Mithril.DirectBookings do
       scheduled_time: scheduled_time,
       duration_hours: duration_hours,
       amount_minor: amount_minor,
-      timezone: timezone || @default_timezone
+      timezone: timezone || @default_timezone,
+      turnover_guest_checkout_at: turnover_guest_checkout_at,
+      turnover_next_checkin_at: turnover_next_checkin_at,
+      turnover_opportunity_id: turnover_opportunity_id,
+      property_id: property_id
     }
   end
 
@@ -1457,6 +1467,16 @@ defmodule Mithril.DirectBookings do
     else
       _ -> {:error, :invalid_request}
     end
+  end
+
+  defp validate_reschedule_turnover(booking, schedule, pricing) do
+    input =
+      Map.merge(schedule, %{
+        turnover_guest_checkout_at: booking.turnover_guest_checkout_at,
+        turnover_next_checkin_at: booking.turnover_next_checkin_at
+      })
+
+    validate_turnover_window(input, pricing)
   end
 
   defp validate_turnover_context(customer_id, input, pricing) do
