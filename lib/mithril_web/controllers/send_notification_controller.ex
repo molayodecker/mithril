@@ -6,6 +6,7 @@ defmodule MithrilWeb.SendNotificationController do
   def create(conn, params) do
     if authorized?(conn) do
       result = Outbound.deliver(params)
+
       recipient_requested? =
         Enum.any?(["email", "phone"], fn key ->
           is_binary(params[key]) and String.trim(params[key]) != ""
