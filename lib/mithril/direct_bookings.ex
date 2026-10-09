@@ -156,7 +156,9 @@ defmodule Mithril.DirectBookings do
             with {:ok, service} <- service_details(input.service_id),
                  :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
                  {:ok, pricing} <- compute_pricing(input),
-                 :ok <- validate_timeslot(input, pricing),
+                 :ok <- validate_turnover_context(customer_id, input, pricing),
+                 :ok <- validate_turnover_context(customer_id, input, pricing),
+          :ok <- validate_timeslot(input, pricing),
                  :ok <- validate_cleaner_availability(input, pricing, nil),
                  :ok <- ensure_customer_profile(customer_id),
                  {:ok, booking_id, subscription_id} <-
@@ -1454,6 +1456,74 @@ defmodule Mithril.DirectBookings do
        }}
     else
       _ -> {:error, :invalid_request}
+    end
+  end
+
+  defp validate_turnover_context(customer_id, input, pricing) do
+    with :ok <- validate_turnover_ownership(customer_id, input),
+         :ok <- validate_turnover_window(input, pricing) do
+      :ok
+    end
+  end
+
+  defp validate_turnover_ownership(customer_id, input) do
+    property_id = Map.get(input, :property_id)
+    opportunity_id = Map.get(input, :turnover_opportunity_id)
+
+    cond do
+      is_nil(property_id) and is_nil(opportunity_id) ->
+        :ok
+
+      true ->
+        case Repo.query(
+               """
+               SELECT
+                 ($2::uuid IS NULL OR EXISTS (
+                   SELECT 1 FROM public.properties p
+                   WHERE p.id = $2::uuid AND p.owner_id = $1::uuid
+                 )),
+                 ($3::uuid IS NULL OR EXISTS (
+                   SELECT 1 FROM public.turnover_opportunities o
+                   JOIN public.properties p ON p.id = o.property_id
+                   WHERE o.id = $3::uuid
+                     AND p.owner_id = $1::uuid
+                     AND ($2::uuid IS NULL OR o.property_id = $2::uuid)
+                 ))
+               """,
+               [customer_id, property_id, opportunity_id]
+             ) do
+          {:ok, %{rows: [[true, true]]}} -> :ok
+          {:ok, %{rows: [[_, _]]}} -> {:error, :invalid_request}
+          {:error, error} -> database_error(error)
+        end
+    end
+  end
+
+  defp validate_turnover_window(input, pricing) do
+    checkout = Map.get(input, :turnover_guest_checkout_at)
+    checkin = Map.get(input, :turnover_next_checkin_at)
+
+    cond do
+      is_nil(checkout) and is_nil(checkin) ->
+        :ok
+
+      not is_nil(checkout) and not is_nil(checkin) and DateTime.compare(checkout, checkin) != :lt ->
+        {:error, :invalid_request}
+
+      true ->
+        start_at = scheduled_at(input.scheduled_date, input.scheduled_time, input.timezone)
+        duration = pricing["durationHours"] || input.duration_hours
+
+        with %DateTime{} = start_at <- start_at,
+             {hours, _} <- Float.parse(to_string(duration)),
+             true <- hours > 0,
+             finish_at <- DateTime.add(start_at, round(hours * 3600), :second),
+             true <- is_nil(checkout) or DateTime.compare(start_at, checkout) != :lt,
+             true <- is_nil(checkin) or DateTime.compare(finish_at, checkin) != :gt do
+          :ok
+        else
+          _ -> {:error, :invalid_request}
+        end
     end
   end
 
