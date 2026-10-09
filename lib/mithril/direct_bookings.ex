@@ -1498,10 +1498,35 @@ defmodule Mithril.DirectBookings do
     input =
       Map.merge(schedule, %{
         turnover_guest_checkout_at: booking.turnover_guest_checkout_at,
-        turnover_next_checkin_at: booking.turnover_next_checkin_at
+        turnover_next_checkin_at: booking.turnover_next_checkin_at,
+        turnover_opportunity_id: booking.turnover_opportunity_id,
+        property_id: booking.property_id
       })
 
-    validate_turnover_window(input, pricing)
+    with :ok <- validate_turnover_window(input, pricing) do
+      if is_nil(input.turnover_opportunity_id) do
+        :ok
+      else
+        case Repo.query(
+               """
+               SELECT checkout_at, next_checkin_at
+               FROM public.turnover_opportunities
+               WHERE id = $1::uuid
+                 AND ($2::uuid IS NULL OR property_id = $2::uuid)
+               """,
+               [input.turnover_opportunity_id, input.property_id]
+             ) do
+          {:ok, %{rows: [[checkout, checkin]]}} ->
+            validate_window_bounds(input, pricing, checkout, checkin)
+
+          {:ok, _} ->
+            {:error, :invalid_request}
+
+          {:error, error} ->
+            database_error(error)
+        end
+      end
+    end
   end
 
   defp validate_turnover_context(customer_id, input, pricing) do
