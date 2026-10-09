@@ -66,7 +66,7 @@ defmodule Mithril.DirectAdminServices do
                maximum_duration_hours = COALESCE($7, maximum_duration_hours),
                last_updated = timezone('utc', now())
              WHERE id = $1
-               AND COALESCE($6, minimum_duration_hours) <= COALESCE($7, maximum_duration_hours)
+               AND COALESCE($6, minimum_duration_hours, 2) <= COALESCE($7, maximum_duration_hours, 12)
              RETURNING id
              """,
              [
