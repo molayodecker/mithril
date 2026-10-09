@@ -213,13 +213,17 @@ defmodule Mithril.DirectPayments do
 
     case pending_recurring_subscription(booking.uuid) do
       {:ok, subscription_id} ->
-        Map.merge(metadata, %{
-          subscription_id: subscription_id,
-          payment_intent: "recurring_first_charge"
-        })
+        {:ok,
+         Map.merge(metadata, %{
+           subscription_id: subscription_id,
+           payment_intent: "recurring_first_charge"
+         })}
 
       :none ->
-        metadata
+        {:ok, metadata}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -247,41 +251,41 @@ defmodule Mithril.DirectPayments do
 
       {:error, error} ->
         Logger.warning("Direct payment subscription lookup failed: #{inspect(error)}")
-        :none
+        {:error, :database_unavailable}
     end
   end
 
   defp initialize_checkout(attempt, booking, email, callback_url, routing) do
-    attrs =
-      %{
-        email: email,
-        amount: booking.amount_minor,
-        currency: booking.currency,
-        reference: attempt.reference,
-        callback_url: callback_url,
-        metadata: checkout_metadata(booking)
-      }
-      |> Map.merge(routing)
+    with {:ok, metadata} <- checkout_metadata(booking) do
+      attrs =
+        %{
+          email: email,
+          amount: booking.amount_minor,
+          currency: booking.currency,
+          reference: attempt.reference,
+          callback_url: callback_url,
+          metadata: metadata
+        }
+        |> Map.merge(routing)
 
-    case Paystack.initialize(attrs) do
-      {:ok, provider} ->
-        complete_attempt(attempt.attempt_id, provider, booking)
+      case Paystack.initialize(attrs) do
+        {:ok, provider} ->
+          complete_attempt(attempt.attempt_id, provider, booking)
 
-      {:error, :payment_not_configured} ->
-        {:error, :payment_not_configured}
+        {:error, :payment_not_configured} ->
+          {:error, :payment_not_configured}
 
-      {:error, {:provider, status, message}} ->
-        _ = fail_attempt(attempt.attempt_id, "Paystack #{status}: #{message}")
-        {:error, :payment_failed}
+        {:error, {:provider, status, message}} ->
+          _ = fail_attempt(attempt.attempt_id, "Paystack #{status}: #{message}")
+          {:error, :payment_failed}
 
-      {:error, :provider_unavailable} ->
-        # The request may have reached Paystack even if the response was lost.
-        # Leave the attempt initializing so stale recovery verifies it first.
-        {:error, :payment_in_progress}
+        {:error, :provider_unavailable} ->
+          {:error, :payment_in_progress}
 
-      {:error, reason} ->
-        Logger.warning("Direct Paystack initialize failed: #{inspect(reason)}")
-        {:error, :payment_failed}
+        {:error, reason} ->
+          Logger.warning("Direct Paystack initialize failed: #{inspect(reason)}")
+          {:error, :payment_failed}
+      end
     end
   end
 
