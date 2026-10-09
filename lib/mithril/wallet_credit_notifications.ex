@@ -185,18 +185,25 @@ defmodule Mithril.WalletCreditNotifications do
                """,
                [transaction_id]
              ) do
-          {:ok, _} -> :ok
-          {:error, error} -> Logger.warning("wallet credit WhatsApp receipt failed: #{inspect(error)}")
+          {:ok, _} ->
+            :ok
+
+          {:error, error} ->
+            Logger.warning("wallet credit WhatsApp receipt failed: #{inspect(error)}")
         end
       end
 
       :ok
     else
-      {:ok, %{rows: []}} -> :ok
+      {:ok, %{rows: []}} ->
+        :ok
+
       {:error, error} ->
         Logger.warning("wallet credit WhatsApp queue failed: #{inspect(error)}")
         :ok
-      :error -> :ok
+
+      :error ->
+        :ok
     end
   end
 
