@@ -76,7 +76,8 @@ defmodule Mithril.Notifications.Outbound do
 
     from = whatsapp_address(env(:twilio_whatsapp_from))
 
-    if sid == nil or token == nil or content_sid == nil or from == nil or whatsapp_address(phone) == nil do
+    if sid == nil or token == nil or content_sid == nil or from == nil or
+         whatsapp_address(phone) == nil do
       false
     else
       url = "https://api.twilio.com/2010-04-01/Accounts/#{sid}/Messages.json"
