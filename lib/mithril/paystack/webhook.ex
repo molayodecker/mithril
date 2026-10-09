@@ -132,6 +132,11 @@ defmodule Mithril.Paystack.Webhook do
   defp apply_charge(attempt, event) do
     cond do
       paid?(attempt.payment_status) and attempt.booking_reference == attempt.reference ->
+        if event.status in [nil, "success"] and event.amount_minor == attempt.amount_minor and
+             event.currency == attempt.currency do
+          activate_first_charge!(attempt, event)
+        end
+
         %{already_paid: true, reference: attempt.reference, booking_id: attempt.booking_id}
 
       attempt.booking_status == "cancelled" and not paid?(attempt.payment_status) ->
