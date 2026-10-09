@@ -229,12 +229,12 @@ defmodule Mithril.DirectBookingsTest do
                "requiresKeyOrAccessCode" => true,
                "accessInstructions" => "Lockbox by the gate",
                "customerContactPhone" => "+233200000002",
-               "turnoverGuestCheckoutAt" => "2026-10-10T08:00:00Z",
-               "turnoverNextCheckInAt" => "2026-10-10T15:00:00Z",
+               "turnoverGuestCheckoutAt" => checkout_at,
+               "turnoverNextCheckInAt" => checkin_at,
                "turnoverLinenHandling" => "replace_no_wash",
                "turnoverRestockingNotes" => "Coffee and towels",
                "turnoverSource" => "airbnb_ical",
-               "propertyId" => "6d8c2a10-4b3e-4f1a-9c2d-1a2b3c4d5e6f"
+               "propertyId" => property_id
              })
 
     refute Map.has_key?(with_access, :subscriptionId)
@@ -250,12 +250,12 @@ defmodule Mithril.DirectBookingsTest do
                true,
                "Lockbox by the gate",
                "+233200000002",
-               "2026-10-10T08:00:00Z",
-               "2026-10-10T15:00:00Z",
+               ^checkout_at,
+               ^checkin_at,
                "replace_no_wash",
                "Coffee and towels",
                "airbnb_ical",
-               "6d8c2a10-4b3e-4f1a-9c2d-1a2b3c4d5e6f"
+               ^property_id
              ]
            ] =
              Repo.query!(
@@ -1481,6 +1481,8 @@ defmodule Mithril.DirectBookingsTest do
     Repo.query!("DROP TABLE IF EXISTS public.booking_refunds CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.payment_attempts CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.bookings CASCADE")
+    Repo.query!("DROP TABLE IF EXISTS public.turnover_opportunities CASCADE")
+    Repo.query!("DROP TABLE IF EXISTS public.properties CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.subscriptions CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.cleaner_availability_exceptions CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.cleaner_data CASCADE")
@@ -1504,6 +1506,20 @@ defmodule Mithril.DirectBookingsTest do
       email text,
       phone text,
       status text NOT NULL DEFAULT 'active'
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.properties (
+      id uuid PRIMARY KEY,
+      owner_id uuid NOT NULL
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.turnover_opportunities (
+      id uuid PRIMARY KEY,
+      property_id uuid NOT NULL REFERENCES public.properties(id)
     )
     """)
 
