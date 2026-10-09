@@ -222,13 +222,13 @@ defmodule Mithril.Paystack.Webhook do
                  AND b.id = $2::uuid
                  AND b.subscription_id = s.id
                  AND b.customer_id = s.customer_id
-                 AND s.status IN ('pending', 'active')
+                 AND s.status = 'pending'
                  AND s.recurrence_interval IN ('daily', 'weekly', 'monthly', 'quarterly', 'annually')
                """,
                [id, attempt.booking_uuid, code]
              ) do
           {:ok, %{num_rows: 1}} -> :ok
-          {:ok, _} -> Repo.rollback(:payment_reference_mismatch)
+          {:ok, _} -> confirm_active_subscription!(id, attempt.booking_uuid, code)
           {:error, error} -> Repo.rollback(error)
         end
       else
@@ -237,6 +237,26 @@ defmodule Mithril.Paystack.Webhook do
     end
 
     :ok
+  end
+
+  defp confirm_active_subscription!(subscription_id, booking_uuid, code) do
+    case Repo.query(
+           """
+           SELECT 1
+           FROM public.subscriptions s
+           JOIN public.bookings b ON b.subscription_id = s.id
+           WHERE s.id = $1::uuid
+             AND b.id = $2::uuid
+             AND b.customer_id = s.customer_id
+             AND s.status = 'active'
+             AND s.paystack_authorization_code = $3
+           """,
+           [subscription_id, booking_uuid, code]
+         ) do
+      {:ok, %{rows: [[1]]}} -> :ok
+      {:ok, _} -> Repo.rollback(:payment_reference_mismatch)
+      {:error, error} -> Repo.rollback(error)
+    end
   end
 
   defp fail_charge(event) do
