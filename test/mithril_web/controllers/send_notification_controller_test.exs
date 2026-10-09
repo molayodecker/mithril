@@ -67,6 +67,18 @@ defmodule MithrilWeb.SendNotificationControllerTest do
     assert body =~ "Instaclean reminder"
   end
 
+  test "POST returns 502 when a requested notification fails" do
+    Application.put_env(:mithril, :sms_adapter, Mithril.Auth.SMS.Disabled)
+
+    conn =
+      build_conn()
+      |> put_req_header("authorization", "Bearer reminder-test-token")
+      |> post_json(reminder_body())
+
+    assert %{"smsSent" => false, "error" => "Notification delivery failed"} =
+             json_response(conn, 502)
+  end
+
   defp post_json(conn, body) do
     conn
     |> put_req_header("content-type", "application/json")
