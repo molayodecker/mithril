@@ -32,7 +32,6 @@ defmodule Mithril.DirectAdminPromotions do
                WHEN p.valid_from IS NOT NULL AND p.valid_from > timezone('utc', now()) THEN 'scheduled'
                WHEN p.valid_to IS NOT NULL AND p.valid_to < timezone('utc', now()) THEN 'expired'
                WHEN p.max_redemptions IS NOT NULL AND stats.redemption_count >= p.max_redemptions THEN 'exhausted'
-               WHEN pc.max_redemptions IS NOT NULL AND stats.redemption_count >= pc.max_redemptions THEN 'exhausted'
                ELSE 'active'
              END
            )
