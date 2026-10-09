@@ -38,6 +38,39 @@ defmodule Mithril.DirectPaymentsTest do
 
     assert {:ok, receipt} = Mithril.Paystack.verify(checkout.reference)
     assert receipt.split_code == "SPL_test"
+    assert receipt.metadata.booking_id == booking_id
+    assert receipt.metadata.customer_id == customer_id
+    refute Map.has_key?(receipt.metadata, :subscription_id)
+  end
+
+  test "tags a pending recurring first charge so the plan can be activated" do
+    customer_id = Ecto.UUID.generate()
+    booking_id = insert_booking!(customer_id, 48_694)
+    subscription_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.subscriptions (id, customer_id, status, recurrence_interval)
+      VALUES ($1, $2, 'pending', 'weekly')
+      """,
+      [Ecto.UUID.dump!(subscription_id), Ecto.UUID.dump!(customer_id)]
+    )
+
+    Repo.query!(
+      "UPDATE public.bookings SET subscription_id = $2 WHERE id = $1",
+      [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(subscription_id)]
+    )
+
+    assert {:ok, checkout} =
+             DirectPayments.initialize(customer_id, booking_id, %{
+               "callbackUrl" => "https://direct.tryinstaclean.com/bookings/#{booking_id}"
+             })
+
+    assert {:ok, receipt} = Mithril.Paystack.verify(checkout.reference)
+    assert receipt.metadata.subscription_id == subscription_id
+    assert receipt.metadata.payment_intent == "recurring_first_charge"
+    assert receipt.metadata.customer_id == customer_id
+    assert receipt.metadata.booking_id == booking_id
   end
 
   test "uses numeric shares for dynamic Paystack split routing" do
@@ -381,6 +414,7 @@ defmodule Mithril.DirectPaymentsTest do
 
     Repo.query!("DROP TABLE IF EXISTS public.payment_attempts CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.bookings CASCADE")
+    Repo.query!("DROP TABLE IF EXISTS public.subscriptions CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.service_types CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.users CASCADE")
 
@@ -448,7 +482,17 @@ defmodule Mithril.DirectPaymentsTest do
       vendor_percentage_bps integer,
       tax_paystack_share text,
       vendor_paystack_share text,
+      subscription_id uuid,
       updated_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.subscriptions (
+      id uuid PRIMARY KEY,
+      customer_id uuid NOT NULL,
+      status text NOT NULL,
+      recurrence_interval text
     )
     """)
 

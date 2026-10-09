@@ -229,7 +229,18 @@ defmodule MithrilWeb.Schemas.DirectBooking do
         occupantPresent: %Schema{type: :boolean, nullable: true},
         requiresKeyOrAccessCode: %Schema{type: :boolean, default: false},
         accessInstructions: %Schema{type: :string, nullable: true, maxLength: 2000},
-        customerContactPhone: %Schema{type: :string, nullable: true, maxLength: 24}
+        customerContactPhone: %Schema{type: :string, nullable: true, maxLength: 24},
+        turnoverGuestCheckoutAt: %Schema{type: :string, format: :"date-time", nullable: true},
+        turnoverNextCheckInAt: %Schema{type: :string, format: :"date-time", nullable: true},
+        turnoverLinenHandling: %Schema{
+          type: :string,
+          nullable: true,
+          enum: ~w(replace_no_wash wash_hang_dry wash_dry_repack_onsite no_bedding_replace)
+        },
+        turnoverRestockingNotes: %Schema{type: :string, nullable: true, maxLength: 2000},
+        turnoverSource: %Schema{type: :string, nullable: true, enum: ~w(manual airbnb_ical)},
+        turnoverOpportunityId: %Schema{type: :string, format: :uuid, nullable: true},
+        propertyId: %Schema{type: :string, format: :uuid, nullable: true}
       },
       required: [
         :serviceId,
@@ -277,6 +288,17 @@ defmodule MithrilWeb.Schemas.DirectBooking do
         requiresKeyOrAccessCode: %Schema{type: :boolean, default: false},
         accessInstructions: %Schema{type: :string, nullable: true, maxLength: 2000},
         customerContactPhone: %Schema{type: :string, nullable: true, maxLength: 24},
+        turnoverGuestCheckoutAt: %Schema{type: :string, format: :"date-time", nullable: true},
+        turnoverNextCheckInAt: %Schema{type: :string, format: :"date-time", nullable: true},
+        turnoverLinenHandling: %Schema{
+          type: :string,
+          nullable: true,
+          enum: ~w(replace_no_wash wash_hang_dry wash_dry_repack_onsite no_bedding_replace)
+        },
+        turnoverRestockingNotes: %Schema{type: :string, nullable: true, maxLength: 2000},
+        turnoverSource: %Schema{type: :string, nullable: true, enum: ~w(manual airbnb_ical)},
+        turnoverOpportunityId: %Schema{type: :string, format: :uuid, nullable: true},
+        propertyId: %Schema{type: :string, format: :uuid, nullable: true},
         recurrenceInterval: %Schema{
           type: :string,
           enum: ~w(daily weekly monthly quarterly annually),

@@ -50,7 +50,8 @@ defmodule Mithril.Paystack.Test do
       currency: attrs.currency,
       status: "success",
       split_code: Map.get(attrs, :split_code),
-      split: Map.get(attrs, :split)
+      split: Map.get(attrs, :split),
+      metadata: Map.get(attrs, :metadata)
     }
 
     put_attempt(reference, record)

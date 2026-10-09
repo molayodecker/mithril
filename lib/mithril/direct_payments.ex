@@ -204,6 +204,53 @@ defmodule Mithril.DirectPayments do
     end
   end
 
+  defp checkout_metadata(booking) do
+    metadata = %{
+      booking_id: booking.id,
+      customer_id: Ecto.UUID.load!(booking.customer_uuid),
+      source: "instaclean_direct"
+    }
+
+    case pending_recurring_subscription(booking.uuid) do
+      {:ok, subscription_id} ->
+        Map.merge(metadata, %{
+          subscription_id: subscription_id,
+          payment_intent: "recurring_first_charge"
+        })
+
+      :none ->
+        metadata
+    end
+  end
+
+  # The first visit is a normal Paystack charge. The webhook creates the plan
+  # only when this metadata is present.
+  defp pending_recurring_subscription(booking_uuid) do
+    case Repo.query(
+           """
+           SELECT s.id::text
+           FROM public.bookings b
+           JOIN public.subscriptions s
+             ON s.id = b.subscription_id
+            AND s.customer_id = b.customer_id
+           WHERE b.id = $1
+             AND s.status = 'pending'
+             AND s.recurrence_interval IN ('daily', 'weekly', 'monthly', 'quarterly', 'annually')
+           """,
+           [booking_uuid]
+         ) do
+      {:ok, %{rows: [[subscription_id]]}} when is_binary(subscription_id) ->
+        {:ok, subscription_id}
+
+      {:ok, _} ->
+        :none
+
+      {:error, error} ->
+        Logger.warning("Direct payment subscription lookup failed: #{inspect(error)}")
+        :none
+    end
+  end
+
   defp initialize_checkout(attempt, booking, email, callback_url, routing) do
     attrs =
       %{
@@ -212,10 +259,7 @@ defmodule Mithril.DirectPayments do
         currency: booking.currency,
         reference: attempt.reference,
         callback_url: callback_url,
-        metadata: %{
-          booking_id: booking.id,
-          source: "instaclean_direct"
-        }
+        metadata: checkout_metadata(booking)
       }
       |> Map.merge(routing)
 

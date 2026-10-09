@@ -228,7 +228,13 @@ defmodule Mithril.DirectBookingsTest do
                "occupantPresent" => true,
                "requiresKeyOrAccessCode" => true,
                "accessInstructions" => "Lockbox by the gate",
-               "customerContactPhone" => "+233200000002"
+               "customerContactPhone" => "+233200000002",
+               "turnoverGuestCheckoutAt" => "2026-10-10T08:00:00Z",
+               "turnoverNextCheckInAt" => "2026-10-10T15:00:00Z",
+               "turnoverLinenHandling" => "replace_no_wash",
+               "turnoverRestockingNotes" => "Coffee and towels",
+               "turnoverSource" => "airbnb_ical",
+               "propertyId" => "6d8c2a10-4b3e-4f1a-9c2d-1a2b3c4d5e6f"
              })
 
     refute Map.has_key?(with_access, :subscriptionId)
@@ -243,14 +249,24 @@ defmodule Mithril.DirectBookingsTest do
                true,
                true,
                "Lockbox by the gate",
-               "+233200000002"
+               "+233200000002",
+               "2026-10-10T08:00:00Z",
+               "2026-10-10T15:00:00Z",
+               "replace_no_wash",
+               "Coffee and towels",
+               "airbnb_ical",
+               "6d8c2a10-4b3e-4f1a-9c2d-1a2b3c4d5e6f"
              ]
            ] =
              Repo.query!(
                """
                SELECT booking_for_self, site_contact_name, site_contact_phone,
                       site_contact_relationship, property_type, occupant_present,
-                      requires_key_or_access_code, access_instructions, customer_contact_phone
+                      requires_key_or_access_code, access_instructions, customer_contact_phone,
+                      to_char(turnover_guest_checkout_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                      to_char(turnover_next_checkin_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                      turnover_linen_handling, turnover_restocking_notes, turnover_source,
+                      property_id::text
                FROM public.bookings
                WHERE id = $1::uuid
                """,
@@ -1588,6 +1604,13 @@ defmodule Mithril.DirectBookingsTest do
       occupant_present boolean,
       access_instructions text,
       customer_contact_phone text,
+      turnover_guest_checkout_at timestamptz,
+      turnover_next_checkin_at timestamptz,
+      turnover_linen_handling text,
+      turnover_restocking_notes text,
+      turnover_source text,
+      turnover_opportunity_id uuid,
+      property_id uuid,
       created_at timestamptz NOT NULL DEFAULT now(),
       cancelled_at timestamptz,
       cancelled_by uuid,

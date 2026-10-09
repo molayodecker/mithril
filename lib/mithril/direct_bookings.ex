@@ -15,6 +15,8 @@ defmodule Mithril.DirectBookings do
   # Paystack plan intervals. Hourly and legacy bi-weekly stay unbookable.
   @bookable_recurrence_intervals ~w(daily weekly monthly quarterly annually)
   @property_types ~w(residential vacant_home office commercial airbnb_turnover post_construction)
+  @linen_handling ~w(replace_no_wash wash_hang_dry wash_dry_repack_onsite no_bedding_replace)
+  @turnover_sources ~w(manual airbnb_ical)
 
   def list_services do
     # `service_types.duration` is a display string like "2 hours", so it cannot
@@ -240,7 +242,10 @@ defmodule Mithril.DirectBookings do
            SELECT id::text, status::text, payment_status::text, subscription_id, reference,
                   booking_for_self, site_contact_name, site_contact_phone,
                   site_contact_relationship, property_type, occupant_present,
-                  requires_key_or_access_code, access_instructions, customer_contact_phone
+                  requires_key_or_access_code, access_instructions, customer_contact_phone,
+                  turnover_guest_checkout_at, turnover_next_checkin_at,
+                  turnover_linen_handling, turnover_restocking_notes, turnover_source,
+                  turnover_opportunity_id, property_id
            FROM public.bookings
            WHERE id = $1 AND customer_id = $2
            FOR UPDATE
@@ -264,7 +269,14 @@ defmodule Mithril.DirectBookings do
              occupant_present,
              requires_key_or_access_code,
              access_instructions,
-             customer_contact_phone
+             customer_contact_phone,
+             turnover_guest_checkout_at,
+             turnover_next_checkin_at,
+             turnover_linen_handling,
+             turnover_restocking_notes,
+             turnover_source,
+             turnover_opportunity_id,
+             property_id
            ]
          ]
        }} ->
@@ -284,7 +296,14 @@ defmodule Mithril.DirectBookings do
              occupant_present: occupant_present,
              requires_key_or_access_code: requires_key_or_access_code,
              access_instructions: access_instructions,
-             customer_contact_phone: customer_contact_phone
+             customer_contact_phone: customer_contact_phone,
+             turnover_guest_checkout_at: turnover_guest_checkout_at,
+             turnover_next_checkin_at: turnover_next_checkin_at,
+             turnover_linen_handling: turnover_linen_handling,
+             turnover_restocking_notes: turnover_restocking_notes,
+             turnover_source: turnover_source,
+             turnover_opportunity_id: turnover_opportunity_id,
+             property_id: property_id
            }
          }}
 
@@ -308,7 +327,14 @@ defmodule Mithril.DirectBookings do
       "occupantPresent" => :occupant_present,
       "requiresKeyOrAccessCode" => :requires_key_or_access_code,
       "accessInstructions" => :access_instructions,
-      "customerContactPhone" => :customer_contact_phone
+      "customerContactPhone" => :customer_contact_phone,
+      "turnoverGuestCheckoutAt" => :turnover_guest_checkout_at,
+      "turnoverNextCheckInAt" => :turnover_next_checkin_at,
+      "turnoverLinenHandling" => :turnover_linen_handling,
+      "turnoverRestockingNotes" => :turnover_restocking_notes,
+      "turnoverSource" => :turnover_source,
+      "turnoverOpportunityId" => :turnover_opportunity_id,
+      "propertyId" => :property_id
     }
 
     Enum.reduce(mapping, input, fn {key, field}, acc ->
@@ -925,7 +951,14 @@ defmodule Mithril.DirectBookings do
              occupant_present,
              requires_key_or_access_code,
              access_instructions,
-             customer_contact_phone
+             customer_contact_phone,
+             turnover_guest_checkout_at,
+             turnover_next_checkin_at,
+             turnover_linen_handling,
+             turnover_restocking_notes,
+             turnover_source,
+             turnover_opportunity_id,
+             property_id
            ) VALUES (
              $1, $2, $3, $4, $5::date, $6::time, $7, $7, $8,
              NULLIF($9::text, ''), $10::numeric, $11::integer, $12::integer,
@@ -934,7 +967,9 @@ defmodule Mithril.DirectBookings do
              $24::integer, $25::integer, 'pending', 'pending', $26, $27,
              $28::uuid, NULLIF($29::text, ''),
              $30, NULLIF($31::text, ''), NULLIF($32::text, ''), NULLIF($33::text, ''),
-             NULLIF($34::text, ''), $35, $36, NULLIF($37::text, ''), NULLIF($38::text, '')
+             NULLIF($34::text, ''), $35, $36, NULLIF($37::text, ''), NULLIF($38::text, ''),
+             $39::timestamptz, $40::timestamptz, NULLIF($41::text, ''), NULLIF($42::text, ''),
+             NULLIF($43::text, ''), $44::uuid, $45::uuid
            )
            RETURNING id::text
            """,
@@ -976,7 +1011,14 @@ defmodule Mithril.DirectBookings do
              Map.get(input, :occupant_present),
              Map.get(input, :requires_key_or_access_code, false),
              blank_to_nil(Map.get(input, :access_instructions)),
-             blank_to_nil(Map.get(input, :customer_contact_phone))
+             blank_to_nil(Map.get(input, :customer_contact_phone)),
+             Map.get(input, :turnover_guest_checkout_at),
+             Map.get(input, :turnover_next_checkin_at),
+             blank_to_nil(Map.get(input, :turnover_linen_handling)),
+             blank_to_nil(Map.get(input, :turnover_restocking_notes)),
+             blank_to_nil(Map.get(input, :turnover_source)),
+             Map.get(input, :turnover_opportunity_id),
+             Map.get(input, :property_id)
            ]
          ) do
       {:ok, %{rows: [[id]]}} ->
@@ -1386,7 +1428,8 @@ defmodule Mithril.DirectBookings do
          {:ok, occupant_present} <- optional_boolean(params["occupantPresent"]),
          {:ok, property_type} <- optional_property_type(params["propertyType"]),
          {:ok, customer_contact_phone} <- optional_phone(params["customerContactPhone"]),
-         {:ok, site_contact} <- site_contact(params, booking_for_self) do
+         {:ok, site_contact} <- site_contact(params, booking_for_self),
+         {:ok, turnover} <- turnover_details(params) do
       access_instructions =
         if requires_key, do: optional_text(params["accessInstructions"], 2_000), else: nil
 
@@ -1400,12 +1443,95 @@ defmodule Mithril.DirectBookings do
          access_instructions: access_instructions,
          site_contact_name: site_contact.name,
          site_contact_phone: site_contact.phone,
-         site_contact_relationship: site_contact.relationship
+         site_contact_relationship: site_contact.relationship,
+         turnover_guest_checkout_at: turnover.guest_checkout_at,
+         turnover_next_checkin_at: turnover.next_checkin_at,
+         turnover_linen_handling: turnover.linen_handling,
+         turnover_restocking_notes: turnover.restocking_notes,
+         turnover_source: turnover.source,
+         turnover_opportunity_id: turnover.opportunity_id,
+         property_id: turnover.property_id
        }}
     else
       _ -> {:error, :invalid_request}
     end
   end
+
+  defp turnover_details(params) do
+    with {:ok, guest_checkout_at} <- optional_timestamptz(params["turnoverGuestCheckoutAt"]),
+         {:ok, next_checkin_at} <- optional_timestamptz(params["turnoverNextCheckInAt"]),
+         {:ok, linen_handling} <- optional_linen_handling(params["turnoverLinenHandling"]),
+         {:ok, source} <- optional_turnover_source(params["turnoverSource"]),
+         {:ok, opportunity_id} <- optional_uuid(params["turnoverOpportunityId"]),
+         {:ok, property_id} <- optional_uuid(params["propertyId"]) do
+      {:ok,
+       %{
+         guest_checkout_at: guest_checkout_at,
+         next_checkin_at: next_checkin_at,
+         linen_handling: linen_handling,
+         restocking_notes: optional_text(params["turnoverRestockingNotes"], 2_000),
+         source: source,
+         opportunity_id: opportunity_id,
+         property_id: property_id
+       }}
+    else
+      _ -> :error
+    end
+  end
+
+  defp optional_timestamptz(nil), do: {:ok, nil}
+  defp optional_timestamptz(""), do: {:ok, nil}
+
+  defp optional_timestamptz(value) when is_binary(value) do
+    case DateTime.from_iso8601(String.trim(value)) do
+      {:ok, datetime, _offset} -> {:ok, DateTime.truncate(datetime, :second)}
+      _ -> :error
+    end
+  end
+
+  defp optional_timestamptz(_), do: :error
+
+  defp optional_linen_handling(nil), do: {:ok, nil}
+  defp optional_linen_handling(""), do: {:ok, nil}
+
+  defp optional_linen_handling(value) when is_binary(value) do
+    linen = value |> String.trim() |> String.downcase()
+
+    cond do
+      linen == "" -> {:ok, nil}
+      linen in @linen_handling -> {:ok, linen}
+      true -> :error
+    end
+  end
+
+  defp optional_linen_handling(_), do: :error
+
+  defp optional_turnover_source(nil), do: {:ok, nil}
+  defp optional_turnover_source(""), do: {:ok, nil}
+
+  defp optional_turnover_source(value) when is_binary(value) do
+    source = value |> String.trim() |> String.downcase()
+
+    cond do
+      source == "" -> {:ok, nil}
+      source in @turnover_sources -> {:ok, source}
+      true -> :error
+    end
+  end
+
+  defp optional_turnover_source(_), do: :error
+
+  defp optional_uuid(nil), do: {:ok, nil}
+  defp optional_uuid(""), do: {:ok, nil}
+
+  defp optional_uuid(value) when is_binary(value) do
+    case value |> String.trim() |> Ecto.UUID.dump() do
+      {:ok, dumped} -> {:ok, dumped}
+      :error -> :error
+    end
+  end
+
+  defp optional_uuid(_), do: :error
 
   defp site_contact(_params, true) do
     {:ok, %{name: nil, phone: nil, relationship: nil}}
