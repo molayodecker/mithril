@@ -53,7 +53,7 @@ defmodule Mithril.DirectAdminServices do
          :ok <- require_admin_user(user_id),
          {:ok, sid} <- positive_integer(service_id),
          {:ok, patch} <- validate_update(params),
-         {:ok, _} <-
+         {:ok, %{rows: [[_]]}} <-
            Repo.query(
              """
              UPDATE public.service_types
@@ -61,11 +61,13 @@ defmodule Mithril.DirectAdminServices do
                name = COALESCE($2, name),
                price = COALESCE($3, price),
                active = COALESCE($4, active),
-               description = COALESCE($5, description),
+               description = CASE WHEN $8::boolean THEN $5 ELSE description END,
                minimum_duration_hours = COALESCE($6, minimum_duration_hours),
                maximum_duration_hours = COALESCE($7, maximum_duration_hours),
                last_updated = timezone('utc', now())
              WHERE id = $1
+               AND COALESCE($6, minimum_duration_hours) <= COALESCE($7, maximum_duration_hours)
+             RETURNING id
              """,
              [
                sid,
@@ -74,11 +76,13 @@ defmodule Mithril.DirectAdminServices do
                patch.active,
                patch.description,
                patch.minimum_duration_hours,
-               patch.maximum_duration_hours
+               patch.maximum_duration_hours,
+               patch.description_present
              ]
            ) do
       fetch_after_update(sid)
     else
+      {:ok, %{rows: []}} -> {:error, :invalid_request}
       :error -> {:error, :invalid_request}
       {:error, reason} when is_atom(reason) -> {:error, reason}
       {:error, error} -> database_error(error)
@@ -134,13 +138,15 @@ defmodule Mithril.DirectAdminServices do
       patch = %{
         name: name,
         description: description,
+        description_present: Map.has_key?(params, "description") or Map.has_key?(params, :description),
         active: active,
         price: price,
         minimum_duration_hours: min_hours,
         maximum_duration_hours: max_hours
       }
 
-      if Enum.all?(patch, fn {_k, v} -> is_nil(v) end) do
+      if Enum.all?(Map.delete(patch, :description_present), fn {_k, v} -> is_nil(v) end) and
+           not patch.description_present do
         {:error, :invalid_request}
       else
         {:ok, patch}
