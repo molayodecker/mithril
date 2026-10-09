@@ -130,6 +130,15 @@ defmodule Mithril.DirectAdminCatalogTest do
     )
     """)
 
+    Repo.query!("""
+    CREATE TABLE public.booking_refunds (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      booking_id uuid NOT NULL REFERENCES public.bookings(id),
+      refund_amount_minor bigint NOT NULL,
+      status text NOT NULL DEFAULT 'processed'
+    )
+    """)
+
     customer_id = Ecto.UUID.generate()
 
     Repo.query!(
