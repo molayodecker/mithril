@@ -19,10 +19,10 @@ defmodule Mithril.Cron.JobsTest do
 
   test "oban crontab covers jzevawnetjwnliamyilb inventory" do
     assert length(Jobs.sql_job_names()) == 9
-    assert length(Jobs.scheduled_job_names()) == 12
+    assert length(Jobs.scheduled_job_names()) == 13
 
     crontab = Jobs.oban_crontab()
-    assert length(crontab) == 22
+    assert length(crontab) == 23
 
     assert Enum.any?(crontab, fn {_schedule, worker, _opts} ->
              worker == ScheduledJob
