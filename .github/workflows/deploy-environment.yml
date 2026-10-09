@@ -51,7 +51,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: ${{ inputs.mark_staging_status && 'write' || 'read' }}
+      contents: write
       actions: read
       statuses: write
     environment: ${{ inputs.environment_name }}
@@ -250,23 +250,42 @@ jobs:
             -f context=mithril/staging \
             -f description="Mithril staging deployed and verified"
 
-      - name: Create staging deployment tag
+      - name: Create or verify staging deployment tag
         if: ${{ inputs.mark_staging_status }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          tag="staging/${DEPLOY_SHA}"
-          ref="refs/tags/${tag}"
-          if ! gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-            -f ref="${ref}" \
-            -f sha="${DEPLOY_SHA}" 2> /tmp/tag-error.txt; then
-            if grep -q 'Reference already exists' /tmp/tag-error.txt; then
-              echo "Tag ${tag} already exists."
-              exit 0
-            fi
-            cat /tmp/tag-error.txt
+          if [[ ! "$DEPLOY_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::Invalid deployment commit SHA."
             exit 1
           fi
-          echo "Created tag ${tag}"
+
+          tag="staging/$DEPLOY_SHA"
+          ref="refs/tags/$tag"
+          api_ref="tags/staging/$DEPLOY_SHA"
+
+          verify_existing_tag() {
+            local existing existing_sha existing_type
+            existing="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/$api_ref")"
+            read -r existing_sha existing_type < <(
+              printf '%s' "$existing" |
+                python3 -c 'import json,sys; o=json.load(sys.stdin)["object"]; print(o["sha"], o["type"])'
+            )
+            if [[ "$existing_sha" != "$DEPLOY_SHA" || "$existing_type" != "commit" ]]; then
+              echo "::error::Tag $tag points to $existing_type $existing_sha, expected commit $DEPLOY_SHA."
+              return 1
+            fi
+            echo "Verified tag $tag -> $DEPLOY_SHA"
+          }
+
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/$api_ref" >/dev/null 2>&1; then
+            verify_existing_tag
+          elif gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="$ref" -f sha="$DEPLOY_SHA"; then
+            echo "Created tag $tag"
+          else
+            echo "Tag creation failed or raced; checking for the expected ref."
+            verify_existing_tag
+          fi
