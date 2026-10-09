@@ -157,8 +157,7 @@ defmodule Mithril.DirectBookings do
                  :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
                  {:ok, pricing} <- compute_pricing(input),
                  :ok <- validate_turnover_context(customer_id, input, pricing),
-                 :ok <- validate_turnover_context(customer_id, input, pricing),
-          :ok <- validate_timeslot(input, pricing),
+                 :ok <- validate_timeslot(input, pricing),
                  :ok <- validate_cleaner_availability(input, pricing, nil),
                  :ok <- ensure_customer_profile(customer_id),
                  {:ok, booking_id, subscription_id} <-
@@ -434,6 +433,7 @@ defmodule Mithril.DirectBookings do
     with {:ok, service} <- service_details(input.service_id),
          :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
          {:ok, pricing} <- compute_pricing(input),
+         :ok <- validate_turnover_context(customer_id, input, pricing),
          :ok <- validate_timeslot(input, pricing),
          :ok <- validate_cleaner_availability(input, pricing, nil),
          :ok <- ensure_customer_profile(customer_id),
