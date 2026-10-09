@@ -210,6 +210,16 @@ defmodule Mithril.DirectBookingsTest do
       [Ecto.UUID.dump!(cleaner_id)]
     )
 
+    property_id = Ecto.UUID.generate()
+    visit_date = Date.add(Date.utc_today(), 5)
+    checkout_at = "#{Date.to_iso8601(visit_date)}T08:00:00Z"
+    checkin_at = "#{Date.to_iso8601(visit_date)}T15:00:00Z"
+
+    Repo.query!(
+      "INSERT INTO public.properties (id, owner_id) VALUES ($1, $2)",
+      [Ecto.UUID.dump!(property_id), Ecto.UUID.dump!(customer_id)]
+    )
+
     assert {:ok, with_access} =
              DirectBookings.create_customer_booking(customer_id, %{
                "serviceId" => 1,
