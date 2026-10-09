@@ -34,6 +34,28 @@ defmodule MithrilWeb.SendNotificationControllerTest do
     assert %{"error" => "Unauthorized"} = json_response(conn, 401)
   end
 
+  test "POST rejects an incorrect bearer token" do
+    conn =
+      build_conn()
+      |> put_req_header("authorization", "Bearer invalid-token")
+      |> post_json(reminder_body())
+
+    assert %{"error" => "Unauthorized"} = json_response(conn, 401)
+    assert Application.get_env(:mithril, :test_sms_messages) == []
+  end
+
+  test "POST with no recipient does not send notifications" do
+    conn =
+      build_conn()
+      |> put_req_header("authorization", "Bearer reminder-test-token")
+      |> post_json(Map.delete(reminder_body(), "phone"))
+
+    assert %{"emailSent" => false, "smsSent" => false, "whatsappSent" => false} =
+             json_response(conn, 200)
+
+    assert Application.get_env(:mithril, :test_sms_messages) == []
+  end
+
   test "POST /functions/v1/send-notification sends the booking reminder SMS" do
     conn =
       build_conn()
