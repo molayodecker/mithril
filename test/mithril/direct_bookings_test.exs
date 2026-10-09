@@ -1529,7 +1529,12 @@ defmodule Mithril.DirectBookingsTest do
     Repo.query!("""
     CREATE TABLE public.turnover_opportunities (
       id uuid PRIMARY KEY,
-      property_id uuid NOT NULL REFERENCES public.properties(id)
+      property_id uuid NOT NULL REFERENCES public.properties(id),
+      checkout_at timestamptz,
+      next_checkin_at timestamptz,
+      booking_id uuid,
+      status text NOT NULL DEFAULT 'ready_to_book',
+      updated_at timestamptz DEFAULT now()
     )
     """)
 
