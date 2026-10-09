@@ -31,6 +31,8 @@ defmodule Mithril.DirectAdminPromotions do
                WHEN NOT p.active OR NOT pc.active THEN 'inactive'
                WHEN p.valid_from IS NOT NULL AND p.valid_from > timezone('utc', now()) THEN 'scheduled'
                WHEN p.valid_to IS NOT NULL AND p.valid_to < timezone('utc', now()) THEN 'expired'
+               WHEN p.max_redemptions IS NOT NULL AND stats.redemption_count >= p.max_redemptions THEN 'exhausted'
+               WHEN pc.max_redemptions IS NOT NULL AND code_stats.redemption_count >= pc.max_redemptions THEN 'exhausted'
                ELSE 'active'
              END
            )
@@ -42,6 +44,12 @@ defmodule Mithril.DirectAdminPromotions do
              WHERE r.promotion_id = p.id
                AND r.status IN ('reserved', 'redeemed')
            ) stats ON true
+           LEFT JOIN LATERAL (
+             SELECT count(*)::integer AS redemption_count
+             FROM public.promotion_redemptions r
+             WHERE r.promotion_code_id = pc.id
+               AND r.status IN ('reserved', 'redeemed')
+           ) code_stats ON true
            ORDER BY pc.created_at DESC
            LIMIT 200
            """) do
