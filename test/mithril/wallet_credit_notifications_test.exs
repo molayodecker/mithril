@@ -195,6 +195,27 @@ defmodule Mithril.WalletCreditNotificationsTest do
     end
 
     Repo.query!("""
+    CREATE TABLE IF NOT EXISTS public.wallet_credit_notification_settings (
+      id boolean PRIMARY KEY,
+      activated_at timestamptz NOT NULL
+    )
+    """)
+
+    Repo.query!("""
+    INSERT INTO public.wallet_credit_notification_settings (id, activated_at)
+    VALUES (true, '2000-01-01'::timestamptz)
+    ON CONFLICT (id) DO UPDATE SET activated_at = EXCLUDED.activated_at
+    """)
+
+    Repo.query!("""
+    CREATE TABLE IF NOT EXISTS public.wallet_credit_whatsapp_delivery (
+      transaction_id uuid PRIMARY KEY,
+      sent_at timestamptz,
+      next_attempt_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    Repo.query!("""
     CREATE TABLE IF NOT EXISTS public.users (
       id uuid PRIMARY KEY,
       phone text
