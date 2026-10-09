@@ -286,6 +286,13 @@ defmodule Mithril.DirectPayments do
           Logger.warning("Direct Paystack initialize failed: #{inspect(reason)}")
           {:error, :payment_failed}
       end
+    else
+      {:error, reason} ->
+        if fail_attempt(attempt.attempt_id, "Checkout metadata unavailable before provider call") do
+          {:error, reason}
+        else
+          {:error, :database_unavailable}
+        end
     end
   end
 
