@@ -409,6 +409,30 @@ defmodule Mithril.DirectDispatchTest do
                "occurrenceCount" => "2"
              })
 
+    assert {:ok, ["2026-10-01", "2026-10-02", "2026-10-03"]} =
+             DirectDispatch.expand_booking_dates(%{
+               "scheduleKind" => "recurring",
+               "scheduledDate" => "2026-10-01",
+               "recurrenceInterval" => "daily",
+               "occurrenceCount" => 3
+             })
+
+    assert {:ok, ["2026-01-31", "2026-04-30", "2026-07-31"]} =
+             DirectDispatch.expand_booking_dates(%{
+               "scheduleKind" => "recurring",
+               "scheduledDate" => "2026-01-31",
+               "recurrenceInterval" => "quarterly",
+               "occurrenceCount" => 3
+             })
+
+    assert {:ok, ["2024-02-29", "2025-02-28"]} =
+             DirectDispatch.expand_booking_dates(%{
+               "scheduleKind" => "recurring",
+               "scheduledDate" => "2024-02-29",
+               "recurrenceInterval" => "annually",
+               "occurrenceCount" => 2
+             })
+
     assert {:ok, ["2026-10-02", "2026-10-09"]} =
              DirectDispatch.expand_booking_dates(%{
                "scheduleKind" => "custom_days",

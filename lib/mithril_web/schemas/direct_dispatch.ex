@@ -192,7 +192,7 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
         },
         recurrenceInterval: %Schema{
           type: :string,
-          enum: ~w(weekly bi_weekly monthly),
+          enum: ~w(daily weekly bi_weekly monthly quarterly annually),
           nullable: true
         },
         occurrenceCount: %Schema{type: :integer, minimum: 2, maximum: 12, nullable: true},
