@@ -73,13 +73,13 @@ defmodule Mithril.Notifications.Outbound do
       present(body["whatsappContentSid"]) ||
         if(template == "booking_reminder", do: env(:twilio_template_booking_reminder), else: nil)
 
-    from = env(:twilio_whatsapp_from)
+    from = whatsapp_address(env(:twilio_whatsapp_from))
 
     if sid == nil or token == nil or content_sid == nil or from == nil do
       false
     else
       url = "https://api.twilio.com/2010-04-01/Accounts/#{sid}/Messages.json"
-      to = if String.starts_with?(phone, "whatsapp:"), do: phone, else: "whatsapp:#{phone}"
+      to = whatsapp_address(phone)
 
       fields = [
         To: to,
@@ -92,6 +92,19 @@ defmodule Mithril.Notifications.Outbound do
         {:ok, %{status: status}} when status in 200..299 -> true
         _ -> false
       end
+    end
+  end
+
+  @doc false
+  def whatsapp_address(nil), do: nil
+
+  def whatsapp_address(value) do
+    value = String.trim(value)
+
+    cond do
+      value == "" -> nil
+      String.starts_with?(String.downcase(value), "whatsapp:") -> value
+      true -> "whatsapp:#{value}"
     end
   end
 
