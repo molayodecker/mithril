@@ -153,6 +153,30 @@ defmodule Mithril.Notifications.Outbound do
     "Instaclean: New booking for #{customer} · #{date}#{tail}"
   end
 
+  defp message_body("cleaner_en_route", variables) do
+    cleaner = present(variables["cleanerName"]) || "Your Instaclean professional"
+    booking = present(variables["bookingId"])
+    reference = if booking, do: " (booking #{booking})", else: ""
+    "#{cleaner} is on the way#{reference}. Track your booking in the Instaclean app."
+  end
+
+  defp message_body("cleaner_arrived", variables) do
+    cleaner = present(variables["cleanerName"]) || "Your Instaclean professional"
+    address = present(variables["address"])
+    destination = if address, do: " at #{address}", else: ""
+    "#{cleaner} has arrived#{destination}. Check your Instaclean booking."
+  end
+
+  defp message_body("cleaner_milestone_support", variables) do
+    cleaner = present(variables["cleanerName"]) || "A cleaner"
+    customer = present(variables["customerName"]) || "a customer"
+    label = present(variables["milestoneLabel"]) || present(variables["milestone"]) || "updated status"
+    booking = present(variables["bookingId"]) || "unknown"
+    email = present(variables["customerEmail"]) || "unavailable"
+    phone = present(variables["customerPhone"]) || "unavailable"
+    "#{cleaner} marked #{label} for booking #{booking} (customer: #{customer}; email: #{email}; phone: #{phone})."
+  end
+
   defp message_body("review_request", variables) do
     cleaner = present(variables["cleanerName"]) || "your cleaner"
     review_url = present(variables["reviewUrl"])
@@ -168,6 +192,9 @@ defmodule Mithril.Notifications.Outbound do
   defp subject("payment_received"), do: "Instaclean payment receipt"
   defp subject("cleaner_assigned"), do: "Your Instaclean professional is assigned"
   defp subject("new_booking"), do: "New Instaclean booking"
+  defp subject("cleaner_en_route"), do: "Your Instaclean professional is on the way"
+  defp subject("cleaner_arrived"), do: "Your Instaclean professional has arrived"
+  defp subject("cleaner_milestone_support"), do: "Instaclean booking status update"
   defp subject("review_request"), do: "How was your clean?"
   defp subject(_), do: "Instaclean"
 
