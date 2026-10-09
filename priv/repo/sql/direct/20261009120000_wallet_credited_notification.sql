@@ -50,3 +50,19 @@ $$;
 
 COMMENT ON FUNCTION public.inbox_notification_android_channel(text, integer) IS
   'Expo Android channel for inbox-triggered pushes; wallet_credited and review_request use booking_updates. Job alerts use _v3 only when device reported channel version >= 3; otherwise _v2.';
+
+-- Initialize the cutoff when the migration is applied, so historical wallet
+-- credits cannot trigger newly-enabled customer-facing notifications.
+CREATE TABLE IF NOT EXISTS public.wallet_credit_notification_settings (
+  id boolean PRIMARY KEY DEFAULT true CHECK (id),
+  activated_at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO public.wallet_credit_notification_settings (id)
+VALUES (true)
+ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS public.wallet_credit_whatsapp_delivery (
+  transaction_id uuid PRIMARY KEY,
+  sent_at timestamptz,
+  next_attempt_at timestamptz NOT NULL DEFAULT now()
+);
