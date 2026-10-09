@@ -44,7 +44,15 @@ defmodule Mithril.DirectAdminReports do
                    CASE
                      WHEN lower(COALESCE(b.payment_status::text, '')) = ANY($3::text[])
                        AND lower(b.status::text) <> ALL($2::text[])
-                     THEN ROUND(COALESCE(b.final_amount_minor::numeric, b.total_price::numeric, 0))
+                     THEN GREATEST(
+                       ROUND(COALESCE(b.final_amount_minor::numeric, b.total_price::numeric, 0)) -
+                       COALESCE((
+                         SELECT SUM(br.refund_amount_minor)::numeric
+                         FROM public.booking_refunds br
+                         WHERE br.booking_id = b.id AND br.status = 'processed'
+                       ), 0),
+                       0
+                     )
                      ELSE 0
                    END
                  ), 0)::bigint AS revenue_minor,
@@ -59,7 +67,15 @@ defmodule Mithril.DirectAdminReports do
                  CASE
                    WHEN lower(COALESCE(b.payment_status::text, '')) = ANY($3::text[])
                      AND lower(b.status::text) <> ALL($2::text[])
-                   THEN ROUND(COALESCE(b.final_amount_minor::numeric, b.total_price::numeric, 0))
+                   THEN GREATEST(
+                       ROUND(COALESCE(b.final_amount_minor::numeric, b.total_price::numeric, 0)) -
+                       COALESCE((
+                         SELECT SUM(br.refund_amount_minor)::numeric
+                         FROM public.booking_refunds br
+                         WHERE br.booking_id = b.id AND br.status = 'processed'
+                       ), 0),
+                       0
+                     )
                    ELSE 0
                  END
                ), 0)::bigint AS revenue_minor
@@ -72,7 +88,15 @@ defmodule Mithril.DirectAdminReports do
                    CASE
                      WHEN lower(COALESCE(b.payment_status::text, '')) = ANY($3::text[])
                        AND lower(b.status::text) <> ALL($2::text[])
-                     THEN ROUND(COALESCE(b.final_amount_minor::numeric, b.total_price::numeric, 0))
+                     THEN GREATEST(
+                       ROUND(COALESCE(b.final_amount_minor::numeric, b.total_price::numeric, 0)) -
+                       COALESCE((
+                         SELECT SUM(br.refund_amount_minor)::numeric
+                         FROM public.booking_refunds br
+                         WHERE br.booking_id = b.id AND br.status = 'processed'
+                       ), 0),
+                       0
+                     )
                      ELSE 0
                    END
                  ), 0)::bigint AS revenue_minor
@@ -87,7 +111,15 @@ defmodule Mithril.DirectAdminReports do
                    CASE
                      WHEN lower(COALESCE(b.payment_status::text, '')) = ANY($3::text[])
                        AND lower(b.status::text) <> ALL($2::text[])
-                     THEN ROUND(COALESCE(b.final_amount_minor::numeric, b.total_price::numeric, 0))
+                     THEN GREATEST(
+                       ROUND(COALESCE(b.final_amount_minor::numeric, b.total_price::numeric, 0)) -
+                       COALESCE((
+                         SELECT SUM(br.refund_amount_minor)::numeric
+                         FROM public.booking_refunds br
+                         WHERE br.booking_id = b.id AND br.status = 'processed'
+                       ), 0),
+                       0
+                     )
                      ELSE 0
                    END
                  ), 0)::bigint AS revenue_minor
