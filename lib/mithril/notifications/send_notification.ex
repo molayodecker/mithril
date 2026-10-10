@@ -143,7 +143,7 @@ defmodule Mithril.Notifications.SendNotification do
           })
 
         whatsapp =
-          if phone do
+          if phone and not Keyword.get(opts, :sms_fallback_to_whatsapp, false) do
             post(%{
               "template" => template,
               "channel" => "whatsapp",
