@@ -165,6 +165,40 @@ defmodule Mithril.WalletCreditNotificationsTest do
            ).rows == [[1]]
   end
 
+  test "a crashing WhatsApp sender does not block other wallet inbox credits" do
+    first_user = Ecto.UUID.generate()
+    second_user = Ecto.UUID.generate()
+    first_transaction = insert_credit!(first_user, 1_000, nil, nil)
+    second_transaction = insert_credit!(second_user, 2_000, nil, nil)
+    parent = self()
+
+    assert :ok =
+             WalletCreditNotifications.run(
+               whatsapp_sender: fn credit ->
+                 if credit.transaction_id == first_transaction do
+                   raise "provider unavailable"
+                 else
+                   send(parent, {:sent, credit.transaction_id})
+                   :sent
+                 end
+               end
+             )
+
+    assert_receive {:sent, ^second_transaction}
+
+    for user_id <- [first_user, second_user] do
+      assert Repo.query!(
+               "SELECT count(*) FROM public.notifications WHERE user_id = $1::uuid",
+               [dump!(user_id)]
+             ).rows == [[1]]
+    end
+
+    assert Repo.query!(
+             "SELECT sent_at IS NULL FROM public.wallet_credit_whatsapp_delivery WHERE transaction_id = $1::uuid",
+             [dump!(first_transaction)]
+           ).rows == [[true]]
+  end
+
   test "uses the completed-job copy when the credit belongs to a booking" do
     parent = self()
     user_id = Ecto.UUID.generate()
