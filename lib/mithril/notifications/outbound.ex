@@ -87,7 +87,7 @@ defmodule Mithril.Notifications.Outbound do
         To: to,
         From: from,
         ContentSid: content_sid,
-        ContentVariables: Jason.encode!(content_variables(variables))
+        ContentVariables: Jason.encode!(content_variables(template, variables))
       ]
 
       case Req.post(url, form: fields, auth: {:basic, "#{sid}:#{token}"}) do
@@ -113,9 +113,27 @@ defmodule Mithril.Notifications.Outbound do
   defp template_content_sid("review_request"), do: env(:twilio_template_review_request)
   defp template_content_sid("cleaner_en_route"), do: env(:twilio_template_cleaner_en_route)
   defp template_content_sid("cleaner_arrived"), do: env(:twilio_template_cleaner_arrived)
+  defp template_content_sid("cleaner_assigned"), do: env(:twilio_template_cleaner_assigned)
+  defp template_content_sid("new_booking"), do: env(:twilio_template_new_booking)
+  defp template_content_sid("payment_received"), do: env(:twilio_template_payment_received)
   defp template_content_sid(_), do: nil
 
-  defp content_variables(variables) do
+  defp content_variables("review_request", variables) do
+    %{
+      "1" => present(variables["cleanerName"]) || "your cleaner",
+      "2" => present(variables["reviewUrl"]) || ""
+    }
+  end
+
+  defp content_variables(template, variables) when template in ["cleaner_en_route", "cleaner_arrived"] do
+    %{
+      "1" => present(variables["cleanerName"]) || "Your cleaner",
+      "2" => present(variables["bookingId"]) || "",
+      "3" => present(variables["address"]) || ""
+    }
+  end
+
+  defp content_variables(_template, variables) do
     %{
       "1" => present(variables["address"]) || "—",
       "2" => present(variables["service"]) || "Instaclean booking",
