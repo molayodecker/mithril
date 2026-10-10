@@ -426,8 +426,11 @@ defmodule Mithril.DirectBookings do
       {:ok, %{rows: [[_id]]}} ->
         release_turnover_claim(booking_id)
 
-      {:ok, %{rows: []}} -> {:error, :cancel_conflict}
-      {:error, error} -> database_error(error)
+      {:ok, %{rows: []}} ->
+        {:error, :cancel_conflict}
+
+      {:error, error} ->
+        database_error(error)
     end
   end
 
