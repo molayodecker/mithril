@@ -19,9 +19,9 @@ on:
         required: false
         type: string
 
-# Shared deployments use read-only repository content; only staging finalization writes tags.
+# Staging finalization may write tags, but every deploy caller explicitly uses read-only contents.
 permissions:
-  contents: read
+  contents: write
   actions: read
   statuses: write
 
