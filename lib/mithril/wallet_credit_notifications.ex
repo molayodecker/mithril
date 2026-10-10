@@ -193,7 +193,24 @@ defmodule Mithril.WalletCreditNotifications do
              """,
              [transaction_id]
            ) do
-      result = sender.(Map.put(credit, :message, body))
+      result =
+        try do
+          sender.(Map.put(credit, :message, body))
+        rescue
+          error ->
+            Logger.warning(
+              "wallet credit WhatsApp sender crashed transaction=#{credit.transaction_id}: #{inspect(error)}"
+            )
+
+            :failed
+        catch
+          kind, reason ->
+            Logger.warning(
+              "wallet credit WhatsApp sender failed transaction=#{credit.transaction_id}: #{inspect({kind, reason})}"
+            )
+
+            :failed
+        end
 
       if result in [:sent, :ok, :no_phone] or
            match?({:ok, %{"whatsappSent" => true}}, result) or
