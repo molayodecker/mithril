@@ -168,7 +168,8 @@ defmodule Mithril.Notifications.SendNotification do
     end
   end
 
-  defp deliver_raw(body) when is_map(body) do
+  @doc false
+  def deliver_raw(body) when is_map(body) do
     payload =
       body
       |> Enum.reject(fn {_key, value} -> is_nil(value) or value == "" end)
