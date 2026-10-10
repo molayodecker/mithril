@@ -344,7 +344,10 @@ end
 for {env_key, config_key} <- [
       {"TWILIO_TEMPLATE_REVIEW_REQUEST", :twilio_template_review_request},
       {"TWILIO_TEMPLATE_CLEANER_EN_ROUTE", :twilio_template_cleaner_en_route},
-      {"TWILIO_TEMPLATE_CLEANER_ARRIVED", :twilio_template_cleaner_arrived}
+      {"TWILIO_TEMPLATE_CLEANER_ARRIVED", :twilio_template_cleaner_arrived},
+      {"TWILIO_TEMPLATE_CLEANER_ASSIGNED", :twilio_template_cleaner_assigned},
+      {"TWILIO_TEMPLATE_NEW_BOOKING", :twilio_template_new_booking},
+      {"TWILIO_TEMPLATE_PAYMENT_RECEIVED", :twilio_template_payment_received}
     ] do
   if content_sid = System.get_env(env_key) do
     config :mithril, config_key, content_sid
