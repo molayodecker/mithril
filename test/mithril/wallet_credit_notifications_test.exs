@@ -117,6 +117,7 @@ defmodule Mithril.WalletCreditNotificationsTest do
              )
 
     assert_receive {:recovered, ^transaction_id}
+
     assert Repo.query!(
              "SELECT count(*) FROM public.notifications WHERE user_id = $1::uuid",
              [dump!(user_id)]
@@ -159,6 +160,7 @@ defmodule Mithril.WalletCreditNotificationsTest do
              )
 
     assert_received {:delivered, ^new_transaction}
+
     assert Repo.query!(
              "SELECT count(*) FROM public.notifications WHERE user_id = $1::uuid",
              [dump!(new_user)]
