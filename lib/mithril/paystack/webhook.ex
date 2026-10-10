@@ -268,8 +268,10 @@ defmodule Mithril.Paystack.Webhook do
            WHERE s.id = $1::uuid
              AND b.id = $2::uuid
              AND b.customer_id = s.customer_id
-             AND s.status = 'active'
-             AND s.paystack_authorization_code = $3
+             AND (
+               (s.status = 'active' AND s.paystack_authorization_code = $3)
+               OR s.status IN ('cancelled', 'canceled', 'expired', 'inactive')
+             )
            """,
            [subscription_id, booking_uuid, code]
          ) do
