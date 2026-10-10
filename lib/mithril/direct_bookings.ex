@@ -837,6 +837,16 @@ defmodule Mithril.DirectBookings do
 
   defp maybe_insert_subscription(customer_id, %{recurrence_interval: interval} = input, pricing)
        when interval in @bookable_recurrence_intervals do
+    if Map.get(input, :property_type) == "airbnb_turnover" or
+         not is_nil(Map.get(input, :turnover_opportunity_id)) or
+         not is_nil(Map.get(input, :property_id)) do
+      {:error, :invalid_request}
+    else
+      maybe_insert_standard_subscription(customer_id, input, pricing)
+    end
+  end
+
+  defp maybe_insert_standard_subscription(customer_id, input, pricing) do
     recurring_minor = positive_minor(pricing["recurringAmountMinor"])
     first_minor = positive_minor(pricing["firstChargeAmountMinor"] || pricing["finalAmountMinor"])
 
