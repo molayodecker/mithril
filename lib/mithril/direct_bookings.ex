@@ -1626,10 +1626,10 @@ defmodule Mithril.DirectBookings do
 
   defp validate_window_bounds(input, pricing, checkout, checkin) do
     cond do
-      is_nil(checkout) or is_nil(checkin) ->
+      is_nil(checkout) ->
         {:error, :invalid_request}
 
-      DateTime.compare(checkout, checkin) != :lt ->
+      not is_nil(checkin) and DateTime.compare(checkout, checkin) != :lt ->
         {:error, :invalid_request}
 
       true ->
@@ -1641,7 +1641,7 @@ defmodule Mithril.DirectBookings do
              true <- hours > 0,
              finish_at <- DateTime.add(start_at, round(hours * 3600), :second),
              true <- DateTime.compare(start_at, checkout) != :lt,
-             true <- DateTime.compare(finish_at, checkin) != :gt do
+             true <- is_nil(checkin) or DateTime.compare(finish_at, checkin) != :gt do
           :ok
         else
           _ -> {:error, :invalid_request}
