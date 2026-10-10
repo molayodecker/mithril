@@ -210,6 +210,16 @@ defmodule Mithril.DirectBookingsTest do
       [Ecto.UUID.dump!(cleaner_id)]
     )
 
+    property_id = Ecto.UUID.generate()
+    visit_date = Date.add(Date.utc_today(), 5)
+    checkout_at = "#{Date.to_iso8601(visit_date)}T08:00:00Z"
+    checkin_at = "#{Date.to_iso8601(visit_date)}T15:00:00Z"
+
+    Repo.query!(
+      "INSERT INTO public.properties (id, owner_id) VALUES ($1, $2)",
+      [Ecto.UUID.dump!(property_id), Ecto.UUID.dump!(customer_id)]
+    )
+
     assert {:ok, with_access} =
              DirectBookings.create_customer_booking(customer_id, %{
                "serviceId" => 1,
@@ -228,7 +238,13 @@ defmodule Mithril.DirectBookingsTest do
                "occupantPresent" => true,
                "requiresKeyOrAccessCode" => true,
                "accessInstructions" => "Lockbox by the gate",
-               "customerContactPhone" => "+233200000002"
+               "customerContactPhone" => "+233200000002",
+               "turnoverGuestCheckoutAt" => checkout_at,
+               "turnoverNextCheckInAt" => checkin_at,
+               "turnoverLinenHandling" => "replace_no_wash",
+               "turnoverRestockingNotes" => "Coffee and towels",
+               "turnoverSource" => "airbnb_ical",
+               "propertyId" => property_id
              })
 
     refute Map.has_key?(with_access, :subscriptionId)
@@ -243,14 +259,24 @@ defmodule Mithril.DirectBookingsTest do
                true,
                true,
                "Lockbox by the gate",
-               "+233200000002"
+               "+233200000002",
+               ^checkout_at,
+               ^checkin_at,
+               "replace_no_wash",
+               "Coffee and towels",
+               "airbnb_ical",
+               ^property_id
              ]
            ] =
              Repo.query!(
                """
                SELECT booking_for_self, site_contact_name, site_contact_phone,
                       site_contact_relationship, property_type, occupant_present,
-                      requires_key_or_access_code, access_instructions, customer_contact_phone
+                      requires_key_or_access_code, access_instructions, customer_contact_phone,
+                      to_char(turnover_guest_checkout_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                      to_char(turnover_next_checkin_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                      turnover_linen_handling, turnover_restocking_notes, turnover_source,
+                      property_id::text
                FROM public.bookings
                WHERE id = $1::uuid
                """,
@@ -1465,6 +1491,8 @@ defmodule Mithril.DirectBookingsTest do
     Repo.query!("DROP TABLE IF EXISTS public.booking_refunds CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.payment_attempts CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.bookings CASCADE")
+    Repo.query!("DROP TABLE IF EXISTS public.turnover_opportunities CASCADE")
+    Repo.query!("DROP TABLE IF EXISTS public.properties CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.subscriptions CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.cleaner_availability_exceptions CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.cleaner_data CASCADE")
@@ -1488,6 +1516,25 @@ defmodule Mithril.DirectBookingsTest do
       email text,
       phone text,
       status text NOT NULL DEFAULT 'active'
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.properties (
+      id uuid PRIMARY KEY,
+      owner_id uuid NOT NULL
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.turnover_opportunities (
+      id uuid PRIMARY KEY,
+      property_id uuid NOT NULL REFERENCES public.properties(id),
+      checkout_at timestamptz,
+      next_checkin_at timestamptz,
+      booking_id uuid,
+      status text NOT NULL DEFAULT 'ready_to_book',
+      updated_at timestamptz DEFAULT now()
     )
     """)
 
@@ -1588,6 +1635,13 @@ defmodule Mithril.DirectBookingsTest do
       occupant_present boolean,
       access_instructions text,
       customer_contact_phone text,
+      turnover_guest_checkout_at timestamptz,
+      turnover_next_checkin_at timestamptz,
+      turnover_linen_handling text,
+      turnover_restocking_notes text,
+      turnover_source text,
+      turnover_opportunity_id uuid,
+      property_id uuid,
       created_at timestamptz NOT NULL DEFAULT now(),
       cancelled_at timestamptz,
       cancelled_by uuid,

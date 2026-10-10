@@ -177,21 +177,55 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
 
   defp maybe_send_external(user_id, booking_id, message, new_label, old_label) do
     if SendNotification.configured?() do
-      SendNotification.invoke_mobile(%{
-        "template" => "booking_rescheduled",
-        "userId" => user_id,
-        "bookingId" => booking_id,
-        "variables" => %{
-          "message" => message,
-          "newDate" => new_label,
-          "oldDate" => old_label,
-          "bookingId" => booking_id
-        }
-      })
+      {email, phone} = recipient_contact(user_id)
+
+      channel =
+        cond do
+          email && phone -> "both"
+          email -> "email"
+          phone -> "sms"
+          true -> nil
+        end
+
+      if channel do
+        SendNotification.invoke_mobile(%{
+          "template" => "booking_rescheduled",
+          "channel" => channel,
+          "email" => email,
+          "phone" => phone,
+          "userId" => user_id,
+          "bookingId" => booking_id,
+          "variables" => %{
+            "message" => message,
+            "newDate" => new_label,
+            "oldDate" => old_label,
+            "bookingId" => booking_id
+          }
+        })
+      end
     end
 
     :ok
   end
+
+  defp recipient_contact(user_id) do
+    case Repo.query(
+           "SELECT email, phone FROM public.users WHERE id = $1::uuid LIMIT 1",
+           [DbUuid.dump!(user_id)]
+         ) do
+      {:ok, %{rows: [[email, phone]]}} -> {nonempty(email), nonempty(phone)}
+      _ -> {nil, nil}
+    end
+  end
+
+  defp nonempty(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp nonempty(_), do: nil
 
   defp normalize_time(raw) do
     value = raw |> to_string() |> String.trim()
