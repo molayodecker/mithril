@@ -149,7 +149,9 @@ defmodule Mithril.Paystack.HTTP do
              status: data["status"],
              amount: data["amount"],
              currency: data["currency"],
-             reference: data["reference"]
+             reference: data["reference"],
+             metadata: data["metadata"],
+             authorization: data["authorization"]
            }}
 
         {:ok, %{status: 404}} ->

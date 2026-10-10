@@ -211,7 +211,7 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewals do
              reference, platform_fee, booking_cover, booking_cover_amount, pricing_version,
              timezone_name, supplies_option, supplies_allowance_minor, recurrence_interval, idempotency_key
            ) VALUES (
-             $1::uuid, $2::uuid, $2::uuid, $3::uuid, 'Regular Cleaning Service',
+             $1::uuid, $2::uuid, $2::uuid, $3::integer, 'Regular Cleaning Service',
              $4::date, $5::time, COALESCE($6::numeric, 2), $7, $8::geometry,
              $9, $10, COALESCE($11::uuid[], '{}'), $12, $12, $12, $13, $14::uuid,
              CASE WHEN $2::uuid IS NULL THEN 'pending' ELSE 'confirmed' END,

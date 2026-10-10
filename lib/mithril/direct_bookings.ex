@@ -423,8 +423,27 @@ defmodule Mithril.DirectBookings do
            """,
            [booking_id, customer_id, ["pending", "confirmed"], ["pending", "failed"]]
          ) do
-      {:ok, %{rows: [[_id]]}} -> :ok
-      {:ok, %{rows: []}} -> {:error, :cancel_conflict}
+      {:ok, %{rows: [[_id]]}} ->
+        release_turnover_claim(booking_id)
+
+      {:ok, %{rows: []}} ->
+        {:error, :cancel_conflict}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp release_turnover_claim(booking_id) do
+    case Repo.query(
+           """
+           UPDATE public.turnover_opportunities
+           SET booking_id = NULL, status = 'ready_to_book', updated_at = now()
+           WHERE booking_id = $1::uuid
+           """,
+           [booking_id]
+         ) do
+      {:ok, _} -> :ok
       {:error, error} -> database_error(error)
     end
   end
@@ -837,6 +856,16 @@ defmodule Mithril.DirectBookings do
 
   defp maybe_insert_subscription(customer_id, %{recurrence_interval: interval} = input, pricing)
        when interval in @bookable_recurrence_intervals do
+    if Map.get(input, :property_type) == "airbnb_turnover" or
+         not is_nil(Map.get(input, :turnover_opportunity_id)) or
+         not is_nil(Map.get(input, :property_id)) do
+      {:error, :invalid_request}
+    else
+      maybe_insert_standard_subscription(customer_id, input, pricing)
+    end
+  end
+
+  defp maybe_insert_standard_subscription(customer_id, input, pricing) do
     recurring_minor = positive_minor(pricing["recurringAmountMinor"])
     first_minor = positive_minor(pricing["firstChargeAmountMinor"] || pricing["finalAmountMinor"])
 
@@ -1626,10 +1655,10 @@ defmodule Mithril.DirectBookings do
 
   defp validate_window_bounds(input, pricing, checkout, checkin) do
     cond do
-      is_nil(checkout) or is_nil(checkin) ->
+      is_nil(checkout) ->
         {:error, :invalid_request}
 
-      DateTime.compare(checkout, checkin) != :lt ->
+      not is_nil(checkin) and DateTime.compare(checkout, checkin) != :lt ->
         {:error, :invalid_request}
 
       true ->
@@ -1641,7 +1670,7 @@ defmodule Mithril.DirectBookings do
              true <- hours > 0,
              finish_at <- DateTime.add(start_at, round(hours * 3600), :second),
              true <- DateTime.compare(start_at, checkout) != :lt,
-             true <- DateTime.compare(finish_at, checkin) != :gt do
+             true <- is_nil(checkin) or DateTime.compare(finish_at, checkin) != :gt do
           :ok
         else
           _ -> {:error, :invalid_request}

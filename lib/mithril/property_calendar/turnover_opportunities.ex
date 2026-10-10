@@ -80,7 +80,7 @@ defmodule Mithril.PropertyCalendar.TurnoverOpportunities do
              next_checkin_at = EXCLUDED.next_checkin_at,
              suggested_start_at = EXCLUDED.suggested_start_at,
              suggested_duration_hours = EXCLUDED.suggested_duration_hours,
-             status = EXCLUDED.status,
+             status = CASE WHEN public.turnover_opportunities.booking_id IS NOT NULL THEN 'booked' ELSE EXCLUDED.status END,
              updated_at = EXCLUDED.updated_at
            """,
            [

@@ -300,6 +300,14 @@ defmodule Mithril.DirectOperations do
            ]
          ) do
       {:ok, %{rows: [[id]]}} ->
+        case Repo.query(
+               "UPDATE public.turnover_opportunities SET booking_id = NULL, status = 'ready_to_book', updated_at = now() WHERE booking_id = $1::uuid",
+               [booking.uuid]
+             ) do
+          {:ok, _} -> :ok
+          {:error, error} -> Repo.rollback({:database, error})
+        end
+
         refund_request =
           maybe_queue_cancellation_refund(booking, actor_uid, reason, policy)
 
