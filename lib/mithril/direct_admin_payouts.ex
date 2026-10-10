@@ -32,27 +32,32 @@ defmodule Mithril.DirectAdminPayouts do
                FROM public.wallets w
                JOIN public.cleaner_data cd ON cd.user_id = w.user_id
                WHERE COALESCE(w.balance_subunit, 0) > 0
+                 AND upper(COALESCE(w.currency, 'GHS')) = 'GHS'
              ), 0),
              'cleanersWithBalance', COALESCE((
                SELECT count(*)::integer
                FROM public.wallets w
                JOIN public.cleaner_data cd ON cd.user_id = w.user_id
                WHERE COALESCE(w.balance_subunit, 0) > 0
+                 AND upper(COALESCE(w.currency, 'GHS')) = 'GHS'
              ), 0),
              'pendingCount', COALESCE((
                SELECT count(*)::integer
                FROM public.cleaner_payouts cp
-               WHERE lower(cp.status::text) = ANY($1::text[])
+               WHERE upper(COALESCE(cp.currency, 'GHS')) = 'GHS'
+                 AND lower(cp.status::text) = ANY($1::text[])
              ), 0),
              'pendingMinor', COALESCE((
                SELECT sum(cp.amount)::bigint
                FROM public.cleaner_payouts cp
-               WHERE lower(cp.status::text) = ANY($1::text[])
+               WHERE upper(COALESCE(cp.currency, 'GHS')) = 'GHS'
+                 AND lower(cp.status::text) = ANY($1::text[])
              ), 0),
              'paidThisWeekMinor', COALESCE((
                SELECT sum(cp.amount)::bigint
                FROM public.cleaner_payouts cp
-               WHERE lower(cp.status::text) IN ('success', 'paid', 'completed')
+               WHERE upper(COALESCE(cp.currency, 'GHS')) = 'GHS'
+                 AND lower(cp.status::text) IN ('success', 'paid', 'completed')
                  AND cp.updated_at >= (date_trunc('week', timezone('Africa/Accra', now())) AT TIME ZONE 'Africa/Accra')
              ), 0)
            )

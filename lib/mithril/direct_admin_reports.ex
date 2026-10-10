@@ -43,7 +43,7 @@ defmodule Mithril.DirectAdminReports do
                  COALESCE(sum(
                    CASE
                      WHEN lower(COALESCE(b.payment_status::text, '')) = ANY($3::text[])
-                       AND lower(b.status::text) <> ALL($2::text[])
+
                      THEN GREATEST(
                        ROUND(COALESCE(b.final_amount_minor::numeric, b.total_price::numeric, 0)) -
                        COALESCE((
@@ -58,7 +58,7 @@ defmodule Mithril.DirectAdminReports do
                  ), 0)::bigint AS revenue_minor,
                  count(*) FILTER (
                    WHERE lower(COALESCE(b.payment_status::text, '')) = ANY($3::text[])
-                     AND lower(b.status::text) <> ALL($2::text[])
+
                  )::integer AS paid_count
                FROM current_period b
              ),
@@ -66,7 +66,7 @@ defmodule Mithril.DirectAdminReports do
                SELECT COALESCE(sum(
                  CASE
                    WHEN lower(COALESCE(b.payment_status::text, '')) = ANY($3::text[])
-                     AND lower(b.status::text) <> ALL($2::text[])
+
                    THEN GREATEST(
                        ROUND(COALESCE(b.final_amount_minor::numeric, b.total_price::numeric, 0)) -
                        COALESCE((
@@ -87,7 +87,7 @@ defmodule Mithril.DirectAdminReports do
                  COALESCE(sum(
                    CASE
                      WHEN lower(COALESCE(b.payment_status::text, '')) = ANY($3::text[])
-                       AND lower(b.status::text) <> ALL($2::text[])
+
                      THEN GREATEST(
                        ROUND(COALESCE(b.final_amount_minor::numeric, b.total_price::numeric, 0)) -
                        COALESCE((
@@ -110,7 +110,7 @@ defmodule Mithril.DirectAdminReports do
                  COALESCE(sum(
                    CASE
                      WHEN lower(COALESCE(b.payment_status::text, '')) = ANY($3::text[])
-                       AND lower(b.status::text) <> ALL($2::text[])
+
                      THEN GREATEST(
                        ROUND(COALESCE(b.final_amount_minor::numeric, b.total_price::numeric, 0)) -
                        COALESCE((
@@ -131,7 +131,7 @@ defmodule Mithril.DirectAdminReports do
              SELECT jsonb_build_object(
                'days', $1::integer,
                'currency', 'GHS',
-               'generatedAt', timezone('utc', now()),
+               'generatedAt', now(),
                'revenueMinor', cm.revenue_minor,
                'revenueGrowthPercent', CASE
                  WHEN pm.revenue_minor = 0 THEN NULL
