@@ -156,7 +156,6 @@ defmodule Mithril.DirectBookings do
             with {:ok, service} <- service_details(input.service_id),
                  :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
                  {:ok, pricing} <- compute_pricing(input),
-                 :ok <- validate_turnover_context(customer_id, input, pricing),
                  :ok <- validate_timeslot(input, pricing),
                  :ok <- validate_cleaner_availability(input, pricing, nil),
                  :ok <- ensure_customer_profile(customer_id),
@@ -433,7 +432,6 @@ defmodule Mithril.DirectBookings do
     with {:ok, service} <- service_details(input.service_id),
          :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
          {:ok, pricing} <- compute_pricing(input),
-         :ok <- validate_turnover_context(customer_id, input, pricing),
          :ok <- validate_timeslot(input, pricing),
          :ok <- validate_cleaner_availability(input, pricing, nil),
          :ok <- ensure_customer_profile(customer_id),
@@ -524,7 +522,6 @@ defmodule Mithril.DirectBookings do
              schedule <- merge_reschedule_schedule(path, booking, input),
              :ok <- ensure_future_schedule(schedule),
              {:ok, pricing} <- reschedule_pricing(path, booking, schedule),
-             :ok <- validate_reschedule_turnover(booking, schedule, pricing),
              :ok <- validate_timeslot(schedule, pricing),
              :ok <- validate_cleaner_availability(schedule, pricing, bid),
              :ok <- apply_reschedule(path, booking, schedule, pricing, customer_id) do
@@ -903,33 +900,8 @@ defmodule Mithril.DirectBookings do
   defp insert_booking(customer_id, input, pricing, service_name) do
     with {:ok, subscription_id} <- maybe_insert_subscription(customer_id, input, pricing),
          {:ok, booking_id} <-
-           insert_booking_row(customer_id, input, pricing, service_name, subscription_id),
-         :ok <- claim_turnover_opportunity(customer_id, input, booking_id) do
+           insert_booking_row(customer_id, input, pricing, service_name, subscription_id) do
       {:ok, booking_id, subscription_id}
-    end
-  end
-
-  defp claim_turnover_opportunity(_customer_id, %{turnover_opportunity_id: nil}, _booking_id),
-    do: :ok
-
-  defp claim_turnover_opportunity(customer_id, input, booking_id) do
-    case Repo.query(
-           """
-           UPDATE public.turnover_opportunities o
-           SET booking_id = $2::uuid, status = 'booked', updated_at = now()
-           FROM public.properties p
-           WHERE o.id = $1::uuid
-             AND p.id = o.property_id
-             AND p.owner_id = $3::uuid
-             AND (o.booking_id IS NULL OR o.booking_id = $2::uuid)
-             AND o.status IN ('needs_review', 'ready_to_book', 'conflict', 'booked')
-           RETURNING o.id
-           """,
-           [input.turnover_opportunity_id, booking_id, customer_id]
-         ) do
-      {:ok, %{num_rows: 1}} -> :ok
-      {:ok, _} -> {:error, :invalid_request}
-      {:error, error} -> database_error(error)
     end
   end
 
@@ -1078,8 +1050,7 @@ defmodule Mithril.DirectBookings do
                NULLIF(btrim(to_jsonb(b)->>'timezone_name'), ''),
                NULLIF(btrim(to_jsonb(b)->>'timezone'), ''),
                'Africa/Accra'
-             ) AS timezone,
-             turnover_guest_checkout_at, turnover_next_checkin_at, turnover_opportunity_id, property_id
+             ) AS timezone
            FROM public.bookings b
            WHERE id = $1 AND customer_id = $2
            FOR UPDATE
@@ -1108,11 +1079,7 @@ defmodule Mithril.DirectBookings do
          scheduled_time,
          duration_hours,
          amount_minor,
-         timezone,
-         turnover_guest_checkout_at,
-         turnover_next_checkin_at,
-         turnover_opportunity_id,
-         property_id
+         timezone
        ]) do
     %{
       id: id,
@@ -1125,11 +1092,7 @@ defmodule Mithril.DirectBookings do
       scheduled_time: scheduled_time,
       duration_hours: duration_hours,
       amount_minor: amount_minor,
-      timezone: timezone || @default_timezone,
-      turnover_guest_checkout_at: turnover_guest_checkout_at,
-      turnover_next_checkin_at: turnover_next_checkin_at,
-      turnover_opportunity_id: turnover_opportunity_id,
-      property_id: property_id
+      timezone: timezone || @default_timezone
     }
   end
 
@@ -1491,161 +1454,6 @@ defmodule Mithril.DirectBookings do
        }}
     else
       _ -> {:error, :invalid_request}
-    end
-  end
-
-  defp validate_reschedule_turnover(booking, schedule, pricing) do
-    input =
-      Map.merge(schedule, %{
-        turnover_guest_checkout_at: booking.turnover_guest_checkout_at,
-        turnover_next_checkin_at: booking.turnover_next_checkin_at,
-        turnover_opportunity_id: booking.turnover_opportunity_id,
-        property_id: booking.property_id
-      })
-
-    with :ok <- validate_turnover_window(input, pricing) do
-      if is_nil(input.turnover_opportunity_id) do
-        :ok
-      else
-        case Repo.query(
-               """
-               SELECT checkout_at, next_checkin_at
-               FROM public.turnover_opportunities
-               WHERE id = $1::uuid
-                 AND ($2::uuid IS NULL OR property_id = $2::uuid)
-               """,
-               [input.turnover_opportunity_id, input.property_id]
-             ) do
-          {:ok, %{rows: [[checkout, checkin]]}} ->
-            validate_window_bounds(input, pricing, checkout, checkin)
-
-          {:ok, _} ->
-            {:error, :invalid_request}
-
-          {:error, error} ->
-            database_error(error)
-        end
-      end
-    end
-  end
-
-  defp validate_turnover_context(customer_id, input, pricing) do
-    with :ok <- validate_turnover_ownership(customer_id, input),
-         :ok <- validate_turnover_window(input, pricing),
-         :ok <- validate_opportunity_window(customer_id, input, pricing) do
-      :ok
-    end
-  end
-
-  defp validate_turnover_ownership(customer_id, input) do
-    property_id = Map.get(input, :property_id)
-    opportunity_id = Map.get(input, :turnover_opportunity_id)
-
-    cond do
-      is_nil(property_id) and is_nil(opportunity_id) ->
-        :ok
-
-      true ->
-        case Repo.query(
-               """
-               SELECT
-                 ($2::uuid IS NULL OR EXISTS (
-                   SELECT 1 FROM public.properties p
-                   WHERE p.id = $2::uuid AND p.owner_id = $1::uuid
-                 )),
-                 ($3::uuid IS NULL OR EXISTS (
-                   SELECT 1 FROM public.turnover_opportunities o
-                   JOIN public.properties p ON p.id = o.property_id
-                   WHERE o.id = $3::uuid
-                     AND p.owner_id = $1::uuid
-                     AND ($2::uuid IS NULL OR o.property_id = $2::uuid)
-                 ))
-               """,
-               [customer_id, property_id, opportunity_id]
-             ) do
-          {:ok, %{rows: [[true, true]]}} -> :ok
-          {:ok, %{rows: [[_, _]]}} -> {:error, :invalid_request}
-          {:error, error} -> database_error(error)
-        end
-    end
-  end
-
-  defp validate_turnover_window(input, pricing) do
-    checkout = Map.get(input, :turnover_guest_checkout_at)
-    checkin = Map.get(input, :turnover_next_checkin_at)
-
-    cond do
-      is_nil(checkout) and is_nil(checkin) ->
-        :ok
-
-      not is_nil(checkout) and not is_nil(checkin) and DateTime.compare(checkout, checkin) != :lt ->
-        {:error, :invalid_request}
-
-      true ->
-        start_at = scheduled_at(input.scheduled_date, input.scheduled_time, input.timezone)
-        duration = pricing["durationHours"] || input.duration_hours
-
-        with %DateTime{} = start_at <- start_at,
-             {hours, _} <- Float.parse(to_string(duration)),
-             true <- hours > 0,
-             finish_at <- DateTime.add(start_at, round(hours * 3600), :second),
-             true <- is_nil(checkout) or DateTime.compare(start_at, checkout) != :lt,
-             true <- is_nil(checkin) or DateTime.compare(finish_at, checkin) != :gt do
-          :ok
-        else
-          _ -> {:error, :invalid_request}
-        end
-    end
-  end
-
-  defp validate_opportunity_window(_customer_id, %{turnover_opportunity_id: nil}, _pricing),
-    do: :ok
-
-  defp validate_opportunity_window(customer_id, input, pricing) do
-    case Repo.query(
-           """
-           SELECT o.checkout_at, o.next_checkin_at
-           FROM public.turnover_opportunities o
-           JOIN public.properties p ON p.id = o.property_id
-           WHERE o.id = $1::uuid
-             AND p.owner_id = $2::uuid
-             AND ($3::uuid IS NULL OR o.property_id = $3::uuid)
-           """,
-           [input.turnover_opportunity_id, customer_id, input.property_id]
-         ) do
-      {:ok, %{rows: [[checkout, checkin]]}} ->
-        validate_window_bounds(input, pricing, checkout, checkin)
-
-      {:ok, _} ->
-        {:error, :invalid_request}
-
-      {:error, error} ->
-        database_error(error)
-    end
-  end
-
-  defp validate_window_bounds(input, pricing, checkout, checkin) do
-    cond do
-      is_nil(checkout) or is_nil(checkin) ->
-        {:error, :invalid_request}
-
-      DateTime.compare(checkout, checkin) != :lt ->
-        {:error, :invalid_request}
-
-      true ->
-        start_at = scheduled_at(input.scheduled_date, input.scheduled_time, input.timezone)
-        duration = pricing["durationHours"] || input.duration_hours
-
-        with %DateTime{} = start_at <- start_at,
-             {hours, _} <- Float.parse(to_string(duration)),
-             true <- hours > 0,
-             finish_at <- DateTime.add(start_at, round(hours * 3600), :second),
-             true <- DateTime.compare(start_at, checkout) != :lt,
-             true <- DateTime.compare(finish_at, checkin) != :gt do
-          :ok
-        else
-          _ -> {:error, :invalid_request}
-        end
     end
   end
 
