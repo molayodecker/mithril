@@ -423,8 +423,24 @@ defmodule Mithril.DirectBookings do
            """,
            [booking_id, customer_id, ["pending", "confirmed"], ["pending", "failed"]]
          ) do
-      {:ok, %{rows: [[_id]]}} -> :ok
+      {:ok, %{rows: [[_id]]}} ->
+        release_turnover_claim(booking_id)
+
       {:ok, %{rows: []}} -> {:error, :cancel_conflict}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp release_turnover_claim(booking_id) do
+    case Repo.query(
+           """
+           UPDATE public.turnover_opportunities
+           SET booking_id = NULL, status = 'ready_to_book', updated_at = now()
+           WHERE booking_id = $1::uuid
+           """,
+           [booking_id]
+         ) do
+      {:ok, _} -> :ok
       {:error, error} -> database_error(error)
     end
   end
