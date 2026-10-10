@@ -45,7 +45,7 @@ defmodule Mithril.Notifications.SendNotification do
       customer_variables(ctx),
       ctx[:booking_id] || ctx[:request_id],
       message_type,
-      sms_fallback_to_whatsapp: ctx[:kind] == :booking_reminder
+      sms_fallback_to_whatsapp: false
     )
   end
 
@@ -58,7 +58,7 @@ defmodule Mithril.Notifications.SendNotification do
       worker_variables(ctx),
       ctx[:booking_id] || ctx[:request_id],
       message_type,
-      sms_fallback_to_whatsapp: ctx[:kind] == :booking_reminder
+      sms_fallback_to_whatsapp: false
     )
   end
 
@@ -168,7 +168,8 @@ defmodule Mithril.Notifications.SendNotification do
     end
   end
 
-  defp deliver_raw(body) when is_map(body) do
+  @doc false
+  def deliver_raw(body) when is_map(body) do
     payload =
       body
       |> Enum.reject(fn {_key, value} -> is_nil(value) or value == "" end)

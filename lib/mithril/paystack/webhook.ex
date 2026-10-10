@@ -132,6 +132,11 @@ defmodule Mithril.Paystack.Webhook do
   defp apply_charge(attempt, event) do
     cond do
       paid?(attempt.payment_status) and attempt.booking_reference == attempt.reference ->
+        if event.status in [nil, "success"] and event.amount_minor == attempt.amount_minor and
+             event.currency == attempt.currency do
+          activate_first_charge!(attempt, event)
+        end
+
         %{already_paid: true, reference: attempt.reference, booking_id: attempt.booking_id}
 
       attempt.booking_status == "cancelled" and not paid?(attempt.payment_status) ->
@@ -151,6 +156,7 @@ defmodule Mithril.Paystack.Webhook do
 
       true ->
         mark_paid!(attempt)
+        activate_first_charge!(attempt, event)
         %{settled: true, reference: attempt.reference, booking_id: attempt.booking_id}
     end
   end
@@ -182,6 +188,93 @@ defmodule Mithril.Paystack.Webhook do
       :ok
     else
       {:ok, %{num_rows: 0}} -> Repo.rollback(:payment_reference_mismatch)
+      {:error, error} -> Repo.rollback(error)
+    end
+  end
+
+  # A first charge is not a renewal until its reusable authorization is stored.
+  # The booking association is checked in SQL; webhook metadata alone is never trusted.
+  @doc false
+  def reconcile_verified_first_charge!(booking_uuid, receipt) do
+    metadata = Map.get(receipt, :metadata) || %{}
+    authorization = Map.get(receipt, :authorization) || %{}
+
+    # The verified payment reference and amount are checked by the caller.
+    activate_first_charge!(%{booking_uuid: booking_uuid}, %{
+      metadata: stringify_keys(metadata),
+      authorization: stringify_keys(authorization)
+    })
+  end
+
+  defp stringify_keys(map) when is_map(map) do
+    Map.new(map, fn {key, value} -> {to_string(key), value} end)
+  end
+
+  defp stringify_keys(_), do: %{}
+
+  defp activate_first_charge!(attempt, event) do
+    metadata = event.metadata
+    authorization = event.authorization
+
+    if metadata["payment_intent"] == "recurring_first_charge" do
+      with subscription_id when is_binary(subscription_id) <- metadata["subscription_id"],
+           {:ok, id} <- Ecto.UUID.dump(subscription_id),
+           code when is_binary(code) and code != "" <- authorization["authorization_code"],
+           true <- authorization["reusable"] == true do
+        case Repo.query(
+               """
+               UPDATE public.subscriptions s
+               SET status = 'active',
+                   billing_mode = 'managed_authorization',
+                   paystack_authorization_code = $3,
+                   next_occurrence_date =
+                     CASE s.recurrence_interval
+                       WHEN 'daily' THEN (b.scheduled_date + INTERVAL '1 day')::date
+                       WHEN 'weekly' THEN (b.scheduled_date + INTERVAL '1 week')::date
+                       WHEN 'monthly' THEN (b.scheduled_date + INTERVAL '1 month')::date
+                       WHEN 'quarterly' THEN (b.scheduled_date + INTERVAL '3 months')::date
+                       WHEN 'annually' THEN (b.scheduled_date + INTERVAL '1 year')::date
+                     END
+               FROM public.bookings b
+               WHERE s.id = $1::uuid
+                 AND b.id = $2::uuid
+                 AND b.subscription_id = s.id
+                 AND b.customer_id = s.customer_id
+                 AND s.status = 'pending'
+                 AND s.recurrence_interval IN ('daily', 'weekly', 'monthly', 'quarterly', 'annually')
+               """,
+               [id, attempt.booking_uuid, code]
+             ) do
+          {:ok, %{num_rows: 1}} -> :ok
+          {:ok, _} -> confirm_active_subscription!(id, attempt.booking_uuid, code)
+          {:error, error} -> Repo.rollback(error)
+        end
+      else
+        # Successful payment must remain settled even when Paystack did not grant
+        # a reusable authorization. The subscription remains pending.
+        _ -> :ok
+      end
+    end
+
+    :ok
+  end
+
+  defp confirm_active_subscription!(subscription_id, booking_uuid, code) do
+    case Repo.query(
+           """
+           SELECT 1
+           FROM public.subscriptions s
+           JOIN public.bookings b ON b.subscription_id = s.id
+           WHERE s.id = $1::uuid
+             AND b.id = $2::uuid
+             AND b.customer_id = s.customer_id
+             AND s.status = 'active'
+             AND s.paystack_authorization_code = $3
+           """,
+           [subscription_id, booking_uuid, code]
+         ) do
+      {:ok, %{rows: [[1]]}} -> :ok
+      {:ok, _} -> Repo.rollback(:payment_reference_mismatch)
       {:error, error} -> Repo.rollback(error)
     end
   end
@@ -605,7 +698,9 @@ defmodule Mithril.Paystack.Webhook do
          status: status_field(data),
          gateway_response: nullable_string(data, "gateway_response"),
          failure_reason: nullable_string(data, "message") || nullable_string(data, "reason"),
-         transfer_code: nullable_string(data, "transfer_code")
+         transfer_code: nullable_string(data, "transfer_code"),
+         metadata: map_field(data, "metadata"),
+         authorization: map_field(data, "authorization")
        }}
     end
   end

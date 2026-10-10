@@ -32,6 +32,7 @@ defmodule Mithril.Cron.Jobs do
     {"*/15 * * * *", "booking-ops-reminders"},
     {"15 * * * *", "booking-review-requests"},
     {"15 * * * *", "charge-managed-subscription-renewals"},
+    {"* * * * *", "cleaner-wallet-credit-notifications"},
     {"0 0 * * *", "cleaner-application-ops-reminders"},
     {"20 * * * *", "cleanup-expired-cleaning-scan-media"},
     {"20 3 * * *", "cleanup-orphaned-quick-task-uploads"},

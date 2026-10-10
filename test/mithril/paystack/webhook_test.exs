@@ -72,6 +72,61 @@ defmodule Mithril.Paystack.WebhookTest do
     assert replay.already_paid
   end
 
+  test "activates an authorized first subscription charge exactly once" do
+    {booking_id, reference} = insert_pending_booking!(20_000)
+    subscription_id = Ecto.UUID.generate()
+
+    [[customer_id]] =
+      Repo.query!("SELECT customer_id FROM public.bookings WHERE id = $1", [
+        Ecto.UUID.dump!(booking_id)
+      ]).rows
+
+    Repo.query!(
+      """
+      INSERT INTO public.subscriptions (id, customer_id, recurrence_interval)
+      VALUES ($1, $2, 'weekly')
+      """,
+      [Ecto.UUID.dump!(subscription_id), customer_id]
+    )
+
+    Repo.query!(
+      """
+      UPDATE public.bookings
+      SET subscription_id = $2, scheduled_date = DATE '2026-10-12'
+      WHERE id = $1
+      """,
+      [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(subscription_id)]
+    )
+
+    raw =
+      Jason.encode!(%{
+        "event" => "charge.success",
+        "data" => %{
+          "reference" => reference,
+          "status" => "success",
+          "amount" => 20_000,
+          "currency" => "GHS",
+          "metadata" => %{
+            "payment_intent" => "recurring_first_charge",
+            "subscription_id" => subscription_id
+          },
+          "authorization" => %{"authorization_code" => "AUTH_valid", "reusable" => true}
+        }
+      })
+
+    assert {:ok, %{settled: true}} = Webhook.handle(raw, sign(raw))
+    assert {:ok, %{already_paid: true}} = Webhook.handle(raw, sign(raw))
+
+    assert [["active", "managed_authorization", "AUTH_valid", ~D[2026-10-19]]] =
+             Repo.query!(
+               """
+               SELECT status, billing_mode, paystack_authorization_code, next_occurrence_date
+               FROM public.subscriptions WHERE id = $1
+               """,
+               [Ecto.UUID.dump!(subscription_id)]
+             ).rows
+  end
+
   test "rejects charge.success when the amount does not match" do
     {_booking_id, reference} = insert_pending_booking!(20_000)
     raw = charge_success(reference, 1)
@@ -565,7 +620,14 @@ defmodule Mithril.Paystack.WebhookTest do
       raise "Refusing to recreate Paystack fixtures; expected mithril_test, got #{inspect(database)}"
     end
 
-    for table <- ["cleaner_payouts", "booking_refunds", "payment_attempts", "bookings", "users"] do
+    for table <- [
+          "cleaner_payouts",
+          "booking_refunds",
+          "payment_attempts",
+          "bookings",
+          "subscriptions",
+          "users"
+        ] do
       Repo.query!("DROP TABLE IF EXISTS public.#{table} CASCADE")
     end
 
@@ -622,6 +684,18 @@ defmodule Mithril.Paystack.WebhookTest do
     Repo.query!("CREATE TABLE public.users (id uuid PRIMARY KEY)")
 
     Repo.query!("""
+    CREATE TABLE public.subscriptions (
+      id uuid PRIMARY KEY,
+      customer_id uuid NOT NULL,
+      status text NOT NULL DEFAULT 'pending',
+      billing_mode text,
+      recurrence_interval text NOT NULL,
+      paystack_authorization_code text,
+      next_occurrence_date date
+    )
+    """)
+
+    Repo.query!("""
     CREATE TABLE public.bookings (
       id uuid PRIMARY KEY,
       customer_id uuid NOT NULL,
@@ -629,6 +703,8 @@ defmodule Mithril.Paystack.WebhookTest do
       payment_status text NOT NULL DEFAULT 'pending',
       payment_method text,
       reference text,
+      subscription_id uuid,
+      scheduled_date date,
       final_amount_minor bigint NOT NULL,
       currency text NOT NULL DEFAULT 'GHS',
       created_at timestamptz NOT NULL DEFAULT now(),

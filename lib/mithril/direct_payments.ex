@@ -38,7 +38,7 @@ defmodule Mithril.DirectPayments do
          {:ok, attempt} <- verifiable_attempt(booking, params),
          {:ok, receipt} <- Paystack.verify(attempt.reference),
          :ok <- verify_receipt(attempt, receipt),
-         {:ok, booking_status} <- mark_paid(bid, attempt) do
+         {:ok, booking_status} <- mark_paid(bid, attempt, receipt) do
       {:ok,
        %{
          id: booking_id,
@@ -152,7 +152,7 @@ defmodule Mithril.DirectPayments do
           "success" ->
             case assert_successful_payment(attempt, receipt) do
               :ok ->
-                with {:ok, _booking_status} <- mark_paid(booking.uuid, attempt) do
+                with {:ok, _booking_status} <- mark_paid(booking.uuid, attempt, receipt) do
                   {:error, :already_paid}
                 end
 
@@ -204,40 +204,95 @@ defmodule Mithril.DirectPayments do
     end
   end
 
-  defp initialize_checkout(attempt, booking, email, callback_url, routing) do
-    attrs =
-      %{
-        email: email,
-        amount: booking.amount_minor,
-        currency: booking.currency,
-        reference: attempt.reference,
-        callback_url: callback_url,
-        metadata: %{
-          booking_id: booking.id,
-          source: "instaclean_direct"
-        }
-      }
-      |> Map.merge(routing)
+  defp checkout_metadata(booking) do
+    metadata = %{
+      booking_id: booking.id,
+      customer_id: Ecto.UUID.load!(booking.customer_uuid),
+      source: "instaclean_direct"
+    }
 
-    case Paystack.initialize(attrs) do
-      {:ok, provider} ->
-        complete_attempt(attempt.attempt_id, provider, booking)
+    case pending_recurring_subscription(booking.uuid) do
+      {:ok, subscription_id} ->
+        {:ok,
+         Map.merge(metadata, %{
+           subscription_id: subscription_id,
+           payment_intent: "recurring_first_charge"
+         })}
 
-      {:error, :payment_not_configured} ->
-        {:error, :payment_not_configured}
-
-      {:error, {:provider, status, message}} ->
-        _ = fail_attempt(attempt.attempt_id, "Paystack #{status}: #{message}")
-        {:error, :payment_failed}
-
-      {:error, :provider_unavailable} ->
-        # The request may have reached Paystack even if the response was lost.
-        # Leave the attempt initializing so stale recovery verifies it first.
-        {:error, :payment_in_progress}
+      :none ->
+        {:ok, metadata}
 
       {:error, reason} ->
-        Logger.warning("Direct Paystack initialize failed: #{inspect(reason)}")
-        {:error, :payment_failed}
+        {:error, reason}
+    end
+  end
+
+  # The first visit is a normal Paystack charge. The webhook creates the plan
+  # only when this metadata is present.
+  defp pending_recurring_subscription(booking_uuid) do
+    case Repo.query(
+           """
+           SELECT s.id::text
+           FROM public.bookings b
+           JOIN public.subscriptions s
+             ON s.id = b.subscription_id
+            AND s.customer_id = b.customer_id
+           WHERE b.id = $1
+             AND s.status = 'pending'
+             AND s.recurrence_interval IN ('daily', 'weekly', 'monthly', 'quarterly', 'annually')
+           """,
+           [booking_uuid]
+         ) do
+      {:ok, %{rows: [[subscription_id]]}} when is_binary(subscription_id) ->
+        {:ok, subscription_id}
+
+      {:ok, _} ->
+        :none
+
+      {:error, error} ->
+        Logger.warning("Direct payment subscription lookup failed: #{inspect(error)}")
+        {:error, :database_unavailable}
+    end
+  end
+
+  defp initialize_checkout(attempt, booking, email, callback_url, routing) do
+    with {:ok, metadata} <- checkout_metadata(booking) do
+      attrs =
+        %{
+          email: email,
+          amount: booking.amount_minor,
+          currency: booking.currency,
+          reference: attempt.reference,
+          callback_url: callback_url,
+          metadata: metadata
+        }
+        |> Map.merge(routing)
+
+      case Paystack.initialize(attrs) do
+        {:ok, provider} ->
+          complete_attempt(attempt.attempt_id, provider, booking)
+
+        {:error, :payment_not_configured} ->
+          {:error, :payment_not_configured}
+
+        {:error, {:provider, status, message}} ->
+          _ = fail_attempt(attempt.attempt_id, "Paystack #{status}: #{message}")
+          {:error, :payment_failed}
+
+        {:error, :provider_unavailable} ->
+          {:error, :payment_in_progress}
+
+        {:error, reason} ->
+          Logger.warning("Direct Paystack initialize failed: #{inspect(reason)}")
+          {:error, :payment_failed}
+      end
+    else
+      {:error, reason} ->
+        if fail_attempt(attempt.attempt_id, "Checkout metadata unavailable before provider call") do
+          {:error, reason}
+        else
+          {:error, :database_unavailable}
+        end
     end
   end
 
@@ -727,7 +782,7 @@ defmodule Mithril.DirectPayments do
     end
   end
 
-  defp mark_paid(booking_id, attempt) do
+  defp mark_paid(booking_id, attempt, receipt) do
     Repo.transaction(fn ->
       with {:ok, %{rows: [[booking_status, payment_status, booking_reference]]}} <-
              Repo.query(
@@ -761,7 +816,8 @@ defmodule Mithril.DirectPayments do
                RETURNING id
                """,
                [booking_id, attempt.reference]
-             ) do
+             ),
+           :ok <- Mithril.Paystack.Webhook.reconcile_verified_first_charge!(booking_id, receipt) do
         booking_status
       else
         {:ok, %{rows: []}} -> Repo.rollback(:payment_reference_mismatch)

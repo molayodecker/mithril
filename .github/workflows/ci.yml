@@ -14,7 +14,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:15
+        image: public.ecr.aws/docker/library/postgres:15
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -98,4 +98,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build production image
-        run: docker build -t mithril:ci .
+        run: |-
+          docker build \
+            --build-arg ELIXIR_BASE_IMAGE=mirror.gcr.io/hexpm/elixir:1.20.4-erlang-28.5.0.6-alpine-3.24.1 \
+            --build-arg ALPINE_BASE_IMAGE=public.ecr.aws/docker/library/alpine:3.24.1 \
+            -t mithril:ci .

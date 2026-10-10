@@ -52,6 +52,15 @@ defmodule Mithril.Notifications.OutboundTest do
     refute result["whatsappSent"]
   end
 
+  test "whatsapp sender accepts the Instaclean E.164 form and an existing scheme" do
+    assert Outbound.whatsapp_address("+233246326939") == "whatsapp:+233246326939"
+    assert Outbound.whatsapp_address("whatsapp:+233246326939") == "whatsapp:+233246326939"
+    assert Outbound.whatsapp_address("0241234567") == "whatsapp:+233241234567"
+    assert Outbound.whatsapp_address("whatsapp:0241234567") == "whatsapp:+233241234567"
+    assert Outbound.whatsapp_address("invalid") == nil
+    assert Outbound.whatsapp_address(nil) == nil
+  end
+
   test "structured channel input does not crash or send" do
     result =
       Outbound.deliver(%{
@@ -64,6 +73,36 @@ defmodule Mithril.Notifications.OutboundTest do
     refute result["smsSent"]
     refute result["whatsappSent"]
     assert Application.get_env(:mithril, :test_sms_messages) == []
+  end
+
+  test "milestone and support templates include meaningful content" do
+    cases = [
+      {"cleaner_en_route", "is on the way"},
+      {"cleaner_arrived", "has arrived"},
+      {"cleaner_milestone_support", "booking book-123"}
+    ]
+
+    for {template, expected} <- cases do
+      Application.put_env(:mithril, :test_sms_messages, [])
+
+      result =
+        Outbound.deliver(%{
+          "template" => template,
+          "channel" => "sms",
+          "phone" => "+233200000001",
+          "variables" => %{
+            "cleanerName" => "Ama",
+            "customerName" => "Kofi",
+            "bookingId" => "book-123",
+            "milestoneLabel" => "Arrived"
+          }
+        })
+
+      assert result["smsSent"]
+      assert [{"+233200000001", body}] = Application.get_env(:mithril, :test_sms_messages)
+      assert body =~ expected
+      refute body == "Instaclean notification"
+    end
   end
 
   defp restore_env(key, nil), do: Application.delete_env(:mithril, key)

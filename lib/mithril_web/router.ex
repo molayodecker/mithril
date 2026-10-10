@@ -60,6 +60,7 @@ defmodule MithrilWeb.Router do
     post "/webhooks/sumsub", SumsubWebhookController, :create
     post "/webhooks/paystack", PaystackWebhookController, :create
     post "/webhooks/stripe", StripeWebhookController, :create
+    post "/functions/v1/send-notification", SendNotificationController, :create
   end
 
   scope "/", MithrilWeb do
