@@ -46,7 +46,7 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
 
   defp load_booking(booking_id) do
     sql = """
-    SELECT id, customer_id, cleaner_id, scheduled_date, scheduled_time, payment_status, status, subscription_id
+    SELECT id, customer_id, cleaner_id, scheduled_date, scheduled_time, payment_status, status, subscription_id, customer_contact_phone
     FROM public.bookings WHERE id = $1::uuid LIMIT 1
     """
 
@@ -136,7 +136,11 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
         "cleaner"
       )
 
-    _ = maybe_send_external(customer_id, booking_id, customer_body, new_label, old_label)
+    _ =
+      maybe_send_external(
+        customer_id, booking_id, customer_body, new_label, old_label,
+        nonempty(Map.get(booking, "customer_contact_phone"))
+      )
     _ = maybe_send_external(cleaner_id, booking_id, cleaner_body, new_label, old_label)
 
     {:ok,
@@ -175,9 +179,10 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
     end
   end
 
-  defp maybe_send_external(user_id, booking_id, message, new_label, old_label) do
+  defp maybe_send_external(user_id, booking_id, message, new_label, old_label, preferred_phone \\ nil) do
     if SendNotification.configured?() do
-      {email, phone} = recipient_contact(user_id)
+      {email, account_phone} = recipient_contact(user_id)
+      phone = preferred_phone || account_phone
 
       channel =
         cond do
