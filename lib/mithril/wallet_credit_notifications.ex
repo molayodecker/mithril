@@ -107,14 +107,33 @@ defmodule Mithril.WalletCreditNotifications do
                  WHERE n.user_id = w.user_id
                    AND n.dedupe_key = 'wallet_credit:' || t.id::text
                )
-               OR EXISTS (
-                 SELECT 1 FROM public.wallet_credit_whatsapp_delivery d
-                 WHERE d.transaction_id = t.id
-                   AND d.sent_at IS NULL
-                   AND d.next_attempt_at <= now()
+               OR (
+                 EXISTS (
+                   SELECT 1 FROM public.notifications n
+                   WHERE n.user_id = w.user_id
+                     AND n.dedupe_key = 'wallet_credit:' || t.id::text
+                 )
+                 AND (
+                   NOT EXISTS (
+                     SELECT 1 FROM public.wallet_credit_whatsapp_delivery d
+                     WHERE d.transaction_id = t.id
+                   )
+                   OR EXISTS (
+                     SELECT 1 FROM public.wallet_credit_whatsapp_delivery d
+                     WHERE d.transaction_id = t.id
+                       AND d.sent_at IS NULL
+                       AND d.next_attempt_at <= now()
+                   )
+                 )
                )
              )
-           ORDER BY t.created_at ASC NULLS LAST
+           ORDER BY
+             CASE WHEN NOT EXISTS (
+               SELECT 1 FROM public.notifications n
+               WHERE n.user_id = w.user_id
+                 AND n.dedupe_key = 'wallet_credit:' || t.id::text
+             ) THEN 0 ELSE 1 END,
+             t.created_at ASC NULLS LAST
            LIMIT $1
            """,
            [@batch_limit]
@@ -176,7 +195,9 @@ defmodule Mithril.WalletCreditNotifications do
            ) do
       result = sender.(Map.put(credit, :message, body))
 
-      if result in [:sent, :ok] or match?({:ok, _}, result) do
+      if result in [:sent, :ok, :skipped] or
+           match?({:ok, %{"whatsappSent" => true}}, result) or
+           match?({:ok, %{whatsappSent: true}}, result) do
         case Repo.query(
                """
                UPDATE public.wallet_credit_whatsapp_delivery
@@ -264,10 +285,18 @@ defmodule Mithril.WalletCreditNotifications do
              "userId" => credit.user_id,
              "phone" => credit.phone,
              "messageType" => "wallet_credited",
+             "idempotencyKey" => "wallet_credit:#{credit.transaction_id}",
              "variables" => %{"name" => credit.name, "message" => credit.message}
            }) do
-        {:ok, _response} ->
+        {:ok, %{"whatsappSent" => true}} ->
           :sent
+
+        {:ok, %{whatsappSent: true}} ->
+          :sent
+
+        {:ok, _response} ->
+          Logger.warning("wallet credit WhatsApp not confirmed transaction=#{credit.transaction_id}")
+          :failed
 
         {:error, status, _body} ->
           Logger.warning(
