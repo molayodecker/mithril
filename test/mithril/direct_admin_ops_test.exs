@@ -66,7 +66,8 @@ defmodule Mithril.DirectAdminOpsTest do
     CREATE TABLE public.wallets (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id uuid NOT NULL,
-      balance_subunit integer NOT NULL DEFAULT 0
+      balance_subunit integer NOT NULL DEFAULT 0,
+      currency text NOT NULL DEFAULT 'GHS'
     )
     """)
 
