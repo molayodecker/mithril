@@ -45,7 +45,7 @@ defmodule Mithril.Notifications.SendNotification do
       customer_variables(ctx),
       ctx[:booking_id] || ctx[:request_id],
       message_type,
-      sms_fallback_to_whatsapp: false
+      sms_fallback_to_whatsapp: ctx[:kind] == :booking_reminder
     )
   end
 
@@ -58,7 +58,7 @@ defmodule Mithril.Notifications.SendNotification do
       worker_variables(ctx),
       ctx[:booking_id] || ctx[:request_id],
       message_type,
-      sms_fallback_to_whatsapp: false
+      sms_fallback_to_whatsapp: ctx[:kind] == :booking_reminder
     )
   end
 
