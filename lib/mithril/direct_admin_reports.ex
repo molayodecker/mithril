@@ -131,7 +131,7 @@ defmodule Mithril.DirectAdminReports do
              SELECT jsonb_build_object(
                'days', $1::integer,
                'currency', 'GHS',
-               'generatedAt', timezone('utc', now()),
+               'generatedAt', now(),
                'revenueMinor', cm.revenue_minor,
                'revenueGrowthPercent', CASE
                  WHEN pm.revenue_minor = 0 THEN NULL
