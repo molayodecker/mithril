@@ -340,7 +340,13 @@ defmodule Mithril.DirectBookingCancels do
            ]
          ) do
       {:ok, %{rows: [[_id]]}} ->
-        {:ok, :cancelled}
+        case Repo.query(
+               "UPDATE public.turnover_opportunities SET booking_id = NULL, status = 'ready_to_book', updated_at = now() WHERE booking_id = $1::uuid",
+               [dump!(booking_id)]
+             ) do
+          {:ok, _} -> {:ok, :cancelled}
+          {:error, error} -> Repo.rollback({:database, error})
+        end
 
       {:ok, %{rows: []}} ->
         {:error, :cancel_conflict}
