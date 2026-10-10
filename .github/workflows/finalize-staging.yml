@@ -67,7 +67,6 @@ jobs:
           fi
 
       - name: Mark staging deployment successful
-        if: ${{ inputs.mark_staging_status }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
