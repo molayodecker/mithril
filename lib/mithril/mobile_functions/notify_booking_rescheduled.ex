@@ -138,9 +138,14 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
 
     _ =
       maybe_send_external(
-        customer_id, booking_id, customer_body, new_label, old_label,
+        customer_id,
+        booking_id,
+        customer_body,
+        new_label,
+        old_label,
         nonempty(Map.get(booking, "customer_contact_phone"))
       )
+
     _ = maybe_send_external(cleaner_id, booking_id, cleaner_body, new_label, old_label)
 
     {:ok,
@@ -179,7 +184,14 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
     end
   end
 
-  defp maybe_send_external(user_id, booking_id, message, new_label, old_label, preferred_phone \\ nil) do
+  defp maybe_send_external(
+         user_id,
+         booking_id,
+         message,
+         new_label,
+         old_label,
+         preferred_phone \\ nil
+       ) do
     if SendNotification.configured?() do
       {email, account_phone} = recipient_contact(user_id)
       phone = preferred_phone || account_phone
