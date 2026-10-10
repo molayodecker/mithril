@@ -38,8 +38,10 @@ on:
         type: boolean
         default: false
 
+# Must match or stay below the caller. Job-level contents: write cannot exceed
+# this block; GitHub validates that at startup before any deploy step runs.
 permissions:
-  contents: read
+  contents: write
   actions: read
   statuses: write
 
