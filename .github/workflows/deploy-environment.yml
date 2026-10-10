@@ -38,6 +38,7 @@ on:
         type: boolean
         default: false
 
+# Repository contents remain read-only during deployment, including production.
 permissions:
   contents: read
   actions: read
@@ -51,7 +52,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       actions: read
       statuses: write
     environment: ${{ inputs.environment_name }}
@@ -239,54 +240,14 @@ jobs:
           print(f"Verified {len(spec['paths'])} API paths at {os.environ['OPENAPI_URL']}")
           PY
 
-      - name: Create or verify staging deployment tag
-        if: ${{ inputs.mark_staging_status }}
+      - name: Mark failed staging deployment
+        if: ${{ failure() && inputs.mark_staging_status }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          set -euo pipefail
-          if [[ ! "$DEPLOY_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
-            echo "::error::Invalid deployment commit SHA."
-            exit 1
+          if [[ -n "${DEPLOY_SHA:-}" ]]; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$DEPLOY_SHA" \
+              -f state=failure -f context=mithril/staging \
+              -f description="Mithril staging deployment failed"
           fi
-
-          tag="staging/$DEPLOY_SHA"
-          ref="refs/tags/$tag"
-          api_ref="tags/staging/$DEPLOY_SHA"
-
-          verify_existing_tag() {
-            local existing existing_sha existing_type
-            existing="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/$api_ref")"
-            read -r existing_sha existing_type < <(
-              printf '%s' "$existing" |
-                python3 -c 'import json,sys; o=json.load(sys.stdin)["object"]; print(o["sha"], o["type"])'
-            )
-            if [[ "$existing_sha" != "$DEPLOY_SHA" || "$existing_type" != "commit" ]]; then
-              echo "::error::Tag $tag points to $existing_type $existing_sha, expected commit $DEPLOY_SHA."
-              return 1
-            fi
-            echo "Verified tag $tag -> $DEPLOY_SHA"
-          }
-
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/$api_ref" >/dev/null 2>&1; then
-            verify_existing_tag
-          elif gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
-            -f ref="$ref" -f sha="$DEPLOY_SHA"; then
-            echo "Created tag $tag"
-          else
-            echo "Tag creation failed or raced; checking for the expected ref."
-            verify_existing_tag
-          fi
-
-      - name: Mark staging deployment successful
-        if: ${{ inputs.mark_staging_status }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$DEPLOY_SHA" \
-            -f state=success \
-            -f context=mithril/staging \
-            -f description="Mithril staging deployed and verified"
-

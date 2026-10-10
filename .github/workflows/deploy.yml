@@ -19,8 +19,9 @@ on:
         required: false
         type: string
 
+# Staging finalization may write tags, but every deploy caller explicitly uses read-only contents.
 permissions:
-  contents: read
+  contents: write
   actions: read
   statuses: write
 
@@ -35,7 +36,7 @@ jobs:
       && github.event.workflow_run.head_branch == 'main'
       && github.event.workflow_run.head_repository.full_name == github.repository
     permissions:
-      contents: write
+      contents: read
       actions: read
       statuses: write
     uses: ./.github/workflows/deploy-environment.yml
@@ -60,7 +61,7 @@ jobs:
       && github.ref == 'refs/heads/main'
       && inputs.environment == 'staging'
     permissions:
-      contents: write
+      contents: read
       actions: read
       statuses: write
     uses: ./.github/workflows/deploy-environment.yml
@@ -84,6 +85,10 @@ jobs:
       github.event_name == 'workflow_dispatch'
       && github.ref == 'refs/heads/main'
       && inputs.environment == 'production'
+    permissions:
+      contents: read
+      actions: read
+      statuses: write
     uses: ./.github/workflows/deploy-environment.yml
     with:
       environment_name: production
@@ -97,3 +102,23 @@ jobs:
       mark_staging_status: false
       apply_auth_schema: false
     secrets: inherit
+
+  finalize_staging_after_ci:
+    needs: staging_after_ci
+    if: ${{ needs.staging_after_ci.result == 'success' }}
+    permissions:
+      contents: write
+      statuses: write
+    uses: ./.github/workflows/finalize-staging.yml
+    with:
+      checkout_ref: ${{ github.event.workflow_run.head_sha }}
+
+  finalize_staging_manual:
+    needs: staging_manual
+    if: ${{ needs.staging_manual.result == 'success' }}
+    permissions:
+      contents: write
+      statuses: write
+    uses: ./.github/workflows/finalize-staging.yml
+    with:
+      checkout_ref: ${{ inputs.commit_sha != '' && inputs.commit_sha || github.sha }}
