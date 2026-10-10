@@ -73,7 +73,9 @@ DATABASE_URL=ecto://user:password@host:5432/database mix phx.server
 
 ### Admin API access
 
-Mithril does not serve a browser admin UI. The frontend signs in through `/auth` and calls `/direct/admin/*` with the user JWT. Grant `admin` or `reviewer` on an existing user against the database Mithril is using:
+Mithril does not serve a browser admin UI. The Direct web app and the Expo mobile admin app (`instaclean-direct-mobile`) sign in through `/auth` and call `/direct/admin/*` with the user JWT. See [`docs/mobile-admin.md`](docs/mobile-admin.md) for the mobile route map.
+
+Grant `admin` or `reviewer` on an existing user against the database Mithril is using:
 
 ```bash
 mix mithril.staff.grant --phone +233… --role reviewer
