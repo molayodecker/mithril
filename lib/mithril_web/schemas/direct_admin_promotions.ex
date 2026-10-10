@@ -12,7 +12,10 @@ defmodule MithrilWeb.Schemas.DirectAdminPromotions do
         id: %Schema{type: :string, format: :uuid},
         code: %Schema{type: :string},
         active: %Schema{type: :boolean},
-        status: %Schema{type: :string, enum: ["active", "scheduled", "expired", "inactive", "exhausted"]},
+        status: %Schema{
+          type: :string,
+          enum: ["active", "scheduled", "expired", "inactive", "exhausted"]
+        },
         headline: %Schema{type: :string},
         promotionType: %Schema{type: :string},
         promotionValue: %Schema{type: :integer},
