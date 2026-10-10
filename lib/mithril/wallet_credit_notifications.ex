@@ -195,7 +195,7 @@ defmodule Mithril.WalletCreditNotifications do
            ) do
       result = sender.(Map.put(credit, :message, body))
 
-      if result in [:sent, :ok, :skipped] or
+      if result in [:sent, :ok, :no_phone] or
            match?({:ok, %{"whatsappSent" => true}}, result) or
            match?({:ok, %{whatsappSent: true}}, result) do
         case Repo.query(
@@ -275,7 +275,7 @@ defmodule Mithril.WalletCreditNotifications do
     end
   end
 
-  defp send_whatsapp(%{phone: nil}), do: :skipped
+  defp send_whatsapp(%{phone: nil}), do: :no_phone
 
   defp send_whatsapp(credit) do
     if SendNotification.configured?() do
