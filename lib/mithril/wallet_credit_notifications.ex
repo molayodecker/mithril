@@ -312,7 +312,10 @@ defmodule Mithril.WalletCreditNotifications do
           :sent
 
         {:ok, _response} ->
-          Logger.warning("wallet credit WhatsApp not confirmed transaction=#{credit.transaction_id}")
+          Logger.warning(
+            "wallet credit WhatsApp not confirmed transaction=#{credit.transaction_id}"
+          )
+
           :failed
 
         {:error, status, _body} ->
