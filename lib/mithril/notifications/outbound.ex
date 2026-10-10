@@ -125,7 +125,8 @@ defmodule Mithril.Notifications.Outbound do
     }
   end
 
-  defp content_variables(template, variables) when template in ["cleaner_en_route", "cleaner_arrived"] do
+  defp content_variables(template, variables)
+       when template in ["cleaner_en_route", "cleaner_arrived"] do
     %{
       "1" => present(variables["cleanerName"]) || "Your cleaner",
       "2" => present(variables["bookingId"]) || "",
