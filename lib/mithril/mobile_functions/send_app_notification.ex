@@ -424,7 +424,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
           |> maybe_put("email", customer_email)
           |> maybe_put("phone", customer_phone)
 
-        match?({:ok, _}, SendNotification.invoke_mobile(body))
+        notification_delivered?(SendNotification.invoke_mobile(body))
       else
         false
       end
@@ -432,8 +432,7 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
     support_email = Application.get_env(:mithril, :support_email, "support@tryinstaclean.com")
 
     support_notified =
-      match?(
-        {:ok, _},
+      notification_delivered?(
         SendNotification.invoke_mobile(%{
           "template" => "cleaner_milestone_support",
           "channel" => "email",
@@ -452,6 +451,14 @@ defmodule Mithril.MobileFunctions.SendAppNotification do
 
     %{customer_notified: customer_notified, support_notified: support_notified}
   end
+
+  defp notification_delivered?({:ok, response}) when is_map(response) do
+    Enum.any?(["emailSent", "smsSent", "whatsappSent"], fn key ->
+      response[key] in [true, "true"]
+    end)
+  end
+
+  defp notification_delivered?(_), do: false
 
   defp load_customer_contact(customer_id) do
     user_sql = "SELECT email, phone FROM public.users WHERE id = $1::uuid LIMIT 1"

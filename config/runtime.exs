@@ -341,6 +341,16 @@ if reminder_sid = System.get_env("TWILIO_TEMPLATE_BOOKING_REMINDER") do
   config :mithril, :twilio_template_booking_reminder, reminder_sid
 end
 
+for {env_key, config_key} <- [
+      {"TWILIO_TEMPLATE_REVIEW_REQUEST", :twilio_template_review_request},
+      {"TWILIO_TEMPLATE_CLEANER_EN_ROUTE", :twilio_template_cleaner_en_route},
+      {"TWILIO_TEMPLATE_CLEANER_ARRIVED", :twilio_template_cleaner_arrived}
+    ] do
+  if content_sid = System.get_env(env_key) do
+    config :mithril, config_key, content_sid
+  end
+end
+
 if direct_public_url = System.get_env("DIRECT_PUBLIC_URL") do
   config :mithril, :direct_public_url, direct_public_url
 end
