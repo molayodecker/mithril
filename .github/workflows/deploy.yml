@@ -19,11 +19,9 @@ on:
         required: false
         type: string
 
-# Staging tags (`staging/<sha>`) need contents: write. GitHub rejects a reusable
-# workflow that asks for more than its caller grants, and rejects job-level write
-# under a workflow-level read — both fail as startup_failure with no jobs.
+# Shared deployments use read-only repository content; only staging finalization writes tags.
 permissions:
-  contents: write
+  contents: read
   actions: read
   statuses: write
 
@@ -38,7 +36,7 @@ jobs:
       && github.event.workflow_run.head_branch == 'main'
       && github.event.workflow_run.head_repository.full_name == github.repository
     permissions:
-      contents: write
+      contents: read
       actions: read
       statuses: write
     uses: ./.github/workflows/deploy-environment.yml
@@ -63,7 +61,7 @@ jobs:
       && github.ref == 'refs/heads/main'
       && inputs.environment == 'staging'
     permissions:
-      contents: write
+      contents: read
       actions: read
       statuses: write
     uses: ./.github/workflows/deploy-environment.yml
@@ -88,7 +86,7 @@ jobs:
       && github.ref == 'refs/heads/main'
       && inputs.environment == 'production'
     permissions:
-      contents: write
+      contents: read
       actions: read
       statuses: write
     uses: ./.github/workflows/deploy-environment.yml
@@ -104,3 +102,23 @@ jobs:
       mark_staging_status: false
       apply_auth_schema: false
     secrets: inherit
+
+  finalize_staging_after_ci:
+    needs: staging_after_ci
+    if: ${{ needs.staging_after_ci.result == 'success' }}
+    permissions:
+      contents: write
+      statuses: write
+    uses: ./.github/workflows/finalize-staging.yml
+    with:
+      checkout_ref: ${{ github.event.workflow_run.head_sha }}
+
+  finalize_staging_manual:
+    needs: staging_manual
+    if: ${{ needs.staging_manual.result == 'success' }}
+    permissions:
+      contents: write
+      statuses: write
+    uses: ./.github/workflows/finalize-staging.yml
+    with:
+      checkout_ref: ${{ inputs.commit_sha != '' && inputs.commit_sha || github.sha }}
