@@ -95,6 +95,112 @@ defmodule Mithril.WalletCreditNotificationsTest do
     refute_received {:whatsapp, _}
   end
 
+  test "recovers WhatsApp when inbox exists but delivery ledger is missing" do
+    parent = self()
+    user_id = Ecto.UUID.generate()
+    transaction_id = insert_credit!(user_id, 20_000, nil, nil)
+
+    Repo.query!(
+      """
+      INSERT INTO public.notifications (user_id, type, title, message, read, dedupe_key, data)
+      VALUES ($1::uuid, 'wallet_credited', 'Existing credit', 'Existing inbox', false, $2, '{}'::jsonb)
+      """,
+      [dump!(user_id), "wallet_credit:#{transaction_id}"]
+    )
+
+    assert :ok =
+             WalletCreditNotifications.run(
+               whatsapp_sender: fn credit ->
+                 send(parent, {:recovered, credit.transaction_id})
+                 :sent
+               end
+             )
+
+    assert_receive {:recovered, ^transaction_id}
+
+    assert Repo.query!(
+             "SELECT count(*) FROM public.notifications WHERE user_id = $1::uuid",
+             [dump!(user_id)]
+           ).rows == [[1]]
+  end
+
+  test "prioritizes new inbox notifications over an expired WhatsApp retry backlog" do
+    parent = self()
+
+    for _ <- 1..51 do
+      user_id = Ecto.UUID.generate()
+      transaction_id = insert_credit!(user_id, 1_000, nil, nil)
+
+      Repo.query!(
+        """
+        INSERT INTO public.notifications (user_id, type, title, message, read, dedupe_key, data)
+        VALUES ($1::uuid, 'wallet_credited', 'Old credit', 'Retry pending', false, $2, '{}'::jsonb)
+        """,
+        [dump!(user_id), "wallet_credit:#{transaction_id}"]
+      )
+
+      Repo.query!(
+        """
+        INSERT INTO public.wallet_credit_whatsapp_delivery (transaction_id, next_attempt_at)
+        VALUES ($1::uuid, now() - interval '1 minute')
+        """,
+        [dump!(transaction_id)]
+      )
+    end
+
+    new_user = Ecto.UUID.generate()
+    new_transaction = insert_credit!(new_user, 2_000, nil, nil)
+
+    assert :ok =
+             WalletCreditNotifications.run(
+               whatsapp_sender: fn credit ->
+                 send(parent, {:delivered, credit.transaction_id})
+                 :sent
+               end
+             )
+
+    assert_received {:delivered, ^new_transaction}
+
+    assert Repo.query!(
+             "SELECT count(*) FROM public.notifications WHERE user_id = $1::uuid",
+             [dump!(new_user)]
+           ).rows == [[1]]
+  end
+
+  test "a crashing WhatsApp sender does not block other wallet inbox credits" do
+    first_user = Ecto.UUID.generate()
+    second_user = Ecto.UUID.generate()
+    first_transaction = insert_credit!(first_user, 1_000, nil, nil)
+    second_transaction = insert_credit!(second_user, 2_000, nil, nil)
+    parent = self()
+
+    assert :ok =
+             WalletCreditNotifications.run(
+               whatsapp_sender: fn credit ->
+                 if credit.transaction_id == first_transaction do
+                   raise "provider unavailable"
+                 else
+                   send(parent, {:sent, credit.transaction_id})
+                   :sent
+                 end
+               end
+             )
+
+    assert_receive {:sent, ^second_transaction}
+
+    for user_id <- [first_user, second_user] do
+      assert Repo.query!(
+               "SELECT count(*) FROM public.notifications WHERE user_id = $1::uuid",
+               [dump!(user_id)]
+             ).rows == [[1]]
+    end
+
+    assert Repo.query!(
+             "SELECT sent_at IS NULL FROM public.wallet_credit_whatsapp_delivery WHERE transaction_id = $1::uuid",
+             [dump!(first_transaction)]
+           ).rows == [[true]]
+  end
+
   test "uses the completed-job copy when the credit belongs to a booking" do
     parent = self()
     user_id = Ecto.UUID.generate()
