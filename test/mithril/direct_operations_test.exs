@@ -15,6 +15,7 @@ defmodule Mithril.DirectOperationsTest do
     end
 
     for table <- [
+          "turnover_opportunities",
           "direct_refund_requests",
           "booking_refunds",
           "bookings",
@@ -86,6 +87,15 @@ defmodule Mithril.DirectOperationsTest do
       booking_id uuid NOT NULL,
       refund_amount_minor bigint NOT NULL DEFAULT 0,
       status text NOT NULL
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.turnover_opportunities (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      booking_id uuid,
+      status text NOT NULL DEFAULT 'ready_to_book',
+      updated_at timestamptz DEFAULT now()
     )
     """)
 
