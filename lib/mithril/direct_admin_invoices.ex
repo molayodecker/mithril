@@ -281,10 +281,11 @@ defmodule Mithril.DirectAdminInvoices do
       end
 
     with {:ok, bid} <- Ecto.UUID.dump(booking_id),
+         {:ok, sent_version, _offset} <- DateTime.from_iso8601(updated_at),
          {:ok, _} <-
            Repo.query(
              "UPDATE public.job_invoices SET #{column} = now() WHERE booking_id = $1::uuid AND updated_at = $2::timestamptz",
-             [bid, updated_at]
+             [bid, sent_version]
            ) do
       :ok
     else
