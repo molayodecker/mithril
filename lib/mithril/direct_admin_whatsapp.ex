@@ -123,9 +123,22 @@ defmodule Mithril.DirectAdminWhatsApp do
            admin_from(
              params["businessPhoneE164"] || params[:businessPhoneE164] || last_business(e164)
            ),
-         :ok <- deliver_whatsapp(e164, from, body),
-         {:ok, thread_user} <- resolve_user_id(e164) do
-      insert_outbound(e164, body, thread_user, admin_uid, from)
+         :ok <- deliver_whatsapp(e164, from, body) do
+      # The provider has accepted the message. Local inbox bookkeeping must not
+      # turn that successful external side effect into a retryable send failure.
+      case resolve_user_id(e164) do
+        {:ok, thread_user} ->
+          case insert_outbound(e164, body, thread_user, admin_uid, from) do
+            {:ok, result} -> {:ok, result}
+            {:error, reason} ->
+              Logger.error("WhatsApp delivered but inbox audit failed: #{inspect(reason)}")
+              {:ok, %{"ok" => true, "auditRecorded" => false}}
+          end
+
+        {:error, reason} ->
+          Logger.error("WhatsApp delivered but recipient lookup failed: #{inspect(reason)}")
+          {:ok, %{"ok" => true, "auditRecorded" => false}}
+      end
     else
       :error -> {:error, :invalid_request}
       {:error, reason} -> {:error, reason}
