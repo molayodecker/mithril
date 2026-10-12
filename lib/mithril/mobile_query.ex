@@ -115,6 +115,7 @@ defmodule Mithril.MobileQuery do
     "cleaner_data" => MapSet.new(~w(
         user_id
         verified
+        pro
         status
         hourly_rate
         service_categories
