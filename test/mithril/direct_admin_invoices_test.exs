@@ -103,6 +103,26 @@ defmodule Mithril.DirectAdminInvoicesTest do
     assert again["project"] == "Revised clean"
   end
 
+  test "changing recipient details revokes the previous public invoice link" do
+    admin_id = Fixtures.insert_user!("admin")
+    booking_id = Fixtures.insert_booking!(Fixtures.insert_user!())
+
+    assert {:ok, first} = DirectAdminInvoices.upsert(admin_id, booking_id, sample_invoice())
+    old_token = first["publicToken"]
+
+    assert {:ok, revised} =
+             DirectAdminInvoices.upsert(
+               admin_id,
+               booking_id,
+               sample_invoice(%{"billToName" => "Different customer"})
+             )
+
+    refute revised["publicToken"] == old_token
+    assert {:error, :invoice_not_found} = DirectAdminInvoices.public_show(old_token)
+    assert {:ok, latest} = DirectAdminInvoices.public_show(revised["publicToken"])
+    assert latest["billToName"] == "Different customer"
+  end
+
   test "a blank invoice number takes the next sequence value" do
     admin_id = Fixtures.insert_user!("admin")
     first = Fixtures.insert_booking!(Fixtures.insert_user!())
