@@ -129,7 +129,9 @@ defmodule Mithril.DirectAdminWhatsApp do
       case resolve_user_id(e164) do
         {:ok, thread_user} ->
           case insert_outbound(e164, body, thread_user, admin_uid, from) do
-            {:ok, result} -> {:ok, result}
+            {:ok, result} ->
+              {:ok, result}
+
             {:error, reason} ->
               Logger.error("WhatsApp delivered but inbox audit failed: #{inspect(reason)}")
               {:ok, %{"ok" => true, "auditRecorded" => false}}
