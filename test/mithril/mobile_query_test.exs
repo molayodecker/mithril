@@ -283,6 +283,29 @@ defmodule Mithril.MobileQueryTest do
     assert profile_sql =~ "years_experience"
   end
 
+  test "allows PRO badge projection and PRO-only cleaner directory filters" do
+    assert {:ok, %{sql: sql, params: params}} =
+             MobileQuery.compile("customer-1", %{
+               "table" => "cleaner_data",
+               "action" => "select",
+               "columns" => ["user_id", "pro"],
+               "filters" => [%{"op" => "eq", "column" => "pro", "value" => true}]
+             })
+
+    assert sql =~ "'pro'"
+    assert sql =~ "cleaner_data.pro"
+    assert params != []
+
+    assert {:ok, %{sql: wildcard_sql}} =
+             MobileQuery.compile("customer-1", %{
+               "table" => "cleaner_data",
+               "action" => "select",
+               "columns" => ["*"]
+             })
+
+    assert wildcard_sql =~ "'pro'"
+  end
+
   test "compiles the home pending-bookings select" do
     assert {:ok, %{sql: sql}} =
              MobileQuery.compile("customer-1", %{
