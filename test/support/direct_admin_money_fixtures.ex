@@ -3,7 +3,7 @@ defmodule Mithril.DirectAdminMoneyFixtures do
 
   alias Mithril.Repo
 
-  @schema_root Path.expand("../../../instaclean-schema/migrations", __DIR__)
+  @schema_root Path.expand("../../priv/repo/sql/direct", __DIR__)
 
   def checkout! do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
