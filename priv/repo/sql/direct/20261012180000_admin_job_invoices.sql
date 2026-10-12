@@ -57,6 +57,10 @@ DECLARE
   v_total bigint;
   v_invoice_no text;
   v_existing_no text;
+  v_old_name text;
+  v_old_address text;
+  v_old_phone text;
+  v_old_email text;
   v_token text;
   v_issued_on date;
   v_issued_text text;
@@ -178,8 +182,8 @@ BEGIN
     RAISE EXCEPTION 'invalid_email';
   END IF;
 
-  SELECT invoice_no, public_token
-  INTO v_existing_no, v_token
+  SELECT invoice_no, public_token, bill_to_name, bill_to_address, bill_to_phone, bill_to_email
+  INTO v_existing_no, v_token, v_old_name, v_old_address, v_old_phone, v_old_email
   FROM public.job_invoices
   WHERE booking_id = p_booking_id
   FOR UPDATE;
@@ -192,7 +196,10 @@ BEGIN
     v_invoice_no := COALESCE(v_existing_no, nextval('public.job_invoice_no_seq')::text);
   END IF;
 
-  IF v_token IS NULL THEN
+  IF v_token IS NULL OR v_old_name IS DISTINCT FROM v_name
+     OR v_old_address IS DISTINCT FROM v_address
+     OR v_old_phone IS DISTINCT FROM v_phone
+     OR v_old_email IS DISTINCT FROM v_email THEN
     v_token := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
   END IF;
 
@@ -236,6 +243,7 @@ BEGIN
   )
   ON CONFLICT (booking_id) DO UPDATE SET
     invoice_no = EXCLUDED.invoice_no,
+    public_token = EXCLUDED.public_token,
     issued_on = EXCLUDED.issued_on,
     bill_to_name = EXCLUDED.bill_to_name,
     bill_to_address = EXCLUDED.bill_to_address,
