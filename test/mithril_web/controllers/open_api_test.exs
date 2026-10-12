@@ -31,6 +31,25 @@ defmodule MithrilWeb.OpenApiTest do
     assert spec["paths"]["/direct/admin/promotion-codes"]["get"]
     assert spec["paths"]["/direct/admin/reports/summary"]["get"]
     assert spec["paths"]["/direct/admin/service-areas"]["get"]
+
+    assert spec["paths"]["/direct/admin/cleaners/{id}/wallet"]["get"]["operationId"] ==
+             "direct.showAdminWorkerWallet"
+
+    assert spec["paths"]["/direct/admin/cleaners/{id}/wallet-credit"]["post"]["operationId"] ==
+             "direct.creditAdminWorkerWallet"
+
+    assert spec["paths"]["/direct/admin/bookings/{id}/invoice"]["get"]["operationId"] ==
+             "direct.showAdminJobInvoice"
+
+    assert spec["paths"]["/direct/admin/bookings/{id}/invoice"]["put"]["operationId"] ==
+             "direct.upsertAdminJobInvoice"
+
+    assert spec["paths"]["/direct/admin/bookings/{id}/invoice/send"]["post"]["operationId"] ==
+             "direct.sendAdminJobInvoice"
+
+    assert spec["paths"]["/direct/invoices/{token}"]["get"]["operationId"] ==
+             "direct.showPublicJobInvoice"
+
     assert spec["paths"]["/direct/admin/payouts"]["get"]
     assert spec["paths"]["/direct/admin/reviews"]["get"]
     assert spec["paths"]["/direct/admin/team"]["get"]
