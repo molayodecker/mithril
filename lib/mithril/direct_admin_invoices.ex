@@ -73,7 +73,7 @@ defmodule Mithril.DirectAdminInvoices do
          :ok <- require_admin(admin_uid),
          {:ok, invoice} <- show(user_id, booking_id),
          :ok <- deliver(admin_uid, invoice, channel) do
-      mark_sent(invoice["bookingId"], channel)
+      mark_sent(invoice["bookingId"], channel, invoice["updatedAt"])
       {:ok, %{"ok" => true, "channel" => channel, "sent" => true}}
     else
       :error -> {:error, :invalid_request}
@@ -117,13 +117,22 @@ defmodule Mithril.DirectAdminInvoices do
     if String.length(body) <= 1900 do
       body
     else
-      shortened = lines |> Enum.take(8) |> Enum.join("\n")
+      # Reserve room for the total and public link before adding item descriptions.
+      fixed = Enum.join([String.trim(header), String.trim(footer)], "\n\n")
+      allowance = max(0, 1900 - String.length(fixed) - 6)
 
-      Enum.join(
-        [String.trim(header), shortened, "…", String.trim(footer)],
-        "\n\n"
-      )
-      |> String.slice(0, 2000)
+      {selected, _remaining} =
+        Enum.reduce_while(lines, {[], allowance}, fn line, {acc, remaining} ->
+          needed = String.length(line) + 1
+
+          if needed <= remaining do
+            {:cont, {[line | acc], remaining - needed}}
+          else
+            {:halt, {acc, remaining}}
+          end
+        end)
+
+      Enum.join([String.trim(header), Enum.join(Enum.reverse(selected), "\n"), "…", String.trim(footer)], "\n\n")
     end
   end
 
@@ -140,7 +149,7 @@ defmodule Mithril.DirectAdminInvoices do
     SELECT id, booking_id, public_token, invoice_no, issued_on::text, bill_to_name,
            bill_to_address, bill_to_phone, bill_to_email, project, lines,
            adjustment_minor, subtotal_minor, total_minor, currency, notes,
-           last_whatsapp_sent_at, last_email_sent_at
+           last_whatsapp_sent_at, last_email_sent_at, updated_at
     FROM public.job_invoices
     """
   end
@@ -164,7 +173,8 @@ defmodule Mithril.DirectAdminInvoices do
       currency,
       notes,
       whatsapp_at,
-      email_at
+      email_at,
+      updated_at
     ] = row
 
     with_view_url(%{
@@ -185,7 +195,8 @@ defmodule Mithril.DirectAdminInvoices do
       "currency" => currency || "GHS",
       "notes" => notes,
       "lastWhatsappSentAt" => timestamp(whatsapp_at),
-      "lastEmailSentAt" => timestamp(email_at)
+      "lastEmailSentAt" => timestamp(email_at),
+      "updatedAt" => timestamp(updated_at)
     })
   end
 
@@ -259,7 +270,7 @@ defmodule Mithril.DirectAdminInvoices do
     if is_list(extra), do: Keyword.merge(options, extra), else: options
   end
 
-  defp mark_sent(booking_id, channel) do
+  defp mark_sent(booking_id, channel, updated_at) do
     column =
       case channel do
         "whatsapp" -> "last_whatsapp_sent_at"
@@ -269,8 +280,8 @@ defmodule Mithril.DirectAdminInvoices do
     with {:ok, bid} <- Ecto.UUID.dump(booking_id),
          {:ok, _} <-
            Repo.query(
-             "UPDATE public.job_invoices SET #{column} = now(), updated_at = now() WHERE booking_id = $1::uuid",
-             [bid]
+             "UPDATE public.job_invoices SET #{column} = now() WHERE booking_id = $1::uuid AND updated_at = $2::timestamptz",
+             [bid, updated_at]
            ) do
       :ok
     else
