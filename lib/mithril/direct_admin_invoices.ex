@@ -132,7 +132,10 @@ defmodule Mithril.DirectAdminInvoices do
           end
         end)
 
-      Enum.join([String.trim(header), Enum.join(Enum.reverse(selected), "\n"), "…", String.trim(footer)], "\n\n")
+      Enum.join(
+        [String.trim(header), Enum.join(Enum.reverse(selected), "\n"), "…", String.trim(footer)],
+        "\n\n"
+      )
     end
   end
 
