@@ -123,6 +123,12 @@ defmodule MithrilWeb.Router do
   end
 
   scope "/direct", MithrilWeb do
+    pipe_through [:api]
+
+    get "/invoices/:token", DirectAdminInvoicesController, :public_show
+  end
+
+  scope "/direct", MithrilWeb do
     pipe_through [:api, :direct_gateway]
 
     get "/booking-services", DirectBookingController, :list_services
@@ -216,6 +222,8 @@ defmodule MithrilWeb.Router do
     get "/admin/live-jobs", DirectAdminLiveJobsController, :index
     get "/admin/bookings", DirectAdminBookingsController, :index
     get "/admin/cleaners", DirectOperationsController, :list_admin_cleaners
+    get "/admin/cleaners/:id/wallet", DirectAdminWalletsController, :show
+    post "/admin/cleaners/:id/wallet-credit", DirectAdminWalletsController, :credit
 
     get "/admin/bookings/:id/payment-diagnostics",
         DirectOperationsController,
@@ -231,6 +239,9 @@ defmodule MithrilWeb.Router do
     post "/admin/bookings/:id/cash-payout", DirectAdminBookingsController, :cash_payout
     post "/admin/bookings/:id/notify-cleaner", DirectAdminBookingsController, :notify_cleaner
     post "/admin/bookings/:id/send-receipt", DirectAdminBookingsController, :send_receipt
+    get "/admin/bookings/:id/invoice", DirectAdminInvoicesController, :show
+    put "/admin/bookings/:id/invoice", DirectAdminInvoicesController, :upsert
+    post "/admin/bookings/:id/invoice/send", DirectAdminInvoicesController, :send
     get "/admin/service-requests", DirectDispatchController, :list_admin_service_requests
 
     post "/admin/service-requests/:id/assign",

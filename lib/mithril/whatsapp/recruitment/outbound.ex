@@ -87,10 +87,10 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
   end
 
   defp post_message(env, fields) do
-    if Application.get_env(:mithril, :twilio_http, :http) == :noop do
-      :ok
-    else
-      post_message_http(env, fields)
+    case Application.get_env(:mithril, :twilio_http, :http) do
+      :noop -> :ok
+      {:error, reason} -> {:error, reason}
+      _ -> post_message_http(env, fields)
     end
   end
 
