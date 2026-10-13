@@ -42,6 +42,7 @@ defmodule MithrilWeb.Schemas.DirectAdminInvoice do
         totalMinor: %Schema{type: :integer},
         currency: %Schema{type: :string},
         notes: %Schema{type: :string, nullable: true},
+        signatoryRole: %Schema{type: :string, maxLength: 80, nullable: true},
         viewUrl: %Schema{type: :string, nullable: true},
         lastWhatsappSentAt: %Schema{type: :string, format: :"date-time", nullable: true},
         lastEmailSentAt: %Schema{type: :string, format: :"date-time", nullable: true}
@@ -93,7 +94,8 @@ defmodule MithrilWeb.Schemas.DirectAdminInvoice do
           }
         },
         adjustmentMinor: %Schema{type: :integer},
-        notes: %Schema{type: :string, maxLength: 2000, nullable: true}
+        notes: %Schema{type: :string, maxLength: 2000, nullable: true},
+        signatoryRole: %Schema{type: :string, maxLength: 80, nullable: true}
       },
       required: [:issuedOn, :billToName, :project, :lines, :adjustmentMinor]
     })

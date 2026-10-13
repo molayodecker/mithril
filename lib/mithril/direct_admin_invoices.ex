@@ -158,7 +158,7 @@ defmodule Mithril.DirectAdminInvoices do
     SELECT id, booking_id, public_token, invoice_no, issued_on::text, bill_to_name,
            bill_to_address, bill_to_phone, bill_to_email, project, lines,
            adjustment_minor, subtotal_minor, total_minor, currency, notes,
-           last_whatsapp_sent_at, last_email_sent_at, updated_at
+           signatory_role, last_whatsapp_sent_at, last_email_sent_at, updated_at
     FROM public.job_invoices
     """
   end
@@ -181,6 +181,7 @@ defmodule Mithril.DirectAdminInvoices do
       total,
       currency,
       notes,
+      signatory,
       whatsapp_at,
       email_at,
       updated_at
@@ -203,6 +204,7 @@ defmodule Mithril.DirectAdminInvoices do
       "totalMinor" => total,
       "currency" => currency || "GHS",
       "notes" => notes,
+      "signatoryRole" => signatory,
       "lastWhatsappSentAt" => timestamp(whatsapp_at),
       "lastEmailSentAt" => timestamp(email_at),
       "updatedAt" => timestamp(updated_at)
@@ -310,6 +312,7 @@ defmodule Mithril.DirectAdminInvoices do
          {:ok, phone} <- optional_phone(params["billToPhone"] || params[:billToPhone]),
          {:ok, email} <- optional_email(params["billToEmail"] || params[:billToEmail]),
          {:ok, notes} <- optional_text(params["notes"] || params[:notes], 2000),
+         {:ok, signatory} <- optional_text(params["signatoryRole"] || params[:signatoryRole], 80),
          {:ok, invoice_no} <- optional_text(params["invoiceNo"] || params[:invoiceNo], 40) do
       {:ok,
        %{
@@ -322,7 +325,8 @@ defmodule Mithril.DirectAdminInvoices do
          "project" => project,
          "lines" => lines,
          "adjustmentMinor" => adjustment,
-         "notes" => notes
+         "notes" => notes,
+         "signatoryRole" => signatory
        }}
     end
   end

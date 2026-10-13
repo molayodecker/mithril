@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS public.job_invoices (
   total_minor integer NOT NULL,
   currency character varying(3) NOT NULL DEFAULT 'GHS' CHECK (currency = 'GHS'),
   notes text,
+  signatory_role text,
   created_by uuid NOT NULL REFERENCES public.users(id),
   updated_by uuid REFERENCES public.users(id),
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -70,6 +71,7 @@ DECLARE
   v_email text;
   v_project text;
   v_notes text;
+  v_signatory text;
   v_row public.job_invoices%ROWTYPE;
 BEGIN
   IF p_booking_id IS NULL OR p_recorded_by IS NULL OR p_invoice IS NULL THEN
@@ -182,12 +184,14 @@ BEGIN
   v_phone := NULLIF(trim(COALESCE(p_invoice ->> 'billToPhone', '')), '');
   v_email := NULLIF(lower(trim(COALESCE(p_invoice ->> 'billToEmail', ''))), '');
   v_notes := NULLIF(trim(COALESCE(p_invoice ->> 'notes', '')), '');
+  v_signatory := NULLIF(trim(COALESCE(p_invoice ->> 'signatoryRole', '')), '');
   IF v_name = '' OR length(v_name) > 160
      OR v_project = '' OR length(v_project) > 160
      OR (v_address IS NOT NULL AND length(v_address) > 500)
      OR (v_phone IS NOT NULL AND length(v_phone) > 32)
      OR (v_email IS NOT NULL AND length(v_email) > 200)
-     OR (v_notes IS NOT NULL AND length(v_notes) > 2000) THEN
+     OR (v_notes IS NOT NULL AND length(v_notes) > 2000)
+     OR (v_signatory IS NOT NULL AND length(v_signatory) > 80) THEN
     RAISE EXCEPTION 'invalid_invoice';
   END IF;
 
@@ -232,6 +236,7 @@ BEGIN
     total_minor,
     currency,
     notes,
+    signatory_role,
     created_by,
     updated_by
   )
@@ -251,6 +256,7 @@ BEGIN
     v_total::integer,
     'GHS',
     v_notes,
+    v_signatory,
     p_recorded_by,
     p_recorded_by
   )
@@ -268,6 +274,7 @@ BEGIN
     subtotal_minor = EXCLUDED.subtotal_minor,
     total_minor = EXCLUDED.total_minor,
     notes = EXCLUDED.notes,
+    signatory_role = EXCLUDED.signatory_role,
     updated_by = EXCLUDED.updated_by,
     updated_at = now()
   RETURNING * INTO v_row;
@@ -289,6 +296,7 @@ BEGIN
     'totalMinor', v_row.total_minor,
     'currency', v_row.currency,
     'notes', v_row.notes,
+    'signatoryRole', v_row.signatory_role,
     'lastWhatsappSentAt', v_row.last_whatsapp_sent_at,
     'lastEmailSentAt', v_row.last_email_sent_at
   );

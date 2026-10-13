@@ -19,7 +19,7 @@ defmodule Mithril.DirectAdminBilling do
         """
         SELECT id, form_type, invoice_no, issued_on::text, bill_to_name, bill_to_address,
                bill_to_phone, bill_to_email, project, lines, adjustment_minor, subtotal_minor,
-               total_minor, currency, notes, updated_at
+               total_minor, currency, notes, signatory_role, updated_at
         FROM public.admin_billing_invoices
         ORDER BY updated_at DESC, id DESC
         LIMIT 50 OFFSET $1
@@ -129,6 +129,7 @@ defmodule Mithril.DirectAdminBilling do
          {:ok, phone} <- optional_text(params["billToPhone"] || params[:billToPhone], 32),
          {:ok, email} <- optional_email(params["billToEmail"] || params[:billToEmail]),
          {:ok, notes} <- optional_text(params["notes"] || params[:notes], 2000),
+         {:ok, signatory} <- optional_text(params["signatoryRole"] || params[:signatoryRole], 80),
          {:ok, invoice_no} <- optional_text(params["invoiceNo"] || params[:invoiceNo], 40) do
       {:ok,
        %{
@@ -142,7 +143,8 @@ defmodule Mithril.DirectAdminBilling do
          "project" => project,
          "lines" => lines,
          "adjustmentMinor" => adjustment,
-         "notes" => notes
+         "notes" => notes,
+         "signatoryRole" => signatory
        }}
     end
   end
@@ -285,6 +287,7 @@ defmodule Mithril.DirectAdminBilling do
       total,
       currency,
       notes,
+      signatory,
       updated
     ] = row
 
@@ -304,6 +307,7 @@ defmodule Mithril.DirectAdminBilling do
       "totalMinor" => total,
       "currency" => currency || "GHS",
       "notes" => notes,
+      "signatoryRole" => signatory,
       "updatedAt" => timestamp(updated)
     }
   end

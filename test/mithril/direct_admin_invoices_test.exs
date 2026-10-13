@@ -92,6 +92,7 @@ defmodule Mithril.DirectAdminInvoicesTest do
     assert {:ok, public} = DirectAdminInvoices.public_show(saved["publicToken"])
     assert public["totalMinor"] == 480_000
     assert public["bookingId"] == booking_id
+    assert public["signatoryRole"] == nil
 
     updated =
       sample_invoice(%{"project" => "Revised clean", "adjustmentMinor" => 0, "invoiceNo" => nil})
@@ -101,6 +102,26 @@ defmodule Mithril.DirectAdminInvoicesTest do
     assert again["invoiceNo"] == "12"
     assert again["totalMinor"] == 495_000
     assert again["project"] == "Revised clean"
+  end
+
+  test "persists signatory role on save, show, and public view" do
+    admin_id = Fixtures.insert_user!("admin")
+    booking_id = Fixtures.insert_booking!(Fixtures.insert_user!())
+
+    assert {:ok, saved} =
+             DirectAdminInvoices.upsert(
+               admin_id,
+               booking_id,
+               sample_invoice(%{"signatoryRole" => "Operations Manager"})
+             )
+
+    assert saved["signatoryRole"] == "Operations Manager"
+
+    assert {:ok, shown} = DirectAdminInvoices.show(admin_id, booking_id)
+    assert shown["signatoryRole"] == "Operations Manager"
+
+    assert {:ok, public} = DirectAdminInvoices.public_show(saved["publicToken"])
+    assert public["signatoryRole"] == "Operations Manager"
   end
 
   test "changing recipient details revokes the previous public invoice link" do

@@ -31,6 +31,7 @@ defmodule MithrilWeb.Schemas.DirectAdminBilling do
         totalMinor: %Schema{type: :integer},
         currency: %Schema{type: :string},
         notes: %Schema{type: :string, nullable: true},
+        signatoryRole: %Schema{type: :string, nullable: true},
         updatedAt: %Schema{type: :string, format: :"date-time", nullable: true}
       },
       required: [
@@ -100,7 +101,8 @@ defmodule MithrilWeb.Schemas.DirectAdminBilling do
           }
         },
         adjustmentMinor: %Schema{type: :integer},
-        notes: %Schema{type: :string, maxLength: 2000, nullable: true}
+        notes: %Schema{type: :string, maxLength: 2000, nullable: true},
+        signatoryRole: %Schema{type: :string, maxLength: 80, nullable: true}
       },
       required: [:formType, :issuedOn, :billToName, :project, :lines, :adjustmentMinor]
     })
