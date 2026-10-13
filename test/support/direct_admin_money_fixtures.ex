@@ -14,6 +14,8 @@ defmodule Mithril.DirectAdminMoneyFixtures do
     end
 
     for table <- [
+          "admin_billing_invoices",
+          "admin_payment_advices",
           "job_invoices",
           "admin_wallet_credits",
           "wallet_transactions",
@@ -29,6 +31,7 @@ defmodule Mithril.DirectAdminMoneyFixtures do
     end
 
     Repo.query!("DROP SEQUENCE IF EXISTS public.job_invoice_no_seq")
+    Repo.query!("DROP SEQUENCE IF EXISTS public.payment_advice_no_seq")
 
     Repo.query!("""
     CREATE TABLE public.users (
@@ -164,6 +167,75 @@ defmodule Mithril.DirectAdminMoneyFixtures do
     )
 
     install_function!("20261012180000_admin_job_invoices.sql", "upsert_admin_job_invoice")
+
+    Repo.query!("""
+    CREATE SEQUENCE public.payment_advice_no_seq AS integer
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.admin_billing_invoices (
+      id uuid PRIMARY KEY,
+      form_type text NOT NULL CHECK (form_type IN ('w8ben', '1099')),
+      invoice_no text NOT NULL,
+      issued_on date NOT NULL,
+      bill_to_name text NOT NULL,
+      bill_to_address text,
+      bill_to_phone text,
+      bill_to_email text,
+      project text NOT NULL,
+      lines jsonb NOT NULL,
+      adjustment_minor integer NOT NULL DEFAULT 0,
+      subtotal_minor integer NOT NULL CHECK (subtotal_minor >= 0),
+      total_minor integer NOT NULL,
+      currency varchar(3) NOT NULL DEFAULT 'GHS' CHECK (currency = 'GHS'),
+      notes text,
+      created_by uuid NOT NULL REFERENCES public.users(id),
+      updated_by uuid REFERENCES public.users(id),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.admin_payment_advices (
+      id uuid PRIMARY KEY,
+      form_type text NOT NULL CHECK (form_type IN ('w8ben', '1099')),
+      advice_no text NOT NULL,
+      pay_period text NOT NULL,
+      payment_date date NOT NULL,
+      paid_to_name text NOT NULL,
+      paid_to_address text,
+      paid_to_email text,
+      paid_to_phone text,
+      employee_id text,
+      role_name text,
+      department text,
+      pay_type text,
+      earnings jsonb NOT NULL,
+      reimbursements jsonb NOT NULL,
+      deductions jsonb NOT NULL,
+      earnings_minor integer NOT NULL CHECK (earnings_minor >= 0),
+      reimbursements_minor integer NOT NULL CHECK (reimbursements_minor >= 0),
+      deductions_minor integer NOT NULL CHECK (deductions_minor >= 0),
+      net_minor integer NOT NULL,
+      currency varchar(3) NOT NULL DEFAULT 'GHS' CHECK (currency = 'GHS'),
+      pay_method text,
+      pay_account text,
+      pay_network text,
+      pay_reference text,
+      created_by uuid NOT NULL REFERENCES public.users(id),
+      updated_by uuid REFERENCES public.users(id),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    install_function!(
+      "20261012200000_admin_billing_documents.sql",
+      "upsert_admin_billing_invoice"
+    )
+
+    install_function!("20261012200000_admin_billing_documents.sql", "upsert_admin_payment_advice")
   end
 
   def insert_user!(role \\ nil) do

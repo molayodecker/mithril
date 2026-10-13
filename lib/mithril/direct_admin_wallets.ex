@@ -4,6 +4,7 @@ defmodule Mithril.DirectAdminWallets do
   require Logger
 
   alias Mithril.Auth
+  alias Mithril.DirectAdminActor
   alias Mithril.Repo
 
   def show(user_id, worker_id) do
@@ -44,18 +45,26 @@ defmodule Mithril.DirectAdminWallets do
          {:ok, amount} <- positive_int(params["amountMinor"] || params[:amountMinor]),
          :ok <- require_admin(admin_uid),
          {:ok, notes} <- optional_notes(params["notes"] || params[:notes]) do
-      case Repo.query(
-             """
-             SELECT public.record_admin_wallet_credit(
-               p_worker_id := $1::uuid,
-               p_amount_subunit := $2::integer,
-               p_recorded_by := $3::uuid,
-               p_notes := $4::text
-             )
-             """,
-             [worker_uid, amount, admin_uid, notes]
-           ) do
-        {:ok, %{rows: [[payload]]}} ->
+      case DirectAdminActor.with_actor(admin_uid, fn ->
+             case Repo.query(
+                    """
+                    SELECT public.record_admin_wallet_credit(
+                      p_worker_id := $1::uuid,
+                      p_amount_subunit := $2::integer,
+                      p_recorded_by := $3::uuid,
+                      p_notes := $4::text
+                    )
+                    """,
+                    [worker_uid, amount, admin_uid, notes]
+                  ) do
+               {:ok, %{rows: [[payload]]}} ->
+                 payload
+
+               {:error, error} ->
+                 Repo.rollback(error)
+             end
+           end) do
+        {:ok, payload} ->
           {:ok,
            %{
              "amountMinor" => amount,
