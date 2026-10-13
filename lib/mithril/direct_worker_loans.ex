@@ -189,8 +189,6 @@ defmodule Mithril.DirectWorkerLoans do
     end
   end
 
-  end
-
   defp present_row([
          id,
          worker_id,
