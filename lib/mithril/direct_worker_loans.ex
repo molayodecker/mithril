@@ -40,7 +40,10 @@ defmodule Mithril.DirectWorkerLoans do
   def list_worker_requests(worker_id) do
     with {:ok, worker_uid} <- dump_uuid(worker_id),
          :ok <- require_cleaner(worker_uid) do
-      {:ok, Enum.map(fetch_requests(worker_id: worker_uid), &present_row/1)}
+      case fetch_requests(worker_id: worker_uid) do
+        {:ok, rows} -> {:ok, Enum.map(rows, &present_row/1)}
+        {:error, reason} -> {:error, reason}
+      end
     else
       :error -> {:error, :invalid_request}
       {:error, reason} -> {:error, reason}
@@ -62,7 +65,10 @@ defmodule Mithril.DirectWorkerLoans do
     with {:ok, admin_uid} <- dump_uuid(user_id),
          :ok <- require_admin(admin_uid),
          {:ok, status_filter} <- request_status_filter(status) do
-      {:ok, Enum.map(fetch_requests(status: status_filter), &present_row/1)}
+      case fetch_requests(status: status_filter) do
+        {:ok, rows} -> {:ok, Enum.map(rows, &present_row/1)}
+        {:error, reason} -> {:error, reason}
+      end
     else
       :error -> {:error, :invalid_request}
       {:error, reason} -> {:error, reason}
@@ -74,8 +80,9 @@ defmodule Mithril.DirectWorkerLoans do
          :ok <- require_admin(admin_uid),
          {:ok, request_uid} <- dump_uuid(request_id) do
       case fetch_requests(id: request_uid) do
-        [row] -> {:ok, present_row(row)}
-        [] -> {:error, :request_not_found}
+        {:ok, [row]} -> {:ok, present_row(row)}
+        {:ok, []} -> {:error, :request_not_found}
+        {:error, reason} -> {:error, reason}
       end
     else
       :error -> {:error, :invalid_request}
@@ -130,7 +137,7 @@ defmodule Mithril.DirectWorkerLoans do
           end
       end
 
-    {:ok, %{rows: rows}} =
+    result =
       Repo.query(
         """
         SELECT
@@ -152,11 +159,14 @@ defmodule Mithril.DirectWorkerLoans do
         args
       )
 
-    rows
+    case result do
+      {:ok, %{rows: rows}} -> {:ok, rows}
+      {:error, error} -> map_rpc_error(error)
+    end
   end
 
   defp fetch_account_summary(worker_uid) do
-    {:ok, %{rows: rows}} =
+    result =
       Repo.query(
         """
         SELECT COALESCE(a.outstanding_minor, 0), COALESCE(a.currency, 'GHS')
@@ -167,13 +177,18 @@ defmodule Mithril.DirectWorkerLoans do
         [worker_uid]
       )
 
-    case rows do
-      [[outstanding, currency]] ->
+    case result do
+      {:ok, %{rows: [[outstanding, currency]]}} ->
         %{"outstandingMinor" => outstanding, "currency" => currency || "GHS"}
 
-      [] ->
+      {:ok, %{rows: []}} ->
         {:error, :worker_not_found}
+
+      {:error, error} ->
+        map_rpc_error(error)
     end
+  end
+
   end
 
   defp present_row([
@@ -279,6 +294,13 @@ defmodule Mithril.DirectWorkerLoans do
   defp dump_uuid(value) when is_binary(value), do: Ecto.UUID.dump(value)
   defp dump_uuid(_), do: :error
 
+  defp uuid_string(value) when is_binary(value) and byte_size(value) == 16 do
+    case Ecto.UUID.load(value) do
+      {:ok, uuid} -> uuid
+      :error -> nil
+    end
+  end
+
   defp uuid_string(value) do
     case Ecto.UUID.cast(value) do
       {:ok, uuid} -> uuid
@@ -288,6 +310,10 @@ defmodule Mithril.DirectWorkerLoans do
 
   defp datetime_to_iso8601(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
   defp datetime_to_iso8601(_), do: nil
+
+  defp map_rpc_error(%Postgrex.Error{postgres: %{code: :unique_violation, constraint: constraint}})
+       when constraint in ["worker_loan_requests_one_pending_per_worker", "worker_loan_requests_pending_worker_idx"],
+       do: {:error, :pending_request_exists}
 
   defp map_rpc_error(%Postgrex.Error{postgres: %{message: message}} = error)
        when is_binary(message) do
