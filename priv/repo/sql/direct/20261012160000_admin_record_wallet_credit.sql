@@ -160,4 +160,16 @@ COMMENT ON FUNCTION public.record_admin_wallet_credit(uuid, integer, uuid, text)
 
 -- The function owner is the only executor. Credits also require mithril.actor_id
 -- to equal p_recorded_by. Do not GRANT EXECUTE to PUBLIC.
-REVOKE ALL ON FUNCTION public.record_admin_wallet_credit(uuid, integer, uuid, text) FROM PUBLIC;
+-- Fly MPG refuses REVOKE on PUBLIC because it includes system roles.
+DO $$
+BEGIN
+  REVOKE ALL ON FUNCTION public.record_admin_wallet_credit(uuid, integer, uuid, text) FROM PUBLIC;
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLERRM LIKE '%MPG system roles cannot be modified%' THEN
+      RAISE NOTICE 'Skipping REVOKE on Fly MPG: %', SQLERRM;
+    ELSE
+      RAISE;
+    END IF;
+END
+$$;

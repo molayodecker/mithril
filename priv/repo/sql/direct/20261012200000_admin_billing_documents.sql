@@ -582,5 +582,17 @@ COMMENT ON FUNCTION public.upsert_admin_payment_advice(uuid, uuid, jsonb) IS
 -- The role that applies this file owns the functions and is the only executor.
 -- Do not GRANT EXECUTE to PUBLIC. Both functions also require mithril.actor_id,
 -- set by the application from the authenticated user, to equal p_recorded_by.
-REVOKE ALL ON FUNCTION public.upsert_admin_billing_invoice(uuid, uuid, jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.upsert_admin_payment_advice(uuid, uuid, jsonb) FROM PUBLIC;
+-- Fly MPG refuses REVOKE on PUBLIC because it includes system roles.
+DO $$
+BEGIN
+  REVOKE ALL ON FUNCTION public.upsert_admin_billing_invoice(uuid, uuid, jsonb) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.upsert_admin_payment_advice(uuid, uuid, jsonb) FROM PUBLIC;
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLERRM LIKE '%MPG system roles cannot be modified%' THEN
+      RAISE NOTICE 'Skipping REVOKE on Fly MPG: %', SQLERRM;
+    ELSE
+      RAISE;
+    END IF;
+END
+$$;
