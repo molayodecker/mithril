@@ -176,7 +176,7 @@ defmodule Mithril.DirectAdminMoneyFixtures do
     Repo.query!("""
     CREATE TABLE public.admin_billing_invoices (
       id uuid PRIMARY KEY,
-      form_type text NOT NULL CHECK (form_type IN ('w8ben', '1099')),
+      form_type text CHECK (form_type IS NULL OR form_type IN ('w8ben', '1099')),
       invoice_no text NOT NULL,
       issued_on date NOT NULL,
       bill_to_name text NOT NULL,

@@ -119,7 +119,7 @@ defmodule Mithril.DirectAdminBilling do
   end
 
   defp invoice_payload(params) do
-    with {:ok, form_type} <- form_type(params),
+    with {:ok, form_type} <- optional_form_type(params),
          {:ok, lines} <- invoice_lines(params["lines"] || params[:lines]),
          {:ok, adjustment} <- signed_amount(params["adjustmentMinor"] || params[:adjustmentMinor]),
          {:ok, issued_on} <- iso_date(params["issuedOn"] || params[:issuedOn]),
@@ -265,6 +265,15 @@ defmodule Mithril.DirectAdminBilling do
 
   defp form_type(params) do
     case params["formType"] || params[:formType] do
+      form when form in ["w8ben", "1099"] -> {:ok, form}
+      _ -> {:error, :invalid_form_type}
+    end
+  end
+
+  defp optional_form_type(params) do
+    case params["formType"] || params[:formType] do
+      nil -> {:ok, nil}
+      "" -> {:ok, nil}
       form when form in ["w8ben", "1099"] -> {:ok, form}
       _ -> {:error, :invalid_form_type}
     end

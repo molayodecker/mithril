@@ -16,7 +16,8 @@ defmodule MithrilWeb.Schemas.DirectAdminBilling do
         formType: %Schema{
           type: :string,
           enum: ["w8ben", "1099"],
-          description: "Form W-8BEN or 1099"
+          nullable: true,
+          description: "Optional legacy value; payment advice uses the tax form instead"
         },
         invoiceNo: %Schema{type: :string},
         issuedOn: %Schema{type: :string, format: :date},
@@ -36,7 +37,6 @@ defmodule MithrilWeb.Schemas.DirectAdminBilling do
       },
       required: [
         :id,
-        :formType,
         :invoiceNo,
         :issuedOn,
         :billToName,
@@ -76,7 +76,8 @@ defmodule MithrilWeb.Schemas.DirectAdminBilling do
         formType: %Schema{
           type: :string,
           enum: ["w8ben", "1099"],
-          description: "Form W-8BEN or 1099"
+          nullable: true,
+          description: "Ignored for new invoices; optional for legacy rows"
         },
         invoiceNo: %Schema{type: :string, maxLength: 40, nullable: true},
         issuedOn: %Schema{type: :string, format: :date},
@@ -104,7 +105,7 @@ defmodule MithrilWeb.Schemas.DirectAdminBilling do
         notes: %Schema{type: :string, maxLength: 2000, nullable: true},
         signatoryRole: %Schema{type: :string, maxLength: 80, nullable: true}
       },
-      required: [:formType, :issuedOn, :billToName, :project, :lines, :adjustmentMinor]
+      required: [:issuedOn, :billToName, :project, :lines, :adjustmentMinor]
     })
   end
 

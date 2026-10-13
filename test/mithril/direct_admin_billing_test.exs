@@ -42,6 +42,20 @@ defmodule Mithril.DirectAdminBillingTest do
     assert updated["formType"] == "w8ben"
   end
 
+  test "saves a custom invoice without a tax form" do
+    admin_id = Fixtures.insert_user!("admin")
+    invoice_id = Ecto.UUID.generate()
+    payload = Map.delete(sample_invoice("1099"), "formType")
+
+    assert {:ok, saved} = DirectAdminBilling.upsert_invoice(admin_id, invoice_id, payload)
+    assert saved["formType"] == nil
+    assert saved["totalMinor"] == 480_000
+
+    assert {:ok, [listed]} = DirectAdminBilling.list_invoices(admin_id)
+    assert listed["id"] == invoice_id
+    assert listed["formType"] == nil
+  end
+
   test "persists signatory role on custom invoice save and list" do
     admin_id = Fixtures.insert_user!("admin")
     invoice_id = Ecto.UUID.generate()

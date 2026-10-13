@@ -7,7 +7,7 @@ CREATE SEQUENCE IF NOT EXISTS public.payment_advice_no_seq AS integer;
 
 CREATE TABLE IF NOT EXISTS public.admin_billing_invoices (
   id uuid PRIMARY KEY,
-  form_type text NOT NULL CHECK (form_type IN ('w8ben', '1099')),
+  form_type text CHECK (form_type IS NULL OR form_type IN ('w8ben', '1099')),
   invoice_no text NOT NULL,
   issued_on date NOT NULL,
   bill_to_name text NOT NULL,
@@ -131,8 +131,8 @@ BEGIN
     RAISE EXCEPTION 'recorded_by_not_authorized';
   END IF;
 
-  v_form := p_invoice ->> 'formType';
-  IF v_form IS DISTINCT FROM 'w8ben' AND v_form IS DISTINCT FROM '1099' THEN
+  v_form := NULLIF(trim(COALESCE(p_invoice ->> 'formType', '')), '');
+  IF v_form IS NOT NULL AND v_form IS DISTINCT FROM 'w8ben' AND v_form IS DISTINCT FROM '1099' THEN
     RAISE EXCEPTION 'invalid_form_type';
   END IF;
 
