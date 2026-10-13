@@ -18,6 +18,9 @@ DECLARE
   v_net integer;
   v_after integer;
   v_event_id uuid;
+  v_wallet_id uuid;
+  v_wallet_balance bigint;
+  v_wallet_tx_id uuid;
 BEGIN
   IF p_worker_id IS NULL OR p_recorded_by IS NULL OR p_gross_minor IS NULL THEN
     RAISE EXCEPTION 'missing_required_fields';
@@ -53,6 +56,19 @@ BEGIN
   v_net := p_gross_minor - v_recovery;
 
   IF v_recovery > 0 THEN
+    -- Repayment must remove spendable funds as well as reduce the debt.
+    SELECT w.id, w.balance_subunit INTO v_wallet_id, v_wallet_balance
+    FROM public.wallets w WHERE w.user_id = p_worker_id FOR UPDATE;
+    IF v_wallet_id IS NULL OR v_wallet_balance < v_recovery THEN
+      RAISE EXCEPTION 'insufficient_wallet_balance';
+    END IF;
+
+    UPDATE public.wallets SET balance_subunit = balance_subunit - v_recovery, updated_at = now()
+    WHERE id = v_wallet_id;
+    INSERT INTO public.wallet_transactions (wallet_id, booking_id, amount_subunit, type, description)
+    VALUES (v_wallet_id, p_source_id, v_recovery, 'debit', 'Worker loan recovery')
+    RETURNING id INTO v_wallet_tx_id;
+
     UPDATE public.worker_loan_accounts
     SET outstanding_minor = outstanding_minor - v_recovery, updated_at = now()
     WHERE worker_id = p_worker_id
@@ -71,7 +87,7 @@ BEGIN
       'repayment',
       v_recovery,
       v_after,
-      NULL,
+      v_wallet_tx_id,
       p_recorded_by,
       left(COALESCE(p_source_type, 'payout') || ':' || COALESCE(p_source_id::text, ''), 500)
     )
