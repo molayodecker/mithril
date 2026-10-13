@@ -56,6 +56,21 @@ defmodule Mithril.DirectAdminBillingTest do
     assert {:error, :forbidden} = DirectAdminBilling.list_invoices(stranger_id)
   end
 
+  test "invoice totals cannot become negative and archive pages are accessible" do
+    admin_id = Fixtures.insert_user!("admin")
+    assert {:error, :invalid_invoice} =
+             DirectAdminBilling.upsert_invoice(
+               admin_id,
+               Ecto.UUID.generate(),
+               Map.put(sample_invoice("1099"), "adjustmentMinor", -500_000)
+             )
+
+    assert {:error, :invalid_request} = DirectAdminBilling.list_invoices(admin_id, "abc")
+    assert {:error, :invalid_request} = DirectAdminBilling.list_advices(admin_id, "0")
+    assert {:ok, []} = DirectAdminBilling.list_invoices(admin_id, 2)
+    assert {:ok, []} = DirectAdminBilling.list_advices(admin_id, 2)
+  end
+
   test "payment advice net is earnings minus deductions plus reimbursements" do
     admin_id = Fixtures.insert_user!("admin")
     advice_id = Ecto.UUID.generate()
