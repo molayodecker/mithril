@@ -23,8 +23,8 @@ defmodule MithrilWeb.DirectAdminBillingController do
     responses: [ok: {"Custom invoices", "application/json", InvoiceList}]
   )
 
-  def index_invoices(conn, _params) do
-    case DirectAdminBilling.list_invoices(user_id(conn)) do
+  def index_invoices(conn, params) do
+    case DirectAdminBilling.list_invoices(user_id(conn), Map.get(params, "page", 1)) do
       {:ok, invoices} -> json(conn, %{invoices: invoices})
       {:error, reason} -> error(conn, reason)
     end
@@ -55,8 +55,8 @@ defmodule MithrilWeb.DirectAdminBillingController do
     responses: [ok: {"Payment advice", "application/json", AdviceList}]
   )
 
-  def index_advices(conn, _params) do
-    case DirectAdminBilling.list_advices(user_id(conn)) do
+  def index_advices(conn, params) do
+    case DirectAdminBilling.list_advices(user_id(conn), Map.get(params, "page", 1)) do
       {:ok, advices} -> json(conn, %{advices: advices})
       {:error, reason} -> error(conn, reason)
     end
