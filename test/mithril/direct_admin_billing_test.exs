@@ -73,7 +73,7 @@ defmodule Mithril.DirectAdminBillingTest do
     assert listed["signatoryRole"] == "Operations Manager"
   end
 
-  test "a custom invoice requires a tax form and an admin" do
+  test "rejects an invalid tax form and enforces admin access" do
     admin_id = Fixtures.insert_user!("admin")
     stranger_id = Fixtures.insert_user!()
     invoice_id = Ecto.UUID.generate()
