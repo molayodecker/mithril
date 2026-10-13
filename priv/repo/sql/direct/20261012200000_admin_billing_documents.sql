@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS public.admin_billing_invoices (
   lines jsonb NOT NULL,
   adjustment_minor integer NOT NULL DEFAULT 0,
   subtotal_minor integer NOT NULL CHECK (subtotal_minor >= 0),
-  total_minor integer NOT NULL,
+  total_minor integer NOT NULL CHECK (total_minor >= 0),
   currency character varying(3) NOT NULL DEFAULT 'GHS' CHECK (currency = 'GHS'),
   notes text,
   created_by uuid NOT NULL REFERENCES public.users(id),
@@ -190,7 +190,10 @@ BEGIN
   END IF;
   v_adjustment := v_adjustment_text::integer;
   v_total := v_subtotal + v_adjustment::bigint;
-  IF v_total > 2147483647 OR v_total < -2147483648 THEN
+  IF v_total < 0 THEN
+    RAISE EXCEPTION 'invalid_invoice';
+  END IF;
+  IF v_total > 2147483647 THEN
     RAISE EXCEPTION 'amount_too_large';
   END IF;
 
@@ -218,6 +221,9 @@ BEGIN
   IF v_email IS NOT NULL AND v_email !~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$' THEN
     RAISE EXCEPTION 'invalid_email';
   END IF;
+
+  -- Serialize concurrent first writes for the same document ID before checking existence.
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_invoice_id::text, 912731));
 
   SELECT invoice_no INTO v_existing_no
   FROM public.admin_billing_invoices
@@ -465,6 +471,9 @@ BEGIN
     RAISE EXCEPTION 'invalid_email';
   END IF;
 
+  -- Serialize concurrent first writes for the same document ID before checking existence.
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_advice_id::text, 912732));
+
   SELECT advice_no INTO v_existing_no
   FROM public.admin_payment_advices
   WHERE id = p_advice_id
@@ -556,3 +565,10 @@ COMMENT ON FUNCTION public.upsert_admin_billing_invoice(uuid, uuid, jsonb) IS
 
 COMMENT ON FUNCTION public.upsert_admin_payment_advice(uuid, uuid, jsonb) IS
   'Create or update a payment advice. Net pay is earnings minus deductions plus reimbursements, in pesewas. form_type is w8ben or 1099.';
+
+-- SECURITY DEFINER functions must not inherit PostgreSQL's default PUBLIC EXECUTE.
+-- The migration/apply role is the application's trusted database role; when
+-- deployments use distinct migration and runtime roles, explicitly grant EXECUTE
+-- to the runtime role during deployment, never to PUBLIC or anonymous roles.
+REVOKE ALL ON FUNCTION public.upsert_admin_billing_invoice(uuid, uuid, jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.upsert_admin_payment_advice(uuid, uuid, jsonb) FROM PUBLIC;
