@@ -143,7 +143,8 @@ defmodule Mithril.DirectAdminBilling do
          {:ok, earnings} <- money_lines(params["earnings"] || params[:earnings], true, false),
          {:ok, reimbursements} <-
            money_lines(params["reimbursements"] || params[:reimbursements], false, true),
-         {:ok, deductions} <- money_lines(params["deductions"] || params[:deductions], false, false),
+         {:ok, deductions} <-
+           money_lines(params["deductions"] || params[:deductions], false, false),
          {:ok, payment_date} <- iso_date(params["paymentDate"] || params[:paymentDate]),
          {:ok, name} <- required_text(params["paidToName"] || params[:paidToName], 160),
          {:ok, period} <- required_text(params["payPeriod"] || params[:payPeriod], 40),
