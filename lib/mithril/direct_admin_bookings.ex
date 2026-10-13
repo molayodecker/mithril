@@ -214,10 +214,16 @@ defmodule Mithril.DirectAdminBookings do
          notes <- optional_notes(params["notes"] || params[:notes]) do
       case DirectAdminActor.with_actor(admin_uid, fn ->
              with {:ok, recovery_payload} <-
-                    apply_loan_recovery(cleaner_uid, amount, admin_uid, "booking_cash_payout", bid),
-                  net_minor <- recovery_payload["netMinor"] || recovery_payload[:netMinor],
+                    apply_loan_recovery(
+                      cleaner_uid,
+                      amount,
+                      admin_uid,
+                      "booking_cash_payout",
+                      bid
+                    ),
+                  net_minor <- recovery_payload["netMinor"] || recovery_payload[:netMinor] || 0,
                   {:ok, payout_payload} <-
-                    record_cash_payout_rpc(cleaner_uid, net_minor, admin_uid, bid, notes) do
+                    maybe_record_cash_payout(cleaner_uid, net_minor, admin_uid, bid, notes) do
                Map.merge(recovery_payload, payout_payload)
              else
                {:error, error} -> Repo.rollback(error)
@@ -257,6 +263,17 @@ defmodule Mithril.DirectAdminBookings do
       {:ok, %{rows: [[payload]]}} -> {:ok, payload}
       {:error, error} -> {:error, error}
     end
+  end
+
+  defp maybe_record_cash_payout(_cleaner_uid, net_minor, _admin_uid, _bid, _notes)
+       when not is_integer(net_minor) or net_minor < 0 do
+    {:error, :invalid_amount}
+  end
+
+  defp maybe_record_cash_payout(_cleaner_uid, 0, _admin_uid, _bid, _notes), do: {:ok, %{}}
+
+  defp maybe_record_cash_payout(cleaner_uid, net_minor, admin_uid, bid, notes) do
+    record_cash_payout_rpc(cleaner_uid, net_minor, admin_uid, bid, notes)
   end
 
   defp record_cash_payout_rpc(cleaner_uid, amount, admin_uid, bid, notes) do
@@ -873,6 +890,12 @@ defmodule Mithril.DirectAdminBookings do
 
       String.contains?(message, "booking_cleaner_mismatch") ->
         {:error, :booking_cleaner_mismatch}
+
+      String.contains?(message, "recorded_by_not_authorized") ->
+        {:error, :forbidden}
+
+      String.contains?(message, "worker_not_found") ->
+        {:error, :worker_not_found}
 
       String.contains?(message, "undefined_function") ->
         {:error, :database_unavailable}
