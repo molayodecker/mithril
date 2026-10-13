@@ -310,7 +310,7 @@ defmodule Mithril.DirectWorkerLoans do
   defp datetime_to_iso8601(_), do: nil
 
   defp map_rpc_error(%Postgrex.Error{postgres: %{code: :unique_violation, constraint: constraint}})
-       when constraint in ["worker_loan_requests_one_pending_per_worker", "worker_loan_requests_pending_worker_idx"],
+       when constraint in ["worker_loan_requests_one_pending_per_worker_idx"],
        do: {:error, :pending_request_exists}
 
   defp map_rpc_error(%Postgrex.Error{postgres: %{message: message}} = error)
