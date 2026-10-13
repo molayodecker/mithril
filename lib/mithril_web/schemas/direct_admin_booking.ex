@@ -50,6 +50,7 @@ defmodule MithrilWeb.Schemas.DirectAdminBooking do
         cleanerPhone: %Schema{type: :string, nullable: true},
         cleanerEmail: %Schema{type: :string, nullable: true},
         walletBalanceMinor: %Schema{type: :integer, nullable: true},
+        loanOutstandingMinor: %Schema{type: :integer, nullable: true},
         walletCurrency: %Schema{type: :string, nullable: true},
         payoutMethod: %Schema{allOf: [PayoutMethod], nullable: true},
         assignmentPhase: %Schema{type: :string, nullable: true},
@@ -151,6 +152,8 @@ defmodule MithrilWeb.Schemas.DirectAdminBooking do
       type: :object,
       properties: %{
         amountMinor: %Schema{type: :integer},
+        loanRecoveryMinor: %Schema{type: :integer, nullable: true},
+        netPaidMinor: %Schema{type: :integer, nullable: true},
         newBalanceMinor: %Schema{type: :integer, nullable: true}
       },
       required: [:amountMinor]

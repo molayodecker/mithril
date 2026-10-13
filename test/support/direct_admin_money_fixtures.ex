@@ -14,6 +14,9 @@ defmodule Mithril.DirectAdminMoneyFixtures do
     end
 
     for table <- [
+          "worker_loan_events",
+          "worker_loan_requests",
+          "worker_loan_accounts",
           "admin_billing_invoices",
           "admin_payment_advices",
           "job_invoices",
@@ -166,6 +169,58 @@ defmodule Mithril.DirectAdminMoneyFixtures do
       "20261012160000_admin_record_wallet_credit.sql",
       "record_admin_wallet_credit"
     )
+
+    Repo.query!("""
+    CREATE TABLE IF NOT EXISTS public.worker_loan_accounts (
+      worker_id uuid PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
+      outstanding_minor integer NOT NULL DEFAULT 0 CHECK (outstanding_minor >= 0),
+      currency varchar(3) NOT NULL DEFAULT 'GHS',
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE IF NOT EXISTS public.worker_loan_requests (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      worker_id uuid NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+      amount_minor integer NOT NULL CHECK (amount_minor > 0),
+      reason text,
+      status text NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled')),
+      reviewed_by uuid REFERENCES public.users(id),
+      review_notes text,
+      reviewed_at timestamptz,
+      wallet_transaction_id uuid REFERENCES public.wallet_transactions(id),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    Repo.query!("""
+    CREATE UNIQUE INDEX IF NOT EXISTS worker_loan_requests_one_pending_per_worker_idx
+      ON public.worker_loan_requests (worker_id)
+      WHERE status = 'pending'
+    """)
+
+    Repo.query!("""
+    CREATE TABLE IF NOT EXISTS public.worker_loan_events (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      worker_id uuid NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+      request_id uuid REFERENCES public.worker_loan_requests(id),
+      event_type text NOT NULL CHECK (event_type IN ('disbursement', 'repayment')),
+      amount_minor integer NOT NULL CHECK (amount_minor > 0),
+      outstanding_after_minor integer NOT NULL CHECK (outstanding_after_minor >= 0),
+      wallet_transaction_id uuid REFERENCES public.wallet_transactions(id),
+      recorded_by uuid REFERENCES public.users(id),
+      notes text,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    for name <- ["create_worker_loan_request", "review_worker_loan_request"] do
+      install_function!("20261013190000_worker_loan_requests.sql", name)
+    end
+
+    install_function!("20261013200000_worker_loan_recovery.sql", "apply_worker_loan_recovery")
 
     install_function!("20261012180000_admin_job_invoices.sql", "upsert_admin_job_invoice")
 

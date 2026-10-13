@@ -7,6 +7,7 @@ defmodule Mithril.DirectAdminBookings do
   require Logger
 
   alias Mithril.Auth
+  alias Mithril.DirectAdminActor
   alias Mithril.DirectBookingCancels
   alias Mithril.DirectBookings
   alias Mithril.Notifications
@@ -32,6 +33,7 @@ defmodule Mithril.DirectAdminBookings do
              LEFT JOIN public.users wu ON wu.id = b.cleaner_id
              LEFT JOIN public.profiles wp ON wp.id = b.cleaner_id
              LEFT JOIN public.wallets w ON w.user_id = b.cleaner_id
+             LEFT JOIN public.worker_loan_accounts la ON la.worker_id = b.cleaner_id
              LEFT JOIN LATERAL (
                SELECT pm.bank_name, pm.masked_account, pm.account_name, pm.account_number
                FROM public.payout_methods pm
@@ -210,22 +212,23 @@ defmodule Mithril.DirectAdminBookings do
          {:ok, booking} <- fetch_booking(bid),
          {:ok, cleaner_uid} <- dump_uuid(booking["cleanerId"]),
          notes <- optional_notes(params["notes"] || params[:notes]) do
-      case Repo.query(
-             """
-             SELECT public.record_admin_cash_payout(
-               p_cleaner_id := $1::uuid,
-               p_amount_subunit := $2::bigint,
-               p_recorded_by := $3::uuid,
-               p_booking_id := $4::uuid,
-               p_notes := $5::text
-             )
-             """,
-             [cleaner_uid, amount, admin_uid, bid, notes]
-           ) do
-        {:ok, %{rows: [[payload]]}} ->
+      case DirectAdminActor.with_actor(admin_uid, fn ->
+             with {:ok, recovery_payload} <-
+                    apply_loan_recovery(cleaner_uid, amount, admin_uid, "booking_cash_payout", bid),
+                  net_minor <- recovery_payload["netMinor"] || recovery_payload[:netMinor],
+                  {:ok, payout_payload} <-
+                    record_cash_payout_rpc(cleaner_uid, net_minor, admin_uid, bid, notes) do
+               Map.merge(recovery_payload, payout_payload)
+             else
+               {:error, error} -> Repo.rollback(error)
+             end
+           end) do
+        {:ok, payload} ->
           {:ok,
            %{
              "amountMinor" => amount,
+             "loanRecoveryMinor" => rpc_int(payload, "recoveryMinor") || 0,
+             "netPaidMinor" => rpc_int(payload, "netMinor") || amount,
              "newBalanceMinor" => rpc_int(payload, "new_balance_subunit")
            }}
 
@@ -235,6 +238,42 @@ defmodule Mithril.DirectAdminBookings do
     else
       :error -> {:error, :invalid_request}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp apply_loan_recovery(worker_uid, gross_minor, admin_uid, source_type, source_id) do
+    case Repo.query(
+           """
+           SELECT public.apply_worker_loan_recovery(
+             p_worker_id := $1::uuid,
+             p_gross_minor := $2::integer,
+             p_recorded_by := $3::uuid,
+             p_source_type := $4::text,
+             p_source_id := $5::uuid
+           )
+           """,
+           [worker_uid, gross_minor, admin_uid, source_type, source_id]
+         ) do
+      {:ok, %{rows: [[payload]]}} -> {:ok, payload}
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp record_cash_payout_rpc(cleaner_uid, amount, admin_uid, bid, notes) do
+    case Repo.query(
+           """
+           SELECT public.record_admin_cash_payout(
+             p_cleaner_id := $1::uuid,
+             p_amount_subunit := $2::bigint,
+             p_recorded_by := $3::uuid,
+             p_booking_id := $4::uuid,
+             p_notes := $5::text
+           )
+           """,
+           [cleaner_uid, amount, admin_uid, bid, notes]
+         ) do
+      {:ok, %{rows: [[payload]]}} -> {:ok, payload}
+      {:error, error} -> {:error, error}
     end
   end
 
@@ -311,6 +350,7 @@ defmodule Mithril.DirectAdminBookings do
            LEFT JOIN public.users wu ON wu.id = b.cleaner_id
            LEFT JOIN public.profiles wp ON wp.id = b.cleaner_id
            LEFT JOIN public.wallets w ON w.user_id = b.cleaner_id
+           LEFT JOIN public.worker_loan_accounts la ON la.worker_id = b.cleaner_id
            LEFT JOIN LATERAL (
              SELECT pm.bank_name, pm.masked_account, pm.account_name, pm.account_number
              FROM public.payout_methods pm
@@ -371,6 +411,7 @@ defmodule Mithril.DirectAdminBookings do
       'cleanerEmail', wu.email,
       'walletBalanceMinor', w.balance_subunit::bigint,
       'walletCurrency', w.currency,
+      'loanOutstandingMinor', COALESCE(la.outstanding_minor, 0)::bigint,
       'payoutMethod', CASE
         WHEN pay.account_number IS NULL THEN NULL
         ELSE jsonb_build_object(
