@@ -190,6 +190,14 @@ BEGIN
     );
   END IF;
 
+  -- Eligibility must still hold when the request is approved, not just when submitted.
+  PERFORM 1 FROM public.cleaner_data cd
+  WHERE cd.user_id = v_row.worker_id AND cd.status = 'active'
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'worker_not_found';
+  END IF;
+
   -- Approve: credit wallet and record outstanding loan.
   SELECT w.id, COALESCE(w.balance_subunit, 0), COALESCE(w.currency, 'GHS')
   INTO v_wallet_id, v_balance, v_currency
