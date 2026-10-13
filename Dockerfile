@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
-ARG ELIXIR_BASE_IMAGE=hexpm/elixir:1.20.4-erlang-28.5.0.6-alpine-3.24.1
-ARG ALPINE_BASE_IMAGE=alpine:3.24.1
+ARG ELIXIR_BASE_IMAGE=hexpm/elixir:1.20.4-erlang-28.5.0.6-alpine-3.23.5
+ARG ALPINE_BASE_IMAGE=alpine:3.23.5
 FROM ${ELIXIR_BASE_IMAGE} AS build
 
 RUN apk add --no-cache build-base git

@@ -15,7 +15,8 @@ defmodule Mithril.DirectBookings do
   # Paystack plan intervals. Hourly and legacy bi-weekly stay unbookable.
   @bookable_recurrence_intervals ~w(daily weekly monthly quarterly annually)
   @property_types ~w(residential vacant_home office commercial airbnb_turnover post_construction)
-  @linen_handling ~w(replace_no_wash wash_hang_dry wash_dry_repack_onsite no_bedding_replace)
+  # Preserve operationally distinct linen choices; existing legacy values remain accepted.
+  @linen_handling ~w(replace_no_wash wash_hang_dry wash_dry_repack_onsite no_bedding_replace clean_linen_provided launder_on_site no_linen_change)
   @turnover_sources ~w(manual airbnb_ical)
 
   def list_services do
