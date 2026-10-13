@@ -192,7 +192,7 @@ BEGIN
 
   -- Eligibility must still hold when the request is approved, not just when submitted.
   PERFORM 1 FROM public.cleaner_data cd
-  WHERE cd.user_id = v_row.worker_id AND cd.status = 'active'
+  WHERE cd.user_id = v_row.worker_id
   FOR UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'worker_not_found';
