@@ -433,8 +433,9 @@ defmodule Mithril.DirectAdminBilling do
 
   defp iso_date(_), do: {:error, :invalid_invoice}
 
-  defp signed_amount(value) when is_integer(value) and value >= @min_minor and value <= @max_minor,
-    do: {:ok, value}
+  defp signed_amount(value)
+       when is_integer(value) and value >= @min_minor and value <= @max_minor,
+       do: {:ok, value}
 
   defp signed_amount(_), do: {:error, :invalid_invoice}
 
