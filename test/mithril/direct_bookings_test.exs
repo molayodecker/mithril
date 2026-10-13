@@ -216,7 +216,7 @@ defmodule Mithril.DirectBookingsTest do
     checkin_at = "#{Date.to_iso8601(visit_date)}T15:00:00Z"
 
     Repo.query!(
-      "INSERT INTO public.properties (id, owner_id) VALUES ($1, $2)",
+      "INSERT INTO public.properties (id, customer_id) VALUES ($1, $2)",
       [Ecto.UUID.dump!(property_id), Ecto.UUID.dump!(customer_id)]
     )
 
@@ -1522,7 +1522,7 @@ defmodule Mithril.DirectBookingsTest do
     Repo.query!("""
     CREATE TABLE public.properties (
       id uuid PRIMARY KEY,
-      owner_id uuid NOT NULL
+      customer_id uuid NOT NULL
     )
     """)
 
@@ -1637,7 +1637,18 @@ defmodule Mithril.DirectBookingsTest do
       customer_contact_phone text,
       turnover_guest_checkout_at timestamptz,
       turnover_next_checkin_at timestamptz,
-      turnover_linen_handling text,
+      turnover_linen_handling text CHECK (
+        turnover_linen_handling IS NULL
+        OR turnover_linen_handling IN (
+          'clean_linen_provided',
+          'launder_on_site',
+          'no_linen_change',
+          'replace_no_wash',
+          'wash_hang_dry',
+          'wash_dry_repack_onsite',
+          'no_bedding_replace'
+        )
+      ),
       turnover_restocking_notes text,
       turnover_source text,
       turnover_opportunity_id uuid,

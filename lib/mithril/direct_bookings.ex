@@ -949,7 +949,7 @@ defmodule Mithril.DirectBookings do
            FROM public.properties p
            WHERE o.id = $1::uuid
              AND p.id = o.property_id
-             AND p.owner_id = $3::uuid
+             AND p.customer_id = $3::uuid
              AND (o.booking_id IS NULL OR o.booking_id = $2::uuid)
              AND o.status IN ('needs_review', 'ready_to_book', 'conflict', 'booked')
            RETURNING o.id
@@ -1580,13 +1580,13 @@ defmodule Mithril.DirectBookings do
                SELECT
                  ($2::uuid IS NULL OR EXISTS (
                    SELECT 1 FROM public.properties p
-                   WHERE p.id = $2::uuid AND p.owner_id = $1::uuid
+                   WHERE p.id = $2::uuid AND p.customer_id = $1::uuid
                  )),
                  ($3::uuid IS NULL OR EXISTS (
                    SELECT 1 FROM public.turnover_opportunities o
                    JOIN public.properties p ON p.id = o.property_id
                    WHERE o.id = $3::uuid
-                     AND p.owner_id = $1::uuid
+                     AND p.customer_id = $1::uuid
                      AND ($2::uuid IS NULL OR o.property_id = $2::uuid)
                  ))
                """,
@@ -1637,7 +1637,7 @@ defmodule Mithril.DirectBookings do
            FROM public.turnover_opportunities o
            JOIN public.properties p ON p.id = o.property_id
            WHERE o.id = $1::uuid
-             AND p.owner_id = $2::uuid
+             AND p.customer_id = $2::uuid
              AND ($3::uuid IS NULL OR o.property_id = $3::uuid)
            """,
            [input.turnover_opportunity_id, customer_id, input.property_id]
