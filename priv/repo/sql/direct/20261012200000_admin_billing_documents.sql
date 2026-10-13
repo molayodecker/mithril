@@ -108,6 +108,13 @@ BEGIN
     RAISE EXCEPTION 'invalid_invoice';
   END IF;
 
+  -- Fly MPG refuses REVOKE FROM PUBLIC. SECURITY DEFINER still runs as the owner,
+  -- so only that connected role may call this. A reader/writer cannot escalate by
+  -- setting mithril.actor_id.
+  IF session_user IS DISTINCT FROM current_user THEN
+    RAISE EXCEPTION 'recorded_by_not_authorized';
+  END IF;
+
   -- mithril.actor_id is set for this transaction from the authenticated session.
   -- A caller-supplied admin UUID is not enough to create or overwrite a document.
   IF current_setting('mithril.actor_id', true) IS DISTINCT FROM p_recorded_by::text THEN
@@ -338,6 +345,13 @@ DECLARE
 BEGIN
   IF p_advice_id IS NULL OR p_recorded_by IS NULL OR p_advice IS NULL THEN
     RAISE EXCEPTION 'invalid_invoice';
+  END IF;
+
+  -- Fly MPG refuses REVOKE FROM PUBLIC. SECURITY DEFINER still runs as the owner,
+  -- so only that connected role may call this. A reader/writer cannot escalate by
+  -- setting mithril.actor_id.
+  IF session_user IS DISTINCT FROM current_user THEN
+    RAISE EXCEPTION 'recorded_by_not_authorized';
   END IF;
 
   -- mithril.actor_id is set for this transaction from the authenticated session.
@@ -577,10 +591,3 @@ COMMENT ON FUNCTION public.upsert_admin_billing_invoice(uuid, uuid, jsonb) IS
 
 COMMENT ON FUNCTION public.upsert_admin_payment_advice(uuid, uuid, jsonb) IS
   'Create or update a payment advice. Net pay is earnings minus deductions plus reimbursements, in pesewas. form_type is w8ben or 1099.';
-
--- SECURITY DEFINER functions must not inherit PostgreSQL's default PUBLIC EXECUTE.
--- The role that applies this file owns the functions and is the only executor.
--- Do not GRANT EXECUTE to PUBLIC. Both functions also require mithril.actor_id,
--- set by the application from the authenticated user, to equal p_recorded_by.
-REVOKE ALL ON FUNCTION public.upsert_admin_billing_invoice(uuid, uuid, jsonb) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.upsert_admin_payment_advice(uuid, uuid, jsonb) FROM PUBLIC;

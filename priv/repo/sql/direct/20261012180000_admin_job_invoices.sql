@@ -76,6 +76,13 @@ BEGIN
     RAISE EXCEPTION 'invalid_invoice';
   END IF;
 
+  -- Fly MPG refuses REVOKE FROM PUBLIC. SECURITY DEFINER still runs as the owner,
+  -- so only that connected role may call this. A reader/writer cannot escalate by
+  -- setting mithril.actor_id.
+  IF session_user IS DISTINCT FROM current_user THEN
+    RAISE EXCEPTION 'recorded_by_not_authorized';
+  END IF;
+
   -- mithril.actor_id is set for this transaction from the authenticated session.
   -- A caller-supplied admin UUID is not enough to create or overwrite an invoice.
   IF current_setting('mithril.actor_id', true) IS DISTINCT FROM p_recorded_by::text THEN
@@ -290,7 +297,3 @@ $function$;
 
 COMMENT ON FUNCTION public.upsert_admin_job_invoice(uuid, uuid, jsonb) IS
   'Create or replace the invoice for one booking. Quantity times days times unit price, in pesewas. A blank quantity and days bills the unit price once.';
-
--- The function owner is the only executor. Writes also require mithril.actor_id
--- to equal p_recorded_by. Do not GRANT EXECUTE to PUBLIC.
-REVOKE ALL ON FUNCTION public.upsert_admin_job_invoice(uuid, uuid, jsonb) FROM PUBLIC;
