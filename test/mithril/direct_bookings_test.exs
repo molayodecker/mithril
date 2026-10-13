@@ -262,7 +262,7 @@ defmodule Mithril.DirectBookingsTest do
                "+233200000002",
                ^checkout_at,
                ^checkin_at,
-               "replace_no_wash",
+               "clean_linen_provided",
                "Coffee and towels",
                "airbnb_ical",
                ^property_id
@@ -1642,11 +1642,7 @@ defmodule Mithril.DirectBookingsTest do
         OR turnover_linen_handling IN (
           'clean_linen_provided',
           'launder_on_site',
-          'no_linen_change',
-          'replace_no_wash',
-          'wash_hang_dry',
-          'wash_dry_repack_onsite',
-          'no_bedding_replace'
+          'no_linen_change'
         )
       ),
       turnover_restocking_notes text,

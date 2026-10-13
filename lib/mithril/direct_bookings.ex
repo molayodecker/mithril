@@ -15,7 +15,17 @@ defmodule Mithril.DirectBookings do
   # Paystack plan intervals. Hourly and legacy bi-weekly stay unbookable.
   @bookable_recurrence_intervals ~w(daily weekly monthly quarterly annually)
   @property_types ~w(residential vacant_home office commercial airbnb_turnover post_construction)
-  @linen_handling ~w(replace_no_wash wash_hang_dry wash_dry_repack_onsite no_bedding_replace)
+  # bookings.turnover_linen_handling only allows the older stored values.
+  # The API still accepts the current product choices and maps them here.
+  @stored_linen_handling %{
+    "replace_no_wash" => "clean_linen_provided",
+    "wash_hang_dry" => "launder_on_site",
+    "wash_dry_repack_onsite" => "launder_on_site",
+    "no_bedding_replace" => "no_linen_change",
+    "clean_linen_provided" => "clean_linen_provided",
+    "launder_on_site" => "launder_on_site",
+    "no_linen_change" => "no_linen_change"
+  }
   @turnover_sources ~w(manual airbnb_ical)
 
   def list_services do
@@ -1071,7 +1081,7 @@ defmodule Mithril.DirectBookings do
              blank_to_nil(Map.get(input, :customer_contact_phone)),
              Map.get(input, :turnover_guest_checkout_at),
              Map.get(input, :turnover_next_checkin_at),
-             blank_to_nil(Map.get(input, :turnover_linen_handling)),
+             stored_linen_handling(blank_to_nil(Map.get(input, :turnover_linen_handling))),
              blank_to_nil(Map.get(input, :turnover_restocking_notes)),
              blank_to_nil(Map.get(input, :turnover_source)),
              Map.get(input, :turnover_opportunity_id),
@@ -1720,12 +1730,18 @@ defmodule Mithril.DirectBookings do
 
     cond do
       linen == "" -> {:ok, nil}
-      linen in @linen_handling -> {:ok, linen}
+      Map.has_key?(@stored_linen_handling, linen) -> {:ok, stored_linen_handling(linen)}
       true -> :error
     end
   end
 
   defp optional_linen_handling(_), do: :error
+
+  defp stored_linen_handling(nil), do: nil
+
+  defp stored_linen_handling(value) when is_binary(value) do
+    Map.get(@stored_linen_handling, value, value)
+  end
 
   defp optional_turnover_source(nil), do: {:ok, nil}
   defp optional_turnover_source(""), do: {:ok, nil}
