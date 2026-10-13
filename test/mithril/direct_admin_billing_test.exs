@@ -58,6 +58,7 @@ defmodule Mithril.DirectAdminBillingTest do
 
   test "invoice totals cannot become negative and archive pages are accessible" do
     admin_id = Fixtures.insert_user!("admin")
+
     assert {:error, :invalid_invoice} =
              DirectAdminBilling.upsert_invoice(
                admin_id,
@@ -104,6 +105,7 @@ defmodule Mithril.DirectAdminBillingTest do
   test "a blank invoice number is assigned and kept, and email is stored lowercase" do
     admin_id = Fixtures.insert_user!("admin")
     invoice_id = Ecto.UUID.generate()
+
     payload =
       sample_invoice("w8ben")
       |> Map.put("invoiceNo", "  ")
@@ -166,6 +168,7 @@ defmodule Mithril.DirectAdminBillingTest do
 
     assert {:ok, _} =
              DirectAdminBilling.upsert_invoice(admin_id, newer_id, sample_invoice("w8ben"))
+
     touch!(older_id, "admin_billing_invoices")
 
     assert {:ok, [first, second]} = DirectAdminBilling.list_invoices(admin_id)
@@ -174,11 +177,13 @@ defmodule Mithril.DirectAdminBillingTest do
 
     first_advice = Ecto.UUID.generate()
     second_advice = Ecto.UUID.generate()
+
     assert {:ok, _} =
              DirectAdminBilling.upsert_advice(admin_id, first_advice, sample_advice("w8ben"))
 
     assert {:ok, _} =
              DirectAdminBilling.upsert_advice(admin_id, second_advice, sample_advice("1099"))
+
     touch!(second_advice, "admin_payment_advices")
     assert {:ok, [listed, _other]} = DirectAdminBilling.list_advices(admin_id)
     assert listed["id"] == second_advice
@@ -280,6 +285,7 @@ defmodule Mithril.DirectAdminBillingTest do
 
     assert {:error, :amount_too_large} =
              DirectAdminBilling.upsert_advice(admin_id, advice_id, overflowing)
+
     assert {:error, :invalid_request} = DirectAdminBilling.list_advices("not-a-uuid")
   end
 
