@@ -93,6 +93,7 @@ defmodule Mithril.DirectAdminWalletsTest do
     assert other_role =~ "recorded_by_not_authorized"
 
     Repo.query!("RESET SESSION AUTHORIZATION")
+    Repo.query!("DROP ROLE #{role}")
 
     assert {:error, :forbidden} =
              DirectAdminWallets.credit(reviewer_id, worker_id, %{"amountMinor" => 1_000})
