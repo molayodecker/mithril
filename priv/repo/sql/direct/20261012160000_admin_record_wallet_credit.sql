@@ -41,6 +41,13 @@ BEGIN
     RAISE EXCEPTION 'missing_required_fields';
   END IF;
 
+  -- Fly MPG refuses REVOKE FROM PUBLIC. SECURITY DEFINER still runs as the owner,
+  -- so only that connected role may call this. A reader/writer cannot escalate by
+  -- setting mithril.actor_id.
+  IF session_user IS DISTINCT FROM current_user THEN
+    RAISE EXCEPTION 'recorded_by_not_authorized';
+  END IF;
+
   -- mithril.actor_id is set for this transaction from the authenticated session.
   -- A caller-supplied admin UUID is not enough to credit a wallet.
   IF current_setting('mithril.actor_id', true) IS DISTINCT FROM p_recorded_by::text THEN
@@ -157,19 +164,3 @@ $function$;
 
 COMMENT ON FUNCTION public.record_admin_wallet_credit(uuid, integer, uuid, text) IS
   'Atomically credit a worker wallet for an admin-recorded add. Creates a GHS wallet when the worker does not have one yet.';
-
--- The function owner is the only executor. Credits also require mithril.actor_id
--- to equal p_recorded_by. Do not GRANT EXECUTE to PUBLIC.
--- Fly MPG refuses REVOKE on PUBLIC because it includes system roles.
-DO $$
-BEGIN
-  REVOKE ALL ON FUNCTION public.record_admin_wallet_credit(uuid, integer, uuid, text) FROM PUBLIC;
-EXCEPTION
-  WHEN OTHERS THEN
-    IF SQLERRM LIKE '%MPG system roles cannot be modified%' THEN
-      RAISE NOTICE 'Skipping REVOKE on Fly MPG: %', SQLERRM;
-    ELSE
-      RAISE;
-    END IF;
-END
-$$;

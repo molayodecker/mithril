@@ -76,6 +76,24 @@ defmodule Mithril.DirectAdminWalletsTest do
 
     assert unbound =~ "recorded_by_not_authorized"
 
+    role = "mithril_wallet_probe_#{System.unique_integer([:positive])}"
+
+    Repo.query!("CREATE ROLE #{role} NOLOGIN")
+    Repo.query!("SELECT set_config('mithril.actor_id', $1, true)", [admin_id])
+    Repo.query!("SET LOCAL SESSION AUTHORIZATION #{role}")
+
+    assert {:error, %Postgrex.Error{postgres: %{message: other_role}}} =
+             Repo.query(
+               """
+               SELECT public.record_admin_wallet_credit($1::uuid, $2::integer, $3::uuid, $4::text)
+               """,
+               [Ecto.UUID.dump!(worker_id), 1_000, Ecto.UUID.dump!(admin_id), nil]
+             )
+
+    assert other_role =~ "recorded_by_not_authorized"
+
+    Repo.query!("RESET SESSION AUTHORIZATION")
+
     assert {:error, :forbidden} =
              DirectAdminWallets.credit(reviewer_id, worker_id, %{"amountMinor" => 1_000})
 
