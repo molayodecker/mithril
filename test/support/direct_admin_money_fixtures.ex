@@ -234,6 +234,7 @@ defmodule Mithril.DirectAdminMoneyFixtures do
       "20261012200000_admin_billing_documents.sql",
       "upsert_admin_billing_invoice"
     )
+
     install_function!("20261012200000_admin_billing_documents.sql", "upsert_admin_payment_advice")
   end
 
