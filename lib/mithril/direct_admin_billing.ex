@@ -4,6 +4,7 @@ defmodule Mithril.DirectAdminBilling do
   require Logger
 
   alias Mithril.Auth
+  alias Mithril.DirectAdminActor
   alias Mithril.DirectAdminInvoices
   alias Mithril.Repo
 
@@ -92,12 +93,20 @@ defmodule Mithril.DirectAdminBilling do
 
   defp page_offset(_), do: {:error, :invalid_request}
 
-  defp call_upsert(function, params) do
-    case Repo.query(
-           "SELECT public.#{function}($1::uuid, $2::uuid, $3::jsonb)",
-           params
-         ) do
-      {:ok, %{rows: [[document]]}} when is_map(document) -> {:ok, stringify_id(document)}
+  defp call_upsert(function, [id, admin_uid, payload]) do
+    case DirectAdminActor.with_actor(admin_uid, fn ->
+           case Repo.query(
+                  "SELECT public.#{function}($1::uuid, $2::uuid, $3::jsonb)",
+                  [id, admin_uid, payload]
+                ) do
+             {:ok, %{rows: [[document]]}} when is_map(document) ->
+               stringify_id(document)
+
+             {:error, error} ->
+               Repo.rollback(error)
+           end
+         end) do
+      {:ok, document} -> {:ok, document}
       {:error, error} -> map_rpc_error(error)
     end
   end

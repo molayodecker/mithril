@@ -108,6 +108,12 @@ BEGIN
     RAISE EXCEPTION 'invalid_invoice';
   END IF;
 
+  -- mithril.actor_id is set for this transaction from the authenticated session.
+  -- A caller-supplied admin UUID is not enough to create or overwrite a document.
+  IF current_setting('mithril.actor_id', true) IS DISTINCT FROM p_recorded_by::text THEN
+    RAISE EXCEPTION 'recorded_by_not_authorized';
+  END IF;
+
   IF NOT public.admin_cash_payout_recorder_is_allowed(p_recorded_by) THEN
     RAISE EXCEPTION 'recorded_by_not_authorized';
   END IF;
@@ -332,6 +338,12 @@ DECLARE
 BEGIN
   IF p_advice_id IS NULL OR p_recorded_by IS NULL OR p_advice IS NULL THEN
     RAISE EXCEPTION 'invalid_invoice';
+  END IF;
+
+  -- mithril.actor_id is set for this transaction from the authenticated session.
+  -- A caller-supplied admin UUID is not enough to create or overwrite a document.
+  IF current_setting('mithril.actor_id', true) IS DISTINCT FROM p_recorded_by::text THEN
+    RAISE EXCEPTION 'recorded_by_not_authorized';
   END IF;
 
   IF NOT public.admin_cash_payout_recorder_is_allowed(p_recorded_by) THEN
@@ -567,8 +579,8 @@ COMMENT ON FUNCTION public.upsert_admin_payment_advice(uuid, uuid, jsonb) IS
   'Create or update a payment advice. Net pay is earnings minus deductions plus reimbursements, in pesewas. form_type is w8ben or 1099.';
 
 -- SECURITY DEFINER functions must not inherit PostgreSQL's default PUBLIC EXECUTE.
--- The migration/apply role is the application's trusted database role; when
--- deployments use distinct migration and runtime roles, explicitly grant EXECUTE
--- to the runtime role during deployment, never to PUBLIC or anonymous roles.
+-- The role that applies this file owns the functions and is the only executor.
+-- Do not GRANT EXECUTE to PUBLIC. Both functions also require mithril.actor_id,
+-- set by the application from the authenticated user, to equal p_recorded_by.
 REVOKE ALL ON FUNCTION public.upsert_admin_billing_invoice(uuid, uuid, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.upsert_admin_payment_advice(uuid, uuid, jsonb) FROM PUBLIC;

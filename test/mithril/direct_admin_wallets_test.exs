@@ -66,6 +66,16 @@ defmodule Mithril.DirectAdminWalletsTest do
     assert {:error, :forbidden} =
              DirectAdminWallets.credit(stranger_id, worker_id, %{"amountMinor" => 1_000})
 
+    assert {:error, %Postgrex.Error{postgres: %{message: unbound}}} =
+             Repo.query(
+               """
+               SELECT public.record_admin_wallet_credit($1::uuid, $2::integer, $3::uuid, $4::text)
+               """,
+               [Ecto.UUID.dump!(worker_id), 1_000, Ecto.UUID.dump!(admin_id), nil]
+             )
+
+    assert unbound =~ "recorded_by_not_authorized"
+
     assert {:error, :forbidden} =
              DirectAdminWallets.credit(reviewer_id, worker_id, %{"amountMinor" => 1_000})
 

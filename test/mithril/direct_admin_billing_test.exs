@@ -289,6 +289,44 @@ defmodule Mithril.DirectAdminBillingTest do
     assert {:error, :invalid_request} = DirectAdminBilling.list_advices("not-a-uuid")
   end
 
+  test "a caller-supplied admin id cannot write a billing document" do
+    admin_id = Fixtures.insert_user!("admin")
+    admin_uid = Ecto.UUID.dump!(admin_id)
+    invoice_id = Ecto.UUID.dump!(Ecto.UUID.generate())
+    advice_id = Ecto.UUID.dump!(Ecto.UUID.generate())
+    other_actor = Ecto.UUID.generate()
+
+    assert {:error, %Postgrex.Error{postgres: %{message: unbound_invoice}}} =
+             Repo.query(
+               "SELECT public.upsert_admin_billing_invoice($1::uuid, $2::uuid, '{}'::jsonb)",
+               [invoice_id, admin_uid]
+             )
+
+    assert unbound_invoice =~ "recorded_by_not_authorized"
+
+    assert {:error, %Postgrex.Error{postgres: %{message: unbound_advice}}} =
+             Repo.query(
+               "SELECT public.upsert_admin_payment_advice($1::uuid, $2::uuid, '{}'::jsonb)",
+               [advice_id, admin_uid]
+             )
+
+    assert unbound_advice =~ "recorded_by_not_authorized"
+
+    assert {:error, %Postgrex.Error{postgres: %{message: mismatched}}} =
+             Repo.transaction(fn ->
+               Repo.query!("SELECT set_config('mithril.actor_id', $1, true)", [other_actor])
+
+               case Repo.query(
+                      "SELECT public.upsert_admin_billing_invoice($1::uuid, $2::uuid, '{}'::jsonb)",
+                      [invoice_id, admin_uid]
+                    ) do
+                 {:error, error} -> Repo.rollback(error)
+               end
+             end)
+
+    assert mismatched =~ "recorded_by_not_authorized"
+  end
+
   test "a reviewer can list billing documents but cannot save them" do
     reviewer_id = Fixtures.insert_user!("reviewer")
 

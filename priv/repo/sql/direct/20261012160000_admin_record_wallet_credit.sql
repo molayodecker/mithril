@@ -41,6 +41,12 @@ BEGIN
     RAISE EXCEPTION 'missing_required_fields';
   END IF;
 
+  -- mithril.actor_id is set for this transaction from the authenticated session.
+  -- A caller-supplied admin UUID is not enough to credit a wallet.
+  IF current_setting('mithril.actor_id', true) IS DISTINCT FROM p_recorded_by::text THEN
+    RAISE EXCEPTION 'recorded_by_not_authorized';
+  END IF;
+
   IF NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = p_recorded_by) THEN
     RAISE EXCEPTION 'recorded_by_not_found';
   END IF;
@@ -151,3 +157,7 @@ $function$;
 
 COMMENT ON FUNCTION public.record_admin_wallet_credit(uuid, integer, uuid, text) IS
   'Atomically credit a worker wallet for an admin-recorded add. Creates a GHS wallet when the worker does not have one yet.';
+
+-- The function owner is the only executor. Credits also require mithril.actor_id
+-- to equal p_recorded_by. Do not GRANT EXECUTE to PUBLIC.
+REVOKE ALL ON FUNCTION public.record_admin_wallet_credit(uuid, integer, uuid, text) FROM PUBLIC;

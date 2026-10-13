@@ -5,6 +5,7 @@ defmodule Mithril.DirectAdminInvoices do
 
   alias Mithril.Auth
   alias Mithril.Auth.Phone
+  alias Mithril.DirectAdminActor
   alias Mithril.DirectAdminWhatsApp
   alias Mithril.Repo
 
@@ -44,21 +45,26 @@ defmodule Mithril.DirectAdminInvoices do
          {:ok, bid} <- dump_uuid(booking_id),
          :ok <- require_admin(admin_uid),
          {:ok, payload} <- invoice_payload(params) do
-      case Repo.query(
-             """
-             SELECT public.upsert_admin_job_invoice(
-               p_booking_id := $1::uuid,
-               p_recorded_by := $2::uuid,
-               p_invoice := $3::jsonb
-             )
-             """,
-             [bid, admin_uid, payload]
-           ) do
-        {:ok, %{rows: [[invoice]]}} when is_map(invoice) ->
-          {:ok, with_view_url(invoice)}
+      case DirectAdminActor.with_actor(admin_uid, fn ->
+             case Repo.query(
+                    """
+                    SELECT public.upsert_admin_job_invoice(
+                      p_booking_id := $1::uuid,
+                      p_recorded_by := $2::uuid,
+                      p_invoice := $3::jsonb
+                    )
+                    """,
+                    [bid, admin_uid, payload]
+                  ) do
+               {:ok, %{rows: [[invoice]]}} when is_map(invoice) ->
+                 invoice
 
-        {:error, error} ->
-          map_rpc_error(error)
+               {:error, error} ->
+                 Repo.rollback(error)
+             end
+           end) do
+        {:ok, invoice} -> {:ok, with_view_url(invoice)}
+        {:error, error} -> map_rpc_error(error)
       end
     else
       :error -> {:error, :invalid_request}

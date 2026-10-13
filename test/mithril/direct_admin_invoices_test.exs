@@ -164,6 +164,16 @@ defmodule Mithril.DirectAdminInvoicesTest do
              "invalid_email"
 
     assert sql_error(stranger_id, booking_id, sample_invoice()) =~ "recorded_by_not_authorized"
+
+    assert {:error, %Postgrex.Error{postgres: %{message: unbound}}} =
+             Repo.query(
+               """
+               SELECT public.upsert_admin_job_invoice($1::uuid, $2::uuid, $3::jsonb)
+               """,
+               [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(admin_id), sample_invoice()]
+             )
+
+    assert unbound =~ "recorded_by_not_authorized"
     assert sql_error(admin_id, Ecto.UUID.generate(), sample_invoice()) =~ "booking_not_found"
   end
 
@@ -389,14 +399,20 @@ defmodule Mithril.DirectAdminInvoicesTest do
     %{"description" => "Too much", "qty" => 10_000, "days" => 10_000, "unitMinor" => 100_000}
   end
 
-  defp sql_error(admin_id, booking_id, invoice) do
+  defp sql_error(actor_id, booking_id, invoice) do
     assert {:error, %Postgrex.Error{postgres: %{message: message}}} =
-             Repo.query(
-               """
-               SELECT public.upsert_admin_job_invoice($1::uuid, $2::uuid, $3::jsonb)
-               """,
-               [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(admin_id), invoice]
-             )
+             Repo.transaction(fn ->
+               Repo.query!("SELECT set_config('mithril.actor_id', $1, true)", [actor_id])
+
+               case Repo.query(
+                      """
+                      SELECT public.upsert_admin_job_invoice($1::uuid, $2::uuid, $3::jsonb)
+                      """,
+                      [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(actor_id), invoice]
+                    ) do
+                 {:error, error} -> Repo.rollback(error)
+               end
+             end)
 
     message
   end
