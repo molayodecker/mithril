@@ -10,19 +10,21 @@ defmodule Mithril.DirectAdminBilling do
   @max_minor 2_147_483_647
   @min_minor -2_147_483_648
 
-  def list_invoices(user_id) do
+  def list_invoices(user_id, page \\ 1) do
     with {:ok, admin_uid} <- dump_uuid(user_id),
-         :ok <- require_admin(admin_uid) do
+         :ok <- require_admin(admin_uid),
+         {:ok, offset} <- page_offset(page) do
       query_rows(
         """
         SELECT id, form_type, invoice_no, issued_on::text, bill_to_name, bill_to_address,
                bill_to_phone, bill_to_email, project, lines, adjustment_minor, subtotal_minor,
                total_minor, currency, notes, updated_at
         FROM public.admin_billing_invoices
-        ORDER BY updated_at DESC
-        LIMIT 50
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 50 OFFSET $1
         """,
-        &present_invoice/1
+        &present_invoice/1,
+        [offset]
       )
     else
       :error -> {:error, :invalid_request}
@@ -42,9 +44,10 @@ defmodule Mithril.DirectAdminBilling do
     end
   end
 
-  def list_advices(user_id) do
+  def list_advices(user_id, page \\ 1) do
     with {:ok, admin_uid} <- dump_uuid(user_id),
-         :ok <- require_admin(admin_uid) do
+         :ok <- require_admin(admin_uid),
+         {:ok, offset} <- page_offset(page) do
       query_rows(
         """
         SELECT id, form_type, advice_no, pay_period, payment_date::text, paid_to_name,
@@ -53,10 +56,11 @@ defmodule Mithril.DirectAdminBilling do
                reimbursements_minor, deductions_minor, net_minor, currency, pay_method,
                pay_account, pay_network, pay_reference, updated_at
         FROM public.admin_payment_advices
-        ORDER BY updated_at DESC
-        LIMIT 50
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 50 OFFSET $1
         """,
-        &present_advice/1
+        &present_advice/1,
+        [offset]
       )
     else
       :error -> {:error, :invalid_request}
@@ -76,6 +80,18 @@ defmodule Mithril.DirectAdminBilling do
     end
   end
 
+  defp page_offset(value) when is_integer(value) and value >= 1 and value <= 100_000,
+    do: {:ok, (value - 1) * 50}
+
+  defp page_offset(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {page, ""} -> page_offset(page)
+      _ -> {:error, :invalid_request}
+    end
+  end
+
+  defp page_offset(_), do: {:error, :invalid_request}
+
   defp call_upsert(function, params) do
     case Repo.query(
            "SELECT public.#{function}($1::uuid, $2::uuid, $3::jsonb)",
@@ -86,8 +102,8 @@ defmodule Mithril.DirectAdminBilling do
     end
   end
 
-  defp query_rows(sql, present) do
-    case Repo.query(sql, []) do
+  defp query_rows(sql, present, params) do
+    case Repo.query(sql, params) do
       {:ok, %{rows: rows}} -> {:ok, Enum.map(rows, present)}
       {:error, error} -> map_rpc_error(error)
     end
