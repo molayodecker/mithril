@@ -104,7 +104,10 @@ defmodule Mithril.DirectAdminBillingTest do
   test "a blank invoice number is assigned and kept, and email is stored lowercase" do
     admin_id = Fixtures.insert_user!("admin")
     invoice_id = Ecto.UUID.generate()
-    payload = sample_invoice("w8ben") |> Map.put("invoiceNo", "  ") |> Map.put("billToEmail", "Lucy@Example.com")
+    payload =
+      sample_invoice("w8ben")
+      |> Map.put("invoiceNo", "  ")
+      |> Map.put("billToEmail", "Lucy@Example.com")
 
     assert {:ok, saved} = DirectAdminBilling.upsert_invoice(admin_id, invoice_id, payload)
     assert saved["invoiceNo"] =~ ~r/^\d+$/
@@ -112,7 +115,11 @@ defmodule Mithril.DirectAdminBillingTest do
     assert saved["lines"] |> Enum.map(& &1["totalMinor"]) == [300_000, 110_000, 55_000, 30_000]
 
     assert {:ok, again} =
-             DirectAdminBilling.upsert_invoice(admin_id, invoice_id, Map.put(payload, "invoiceNo", nil))
+             DirectAdminBilling.upsert_invoice(
+               admin_id,
+               invoice_id,
+               Map.put(payload, "invoiceNo", nil)
+             )
 
     assert again["id"] == invoice_id
     assert again["invoiceNo"] == saved["invoiceNo"]
@@ -140,7 +147,11 @@ defmodule Mithril.DirectAdminBillingTest do
     assert saved["netMinor"] == 768_748 - 141_467
 
     assert {:ok, again} =
-             DirectAdminBilling.upsert_advice(admin_id, advice_id, Map.put(payload, "adviceNo", ""))
+             DirectAdminBilling.upsert_advice(
+               admin_id,
+               advice_id,
+               Map.put(payload, "adviceNo", "")
+             )
 
     assert again["adviceNo"] == saved["adviceNo"]
   end
@@ -150,8 +161,11 @@ defmodule Mithril.DirectAdminBillingTest do
     older_id = Ecto.UUID.generate()
     newer_id = Ecto.UUID.generate()
 
-    assert {:ok, _} = DirectAdminBilling.upsert_invoice(admin_id, older_id, sample_invoice("1099"))
-    assert {:ok, _} = DirectAdminBilling.upsert_invoice(admin_id, newer_id, sample_invoice("w8ben"))
+    assert {:ok, _} =
+             DirectAdminBilling.upsert_invoice(admin_id, older_id, sample_invoice("1099"))
+
+    assert {:ok, _} =
+             DirectAdminBilling.upsert_invoice(admin_id, newer_id, sample_invoice("w8ben"))
     touch!(older_id, "admin_billing_invoices")
 
     assert {:ok, [first, second]} = DirectAdminBilling.list_invoices(admin_id)
@@ -160,8 +174,11 @@ defmodule Mithril.DirectAdminBillingTest do
 
     first_advice = Ecto.UUID.generate()
     second_advice = Ecto.UUID.generate()
-    assert {:ok, _} = DirectAdminBilling.upsert_advice(admin_id, first_advice, sample_advice("w8ben"))
-    assert {:ok, _} = DirectAdminBilling.upsert_advice(admin_id, second_advice, sample_advice("1099"))
+    assert {:ok, _} =
+             DirectAdminBilling.upsert_advice(admin_id, first_advice, sample_advice("w8ben"))
+
+    assert {:ok, _} =
+             DirectAdminBilling.upsert_advice(admin_id, second_advice, sample_advice("1099"))
     touch!(second_advice, "admin_payment_advices")
     assert {:ok, [listed, _other]} = DirectAdminBilling.list_advices(admin_id)
     assert listed["id"] == second_advice
@@ -181,7 +198,11 @@ defmodule Mithril.DirectAdminBillingTest do
              )
 
     assert {:error, :invalid_lines} =
-             DirectAdminBilling.upsert_invoice(admin_id, invoice_id, Map.put(sample_invoice("1099"), "lines", []))
+             DirectAdminBilling.upsert_invoice(
+               admin_id,
+               invoice_id,
+               Map.put(sample_invoice("1099"), "lines", [])
+             )
 
     assert {:error, :invalid_email} =
              DirectAdminBilling.upsert_invoice(
@@ -224,7 +245,11 @@ defmodule Mithril.DirectAdminBillingTest do
     advice_id = Ecto.UUID.generate()
 
     assert {:error, :invalid_lines} =
-             DirectAdminBilling.upsert_advice(admin_id, advice_id, Map.put(sample_advice("1099"), "earnings", []))
+             DirectAdminBilling.upsert_advice(
+               admin_id,
+               advice_id,
+               Map.put(sample_advice("1099"), "earnings", [])
+             )
 
     assert {:error, :invalid_email} =
              DirectAdminBilling.upsert_advice(
@@ -234,7 +259,11 @@ defmodule Mithril.DirectAdminBillingTest do
              )
 
     assert {:error, :invalid_invoice} =
-             DirectAdminBilling.upsert_advice(admin_id, advice_id, Map.put(sample_advice("1099"), "payPeriod", ""))
+             DirectAdminBilling.upsert_advice(
+               admin_id,
+               advice_id,
+               Map.put(sample_advice("1099"), "payPeriod", "")
+             )
 
     assert {:error, :forbidden} =
              DirectAdminBilling.upsert_advice(
@@ -249,7 +278,8 @@ defmodule Mithril.DirectAdminBillingTest do
       |> Map.put("reimbursements", [%{"description" => "Extra", "amountMinor" => 1}])
       |> Map.put("deductions", [])
 
-    assert {:error, :amount_too_large} = DirectAdminBilling.upsert_advice(admin_id, advice_id, overflowing)
+    assert {:error, :amount_too_large} =
+             DirectAdminBilling.upsert_advice(admin_id, advice_id, overflowing)
     assert {:error, :invalid_request} = DirectAdminBilling.list_advices("not-a-uuid")
   end
 
@@ -314,7 +344,10 @@ defmodule Mithril.DirectAdminBillingTest do
     assert row["id"] == advice_id
 
     unsigned =
-      DirectAdminBillingController.upsert_invoice(build_conn(), Map.put(sample_invoice("1099"), "id", invoice_id))
+      DirectAdminBillingController.upsert_invoice(
+        build_conn(),
+        Map.put(sample_invoice("1099"), "id", invoice_id)
+      )
 
     assert json_response(unsigned, 422) == %{"error" => "invalid_request"}
 
@@ -329,7 +362,10 @@ defmodule Mithril.DirectAdminBillingTest do
     bad_email =
       DirectAdminBillingController.upsert_advice(
         staff_conn(admin_id),
-        Map.merge(sample_advice("1099"), %{"id" => Ecto.UUID.generate(), "paidToEmail" => "not-an-email"})
+        Map.merge(sample_advice("1099"), %{
+          "id" => Ecto.UUID.generate(),
+          "paidToEmail" => "not-an-email"
+        })
       )
 
     assert json_response(bad_email, 422) == %{"error" => "invalid_email"}
@@ -337,7 +373,10 @@ defmodule Mithril.DirectAdminBillingTest do
     bad_invoice =
       DirectAdminBillingController.upsert_invoice(
         staff_conn(admin_id),
-        Map.merge(sample_invoice("1099"), %{"id" => Ecto.UUID.generate(), "issuedOn" => "yesterday"})
+        Map.merge(sample_invoice("1099"), %{
+          "id" => Ecto.UUID.generate(),
+          "issuedOn" => "yesterday"
+        })
       )
 
     assert json_response(bad_invoice, 422) == %{"error" => "invalid_invoice"}
@@ -362,7 +401,11 @@ defmodule Mithril.DirectAdminBillingTest do
     Repo.query!("DROP FUNCTION public.upsert_admin_billing_invoice(uuid, uuid, jsonb)")
 
     assert {:error, :database_unavailable} =
-             DirectAdminBilling.upsert_invoice(admin_id, Ecto.UUID.generate(), sample_invoice("1099"))
+             DirectAdminBilling.upsert_invoice(
+               admin_id,
+               Ecto.UUID.generate(),
+               sample_invoice("1099")
+             )
 
     conn =
       DirectAdminBillingController.upsert_invoice(
@@ -426,7 +469,11 @@ defmodule Mithril.DirectAdminBillingTest do
       ],
       "reimbursements" => [
         %{"description" => "Field travel", "reference" => "RCP-2091", "amountMinor" => 25_600},
-        %{"description" => "Onboarding bonus", "reference" => "RCP-2104", "amountMinor" => 15_000},
+        %{
+          "description" => "Onboarding bonus",
+          "reference" => "RCP-2104",
+          "amountMinor" => 15_000
+        },
         %{"description" => "Airtime", "amountMinor" => 15_000}
       ],
       "deductions" => [
