@@ -246,6 +246,12 @@ defmodule MithrilWeb.Router do
     put "/admin/billing/invoices/:id", DirectAdminBillingController, :upsert_invoice
     get "/admin/billing/payment-advices", DirectAdminBillingController, :index_advices
     put "/admin/billing/payment-advices/:id", DirectAdminBillingController, :upsert_advice
+    get "/admin/worker-loan-requests", DirectAdminWorkerLoansController, :index
+    get "/admin/worker-loan-requests/:id", DirectAdminWorkerLoansController, :show
+    post "/admin/worker-loan-requests/:id/review", DirectAdminWorkerLoansController, :review
+    get "/worker-loans/summary", DirectWorkerLoansController, :summary
+    get "/worker-loans", DirectWorkerLoansController, :index
+    post "/worker-loans", DirectWorkerLoansController, :create
     get "/admin/service-requests", DirectDispatchController, :list_admin_service_requests
 
     post "/admin/service-requests/:id/assign",

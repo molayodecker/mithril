@@ -38,6 +38,28 @@ defmodule MithrilWeb.OpenApiTest do
     assert spec["paths"]["/direct/admin/cleaners/{id}/wallet-credit"]["post"]["operationId"] ==
              "direct.creditAdminWorkerWallet"
 
+    assert spec["paths"]["/direct/worker-loans"]["get"]["operationId"] ==
+             "direct.listWorkerLoanRequests"
+
+    assert spec["paths"]["/direct/worker-loans"]["post"]["operationId"] ==
+             "direct.createWorkerLoanRequest"
+
+    assert spec["paths"]["/direct/worker-loans/summary"]["get"]["operationId"] ==
+             "direct.showWorkerLoanSummary"
+
+    assert spec["paths"]["/direct/admin/worker-loan-requests"]["get"]["operationId"] ==
+             "direct.listAdminWorkerLoanRequests"
+
+    assert spec["paths"]["/direct/admin/worker-loan-requests/{id}"]["get"]["operationId"] ==
+             "direct.showAdminWorkerLoanRequest"
+
+    assert spec["paths"]["/direct/admin/worker-loan-requests/{id}/review"]["post"]["operationId"] ==
+             "direct.reviewAdminWorkerLoanRequest"
+
+    assert spec["components"]["schemas"]["DirectAdminBooking"]["properties"][
+             "loanOutstandingMinor"
+           ]
+
     assert spec["paths"]["/direct/admin/bookings/{id}/invoice"]["get"]["operationId"] ==
              "direct.showAdminJobInvoice"
 

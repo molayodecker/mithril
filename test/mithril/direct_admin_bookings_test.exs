@@ -16,6 +16,7 @@ defmodule Mithril.DirectAdminBookingsTest do
 
     for table <- [
           "payout_methods",
+          "worker_loan_accounts",
           "wallets",
           "cleaner_availability_exceptions",
           "cleaner_data",
@@ -141,6 +142,15 @@ defmodule Mithril.DirectAdminBookingsTest do
     """)
 
     Repo.query!("""
+    CREATE TABLE public.worker_loan_accounts (
+      worker_id uuid PRIMARY KEY,
+      outstanding_minor integer NOT NULL DEFAULT 0,
+      currency text NOT NULL DEFAULT 'GHS',
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    Repo.query!("""
     CREATE TABLE public.payout_methods (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id uuid NOT NULL,
@@ -177,6 +187,7 @@ defmodule Mithril.DirectAdminBookingsTest do
     assert booking["customerName"] == "Andrew Aryee"
     assert booking["cleanerName"] == "Evelyn Pekuson"
     assert booking["amountMinor"] == 28166
+    assert booking["loanOutstandingMinor"] == 0
     assert booking["cleanerEarningsMinor"] == 22841
     assert booking["canCancel"] == false
     assert booking["canRecordCashPayout"] == true

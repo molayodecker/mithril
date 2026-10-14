@@ -3,6 +3,8 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
 
   alias Mithril.Auth.Phone
   alias Mithril.DbUuid
+  alias Mithril.DirectAdminActor
+  alias Mithril.DirectWorkerLoans
   alias Mithril.IdentityVerification
   alias Mithril.MobileFunctions.Paystack
   alias Mithril.MobileGateway
@@ -456,7 +458,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
   defp load_existing_payout(user_id, reference) do
     sql = """
     SELECT status, paystack_transfer_code, paystack_transfer_id, error_message,
-           recipient_code, amount, upper(coalesce(currency, 'GHS'))
+           recipient_code, amount, upper(coalesce(currency, 'GHS')), metadata
     FROM public.cleaner_payouts
     WHERE user_id = $1::uuid AND reference = $2::uuid
     LIMIT 1
@@ -464,7 +466,20 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
 
     case Repo.query(sql, [DbUuid.dump!(user_id), DbUuid.dump!(reference)]) do
       {:ok,
-       %{rows: [[status, transfer_code, transfer_id, error_message, recipient, amount, currency]]}} ->
+       %{
+         rows: [
+           [
+             status,
+             transfer_code,
+             transfer_id,
+             error_message,
+             recipient,
+             amount,
+             currency,
+             metadata
+           ]
+         ]
+       }} ->
         {:ok,
          %{
            status: status,
@@ -473,6 +488,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
            error_message: error_message,
            recipient: recipient,
            amount: amount,
+           requested_amount: requested_payout_amount(metadata, amount),
            currency: currency
          }}
 
@@ -507,7 +523,12 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
   defp validate_existing_payout(nil, _fields), do: :ok
 
   defp validate_existing_payout(existing, fields) do
-    if existing.recipient == fields.recipient and existing.amount == fields.amount and
+    requested = existing.requested_amount || existing.amount
+
+    amounts_match =
+      existing.amount == fields.amount or requested == fields.amount
+
+    if existing.recipient == fields.recipient and amounts_match and
          existing.currency == fields.currency do
       :ok
     else
@@ -542,25 +563,31 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
   end
 
   defp continue_initiate(user_id, fields, payout_method, nil) do
-    with :ok <- begin_withdrawal(user_id, fields, payout_method),
-         :ok <- insert_cleaner_payout(user_id, fields) do
-      case call_paystack_transfer(fields) do
-        {:ok, data} ->
-          case persist_transfer_result(user_id, fields, data) do
-            :ok ->
-              {:ok, %{ok: true, data: data}}
+    with {:ok, recovered} <-
+           reserve_withdrawal_after_loan_recovery(user_id, fields, payout_method) do
+      transfer_fields = Map.put(fields, :amount, recovered.net)
 
-            {:error, _} ->
-              {:error,
-               {:status, 502,
-                %{
-                  ok: false,
-                  error: "Transfer was submitted but its local status could not be saved"
-                }}}
-          end
+      if recovered.net == 0 do
+        {:ok, %{ok: true, data: recovered_only_data(fields, recovered)}}
+      else
+        case call_paystack_transfer(transfer_fields) do
+          {:ok, data} ->
+            case persist_transfer_result(user_id, transfer_fields, data) do
+              :ok ->
+                {:ok, %{ok: true, data: data}}
 
-        {:error, {:status, status, body}} ->
-          {:error, {:status, status, body}}
+              {:error, _} ->
+                {:error,
+                 {:status, 502,
+                  %{
+                    ok: false,
+                    error: "Transfer was submitted but its local status could not be saved"
+                  }}}
+            end
+
+          {:error, {:status, status, body}} ->
+            {:error, {:status, status, body}}
+        end
       end
     else
       {:error, {:race_conflict, raced}} ->
@@ -569,6 +596,93 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
       {:error, {:status, status, body}} ->
         {:error, {:status, status, body}}
     end
+  end
+
+  defp reserve_withdrawal_after_loan_recovery(user_id, fields, payout_method) do
+    worker_uid = DbUuid.dump!(user_id)
+    source_uid = DbUuid.dump!(fields.reference)
+
+    case DirectAdminActor.with_actor(user_id, fn ->
+           with {:ok, payload} <-
+                  DirectWorkerLoans.apply_recovery(
+                    worker_uid,
+                    fields.amount,
+                    worker_uid,
+                    "paystack_withdrawal",
+                    source_uid
+                  ),
+                recovered <- recovery_result(fields, payload),
+                :ok <- validate_net_withdrawal(recovered.net),
+                transfer_fields <- Map.put(fields, :amount, recovered.net),
+                :ok <-
+                  maybe_begin_withdrawal(user_id, transfer_fields, payout_method, recovered.net),
+                :ok <- maybe_insert_cleaner_payout(user_id, transfer_fields, recovered) do
+             recovered
+           else
+             {:error, reason} -> Repo.rollback(reason)
+           end
+         end) do
+      {:ok, recovered} ->
+        {:ok, recovered}
+
+      {:error, {:race_conflict, raced}} ->
+        {:error, {:race_conflict, raced}}
+
+      {:error, {:status, status, body}} ->
+        {:error, {:status, status, body}}
+
+      {:error, %Postgrex.Error{message: message}} when is_binary(message) ->
+        map_begin_withdrawal_error(message)
+
+      {:error, %Postgrex.Error{postgres: %{message: message}}} when is_binary(message) ->
+        map_begin_withdrawal_error(message)
+
+      {:error, error} ->
+        {:error,
+         {:status, 500,
+          %{ok: false, error: db_error_message(error, "Could not start withdrawal")}}}
+    end
+  end
+
+  defp recovery_result(fields, payload) do
+    %{
+      requested: fields.amount,
+      net: rpc_int(payload, "netMinor"),
+      recovery_minor: rpc_int(payload, "recoveryMinor") || 0,
+      outstanding_minor: rpc_int(payload, "outstandingMinor") || 0
+    }
+  end
+
+  defp validate_net_withdrawal(net) when is_integer(net) and net == 0, do: :ok
+
+  defp validate_net_withdrawal(net)
+       when is_integer(net) and net > 0 and net < @min_withdrawal_subunit do
+    {:error,
+     {:status, 400,
+      %{
+        ok: false,
+        error: "After loan recovery, remaining withdrawal is below GHS 50.00"
+      }}}
+  end
+
+  defp validate_net_withdrawal(net) when is_integer(net) and net >= @min_withdrawal_subunit,
+    do: :ok
+
+  defp validate_net_withdrawal(_),
+    do: {:error, {:status, 500, %{ok: false, error: "Could not start withdrawal"}}}
+
+  defp maybe_begin_withdrawal(_user_id, _fields, _payout_method, 0), do: :ok
+
+  defp maybe_begin_withdrawal(user_id, fields, payout_method, _net) do
+    begin_withdrawal(user_id, fields, payout_method)
+  end
+
+  defp maybe_insert_cleaner_payout(user_id, fields, %{net: 0} = recovered) do
+    insert_cleaner_payout(user_id, fields, recovered, "success")
+  end
+
+  defp maybe_insert_cleaner_payout(user_id, fields, recovered) do
+    insert_cleaner_payout(user_id, fields, recovered, "pending")
   end
 
   defp begin_withdrawal(user_id, fields, payout_method) do
@@ -616,13 +730,18 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     end
   end
 
-  defp insert_cleaner_payout(user_id, fields) do
-    metadata = Jason.encode!(%{initiated_at: DateTime.utc_now() |> DateTime.to_iso8601()})
+  defp insert_cleaner_payout(user_id, fields, recovered, status) do
+    metadata = %{
+      "initiated_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "requested_amount" => recovered.requested,
+      "loan_recovery_minor" => recovered.recovery_minor,
+      "net_amount" => recovered.net
+    }
 
     sql = """
     INSERT INTO public.cleaner_payouts (
       user_id, recipient_code, amount, currency, reference, reason, status, metadata
-    ) VALUES ($1::uuid, $2::text, $3::int, $4::text, $5::uuid, $6::text, 'pending', $7::jsonb)
+    ) VALUES ($1::uuid, $2::text, $3::int, $4::text, $5::uuid, $6::text, $7::public.withdrawal_status, $8::jsonb)
     """
 
     case Repo.query(sql, [
@@ -632,6 +751,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
            fields.currency,
            DbUuid.dump!(fields.reference),
            fields.reason,
+           status,
            metadata
          ]) do
       {:ok, _} ->
@@ -798,7 +918,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     %{
       "transfer_code" => payout.paystack_transfer_code,
       "id" => payout.paystack_transfer_id,
-      "amount" => fields.amount,
+      "amount" => payout.amount || fields.amount,
       "currency" => fields.currency,
       "recipient" => fields.recipient,
       "reference" => fields.reference,
@@ -808,6 +928,41 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
       "domain" => "reused"
     }
   end
+
+  defp recovered_only_data(fields, recovered) do
+    %{
+      "amount" => 0,
+      "currency" => fields.currency,
+      "recipient" => fields.recipient,
+      "reference" => fields.reference,
+      "status" => "success",
+      "reason" => fields.reason || "",
+      "source" => "balance",
+      "domain" => "loan_recovery",
+      "loan_recovery_minor" => recovered.recovery_minor,
+      "requested_amount" => recovered.requested
+    }
+  end
+
+  defp requested_payout_amount(metadata, amount) when is_map(metadata) do
+    metadata["requested_amount"] || metadata[:requested_amount] || amount
+  end
+
+  defp requested_payout_amount(metadata, amount) when is_binary(metadata) do
+    case Jason.decode(metadata) do
+      {:ok, decoded} -> requested_payout_amount(decoded, amount)
+      _ -> amount
+    end
+  end
+
+  defp requested_payout_amount(_, amount), do: amount
+
+  defp rpc_int(payload, key) when is_map(payload) do
+    value = payload[key] || payload[String.to_atom(key)]
+    if is_integer(value), do: value, else: nil
+  end
+
+  defp rpc_int(_, _), do: nil
 
   defp write_recipient_audit(user_id, recipient_code, fields) do
     masked = mask_account_tail(fields.account_number)
