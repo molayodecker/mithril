@@ -10,6 +10,7 @@ defmodule Mithril.DirectAdminBookings do
   alias Mithril.DirectAdminActor
   alias Mithril.DirectBookingCancels
   alias Mithril.DirectBookings
+  alias Mithril.DirectWorkerLoans
   alias Mithril.Notifications
   alias Mithril.Repo
 
@@ -214,7 +215,7 @@ defmodule Mithril.DirectAdminBookings do
          notes <- optional_notes(params["notes"] || params[:notes]) do
       case DirectAdminActor.with_actor(admin_uid, fn ->
              with {:ok, recovery_payload} <-
-                    apply_loan_recovery(
+                    DirectWorkerLoans.apply_recovery(
                       cleaner_uid,
                       amount,
                       admin_uid,
@@ -244,24 +245,6 @@ defmodule Mithril.DirectAdminBookings do
     else
       :error -> {:error, :invalid_request}
       {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp apply_loan_recovery(worker_uid, gross_minor, admin_uid, source_type, source_id) do
-    case Repo.query(
-           """
-           SELECT public.apply_worker_loan_recovery(
-             p_worker_id := $1::uuid,
-             p_gross_minor := $2::integer,
-             p_recorded_by := $3::uuid,
-             p_source_type := $4::text,
-             p_source_id := $5::uuid
-           )
-           """,
-           [worker_uid, gross_minor, admin_uid, source_type, source_id]
-         ) do
-      {:ok, %{rows: [[payload]]}} -> {:ok, payload}
-      {:error, error} -> {:error, error}
     end
   end
 
@@ -864,6 +847,9 @@ defmodule Mithril.DirectAdminBookings do
 
   defp map_rpc_error(%Postgrex.Error{postgres: %{message: message}}) when is_binary(message) do
     cond do
+      String.contains?(message, "insufficient_wallet_balance") ->
+        {:error, :insufficient_wallet_balance}
+
       String.contains?(message, "insufficient_balance") ->
         {:error, :insufficient_balance}
 

@@ -147,6 +147,112 @@ defmodule Mithril.DirectWorkerLoansTest do
     assert recovery["outstandingMinor"] == 0
   end
 
+  test "workers can recover their own outstanding loan on withdrawal" do
+    admin_id = Fixtures.insert_user!("admin")
+    worker_id = Fixtures.insert_worker!()
+    worker_uid = Ecto.UUID.dump!(worker_id)
+    source_id = Ecto.UUID.dump!(Ecto.UUID.generate())
+
+    assert {:ok, created} =
+             DirectWorkerLoans.create_request(worker_id, %{"amountMinor" => 40_000})
+
+    assert {:ok, _} =
+             DirectWorkerLoans.review(admin_id, created["id"], %{"decision" => "approve"})
+
+    assert {:ok, recovery} =
+             DirectAdminActor.with_actor(worker_id, fn ->
+               case DirectWorkerLoans.apply_recovery(
+                      worker_uid,
+                      40_000,
+                      worker_uid,
+                      "paystack_withdrawal",
+                      source_id
+                    ) do
+                 {:ok, payload} -> payload
+                 {:error, error} -> Repo.rollback(error)
+               end
+             end)
+
+    assert recovery["recoveryMinor"] == 40_000
+    assert recovery["netMinor"] == 0
+    assert recovery["outstandingMinor"] == 0
+
+    assert {:ok, %{"outstandingMinor" => 0}} = DirectWorkerLoans.worker_summary(worker_id)
+
+    [[balance]] =
+      Repo.query!("SELECT balance_subunit FROM public.wallets WHERE user_id = $1", [worker_uid]).rows
+
+    assert balance == 0
+
+    [[booking_id, description]] =
+      Repo.query!("""
+      SELECT booking_id, description
+      FROM public.wallet_transactions
+      WHERE type = 'debit'
+      """).rows
+
+    assert booking_id == nil
+    assert description == "Worker loan recovery"
+  end
+
+  test "workers cannot recover another worker's loan" do
+    admin_id = Fixtures.insert_user!("admin")
+    worker_id = Fixtures.insert_worker!()
+    other_id = Fixtures.insert_worker!()
+    worker_uid = Ecto.UUID.dump!(worker_id)
+    other_uid = Ecto.UUID.dump!(other_id)
+    source_id = Ecto.UUID.dump!(Ecto.UUID.generate())
+
+    assert {:ok, created} =
+             DirectWorkerLoans.create_request(worker_id, %{"amountMinor" => 5_000})
+
+    assert {:ok, _} =
+             DirectWorkerLoans.review(admin_id, created["id"], %{"decision" => "approve"})
+
+    assert {:error, %Postgrex.Error{postgres: %{message: message}}} =
+             DirectAdminActor.with_actor(other_id, fn ->
+               case DirectWorkerLoans.apply_recovery(
+                      worker_uid,
+                      5_000,
+                      other_uid,
+                      "paystack_withdrawal",
+                      source_id
+                    ) do
+                 {:ok, payload} -> payload
+                 {:error, error} -> Repo.rollback(error)
+               end
+             end)
+
+    assert message =~ "recorded_by_not_authorized"
+    assert {:ok, %{"outstandingMinor" => 5_000}} = DirectWorkerLoans.worker_summary(worker_id)
+  end
+
+  test "cash payout recovery stores the booking on the wallet debit" do
+    admin_id = Fixtures.insert_user!("admin")
+    worker_id = Fixtures.insert_worker!()
+    booking_id = Fixtures.insert_booking!(Fixtures.insert_user!())
+
+    assert {:ok, created} =
+             DirectWorkerLoans.create_request(worker_id, %{"amountMinor" => 6_000})
+
+    assert {:ok, _} =
+             DirectWorkerLoans.review(admin_id, created["id"], %{"decision" => "approve"})
+
+    assert {:ok, _} =
+             recover_query(
+               admin_id,
+               Ecto.UUID.dump!(worker_id),
+               6_000,
+               booking_id,
+               "booking_cash_payout"
+             )
+
+    [[stored]] =
+      Repo.query!("SELECT booking_id FROM public.wallet_transactions WHERE type = 'debit'").rows
+
+    assert stored == Ecto.UUID.dump!(booking_id)
+  end
+
   test "strangers cannot review or impersonate workers" do
     worker_id = Fixtures.insert_worker!()
     stranger_id = Fixtures.insert_user!()
@@ -693,15 +799,21 @@ defmodule Mithril.DirectWorkerLoansTest do
     end
   end
 
-  defp recover_query(admin_id, worker_uid, amount, booking_id) do
+  defp recover_query(admin_id, worker_uid, amount, booking_id, source_type \\ "test") do
     DirectAdminActor.with_actor(admin_id, fn ->
       case Repo.query(
              """
              SELECT public.apply_worker_loan_recovery(
-               $1::uuid, $2::integer, $3::uuid, 'test', $4::uuid
+               $1::uuid, $2::integer, $3::uuid, $4::text, $5::uuid
              )
              """,
-             [worker_uid, amount, Ecto.UUID.dump!(admin_id), Ecto.UUID.dump!(booking_id)]
+             [
+               worker_uid,
+               amount,
+               Ecto.UUID.dump!(admin_id),
+               source_type,
+               Ecto.UUID.dump!(booking_id)
+             ]
            ) do
         {:ok, result} -> result
         {:error, error} -> Repo.rollback(error)

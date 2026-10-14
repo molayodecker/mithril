@@ -121,6 +121,31 @@ defmodule Mithril.DirectWorkerLoans do
     end
   end
 
+  @doc """
+  Applies outstanding loan recovery against a gross payout.
+
+  Must run inside `DirectAdminActor.with_actor/2` so `mithril.actor_id` matches
+  `recorded_by`. Workers may recover only against their own id.
+  """
+  def apply_recovery(worker_uid, gross_minor, recorded_by_uid, source_type, source_id)
+      when is_integer(gross_minor) and is_binary(source_type) do
+    case Repo.query(
+           """
+           SELECT public.apply_worker_loan_recovery(
+             p_worker_id := $1::uuid,
+             p_gross_minor := $2::integer,
+             p_recorded_by := $3::uuid,
+             p_source_type := $4::text,
+             p_source_id := $5::uuid
+           )
+           """,
+           [worker_uid, gross_minor, recorded_by_uid, source_type, source_id]
+         ) do
+      {:ok, %{rows: [[payload]]}} -> {:ok, payload}
+      {:error, error} -> {:error, error}
+    end
+  end
+
   defp fetch_requests(opts) do
     {where, args} =
       cond do
@@ -318,24 +343,62 @@ defmodule Mithril.DirectWorkerLoans do
   defp map_rpc_error(%Postgrex.Error{postgres: %{message: message}} = error)
        when is_binary(message) do
     cond do
-      String.contains?(message, "worker_not_found") -> {:error, :worker_not_found}
-      String.contains?(message, "pending_request_exists") -> {:error, :pending_request_exists}
-      String.contains?(message, "invalid_amount") -> {:error, :invalid_amount}
-      String.contains?(message, "invalid_reason") -> {:error, :invalid_request}
-      String.contains?(message, "invalid_review_notes") -> {:error, :invalid_request}
-      String.contains?(message, "missing_required_fields") -> {:error, :invalid_request}
-      String.contains?(message, "actor_not_authorized") -> {:error, :forbidden}
-      String.contains?(message, "reviewer_not_authorized") -> {:error, :forbidden}
-      String.contains?(message, "recorded_by_not_authorized") -> {:error, :forbidden}
-      String.contains?(message, "request_not_found") -> {:error, :request_not_found}
-      String.contains?(message, "request_not_pending") -> {:error, :request_not_pending}
-      String.contains?(message, "invalid_decision") -> {:error, :invalid_decision}
-      String.contains?(message, "wallet_not_found") -> {:error, :wallet_not_found}
-      String.contains?(message, "unsupported_currency") -> {:error, :unsupported_currency}
-      String.contains?(message, "amount_too_large") -> {:error, :amount_too_large}
-      String.contains?(message, "loan_account_not_found") -> {:error, :loan_account_not_found}
-      String.contains?(message, "undefined_function") -> {:error, :database_unavailable}
-      true -> database_error(error)
+      String.contains?(message, "worker_not_found") ->
+        {:error, :worker_not_found}
+
+      String.contains?(message, "pending_request_exists") ->
+        {:error, :pending_request_exists}
+
+      String.contains?(message, "invalid_amount") ->
+        {:error, :invalid_amount}
+
+      String.contains?(message, "invalid_reason") ->
+        {:error, :invalid_request}
+
+      String.contains?(message, "invalid_review_notes") ->
+        {:error, :invalid_request}
+
+      String.contains?(message, "missing_required_fields") ->
+        {:error, :invalid_request}
+
+      String.contains?(message, "actor_not_authorized") ->
+        {:error, :forbidden}
+
+      String.contains?(message, "reviewer_not_authorized") ->
+        {:error, :forbidden}
+
+      String.contains?(message, "recorded_by_not_authorized") ->
+        {:error, :forbidden}
+
+      String.contains?(message, "request_not_found") ->
+        {:error, :request_not_found}
+
+      String.contains?(message, "request_not_pending") ->
+        {:error, :request_not_pending}
+
+      String.contains?(message, "invalid_decision") ->
+        {:error, :invalid_decision}
+
+      String.contains?(message, "insufficient_wallet_balance") ->
+        {:error, :insufficient_wallet_balance}
+
+      String.contains?(message, "wallet_not_found") ->
+        {:error, :wallet_not_found}
+
+      String.contains?(message, "unsupported_currency") ->
+        {:error, :unsupported_currency}
+
+      String.contains?(message, "amount_too_large") ->
+        {:error, :amount_too_large}
+
+      String.contains?(message, "loan_account_not_found") ->
+        {:error, :loan_account_not_found}
+
+      String.contains?(message, "undefined_function") ->
+        {:error, :database_unavailable}
+
+      true ->
+        database_error(error)
     end
   end
 

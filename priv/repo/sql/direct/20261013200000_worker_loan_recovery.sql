@@ -38,7 +38,10 @@ BEGIN
     RAISE EXCEPTION 'recorded_by_not_authorized';
   END IF;
 
-  IF NOT public.admin_cash_payout_recorder_is_allowed(p_recorded_by) THEN
+  IF NOT (
+    public.admin_cash_payout_recorder_is_allowed(p_recorded_by)
+    OR p_recorded_by = p_worker_id
+  ) THEN
     RAISE EXCEPTION 'recorded_by_not_authorized';
   END IF;
 
@@ -66,7 +69,13 @@ BEGIN
     UPDATE public.wallets SET balance_subunit = balance_subunit - v_recovery, updated_at = now()
     WHERE id = v_wallet_id;
     INSERT INTO public.wallet_transactions (wallet_id, booking_id, amount_subunit, type, description)
-    VALUES (v_wallet_id, p_source_id, v_recovery, 'debit', 'Worker loan recovery')
+    VALUES (
+      v_wallet_id,
+      CASE WHEN p_source_type = 'booking_cash_payout' THEN p_source_id ELSE NULL END,
+      v_recovery,
+      'debit',
+      'Worker loan recovery'
+    )
     RETURNING id INTO v_wallet_tx_id;
 
     UPDATE public.worker_loan_accounts
@@ -107,4 +116,4 @@ END;
 $function$;
 
 COMMENT ON FUNCTION public.apply_worker_loan_recovery(uuid, integer, uuid, text, uuid) IS
-  'Reduces outstanding loan balance by up to the gross payout amount. Returns net amount to pay after recovery.';
+  'Reduces outstanding loan balance by up to the gross payout amount. Admins may recover on cash payouts; workers may recover on their own withdrawals. Returns net amount to pay after recovery.';

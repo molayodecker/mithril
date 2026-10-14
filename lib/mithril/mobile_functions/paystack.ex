@@ -114,8 +114,9 @@ defmodule Mithril.MobileFunctions.Paystack do
 
   def post_json(path, body, secret) when is_binary(path) and is_map(body) and is_binary(secret) do
     url = "https://api.paystack.co#{path}"
+    opts = paystack_req_options(json: body, auth: {:bearer, secret})
 
-    case Req.post(url, json: body, auth: {:bearer, secret}) do
+    case Req.post(url, opts) do
       {:ok, %{status: status, body: %{"status" => true, "data" => data}}}
       when status in 200..299 ->
         {:ok, data}
@@ -146,6 +147,11 @@ defmodule Mithril.MobileFunctions.Paystack do
       {:error, _} ->
         {:error, {:status, 502, "Paystack unavailable"}}
     end
+  end
+
+  defp paystack_req_options(options) do
+    extra = Application.get_env(:mithril, :paystack_req_options, [])
+    if is_list(extra), do: Keyword.merge(options, extra), else: options
   end
 
   defp provider_message(%{"message" => message}) when is_binary(message), do: message
