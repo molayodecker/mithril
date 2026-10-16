@@ -27,6 +27,7 @@ defmodule Mithril.MobileGatewayGuestRpcTest do
              p_cleaning_scan_id: "scan-1"
            }) == {:error, :forbidden}
   end
+
   test "public booking pricing hides compensation and margin fields" do
     payload = [
       %{
