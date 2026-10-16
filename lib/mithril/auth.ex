@@ -1277,7 +1277,7 @@ defmodule Mithril.Auth do
   defp staff_role(role) when role in ~w(admin reviewer), do: {:ok, role}
   defp staff_role(_), do: {:error, :invalid_role}
 
-  defp find_staff_user(email, phone, user_id \\ nil) do
+  defp find_staff_user(email, phone, user_id) do
     cond do
       is_binary(user_id) ->
         fetch_user_by_id(user_id)
