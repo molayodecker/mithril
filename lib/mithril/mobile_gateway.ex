@@ -87,9 +87,34 @@ defmodule Mithril.MobileGateway do
               )
             end
           end)
+          |> sanitize_guest_rpc_result(name)
         end
     end
   end
+
+  @doc false
+  def sanitize_guest_rpc_result({:ok, result}, "compute_booking_pricing") do
+    {:ok, strip_private_pricing_fields(result)}
+  end
+
+  def sanitize_guest_rpc_result(result, _name), do: result
+
+  defp strip_private_pricing_fields(rows) when is_list(rows),
+    do: Enum.map(rows, &strip_private_pricing_fields/1)
+
+  defp strip_private_pricing_fields(row) when is_map(row) do
+    row
+    |> Enum.reject(fn {key, _value} ->
+      normalized = key |> to_string() |> Macro.underscore()
+      String.contains?(normalized, "earnings") or
+        String.contains?(normalized, "margin") or
+        String.contains?(normalized, "profit") or
+        String.contains?(normalized, "payout")
+    end)
+    |> Map.new(fn {key, value} -> {key, strip_private_pricing_fields(value)} end)
+  end
+
+  defp strip_private_pricing_fields(value), do: value
 
   def call_guest_rpc(_name, _args), do: {:error, :unknown_function}
 
