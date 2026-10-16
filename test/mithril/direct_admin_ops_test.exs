@@ -49,9 +49,17 @@ defmodule Mithril.DirectAdminOpsTest do
     """)
 
     Repo.query!("""
+    CREATE TABLE public.roles (
+      id text PRIMARY KEY,
+      description text
+    )
+    """)
+
+    Repo.query!("""
     CREATE TABLE public.user_roles (
       user_id uuid NOT NULL,
-      role_id text NOT NULL
+      role_id text NOT NULL,
+      UNIQUE (user_id, role_id)
     )
     """)
 
@@ -214,6 +222,27 @@ defmodule Mithril.DirectAdminOpsTest do
     assert {:ok, %{members: members}} = DirectAdminTeam.list(admin_id)
     assert length(members) == 1
     assert hd(members)["name"] == "Ops Lead"
+  end
+
+  test "grants and revokes staff roles", %{admin_id: admin_id} do
+    assert {:ok, member} =
+             DirectAdminTeam.grant(admin_id, %{
+               "email" => "cleaner@example.com",
+               "role" => "reviewer"
+             })
+
+    assert member["roles"] == ["reviewer"]
+
+    assert {:ok, %{members: members}} = DirectAdminTeam.list(admin_id)
+    assert length(members) == 2
+
+    assert {:ok, updated} =
+             DirectAdminTeam.revoke(admin_id, %{"userId" => member["userId"], "role" => "reviewer"})
+
+    assert updated["roles"] == []
+
+    assert {:error, :last_admin} =
+             DirectAdminTeam.revoke(admin_id, %{"userId" => admin_id, "role" => "admin"})
   end
 
   test "forbids reviewers from the team roster and guests from payouts" do
