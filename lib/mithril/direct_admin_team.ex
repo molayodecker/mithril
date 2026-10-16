@@ -23,13 +23,11 @@ defmodule Mithril.DirectAdminTeam do
   end
 
   def revoke(actor_id, params) when is_map(params) do
-    with {:ok, actor_uid} <- cast_uuid(actor_id),
+    with {:ok, _actor_uid} <- cast_uuid(actor_id),
          :ok <- require_admin_user(actor_id),
          {:ok, target_uid} <- cast_uuid(params["userId"] || params[:userId]),
          {:ok, role} <- staff_role(params["role"] || params[:role]),
-         :ok <- ensure_can_revoke(actor_uid, target_uid, role),
-         :ok <- Auth.revoke_staff_role(target_uid, role),
-         {:ok, member} <- fetch_member(target_uid) do
+         {:ok, member} <- revoke_role_transaction(target_uid, role) do
       {:ok, member}
     else
       :error -> {:error, :invalid_request}
@@ -122,20 +120,53 @@ defmodule Mithril.DirectAdminTeam do
   defp staff_role(role) when role in @staff_roles, do: {:ok, role}
   defp staff_role(_), do: {:error, :invalid_role}
 
-  defp ensure_can_revoke(actor_uid, target_uid, "admin") do
-    if canonical_uuid(actor_uid) == canonical_uuid(target_uid) and admin_count() <= 1 do
-      {:error, :last_admin}
-    else
-      :ok
+  # Serialize role mutations that could remove the last admin. The count and
+  # deletion must run in one transaction, not in separate requests.
+  defp revoke_role_transaction(target_uid, role) do
+    case Repo.transaction(fn ->
+           if role == "admin" do
+             Repo.query!("SELECT pg_advisory_xact_lock(107, 1)")
+
+             case Repo.query(
+                    "SELECT COUNT(*)::integer FROM public.user_roles WHERE role_id = 'admin'"
+                  ) do
+               {:ok, %{rows: [[count]]}} when count <= 1 ->
+                 case Repo.query(
+                        "SELECT 1 FROM public.user_roles WHERE user_id = $1::uuid AND role_id = 'admin'",
+                        [Ecto.UUID.dump!(target_uid)]
+                      ) do
+                   {:ok, %{num_rows: 1}} -> Repo.rollback(:last_admin)
+                   {:error, error} -> Repo.rollback(database_reason(error))
+                   _ -> :ok
+                 end
+
+               {:ok, _} ->
+                 :ok
+
+               {:error, error} ->
+                 Repo.rollback(database_reason(error))
+             end
+           end
+
+           case Auth.revoke_staff_role(target_uid, role) do
+             :ok ->
+               case fetch_member(target_uid) do
+                 {:ok, member} -> member
+                 {:error, reason} -> Repo.rollback(reason)
+               end
+
+             {:error, reason} ->
+               Repo.rollback(reason)
+           end
+         end) do
+      {:ok, member} -> {:ok, member}
+      {:error, reason} -> {:error, reason}
     end
   end
 
-  defp ensure_can_revoke(_actor_uid, _target_uid, _role), do: :ok
-
-  defp admin_count do
-    case Repo.query("SELECT COUNT(*)::integer FROM public.user_roles WHERE role_id = 'admin'") do
-      {:ok, %{rows: [[count]]}} -> count
-      _ -> 0
+  defp database_reason(error) do
+    case database_error(error) do
+      {:error, reason} -> reason
     end
   end
 
@@ -216,13 +247,6 @@ defmodule Mithril.DirectAdminTeam do
   end
 
   defp cast_uuid(_), do: :error
-
-  defp canonical_uuid(value) when is_binary(value) do
-    case cast_uuid(value) do
-      {:ok, canonical} -> canonical
-      :error -> value
-    end
-  end
 
   defp first_row([row]), do: row
   defp first_row(row) when is_map(row), do: row
