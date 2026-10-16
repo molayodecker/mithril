@@ -297,9 +297,10 @@ defmodule Mithril.Auth do
     role = to_string(Map.get(attrs, :role) || Map.get(attrs, "role") || "admin")
     email = blank_to_nil(Map.get(attrs, :email) || Map.get(attrs, "email"))
     phone = blank_to_nil(Map.get(attrs, :phone) || Map.get(attrs, "phone"))
+    user_id = blank_to_nil(Map.get(attrs, :user_id) || Map.get(attrs, "userId"))
 
     with {:ok, role} <- staff_role(role),
-         {:ok, user} <- find_staff_user(email, phone),
+         {:ok, user} <- find_staff_user(email, phone, user_id),
          :ok <- insert_staff_role(user.id, role) do
       {:ok,
        %{
@@ -310,6 +311,13 @@ defmodule Mithril.Auth do
          admin: admin?(user.id),
          reviewer: reviewer?(user.id)
        }}
+    end
+  end
+
+  def revoke_staff_role(user_id, role) when is_binary(user_id) and is_binary(role) do
+    with {:ok, role} <- staff_role(role),
+         :ok <- delete_user_role(user_id, role) do
+      :ok
     end
   end
 
@@ -1269,8 +1277,11 @@ defmodule Mithril.Auth do
   defp staff_role(role) when role in ~w(admin reviewer), do: {:ok, role}
   defp staff_role(_), do: {:error, :invalid_role}
 
-  defp find_staff_user(email, phone) do
+  defp find_staff_user(email, phone, user_id) do
     cond do
+      is_binary(user_id) ->
+        fetch_user_by_id(user_id)
+
       is_binary(phone) ->
         with {:ok, phone} <- normalize_phone(phone),
              {:ok, user} <- fetch_user_by_phone(phone) do
@@ -1281,6 +1292,33 @@ defmodule Mithril.Auth do
         fetch_user_by_email(normalize_login(email))
 
       true ->
+        {:error, :invalid_request}
+    end
+  end
+
+  defp fetch_user_by_id(user_id) do
+    case Ecto.UUID.cast(user_id) do
+      {:ok, _} ->
+        case Repo.query(
+               """
+               SELECT id::text, email, phone
+               FROM public.users
+               WHERE id = $1::uuid
+               LIMIT 1
+               """,
+               [dump_uuid(user_id)]
+             ) do
+          {:ok, %{num_rows: 1, rows: [[id, email, phone]]}} ->
+            {:ok, %{id: id, email: email, phone: phone}}
+
+          {:ok, _} ->
+            {:error, :not_found}
+
+          {:error, error} ->
+            database_error(error)
+        end
+
+      :error ->
         {:error, :invalid_request}
     end
   end
@@ -2057,6 +2095,20 @@ defmodule Mithril.Auth do
          ) do
       {:ok, _} -> :ok
       {:error, error} -> unique_or_database_error(error)
+    end
+  end
+
+  defp delete_user_role(user_id, role) do
+    case Repo.query(
+           """
+           DELETE FROM public.user_roles
+           WHERE user_id = $1::uuid AND role_id = $2
+           """,
+           [dump_uuid(user_id), role]
+         ) do
+      {:ok, %{num_rows: 0}} -> {:error, :role_not_assigned}
+      {:ok, _} -> :ok
+      {:error, error} -> database_error(error)
     end
   end
 

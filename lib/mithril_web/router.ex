@@ -207,6 +207,8 @@ defmodule MithrilWeb.Router do
     get "/admin/payouts", DirectAdminPayoutsController, :index
     get "/admin/reviews", DirectAdminReviewsController, :index
     get "/admin/team", DirectAdminTeamController, :index
+    post "/admin/team/grant", DirectAdminTeamController, :grant
+    post "/admin/team/revoke", DirectAdminTeamController, :revoke
     get "/admin/notifications", DirectAdminNotificationsController, :index
     get "/admin/notification-targets", DirectAdminNotificationsController, :search
 
