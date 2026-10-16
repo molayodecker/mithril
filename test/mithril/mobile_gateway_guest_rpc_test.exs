@@ -39,7 +39,8 @@ defmodule Mithril.MobileGatewayGuestRpcTest do
     ]
 
     assert MobileGateway.sanitize_guest_rpc_result({:ok, payload}, "compute_booking_pricing") ==
-             {:ok, [%{"final_amount_minor" => 12_000, "details" => %{"customer_total" => 12_000}}]}
+             {:ok,
+              [%{"final_amount_minor" => 12_000, "details" => %{"customer_total" => 12_000}}]}
 
     assert MobileGateway.sanitize_guest_rpc_result({:ok, payload}, "get_available_timeslots") ==
              {:ok, payload}
