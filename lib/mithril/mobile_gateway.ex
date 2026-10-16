@@ -106,6 +106,7 @@ defmodule Mithril.MobileGateway do
     row
     |> Enum.reject(fn {key, _value} ->
       normalized = key |> to_string() |> Macro.underscore()
+
       String.contains?(normalized, "earnings") or
         String.contains?(normalized, "margin") or
         String.contains?(normalized, "profit") or
