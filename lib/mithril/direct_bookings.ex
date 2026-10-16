@@ -133,7 +133,7 @@ defmodule Mithril.DirectBookings do
          {:ok, service} <- service_details(input.service_id),
          :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
          {:ok, pricing} <- compute_pricing(input) do
-      {:ok, pricing}
+      {:ok, Map.delete(pricing, "cleanerEarningsMinor")}
     end
   end
 
