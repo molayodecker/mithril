@@ -27,4 +27,21 @@ defmodule Mithril.MobileGatewayGuestRpcTest do
              p_cleaning_scan_id: "scan-1"
            }) == {:error, :forbidden}
   end
+  test "public booking pricing hides compensation and margin fields" do
+    payload = [
+      %{
+        "final_amount_minor" => 12_000,
+        "cleaner_earnings_minor" => 7_000,
+        "platform_margin_minor" => 5_000,
+        "workerPayoutMinor" => 7_000,
+        "details" => %{"profit_amount" => 5_000, "customer_total" => 12_000}
+      }
+    ]
+
+    assert MobileGateway.sanitize_guest_rpc_result({:ok, payload}, "compute_booking_pricing") ==
+             {:ok, [%{"final_amount_minor" => 12_000, "details" => %{"customer_total" => 12_000}}]}
+
+    assert MobileGateway.sanitize_guest_rpc_result({:ok, payload}, "get_available_timeslots") ==
+             {:ok, payload}
+  end
 end
