@@ -24,6 +24,7 @@ defmodule Mithril.DirectAdminOpsTest do
           "bookings",
           "service_types",
           "user_roles",
+          "roles",
           "users",
           "profiles",
           "cleaner_data"
@@ -243,6 +244,21 @@ defmodule Mithril.DirectAdminOpsTest do
 
     assert {:error, :last_admin} =
              DirectAdminTeam.revoke(admin_id, %{"userId" => admin_id, "role" => "admin"})
+  end
+
+  test "an admin cannot revoke the only other admin", %{admin_id: admin_id} do
+    second_admin = insert_user!("second-admin@example.com", "Second Admin")
+
+    Repo.query!(
+      "INSERT INTO public.user_roles (user_id, role_id) VALUES ($1, 'admin')",
+      [Ecto.UUID.dump!(second_admin)]
+    )
+
+    assert {:ok, _} =
+             DirectAdminTeam.revoke(admin_id, %{"userId" => admin_id, "role" => "admin"})
+
+    assert {:error, :last_admin} =
+             DirectAdminTeam.revoke(second_admin, %{"userId" => second_admin, "role" => "admin"})
   end
 
   test "forbids reviewers from the team roster and guests from payouts" do
