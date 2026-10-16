@@ -92,6 +92,8 @@ defmodule Mithril.MobileGateway do
     end
   end
 
+  def call_guest_rpc(_name, _args), do: {:error, :unknown_function}
+
   @doc false
   def sanitize_guest_rpc_result({:ok, result}, "compute_booking_pricing") do
     {:ok, strip_private_pricing_fields(result)}
@@ -116,8 +118,6 @@ defmodule Mithril.MobileGateway do
   end
 
   defp strip_private_pricing_fields(value), do: value
-
-  def call_guest_rpc(_name, _args), do: {:error, :unknown_function}
 
   defp guest_args_allowed?("manage_extra_tasks", args) when is_map(args) do
     action = args["action"] || args[:action]
