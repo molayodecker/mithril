@@ -238,7 +238,10 @@ defmodule Mithril.DirectAdminOpsTest do
     assert length(members) == 2
 
     assert {:ok, updated} =
-             DirectAdminTeam.revoke(admin_id, %{"userId" => member["userId"], "role" => "reviewer"})
+             DirectAdminTeam.revoke(admin_id, %{
+               "userId" => member["userId"],
+               "role" => "reviewer"
+             })
 
     assert updated["roles"] == []
 
