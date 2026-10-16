@@ -14,6 +14,21 @@ defmodule MithrilWeb.MobileGatewayControllerTest do
     assert json_response(conn, 401) == %{"error" => "unauthorized"}
   end
 
+  test "POST /mobile/guest/rpc rejects account functions" do
+    conn = post(build_conn(), "/mobile/guest/rpc/get_my_wallet_balance", %{"args" => %{}})
+
+    assert json_response(conn, 404)["error"] == "unknown_function"
+  end
+
+  test "POST /mobile/guest/rpc rejects extra-task hour updates" do
+    conn =
+      post(build_conn(), "/mobile/guest/rpc/manage_extra_tasks", %{
+        "args" => %{"action" => "update_hours", "task_id" => "windows", "new_hours" => 2}
+      })
+
+    assert json_response(conn, 403)["error"] == "forbidden"
+  end
+
   test "POST /mobile/rpc/:name rejects functions outside the allowlist" do
     user_id = Ecto.UUID.generate()
     {:ok, access_token, _claims} = Token.issue(user_id, "jwt@example.com")

@@ -22,6 +22,21 @@ defmodule MithrilWeb.MobileGatewayController do
     respond(conn, MobileGateway.call_rpc(user_id(conn), name, params["args"]))
   end
 
+  operation(:guest_rpc,
+    operation_id: "mobile.guestRpc",
+    summary: "Call an allowlisted booking-prep function without a signed-in user",
+    parameters: [
+      name: [in: :path, schema: %Schema{type: :string}, required: true]
+    ],
+    responses: [
+      ok: {"Function result", "application/json", %Schema{type: :object}}
+    ]
+  )
+
+  def guest_rpc(conn, %{"name" => name} = params) do
+    respond(conn, MobileGateway.call_guest_rpc(name, params["args"]))
+  end
+
   operation(:query,
     operation_id: "mobile.query",
     summary: "Run an allowlisted table query as the signed-in user",

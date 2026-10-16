@@ -126,15 +126,17 @@ defmodule MithrilWeb.Router do
     pipe_through [:api]
 
     get "/invoices/:token", DirectAdminInvoicesController, :public_show
+    # Catalog, worker list, and price preview do not use the caller id.
+    # Booking writes stay behind :direct_gateway.
+    get "/booking-services", DirectBookingController, :list_services
+    get "/booking-categories", DirectBookingController, :list_categories
+    get "/booking-cleaners", DirectBookingController, :list_cleaners
+    post "/booking-price", DirectBookingController, :preview_price
   end
 
   scope "/direct", MithrilWeb do
     pipe_through [:api, :direct_gateway]
 
-    get "/booking-services", DirectBookingController, :list_services
-    get "/booking-categories", DirectBookingController, :list_categories
-    get "/booking-cleaners", DirectBookingController, :list_cleaners
-    post "/booking-price", DirectBookingController, :preview_price
     post "/bookings", DirectBookingController, :create
     get "/bookings", DirectBookingController, :index
     get "/bookings/:id", DirectBookingController, :show
@@ -261,6 +263,12 @@ defmodule MithrilWeb.Router do
     post "/admin/service-requests/:id/status",
          DirectDispatchController,
          :update_admin_service_request
+  end
+
+  scope "/mobile", MithrilWeb do
+    pipe_through [:api]
+
+    post "/guest/rpc/:name", MobileGatewayController, :guest_rpc
   end
 
   scope "/mobile", MithrilWeb do

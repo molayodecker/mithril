@@ -51,6 +51,87 @@ defmodule Mithril.MobileGateway do
     end
   end
 
+  # Reads the booking form needs before an account exists. Writes and
+  # customer-scoped functions stay on the authenticated RPC route.
+  @guest_rpcs MapSet.new(~w(
+    compute_booking_pricing
+    compute_extra_task_labor_quotes
+    get_active_pricing_rule
+    get_ai_match_settings
+    get_available_timeslots
+    get_service_categories
+    is_location_in_active_service_area
+    manage_extra_tasks
+    validate_booking_timeslot
+  ))
+
+  def call_guest_rpc(name, args) when is_binary(name) do
+    args = args || %{}
+
+    cond do
+      not MapSet.member?(@guest_rpcs, name) ->
+        {:error, :unknown_function}
+
+      not guest_args_allowed?(name, args) ->
+        {:error, :forbidden}
+
+      true ->
+        with {:ok, compiled} <- MobileRpc.compile(name, args) do
+          transact_anonymous(fn ->
+            with {:ok, signature} <- resolve_signature(compiled.name, compiled.arg_names),
+                 {:ok, params} <- normalize_rpc_params(compiled, signature) do
+              query(
+                MobileRpc.sql(compiled, signature.kind),
+                params,
+                signature.kind != :void
+              )
+            end
+          end)
+          |> sanitize_guest_rpc_result(name)
+        end
+    end
+  end
+
+  def call_guest_rpc(_name, _args), do: {:error, :unknown_function}
+
+  @doc false
+  def sanitize_guest_rpc_result({:ok, result}, "compute_booking_pricing") do
+    {:ok, strip_private_pricing_fields(result)}
+  end
+
+  def sanitize_guest_rpc_result(result, _name), do: result
+
+  defp strip_private_pricing_fields(rows) when is_list(rows),
+    do: Enum.map(rows, &strip_private_pricing_fields/1)
+
+  defp strip_private_pricing_fields(row) when is_map(row) do
+    row
+    |> Enum.reject(fn {key, _value} ->
+      normalized = key |> to_string() |> Macro.underscore()
+
+      String.contains?(normalized, "earnings") or
+        String.contains?(normalized, "margin") or
+        String.contains?(normalized, "profit") or
+        String.contains?(normalized, "payout")
+    end)
+    |> Map.new(fn {key, value} -> {key, strip_private_pricing_fields(value)} end)
+  end
+
+  defp strip_private_pricing_fields(value), do: value
+
+  defp guest_args_allowed?("manage_extra_tasks", args) when is_map(args) do
+    action = args["action"] || args[:action]
+    action in [nil, "get_all"]
+  end
+
+  defp guest_args_allowed?("compute_booking_pricing", args) when is_map(args) do
+    scan_id = args["p_cleaning_scan_id"] || args[:p_cleaning_scan_id]
+    scan_id in [nil, ""]
+  end
+
+  defp guest_args_allowed?(_name, args) when is_map(args), do: true
+  defp guest_args_allowed?(_name, _args), do: false
+
   def run_query(user_id, query) do
     with :ok <- validate_query_boundary(query),
          {:ok, compiled} <- MobileQuery.compile(user_id, query) do
@@ -142,6 +223,18 @@ defmodule Mithril.MobileGateway do
                 {:ok, value} <- fun.() do
              value
            else
+             {:error, reason} -> Repo.rollback(reason)
+           end
+         end) do
+      {:ok, value} -> {:ok, value}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp transact_anonymous(fun) do
+    case Repo.transaction(fn ->
+           case fun.() do
+             {:ok, value} -> value
              {:error, reason} -> Repo.rollback(reason)
            end
          end) do
