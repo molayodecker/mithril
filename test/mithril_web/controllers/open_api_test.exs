@@ -88,6 +88,9 @@ defmodule MithrilWeb.OpenApiTest do
     assert spec["paths"]["/direct/admin/reviews"]["get"]
     assert spec["paths"]["/direct/admin/team"]["get"]
 
+    assert spec["paths"]["/direct/admin/accounts/merge"]["post"]["operationId"] ==
+             "direct.mergeAdminAccounts"
+
     assert spec["paths"]["/direct/admin/team/grant"]["post"]["operationId"] ==
              "direct.grantAdminTeamRole"
 
