@@ -121,6 +121,10 @@ defmodule Mithril.Auth do
         |> Map.put(:admin, "admin" in roles)
         |> Map.put(:reviewer, "reviewer" in roles)
         |> Map.put(:roles, roles)
+        |> Map.put(
+          :permissions,
+          Enum.filter(roles, &Mithril.OpsPermissions.valid?/1)
+        )
         |> Map.put(:cleanerVerified, cleaner_state.verified)
         |> Map.put(:cleanerStatus, cleaner_state.status)
         |> Map.put(:first_name, profile.first_name)
@@ -197,7 +201,94 @@ defmodule Mithril.Auth do
 
   def reviewer?(user_id) when is_binary(user_id), do: has_role?(user_id, "reviewer")
 
-  def staff?(user_id) when is_binary(user_id), do: admin?(user_id) or reviewer?(user_id)
+  def staff?(user_id) when is_binary(user_id),
+    do: admin?(user_id) or reviewer?(user_id) or ops_access?(user_id)
+
+  def ops_access?(user_id) when is_binary(user_id) do
+    case Repo.query(
+           """
+           SELECT EXISTS (
+             SELECT 1
+             FROM public.user_roles
+             WHERE user_id = $1::uuid
+               AND role_id = ANY($2::text[])
+           )
+           """,
+           [dump_uuid(user_id), Mithril.OpsPermissions.ids()]
+         ) do
+      {:ok, %{rows: [[true]]}} -> true
+      _ -> false
+    end
+  end
+
+  def ops_access?(_), do: false
+
+  def find_user_for_staff_access(attrs) when is_map(attrs) do
+    email = blank_to_nil(Map.get(attrs, :email) || Map.get(attrs, "email"))
+    phone = blank_to_nil(Map.get(attrs, :phone) || Map.get(attrs, "phone"))
+    user_id = blank_to_nil(Map.get(attrs, :user_id) || Map.get(attrs, "userId"))
+    find_staff_user(email, phone, user_id)
+  end
+
+  def sync_staff_roles(user_id, desired_roles)
+      when is_binary(user_id) and is_list(desired_roles) do
+    desired = Enum.filter(desired_roles, &(&1 in ~w(admin reviewer))) |> Enum.uniq()
+
+    with {:ok, roles} <- fetch_roles(user_id) do
+      current = Enum.filter(roles, &(&1 in ~w(admin reviewer)))
+      to_add = desired -- current
+      to_remove = current -- desired
+
+      with :ok <-
+             Enum.reduce_while(to_add, :ok, fn role, :ok ->
+               case insert_staff_role(user_id, role) do
+                 :ok -> {:cont, :ok}
+                 {:error, reason} -> {:halt, {:error, reason}}
+               end
+             end),
+           :ok <-
+             Enum.reduce_while(to_remove, :ok, fn role, :ok ->
+               case revoke_staff_role(user_id, role) do
+                 :ok -> {:cont, :ok}
+                 {:error, :role_not_assigned} -> {:cont, :ok}
+                 {:error, reason} -> {:halt, {:error, reason}}
+               end
+             end) do
+        :ok
+      end
+    end
+  end
+
+  def sync_ops_permissions(user_id, desired_ids)
+      when is_binary(user_id) and is_list(desired_ids) do
+    desired = Enum.filter(desired_ids, &Mithril.OpsPermissions.valid?/1) |> Enum.uniq()
+
+    with {:ok, roles} <- fetch_roles(user_id) do
+      current =
+        Enum.filter(roles, &Mithril.OpsPermissions.valid?/1)
+
+      to_add = desired -- current
+      to_remove = current -- desired
+
+      with :ok <-
+             Enum.reduce_while(to_add, :ok, fn role, :ok ->
+               case assign_user_role(user_id, role) do
+                 :ok -> {:cont, :ok}
+                 {:error, reason} -> {:halt, {:error, reason}}
+               end
+             end),
+           :ok <-
+             Enum.reduce_while(to_remove, :ok, fn role, :ok ->
+               case delete_user_role(user_id, role) do
+                 :ok -> {:cont, :ok}
+                 {:error, :role_not_assigned} -> {:cont, :ok}
+                 {:error, reason} -> {:halt, {:error, reason}}
+               end
+             end) do
+        :ok
+      end
+    end
+  end
 
   def staff_uuid?(uid) when is_binary(uid) do
     case Ecto.UUID.cast(uid) do

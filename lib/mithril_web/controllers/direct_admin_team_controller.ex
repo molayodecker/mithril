@@ -7,6 +7,7 @@ defmodule MithrilWeb.DirectAdminTeamController do
   alias MithrilWeb.Schemas.DirectAdminTeam.ListResponse
   alias MithrilWeb.Schemas.DirectAdminTeam.Member
   alias MithrilWeb.Schemas.DirectAdminTeam.RevokeRequest
+  alias MithrilWeb.Schemas.DirectAdminTeam.UpdateAccessRequest
 
   tags(["direct-admin-team"])
 
@@ -30,6 +31,13 @@ defmodule MithrilWeb.DirectAdminTeamController do
     responses: [ok: {"Updated member", "application/json", Member}]
   )
 
+  operation(:update_access,
+    operation_id: "direct.updateAdminTeamAccess",
+    summary: "Set staff roles and ops desk permissions for a user",
+    request_body: {"Access", "application/json", UpdateAccessRequest},
+    responses: [ok: {"Updated member", "application/json", Member}]
+  )
+
   def index(conn, _params) do
     respond(conn, DirectAdminTeam.list(user_id(conn)))
   end
@@ -40,6 +48,10 @@ defmodule MithrilWeb.DirectAdminTeamController do
 
   def revoke(conn, params) do
     respond(conn, DirectAdminTeam.revoke(user_id(conn), params))
+  end
+
+  def update_access(conn, params) do
+    respond(conn, DirectAdminTeam.update_access(user_id(conn), params))
   end
 
   defp user_id(conn), do: conn.assigns.instaclean_user_id

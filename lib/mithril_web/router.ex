@@ -12,6 +12,7 @@ defmodule MithrilWeb.Router do
 
   pipeline :direct_gateway do
     plug MithrilWeb.Plugs.DirectGatewayAuth
+    plug MithrilWeb.Plugs.DirectOpsAuthorization
   end
 
   pipeline :user_auth do
@@ -210,6 +211,7 @@ defmodule MithrilWeb.Router do
     get "/admin/team", DirectAdminTeamController, :index
     post "/admin/team/grant", DirectAdminTeamController, :grant
     post "/admin/team/revoke", DirectAdminTeamController, :revoke
+    post "/admin/team/access", DirectAdminTeamController, :update_access
     get "/admin/notifications", DirectAdminNotificationsController, :index
     get "/admin/notification-targets", DirectAdminNotificationsController, :search
 

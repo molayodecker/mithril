@@ -94,6 +94,9 @@ defmodule MithrilWeb.OpenApiTest do
     assert spec["paths"]["/direct/admin/team/grant"]["post"]["operationId"] ==
              "direct.grantAdminTeamRole"
 
+    assert spec["paths"]["/direct/admin/team/access"]["post"]["operationId"] ==
+             "direct.updateAdminTeamAccess"
+
     assert spec["paths"]["/direct/admin/team/revoke"]["post"]["operationId"] ==
              "direct.revokeAdminTeamRole"
 
