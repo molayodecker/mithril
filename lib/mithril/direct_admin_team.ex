@@ -40,6 +40,7 @@ defmodule Mithril.DirectAdminTeam do
   def update_access(actor_id, params) when is_map(params) do
     with {:ok, _actor} <- dump_uuid(actor_id),
          :ok <- require_admin_user(actor_id),
+         :ok <- require_access_fields(params),
          {:ok, target_uid} <- resolve_target_user(params),
          {:ok, staff_roles} <- parse_staff_roles(params),
          {:ok, permissions} <- parse_permissions(params),
@@ -147,8 +148,17 @@ defmodule Mithril.DirectAdminTeam do
     end
   end
 
+  defp require_access_fields(params) do
+    if (Map.has_key?(params, "staffRoles") or Map.has_key?(params, :staffRoles)) and
+         (Map.has_key?(params, "permissions") or Map.has_key?(params, :permissions)) do
+      :ok
+    else
+      {:error, :invalid_request}
+    end
+  end
+
   defp parse_staff_roles(params) do
-    raw = params["staffRoles"] || params[:staffRoles] || params["roles"] || params[:roles] || []
+    raw = params["staffRoles"] || params[:staffRoles]
 
     if is_list(raw) and Enum.all?(raw, &(&1 in @staff_roles)) do
       {:ok, Enum.uniq(raw)}
@@ -177,6 +187,13 @@ defmodule Mithril.DirectAdminTeam do
 
   defp sync_access_transaction(target_uid, staff_roles, permissions) do
     case Repo.transaction(fn ->
+           # Lock the target before reading role sets, so concurrent replacements cannot combine.
+           case Repo.query("SELECT id FROM public.users WHERE id = $1::uuid FOR UPDATE", [Ecto.UUID.dump!(target_uid)]) do
+             {:ok, %{rows: [[_]]}} -> :ok
+             {:ok, _} -> Repo.rollback(:user_not_found)
+             {:error, error} -> Repo.rollback(database_reason(error))
+           end
+
            if "admin" not in staff_roles and Auth.admin?(target_uid) do
              Repo.query!("SELECT pg_advisory_xact_lock(107, 1)")
 
