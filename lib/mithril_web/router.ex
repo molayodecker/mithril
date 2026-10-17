@@ -12,6 +12,7 @@ defmodule MithrilWeb.Router do
 
   pipeline :direct_gateway do
     plug MithrilWeb.Plugs.DirectGatewayAuth
+    plug MithrilWeb.Plugs.DirectOpsAuthorization
   end
 
   pipeline :user_auth do
