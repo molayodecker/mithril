@@ -188,7 +188,9 @@ defmodule Mithril.DirectAdminTeam do
   defp sync_access_transaction(target_uid, staff_roles, permissions) do
     case Repo.transaction(fn ->
            # Lock the target before reading role sets, so concurrent replacements cannot combine.
-           case Repo.query("SELECT id FROM public.users WHERE id = $1::uuid FOR UPDATE", [Ecto.UUID.dump!(target_uid)]) do
+           case Repo.query("SELECT id FROM public.users WHERE id = $1::uuid FOR UPDATE", [
+                  Ecto.UUID.dump!(target_uid)
+                ]) do
              {:ok, %{rows: [[_]]}} -> :ok
              {:ok, _} -> Repo.rollback(:user_not_found)
              {:error, error} -> Repo.rollback(database_reason(error))
