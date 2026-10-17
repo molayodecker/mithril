@@ -203,6 +203,7 @@ defmodule MithrilWeb.Router do
     post "/admin/placements/:id/matches", DirectController, :match_admin_candidate
 
     get "/admin/customers", DirectDispatchController, :list_admin_customers
+    post "/admin/accounts/merge", DirectAdminAccountsController, :merge
     get "/admin/app-update-policy", DirectAdminAppUpdatePolicyController, :index
     post "/admin/app-update-policy", DirectAdminAppUpdatePolicyController, :save
     get "/admin/services", DirectAdminServicesController, :index
@@ -214,6 +215,9 @@ defmodule MithrilWeb.Router do
     get "/admin/payouts", DirectAdminPayoutsController, :index
     get "/admin/reviews", DirectAdminReviewsController, :index
     get "/admin/team", DirectAdminTeamController, :index
+    post "/admin/team/grant", DirectAdminTeamController, :grant
+    post "/admin/team/revoke", DirectAdminTeamController, :revoke
+    post "/admin/team/access", DirectAdminTeamController, :update_access
     get "/admin/notifications", DirectAdminNotificationsController, :index
     get "/admin/notification-targets", DirectAdminNotificationsController, :search
 
