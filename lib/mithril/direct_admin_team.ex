@@ -44,7 +44,6 @@ defmodule Mithril.DirectAdminTeam do
          {:ok, staff_roles} <- parse_staff_roles(params),
          {:ok, permissions} <- parse_permissions(params),
          {:ok, staff_roles} <- ensure_staff_gate(staff_roles, permissions),
-         :ok <- validate_access_payload(staff_roles, permissions),
          {:ok, member} <- sync_access_transaction(target_uid, staff_roles, permissions) do
       {:ok, member}
     else
@@ -151,9 +150,8 @@ defmodule Mithril.DirectAdminTeam do
   defp parse_staff_roles(params) do
     raw = params["staffRoles"] || params[:staffRoles] || params["roles"] || params[:roles] || []
 
-    if is_list(raw) do
-      staff = Enum.filter(raw, &(&1 in @staff_roles)) |> Enum.uniq()
-      {:ok, staff}
+    if is_list(raw) and Enum.all?(raw, &(&1 in @staff_roles)) do
+      {:ok, Enum.uniq(raw)}
     else
       {:error, :invalid_request}
     end
@@ -162,9 +160,8 @@ defmodule Mithril.DirectAdminTeam do
   defp parse_permissions(params) do
     raw = params["permissions"] || params[:permissions] || []
 
-    if is_list(raw) do
-      permissions = Enum.filter(raw, &OpsPermissions.valid?/1) |> Enum.uniq()
-      {:ok, permissions}
+    if is_list(raw) and Enum.all?(raw, &OpsPermissions.valid?/1) do
+      {:ok, Enum.uniq(raw)}
     else
       {:error, :invalid_request}
     end
@@ -175,14 +172,6 @@ defmodule Mithril.DirectAdminTeam do
       staff_roles != [] -> {:ok, staff_roles}
       permissions == [] -> {:ok, staff_roles}
       true -> {:ok, ["reviewer"]}
-    end
-  end
-
-  defp validate_access_payload(staff_roles, permissions) do
-    if staff_roles == [] and permissions == [] do
-      {:error, :invalid_request}
-    else
-      :ok
     end
   end
 
