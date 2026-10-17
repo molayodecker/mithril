@@ -4,9 +4,11 @@ defmodule Mithril.DirectAdminTeam do
   require Logger
 
   alias Mithril.Auth
+  alias Mithril.OpsPermissions
   alias Mithril.Repo
 
   @staff_roles ~w(admin reviewer)
+  @roster_roles @staff_roles ++ OpsPermissions.ids()
 
   def grant(actor_id, params) when is_map(params) do
     with {:ok, _actor} <- dump_uuid(actor_id),
@@ -31,6 +33,23 @@ defmodule Mithril.DirectAdminTeam do
       {:ok, member}
     else
       :error -> {:error, :invalid_request}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def update_access(actor_id, params) when is_map(params) do
+    with {:ok, _actor} <- dump_uuid(actor_id),
+         :ok <- require_admin_user(actor_id),
+         {:ok, target_uid} <- resolve_target_user(params),
+         {:ok, staff_roles} <- parse_staff_roles(params),
+         {:ok, permissions} <- parse_permissions(params),
+         {:ok, staff_roles} <- ensure_staff_gate(staff_roles, permissions),
+         :ok <- validate_access_payload(staff_roles, permissions),
+         {:ok, member} <- sync_access_transaction(target_uid, staff_roles, permissions) do
+      {:ok, member}
+    else
+      :error -> {:error, :invalid_request}
+      {:error, :not_found} -> {:error, :user_not_found}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -66,13 +85,14 @@ defmodule Mithril.DirectAdminTeam do
                COALESCE(p.fullname, u.email, u.phone, '') ASC
              LIMIT 200
              """,
-             [@staff_roles]
+             [@roster_roles]
            ) do
         {:ok, result} ->
           {:ok,
            %{
-             members: Enum.map(result.rows, &first_row/1),
-             roleGuide: role_guide()
+             members: Enum.map(result.rows, &encode_member(first_row(&1))),
+             roleGuide: role_guide(),
+             permissionCatalog: OpsPermissions.catalog()
            }}
 
         {:error, error} ->
@@ -119,6 +139,102 @@ defmodule Mithril.DirectAdminTeam do
 
   defp staff_role(role) when role in @staff_roles, do: {:ok, role}
   defp staff_role(_), do: {:error, :invalid_role}
+
+  defp resolve_target_user(params) do
+    case Auth.find_user_for_staff_access(params) do
+      {:ok, user} -> {:ok, user.id}
+      {:error, :not_found} -> {:error, :not_found}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp parse_staff_roles(params) do
+    raw = params["staffRoles"] || params[:staffRoles] || params["roles"] || params[:roles] || []
+
+    if is_list(raw) do
+      staff = Enum.filter(raw, &(&1 in @staff_roles)) |> Enum.uniq()
+      {:ok, staff}
+    else
+      {:error, :invalid_request}
+    end
+  end
+
+  defp parse_permissions(params) do
+    raw = params["permissions"] || params[:permissions] || []
+
+    if is_list(raw) do
+      permissions = Enum.filter(raw, &OpsPermissions.valid?/1) |> Enum.uniq()
+      {:ok, permissions}
+    else
+      {:error, :invalid_request}
+    end
+  end
+
+  defp ensure_staff_gate(staff_roles, permissions) do
+    cond do
+      staff_roles != [] -> {:ok, staff_roles}
+      permissions == [] -> {:ok, staff_roles}
+      true -> {:ok, ["reviewer"]}
+    end
+  end
+
+  defp validate_access_payload(staff_roles, permissions) do
+    if staff_roles == [] and permissions == [] do
+      {:error, :invalid_request}
+    else
+      :ok
+    end
+  end
+
+  defp sync_access_transaction(target_uid, staff_roles, permissions) do
+    case Repo.transaction(fn ->
+           if "admin" not in staff_roles and Auth.admin?(target_uid) do
+             Repo.query!("SELECT pg_advisory_xact_lock(107, 1)")
+
+             case Repo.query(
+                    "SELECT COUNT(*)::integer FROM public.user_roles WHERE role_id = 'admin'"
+                  ) do
+               {:ok, %{rows: [[count]]}} when count <= 1 ->
+                 Repo.rollback(:last_admin)
+
+               {:ok, _} ->
+                 :ok
+
+               {:error, error} ->
+                 Repo.rollback(database_reason(error))
+             end
+           end
+
+           with :ok <- Auth.sync_staff_roles(target_uid, staff_roles),
+                :ok <- Auth.sync_ops_permissions(target_uid, permissions),
+                {:ok, member} <- fetch_member(target_uid) do
+             member
+           else
+             {:error, reason} -> Repo.rollback(reason)
+             other -> Repo.rollback(other)
+           end
+         end) do
+      {:ok, member} -> {:ok, member}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp encode_member(member) when is_map(member) do
+    all_roles = Map.get(member, "roles") || Map.get(member, :roles) || []
+
+    {staff_roles, permissions} =
+      case all_roles do
+        roles when is_list(roles) -> OpsPermissions.split_roles(roles)
+        _ -> {[], []}
+      end
+
+    member
+    |> Map.new(fn {k, v} -> {to_string(k), v} end)
+    |> Map.put("roles", staff_roles)
+    |> Map.put("permissions", permissions)
+  end
+
+  defp encode_member(member), do: member
 
   # Serialize role mutations that could remove the last admin. The count and
   # deletion must run in one transaction, not in separate requests.
@@ -198,9 +314,9 @@ defmodule Mithril.DirectAdminTeam do
              WHERE u.id = $1::uuid
              LIMIT 1
              """,
-             [uid, @staff_roles]
+             [uid, @roster_roles]
            ) do
-        {:ok, %{rows: [[member]]}} -> {:ok, member}
+        {:ok, %{rows: [[member]]}} -> {:ok, encode_member(member)}
         {:ok, _} -> {:error, :not_found}
         {:error, error} -> database_error(error)
       end

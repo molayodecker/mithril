@@ -13,8 +13,24 @@ defmodule MithrilWeb.Schemas.DirectAdminTeam do
         name: %Schema{type: :string},
         email: %Schema{type: :string, nullable: true},
         phone: %Schema{type: :string, nullable: true},
-        roles: %Schema{type: :array, items: %Schema{type: :string}}
+        roles: %Schema{type: :array, items: %Schema{type: :string}},
+        permissions: %Schema{type: :array, items: %Schema{type: :string}}
       }
+    })
+  end
+
+  defmodule PermissionCatalogEntry do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminTeamPermissionCatalogEntry",
+      type: :object,
+      properties: %{
+        id: %Schema{type: :string},
+        label: %Schema{type: :string}
+      },
+      required: [:id, :label]
     })
   end
 
@@ -23,14 +39,37 @@ defmodule MithrilWeb.Schemas.DirectAdminTeam do
     alias MithrilWeb.Schemas.DirectAdminTeam.Member
     alias OpenApiSpex.Schema
 
+    alias MithrilWeb.Schemas.DirectAdminTeam.PermissionCatalogEntry
+
     OpenApiSpex.schema(%{
       title: "DirectAdminTeamListResponse",
       type: :object,
       properties: %{
         members: %Schema{type: :array, items: Member},
-        roleGuide: %Schema{type: :array, items: %Schema{type: :object}}
+        roleGuide: %Schema{type: :array, items: %Schema{type: :object}},
+        permissionCatalog: %Schema{type: :array, items: PermissionCatalogEntry}
       },
       required: [:members]
+    })
+  end
+
+  defmodule UpdateAccessRequest do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminTeamUpdateAccessRequest",
+      type: :object,
+      properties: %{
+        userId: %Schema{type: :string, format: :uuid, nullable: true},
+        email: %Schema{type: :string, nullable: true},
+        phone: %Schema{type: :string, nullable: true},
+        staffRoles: %Schema{
+          type: :array,
+          items: %Schema{type: :string, enum: ["admin", "reviewer"]}
+        },
+        permissions: %Schema{type: :array, items: %Schema{type: :string}}
+      }
     })
   end
 

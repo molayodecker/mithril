@@ -244,6 +244,7 @@ defmodule Mithril.DirectAdminOpsTest do
              })
 
     assert updated["roles"] == []
+    assert updated["permissions"] == []
 
     assert {:error, :last_admin} =
              DirectAdminTeam.revoke(admin_id, %{"userId" => admin_id, "role" => "admin"})
@@ -262,6 +263,23 @@ defmodule Mithril.DirectAdminOpsTest do
 
     assert {:error, :last_admin} =
              DirectAdminTeam.revoke(second_admin, %{"userId" => second_admin, "role" => "admin"})
+  end
+
+  test "sets ops desk permissions", %{admin_id: admin_id} do
+    assert {:ok, member} =
+             DirectAdminTeam.update_access(admin_id, %{
+               "email" => "cleaner@example.com",
+               "staffRoles" => ["reviewer"],
+               "permissions" => ["bookings", "users"]
+             })
+
+    assert member["roles"] == ["reviewer"]
+    assert Enum.sort(member["permissions"]) == ["bookings", "users"]
+
+    assert {:ok, %{members: members, permissionCatalog: catalog}} = DirectAdminTeam.list(admin_id)
+    assert length(catalog) > 0
+    listed = Enum.find(members, &(&1["userId"] == member["userId"]))
+    assert Enum.sort(listed["permissions"]) == ["bookings", "users"]
   end
 
   test "forbids reviewers from the team roster and guests from payouts" do
