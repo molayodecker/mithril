@@ -1,5 +1,5 @@
 defmodule Mithril.GuestMobileRateLimitTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Mithril.GuestMobileRateLimit
 
