@@ -46,4 +46,9 @@ defmodule Mithril.MobileGatewayGuestRpcTest do
     assert MobileGateway.sanitize_guest_rpc_result({:ok, payload}, "get_available_timeslots") ==
              {:ok, payload}
   end
+
+  test "rejects guest functions outside the allowlist" do
+    assert MobileGateway.call_guest_function("connect-property-calendar", %{}) ==
+             {:error, :unknown_function}
+  end
 end

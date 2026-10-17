@@ -59,11 +59,15 @@ defmodule Mithril.MobileGateway do
     get_active_pricing_rule
     get_ai_match_settings
     get_available_timeslots
+    get_location_current_time
     get_service_categories
     is_location_in_active_service_area
     manage_extra_tasks
     validate_booking_timeslot
   ))
+
+  # Booking-prep mobile functions that do not need a customer id (e.g. map pin timezone).
+  @guest_functions MapSet.new(~w(timezone))
 
   def call_guest_rpc(name, args) when is_binary(name) do
     args = args || %{}
@@ -93,6 +97,16 @@ defmodule Mithril.MobileGateway do
   end
 
   def call_guest_rpc(_name, _args), do: {:error, :unknown_function}
+
+  def call_guest_function(name, body) when is_binary(name) and is_map(body) do
+    if MapSet.member?(@guest_functions, name) do
+      MobileFunctions.invoke(nil, name, body)
+    else
+      {:error, :unknown_function}
+    end
+  end
+
+  def call_guest_function(_name, _body), do: {:error, :bad_request}
 
   @doc false
   def sanitize_guest_rpc_result({:ok, result}, "compute_booking_pricing") do

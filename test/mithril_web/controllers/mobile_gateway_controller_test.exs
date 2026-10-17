@@ -20,6 +20,39 @@ defmodule MithrilWeb.MobileGatewayControllerTest do
     assert json_response(conn, 404)["error"] == "unknown_function"
   end
 
+  test "POST /mobile/guest/functions rejects account functions" do
+    conn = post(build_conn(), "/mobile/guest/functions/connect-property-calendar", %{})
+
+    assert json_response(conn, 404)["error"] == "unknown_function"
+  end
+
+  test "POST /mobile/guest/rpc returns 429 when the guest prep rate limit is exceeded" do
+    prev = Application.get_env(:mithril, :guest_mobile_prep_limit)
+    Application.put_env(:mithril, :guest_mobile_prep_limit, 2)
+
+    on_exit(fn ->
+      if prev == nil do
+        Application.delete_env(:mithril, :guest_mobile_prep_limit)
+      else
+        Application.put_env(:mithril, :guest_mobile_prep_limit, prev)
+      end
+    end)
+
+    ip = "203.0.113.#{rem(System.unique_integer([:positive]), 200) + 1}"
+
+    base_conn =
+      build_conn()
+      |> put_req_header("fly-client-ip", ip)
+
+    guest_rpc = fn ->
+      post(base_conn, "/mobile/guest/rpc/get_my_wallet_balance", %{"args" => %{}})
+    end
+
+    refute guest_rpc.().status == 429
+    refute guest_rpc.().status == 429
+    assert json_response(guest_rpc.(), 429) == %{"error" => "guest_rate_limited"}
+  end
+
   test "POST /mobile/guest/rpc rejects extra-task hour updates" do
     conn =
       post(build_conn(), "/mobile/guest/rpc/manage_extra_tasks", %{
