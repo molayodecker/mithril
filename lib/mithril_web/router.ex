@@ -19,6 +19,12 @@ defmodule MithrilWeb.Router do
     plug MithrilWeb.Plugs.UserAuth
   end
 
+  pipeline :mobile_guest do
+    plug :accepts, ["json"]
+    plug OpenApiSpex.Plug.PutApiSpec, module: MithrilWeb.ApiSpec
+    plug MithrilWeb.Plugs.GuestMobileRateLimit
+  end
+
   pipeline :whatsapp do
     plug :accepts, ["html", "xml", "json"]
   end
@@ -271,9 +277,10 @@ defmodule MithrilWeb.Router do
   end
 
   scope "/mobile", MithrilWeb do
-    pipe_through [:api]
+    pipe_through [:mobile_guest]
 
     post "/guest/rpc/:name", MobileGatewayController, :guest_rpc
+    post "/guest/functions/*name", MobileGatewayController, :guest_function
   end
 
   scope "/mobile", MithrilWeb do
