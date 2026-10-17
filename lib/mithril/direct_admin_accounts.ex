@@ -64,13 +64,26 @@ defmodule Mithril.DirectAdminAccounts do
        when is_binary(message) do
     reason =
       cond do
-        String.contains?(message, "same_user") -> :same_user
-        String.contains?(message, "primary_not_found") -> :primary_not_found
-        String.contains?(message, "secondary_not_found") -> :secondary_not_found
-        String.contains?(message, "secondary_is_privileged") -> :secondary_is_privileged
-        String.contains?(message, "merge_wallet_currency_mismatch") -> :merge_wallet_currency_mismatch
-        String.contains?(message, "invalid_user_ids") -> :invalid_request
-        true -> nil
+        String.contains?(message, "same_user") ->
+          :same_user
+
+        String.contains?(message, "primary_not_found") ->
+          :primary_not_found
+
+        String.contains?(message, "secondary_not_found") ->
+          :secondary_not_found
+
+        String.contains?(message, "secondary_is_privileged") ->
+          :secondary_is_privileged
+
+        String.contains?(message, "merge_wallet_currency_mismatch") ->
+          :merge_wallet_currency_mismatch
+
+        String.contains?(message, "invalid_user_ids") ->
+          :invalid_request
+
+        true ->
+          nil
       end
 
     if reason, do: {:error, reason}, else: database_error(error)
