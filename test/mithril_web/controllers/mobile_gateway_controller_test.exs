@@ -1,5 +1,5 @@
 defmodule MithrilWeb.MobileGatewayControllerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   import Plug.Conn
   import Phoenix.ConnTest
