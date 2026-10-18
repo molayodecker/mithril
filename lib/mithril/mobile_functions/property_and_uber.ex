@@ -151,41 +151,28 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
 
   # Serialize requests from the same customer before calling paid routing APIs.
   # The transaction lock is released on success or failure.
+  # Provider calls run outside a DB transaction so a slow map provider
+  # cannot consume a Repo connection for the duration of its timeout.
   defp quote_serialized(user_id, cleaner_id, booking_id) do
-    case Repo.transaction(fn ->
-           case Repo.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
-                  "transport-quote:" <> user_id
-                ]) do
-             {:ok, _} ->
-               with {:ok, booking} <- authorize_booking(user_id, cleaner_id, booking_id),
-                    :ok <- ensure_gate(),
-                    :ok <- enforce_limit(user_id),
-                    {:ok, destination} <- booking_destination(booking),
-                    {:ok, origin} <- load_origin(cleaner_id),
-                    {:ok, route} <- route(origin, destination),
-                    {:ok, priced} <- strict_price(route.distance_km),
-                    :ok <- ensure_priced(priced),
-                    {:ok, quote} <-
-                      insert_quote(
-                        user_id,
-                        cleaner_id,
-                        booking_id,
-                        destination.latitude,
-                        destination.longitude,
-                        route,
-                        priced
-                      ) do
-                 present(route, priced, quote)
-               else
-                 {:error, reason} -> Repo.rollback(reason)
-               end
-
-             _ ->
-               Repo.rollback({:status, 503, %{error: "Quote lock unavailable"}})
-           end
-         end) do
-      {:ok, result} -> {:ok, result}
-      {:error, reason} -> {:error, reason}
+    with {:ok, booking} <- authorize_booking(user_id, cleaner_id, booking_id),
+         :ok <- ensure_gate(),
+         :ok <- enforce_limit(user_id),
+         {:ok, destination} <- booking_destination(booking),
+         {:ok, origin} <- load_origin(cleaner_id),
+         {:ok, route} <- route(origin, destination),
+         {:ok, priced} <- strict_price(route.distance_km),
+         :ok <- ensure_priced(priced),
+         {:ok, quote} <-
+           insert_quote(
+             user_id,
+             cleaner_id,
+             booking_id,
+             destination.latitude,
+             destination.longitude,
+             route,
+             priced
+           ) do
+      {:ok, present(route, priced, quote)}
     end
   end
 
@@ -269,7 +256,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
     case Repo.query(
            """
            SELECT count(*) FROM public.uber_transportation_quotes
-           WHERE customer_id = $1::uuid AND expires_at > now()
+           WHERE customer_id = $1::uuid AND revoked_at IS NULL AND expires_at > now()
            """,
            [DbUuid.dump!(user_id)]
          ) do
