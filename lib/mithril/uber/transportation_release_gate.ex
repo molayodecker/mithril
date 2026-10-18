@@ -7,9 +7,10 @@ defmodule Mithril.Uber.TransportationReleaseGate do
   @flag_channel "production"
 
   @spec sync(boolean()) :: :ok | {:error, term()}
-  def sync(enabled) when is_boolean(enabled) do
+  def sync(enabled, evaluated_at) when is_boolean(enabled) do
     case Repo.transaction(fn ->
-           with {:ok, current_enabled} <- read_current_enabled(),
+           with {:ok, current_enabled, updated_at} <- read_current_enabled(),
+                :ok <- ensure_fresh(evaluated_at, updated_at),
                 :ok <- maybe_write(enabled, current_enabled),
                 :ok <- maybe_revoke(enabled) do
              :ok
@@ -18,9 +19,18 @@ defmodule Mithril.Uber.TransportationReleaseGate do
            end
          end) do
       {:ok, :ok} -> :ok
+      {:error, :stale_evaluation} -> :ok
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp ensure_fresh(%DateTime{} = evaluated_at, %DateTime{} = updated_at) do
+    if DateTime.compare(evaluated_at, updated_at) == :lt,
+      do: {:error, :stale_evaluation},
+      else: :ok
+  end
+
+  defp ensure_fresh(_, _), do: :ok
 
   defp maybe_write(enabled, enabled), do: :ok
   defp maybe_write(enabled, _current), do: write_enabled(enabled)
@@ -30,16 +40,18 @@ defmodule Mithril.Uber.TransportationReleaseGate do
 
   defp read_current_enabled do
     sql = """
-    SELECT enabled
+    SELECT enabled, updated_at
     FROM public.app_feature_flags
     WHERE key = $1 AND channel = $2
     LIMIT 1 FOR UPDATE
     """
 
     case Repo.query(sql, [@flag_key, @flag_channel]) do
-      {:ok, %{rows: [[enabled]]}} when is_boolean(enabled) -> {:ok, enabled}
-      {:ok, %{rows: [[enabled]]}} when enabled in [true, false] -> {:ok, enabled == true}
-      {:ok, %{rows: []}} -> {:ok, false}
+      {:ok, %{rows: [[enabled, updated_at]]}} when is_boolean(enabled) ->
+        {:ok, enabled, updated_at}
+      {:ok, %{rows: [[enabled, updated_at]]}} when enabled in [true, false] ->
+        {:ok, enabled == true, updated_at}
+      {:ok, %{rows: []}} -> {:ok, false, nil}
       {:error, error} -> {:error, error}
     end
   end
