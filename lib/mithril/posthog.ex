@@ -18,12 +18,21 @@ defmodule Mithril.Posthog do
   def stripe_release_gate_distinct_id, do: @stripe_release_gate_distinct_id
 
   @spec fetch_boolean_flag(String.t(), String.t(), keyword()) :: boolean()
-  def fetch_boolean_flag(flag_key, distinct_id, opts \\ [])
+  def fetch_boolean_flag(flag_key, distinct_id, opts \\ []) do
+    case fetch_boolean_flag_result(flag_key, distinct_id, opts) do
+      {:ok, enabled} -> enabled
+      {:error, _} -> false
+    end
+  end
+
+  @spec fetch_boolean_flag_result(String.t(), String.t(), keyword()) ::
+          {:ok, boolean()} | {:error, term()}
+  def fetch_boolean_flag_result(flag_key, distinct_id, opts \\ [])
       when is_binary(flag_key) and is_binary(distinct_id) and is_list(opts) do
     api_key = api_key()
 
     if api_key == "" do
-      false
+      {:error, :not_configured}
     else
       host = flags_host()
 
@@ -51,16 +60,31 @@ defmodule Mithril.Posthog do
       try do
         case Task.await(task, @timeout_ms + 500) do
           {:ok, %{status: status, body: payload}} when status in 200..299 ->
-            read_boolean_flag(payload, flag_key)
+            if flag_present?(payload, flag_key) do
+              {:ok, read_boolean_flag(payload, flag_key)}
+            else
+              {:error, :flag_missing}
+            end
 
           _ ->
-            false
+            {:error, :evaluation_failed}
         end
       catch
-        :exit, _ -> false
+        :exit, _ ->
+          Task.shutdown(task, :brutal_kill)
+          {:error, :evaluation_failed}
       end
     end
   end
+
+  defp flag_present?(payload, flag_key) when is_map(payload) do
+    flags = Map.get(payload, "flags") || Map.get(payload, :flags) || %{}
+    legacy = Map.get(payload, "featureFlags") || Map.get(payload, :featureFlags) || %{}
+    (is_map(flags) and Map.has_key?(flags, flag_key)) or
+      (is_map(legacy) and Map.has_key?(legacy, flag_key))
+  end
+
+  defp flag_present?(_, _), do: false
 
   @spec read_boolean_flag(term(), String.t()) :: boolean()
   def read_boolean_flag(payload, flag_key) when is_binary(flag_key) do
