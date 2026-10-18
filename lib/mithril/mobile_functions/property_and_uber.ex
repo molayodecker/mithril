@@ -149,7 +149,9 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
   # The transaction lock is released on success or failure.
   defp quote_serialized(user_id, cleaner_id, booking_id) do
     case Repo.transaction(fn ->
-           case Repo.query("SELECT pg_advisory_xact_lock(hashtext($1))", ["transport-quote:" <> user_id]) do
+           case Repo.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+                  "transport-quote:" <> user_id
+                ]) do
              {:ok, _} ->
                with {:ok, booking} <- authorize_booking(user_id, cleaner_id, booking_id),
                     :ok <- ensure_gate(),
@@ -368,7 +370,11 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
                           AND status IN ('pending', 'confirmed', 'scheduled', 'en_route', 'arrived', 'in_progress')
                         FOR UPDATE
                         """,
-                        [DbUuid.dump!(booking_id), DbUuid.dump!(user_id), DbUuid.dump!(cleaner_id)]
+                        [
+                          DbUuid.dump!(booking_id),
+                          DbUuid.dump!(user_id),
+                          DbUuid.dump!(cleaner_id)
+                        ]
                       ) do
                  case Repo.query(sql, params) do
                    {:ok, %{rows: [[id, expires]]}} -> {id, expires}
