@@ -147,7 +147,15 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
          {:ok, route} <- route(origin, destination),
          {:ok, priced} <- strict_price(route.distance_km),
          :ok <- ensure_priced(priced),
-         {:ok, quote} <- insert_quote(user_id, cleaner_id, destination.latitude, destination.longitude, route, priced) do
+         {:ok, quote} <-
+           insert_quote(
+             user_id,
+             cleaner_id,
+             destination.latitude,
+             destination.longitude,
+             route,
+             priced
+           ) do
       {:ok, present(route, priced, quote)}
     end
   end
@@ -204,8 +212,11 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
          ) do
       {:ok, %{rows: [[id, customer_id, address]]}} ->
         {:ok, %{"id" => id, "customer_id" => customer_id, "address" => address}}
-      {:ok, _} -> {:error, {:status, 404, %{error: "Booking not found"}}}
-      {:error, _} -> {:error, {:status, 503, %{error: "Booking authorization unavailable"}}}
+      {:ok, _} ->
+        {:error, {:status, 404, %{error: "Booking not found"}}}
+
+      {:error, _} ->
+        {:error, {:status, 503, %{error: "Booking authorization unavailable"}}}
     end
   end
 
@@ -329,7 +340,8 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
                  _ -> Repo.rollback(:insert_failed)
                end
 
-             _ -> Repo.rollback(:disabled)
+             _ ->
+               Repo.rollback(:disabled)
            end
          end) do
       {:ok, {id, expires}} ->
