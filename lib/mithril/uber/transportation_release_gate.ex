@@ -46,7 +46,8 @@ defmodule Mithril.Uber.TransportationReleaseGate do
            """,
            [enabled, now, @flag_key, @flag_channel]
          ) do
-      {:ok, _} -> :ok
+      {:ok, %{num_rows: 1}} -> :ok
+      {:ok, _} -> {:error, :flag_missing}
       {:error, error} -> {:error, error}
     end
   end
@@ -54,14 +55,16 @@ defmodule Mithril.Uber.TransportationReleaseGate do
   defp revoke_quotes do
     now = DateTime.utc_now() |> DateTime.to_iso8601()
 
-    _ =
-      Repo.query(
+    case Repo.query(
         """
         UPDATE public.uber_transportation_quotes
         SET revoked_at = $1::timestamptz
         WHERE revoked_at IS NULL AND expires_at > $1::timestamptz
         """,
         [now]
-      )
+      ) do
+      {:ok, _} -> :ok
+      {:error, error} -> {:error, error}
+    end
   end
 end
