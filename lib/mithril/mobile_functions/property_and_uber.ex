@@ -126,6 +126,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
 
   alias Mithril.DbUuid
   alias Mithril.Repo
+  alias Mithril.Transport.Estimate
   alias Mithril.Transport.Origins
   alias Mithril.Transport.Pricing
   alias Mithril.Transport.Router
@@ -140,9 +141,9 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
          {:ok, _longitude} <- required_coord(body, "customer_longitude", -180, 180),
          {:ok, booking_id} <- required_uuid(body, "booking_id"),
          {:ok, booking} <- authorize_booking(user_id, cleaner_id, booking_id),
-         {:ok, destination} <- booking_destination(booking),
          :ok <- ensure_gate(),
          :ok <- enforce_limit(user_id),
+         {:ok, destination} <- booking_destination(booking),
          {:ok, origin} <- load_origin(cleaner_id),
          {:ok, route} <- route(origin, destination),
          {:ok, priced} <- strict_price(route.distance_km),
@@ -210,8 +211,8 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
            """,
            [DbUuid.dump!(booking_id), DbUuid.dump!(user_id), DbUuid.dump!(cleaner_id)]
          ) do
-      {:ok, %{rows: [[id, customer_id, address]]}} ->
-        {:ok, %{"id" => id, "customer_id" => customer_id, "address" => address}}
+      {:ok, %{rows: [[_id, _customer_id, _address]]}} ->
+        Estimate.load_booking(booking_id)
 
       {:ok, _} ->
         {:error, {:status, 404, %{error: "Booking not found"}}}
