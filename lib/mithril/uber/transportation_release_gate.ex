@@ -49,10 +49,15 @@ defmodule Mithril.Uber.TransportationReleaseGate do
     case Repo.query(sql, [@flag_key, @flag_channel]) do
       {:ok, %{rows: [[enabled, updated_at]]}} when is_boolean(enabled) ->
         {:ok, enabled, updated_at}
+
       {:ok, %{rows: [[enabled, updated_at]]}} when enabled in [true, false] ->
         {:ok, enabled == true, updated_at}
-      {:ok, %{rows: []}} -> {:ok, false, nil}
-      {:error, error} -> {:error, error}
+
+      {:ok, %{rows: []}} ->
+        {:ok, false, nil}
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
