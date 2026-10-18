@@ -60,10 +60,16 @@ defmodule Mithril.Posthog do
       try do
         case Task.await(task, @timeout_ms + 500) do
           {:ok, %{status: status, body: payload}} when status in 200..299 ->
-            if flag_present?(payload, flag_key) do
+            if is_map(payload) and
+                 (Map.get(payload, "errorsWhileComputingFlags") == true or
+                    Map.get(payload, :errorsWhileComputingFlags) == true) do
+              {:error, :flag_computation_failed}
+            else
+              if flag_present?(payload, flag_key) do
               {:ok, read_boolean_flag(payload, flag_key)}
             else
-              {:error, :flag_missing}
+                {:error, :flag_missing}
+              end
             end
 
           _ ->
