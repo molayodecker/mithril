@@ -30,11 +30,12 @@ defmodule Mithril.Transport.Pricing do
   # Persisted charges must never use fallback rules when the database is unavailable.
   def quote_strict(distance_km) when is_number(distance_km) and distance_km >= 0 do
     with {:ok, rules} <- load_rules_strict() do
-      {:ok, %{
-        distance_km: Float.round(distance_km * 1.0, 2),
-        amount_minor: amount_minor(distance_km, rules),
-        currency: rules.currency
-      }}
+      {:ok,
+       %{
+         distance_km: Float.round(distance_km * 1.0, 2),
+         amount_minor: amount_minor(distance_km, rules),
+         currency: rules.currency
+       }}
     end
   end
 
@@ -53,20 +54,20 @@ defmodule Mithril.Transport.Pricing do
       {:ok, %{rows: [[currency, base, per_km, min_fee, max_fee, bands]]}}
       when is_binary(currency) and is_integer(base) and is_integer(per_km) and
              is_integer(min_fee) and is_integer(max_fee) ->
-        {:ok, %{
-          currency: currency,
-          base_fee_minor: base,
-          per_km_rate_minor: per_km,
-          min_fee_minor: min_fee,
-          max_fee_minor: max_fee,
-          bands: parse_bands(bands)
-        }}
+        {:ok,
+         %{
+           currency: currency,
+           base_fee_minor: base,
+           per_km_rate_minor: per_km,
+           min_fee_minor: min_fee,
+           max_fee_minor: max_fee,
+           bands: parse_bands(bands)
+         }}
 
       _ ->
         {:error, :pricing_rules_unavailable}
     end
   end
-
 
   defp amount_minor(distance_km, rules) do
     band = matching_band(distance_km, rules.bands)
