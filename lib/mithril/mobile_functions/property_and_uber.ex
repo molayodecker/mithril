@@ -139,13 +139,15 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
          {:ok, latitude} <- required_coord(body, "customer_latitude", -90, 90),
          {:ok, longitude} <- required_coord(body, "customer_longitude", -180, 180),
          {:ok, booking_id} <- required_uuid(body, "booking_id"),
-         :ok <- authorize_booking(user_id, cleaner_id, booking_id),
+         {:ok, booking} <- authorize_booking(user_id, cleaner_id, booking_id),
+         {:ok, destination} <- booking_destination(booking),
+         :ok <- ensure_gate(),
          :ok <- enforce_limit(user_id),
          {:ok, origin} <- load_origin(cleaner_id),
-         {:ok, route} <- route(origin, %{latitude: latitude, longitude: longitude}),
+         {:ok, route} <- route(origin, destination),
          {:ok, priced} <- strict_price(route.distance_km),
          :ok <- ensure_priced(priced),
-         {:ok, quote} <- insert_quote(user_id, cleaner_id, latitude, longitude, route, priced) do
+         {:ok, quote} <- insert_quote(user_id, cleaner_id, destination.latitude, destination.longitude, route, priced) do
       {:ok, present(route, priced, quote)}
     end
   end
@@ -193,16 +195,35 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
   defp authorize_booking(user_id, cleaner_id, booking_id) do
     case Repo.query(
            """
-           SELECT 1 FROM public.bookings
+           SELECT id, customer_id, address FROM public.bookings
            WHERE id = $1::uuid AND customer_id = $2::uuid AND cleaner_id = $3::uuid
              AND status IN ('pending', 'confirmed', 'scheduled', 'en_route', 'arrived', 'in_progress')
            LIMIT 1
            """,
            [DbUuid.dump!(booking_id), DbUuid.dump!(user_id), DbUuid.dump!(cleaner_id)]
          ) do
-      {:ok, %{rows: [[1]]}} -> :ok
+      {:ok, %{rows: [[id, customer_id, address]]}} ->
+        {:ok, %{"id" => id, "customer_id" => customer_id, "address" => address}}
       {:ok, _} -> {:error, {:status, 404, %{error: "Booking not found"}}}
       {:error, _} -> {:error, {:status, 503, %{error: "Booking authorization unavailable"}}}
+    end
+  end
+
+  defp booking_destination(booking) do
+    case Origins.load_booking_destination(booking) do
+      {:ok, destination} -> {:ok, destination}
+      _ -> {:error, {:status, 422, %{error: "Booking destination is unavailable"}}}
+    end
+  end
+
+  defp ensure_gate do
+    case Repo.query(
+           "SELECT enabled FROM public.app_feature_flags WHERE key = 'BOOKING_UBER_TRANSPORTATION' AND channel = 'production'",
+           []
+         ) do
+      {:ok, %{rows: [[true]]}} -> :ok
+      {:ok, _} -> {:error, {:status, 409, %{error: "Transport is disabled"}}}
+      {:error, _} -> {:error, {:status, 503, %{error: "Transport flag unavailable"}}}
     end
   end
 
@@ -245,7 +266,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
       {:ok, %{distance_m: distance_m, duration_s: duration_s}} when is_number(distance_m) ->
         {:ok,
          %{
-           distance_km: Float.round(distance_m / 1000.0, 2),
+           distance_km: distance_m / 1000.0,
            duration_seconds: max(0, trunc(duration_s))
          }}
 
@@ -297,9 +318,25 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
       DateTime.to_iso8601(expires_at)
     ]
 
-    case Repo.query(sql, params) do
-      {:ok, %{rows: [[id, expires]]}} ->
+    case Repo.transaction(fn ->
+           case Repo.query(
+                  "SELECT enabled FROM public.app_feature_flags WHERE key = 'BOOKING_UBER_TRANSPORTATION' AND channel = 'production' FOR UPDATE",
+                  []
+                ) do
+             {:ok, %{rows: [[true]]}} ->
+               case Repo.query(sql, params) do
+                 {:ok, %{rows: [[id, expires]]}} -> {id, expires}
+                 _ -> Repo.rollback(:insert_failed)
+               end
+
+             _ -> Repo.rollback(:disabled)
+           end
+         end) do
+      {:ok, {id, expires}} ->
         {:ok, %{id: id, expires_at: expires_iso(expires), display: display}}
+
+      {:error, :disabled} ->
+        {:error, {:status, 409, %{error: "Transport is disabled"}}}
 
       _ ->
         {:error, {:status, 500, %{error: "Could not save the transport quote"}}}
@@ -310,7 +347,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
     fee_major = priced.amount_minor / 100
 
     %{
-      distance_km: route.distance_km,
+      distance_km: Float.round(route.distance_km, 2),
       distance_miles: Float.round(route.distance_km / 1.609344, 2),
       duration_seconds: route.duration_seconds,
       currency_code: "GHS",
