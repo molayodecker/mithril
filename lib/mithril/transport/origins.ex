@@ -17,6 +17,21 @@ defmodule Mithril.Transport.Origins do
     end
   end
 
+  def load_cleaner_origin_strict(cleaner_id) when is_binary(cleaner_id) do
+    case Repo.query("SELECT * FROM public.get_cleaner_trip_origin($1::uuid)", [
+           DbUuid.dump!(cleaner_id)
+         ]) do
+      {:ok, %{columns: columns, rows: [row]}} ->
+        coords_from_row(Map.new(Enum.zip(columns, row)))
+
+      {:ok, _} ->
+        {:error, :origin_missing}
+
+      {:error, _} ->
+        {:error, :origin_lookup_failed}
+    end
+  end
+
   def load_profile_origin(user_id) when is_binary(user_id) do
     postgis = """
     SELECT
