@@ -136,8 +136,8 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
   def call(user_id, body) when is_binary(user_id) and is_map(body) do
     with :ok <- ensure_uuid(user_id, "customer"),
          {:ok, cleaner_id} <- required_uuid(body, "cleaner_id"),
-         {:ok, latitude} <- required_coord(body, "customer_latitude", -90, 90),
-         {:ok, longitude} <- required_coord(body, "customer_longitude", -180, 180),
+         {:ok, _latitude} <- required_coord(body, "customer_latitude", -90, 90),
+         {:ok, _longitude} <- required_coord(body, "customer_longitude", -180, 180),
          {:ok, booking_id} <- required_uuid(body, "booking_id"),
          {:ok, booking} <- authorize_booking(user_id, cleaner_id, booking_id),
          {:ok, destination} <- booking_destination(booking),
