@@ -124,13 +124,171 @@ end
 defmodule Mithril.MobileFunctions.UberTripEstimate do
   @moduledoc false
 
-  def call(_user_id, _body) do
-    {:error,
-     {:status, 410,
-      %{
-        error:
-          "Uber trip estimates are no longer used. Request GET /bookings/:id/transport-estimate.",
-        code: "uber_estimate_removed"
-      }}}
+  alias Mithril.DbUuid
+  alias Mithril.Repo
+  alias Mithril.Transport.Origins
+  alias Mithril.Transport.Pricing
+  alias Mithril.Transport.Router
+
+  @quote_ttl_seconds 15 * 60
+  @uuid_regex ~r/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+  def call(user_id, body) when is_binary(user_id) and is_map(body) do
+    with :ok <- ensure_uuid(user_id, "customer"),
+         {:ok, cleaner_id} <- required_uuid(body, "cleaner_id"),
+         {:ok, latitude} <- required_coord(body, "customer_latitude", -90, 90),
+         {:ok, longitude} <- required_coord(body, "customer_longitude", -180, 180),
+         {:ok, origin} <- load_origin(cleaner_id),
+         {:ok, route} <- route(origin, %{latitude: latitude, longitude: longitude}),
+         {:ok, priced} <- Pricing.quote(route.distance_km),
+         :ok <- ensure_priced(priced),
+         {:ok, quote} <- insert_quote(user_id, cleaner_id, latitude, longitude, route, priced) do
+      {:ok, present(route, priced, quote)}
+    end
   end
+
+  def call(_user_id, _body) do
+    {:error, {:status, 400, %{error: "Cleaner and customer coordinates are required"}}}
+  end
+
+  defp ensure_uuid(value, label) do
+    if is_binary(value) and Regex.match?(@uuid_regex, value) do
+      :ok
+    else
+      {:error, {:status, 400, %{error: "Invalid #{label} id"}}}
+    end
+  end
+
+  defp required_uuid(body, key) do
+    value = body |> Map.get(key) |> to_string() |> String.trim()
+
+    if Regex.match?(@uuid_regex, value) do
+      {:ok, value}
+    else
+      {:error, {:status, 400, %{error: "Invalid #{key}"}}}
+    end
+  end
+
+  defp required_coord(body, key, min, max) do
+    case Map.get(body, key) do
+      value when is_number(value) and value >= min and value <= max ->
+        {:ok, value * 1.0}
+
+      value when is_binary(value) ->
+        case Float.parse(value) do
+          {parsed, ""} when parsed >= min and parsed <= max -> {:ok, parsed}
+          _ -> {:error, {:status, 400, %{error: "Invalid #{key}"}}}
+        end
+
+      _ ->
+        {:error, {:status, 400, %{error: "Invalid #{key}"}}}
+    end
+  end
+
+  defp load_origin(cleaner_id) do
+    case Origins.load_cleaner_origin(cleaner_id) do
+      {:ok, origin} ->
+        {:ok, origin}
+
+      _ ->
+        {:error,
+         {:status, 422,
+          %{error: "Cleaner location is not available", code: "cleaner_location_missing"}}}
+    end
+  end
+
+  defp route(origin, dest) do
+    case Router.directions(origin, dest) do
+      {:ok, %{distance_m: distance_m, duration_s: duration_s}} when is_number(distance_m) ->
+        {:ok,
+         %{
+           distance_km: Float.round(distance_m / 1000.0, 2),
+           duration_seconds: max(0, trunc(duration_s))
+         }}
+
+      {:error, :not_configured} ->
+        {:error, {:status, 500, %{error: "Transport routing is not configured"}}}
+
+      {:error, :rate_limited} ->
+        {:error, {:status, 429, %{error: "Too many transport estimates. Try again shortly."}}}
+
+      _ ->
+        {:error, {:status, 502, %{error: "Could not estimate transport"}}}
+    end
+  end
+
+  defp ensure_priced(%{currency: "GHS", amount_minor: amount})
+       when is_integer(amount) and amount > 0,
+       do: :ok
+
+  defp ensure_priced(_),
+    do:
+      {:error,
+       {:status, 422,
+        %{error: "Transport price is not available", code: "transport_price_unavailable"}}}
+
+  defp insert_quote(user_id, cleaner_id, latitude, longitude, route, priced) do
+    expires_at = DateTime.utc_now() |> DateTime.add(@quote_ttl_seconds, :second)
+    display = display(priced.amount_minor)
+
+    sql = """
+    INSERT INTO public.uber_transportation_quotes (
+      customer_id, cleaner_id, amount_minor, currency, distance_km, duration_seconds,
+      product_id, product_name, estimate_display, customer_latitude, customer_longitude, expires_at
+    ) VALUES (
+      $1::uuid, $2::uuid, $3, 'GHS', $4, $5,
+      'instaclean', 'Instaclean transport', $6, $7, $8, $9::timestamptz
+    )
+    RETURNING id::text, expires_at
+    """
+
+    params = [
+      DbUuid.dump!(user_id),
+      DbUuid.dump!(cleaner_id),
+      priced.amount_minor,
+      route.distance_km,
+      route.duration_seconds,
+      display,
+      latitude,
+      longitude,
+      DateTime.to_iso8601(expires_at)
+    ]
+
+    case Repo.query(sql, params) do
+      {:ok, %{rows: [[id, expires]]}} ->
+        {:ok, %{id: id, expires_at: expires_iso(expires), display: display}}
+
+      _ ->
+        {:error, {:status, 500, %{error: "Could not save the transport quote"}}}
+    end
+  end
+
+  defp present(route, priced, quote) do
+    fee_major = priced.amount_minor / 100
+
+    %{
+      distance_km: route.distance_km,
+      distance_miles: Float.round(route.distance_km / 1.609344, 2),
+      duration_seconds: route.duration_seconds,
+      currency_code: "GHS",
+      estimate_display: quote.display,
+      low_estimate_major: fee_major,
+      high_estimate_major: fee_major,
+      customer_fee_major: fee_major,
+      quote_id: quote.id,
+      quote_expires_at: quote.expires_at,
+      product_id: "instaclean",
+      product_name: "Instaclean transport"
+    }
+  end
+
+  defp display(amount_minor) do
+    major = :erlang.float_to_binary(amount_minor / 100, decimals: 2)
+    "GH₵#{major}"
+  end
+
+  defp expires_iso(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp expires_iso(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value) <> "Z"
+  defp expires_iso(value) when is_binary(value), do: value
+  defp expires_iso(value), do: to_string(value)
 end

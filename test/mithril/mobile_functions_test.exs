@@ -23,20 +23,21 @@ defmodule Mithril.MobileFunctions.GatewayAuthTest do
              })
   end
 
-  test "uber release gate is a read-only flag lookup" do
+  test "uber release gate reports whether transportation is enabled" do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Mithril.Repo)
     user_id = Ecto.UUID.generate()
 
     assert {:ok, %{enabled: enabled}} = UberTransportationReleaseGate.call(user_id, %{})
     assert is_boolean(enabled)
   end
 
-  test "uber trip estimate is retired in favor of booking transport estimates" do
+  test "trip estimate rejects a destination without calling Uber" do
     user_id = Ecto.UUID.generate()
 
-    assert {:error, {:status, 410, %{code: "uber_estimate_removed"}}} =
+    assert {:error, {:status, 400, %{error: "Invalid customer_latitude"}}} =
              MobileFunctions.invoke(user_id, "uber-trip-estimate", %{
                "cleaner_id" => Ecto.UUID.generate(),
-               "customer_latitude" => 5.6,
+               "customer_latitude" => 95,
                "customer_longitude" => -0.2
              })
   end

@@ -2,6 +2,8 @@ defmodule Mithril.MobileFunctions.UberTransportationReleaseGate do
   @moduledoc false
 
   alias Mithril.Posthog
+  alias Mithril.Uber.TransportationReleaseGate
+
   @spec call(String.t(), map()) :: {:ok, map()} | {:error, term()}
   def call(_user_id, _body) do
     enabled =
@@ -9,6 +11,9 @@ defmodule Mithril.MobileFunctions.UberTransportationReleaseGate do
         Posthog.booking_uber_transportation_flag(),
         Posthog.uber_release_gate_distinct_id()
       )
+
+    # Pricing reads app_feature_flags, not PostHog. Mirror the release gate before quotes are used.
+    _ = TransportationReleaseGate.sync(enabled)
 
     {:ok, %{enabled: enabled}}
   end
