@@ -56,13 +56,13 @@ defmodule Mithril.Uber.TransportationReleaseGate do
     now = DateTime.utc_now() |> DateTime.to_iso8601()
 
     case Repo.query(
-        """
-        UPDATE public.uber_transportation_quotes
-        SET revoked_at = $1::timestamptz
-        WHERE revoked_at IS NULL AND expires_at > $1::timestamptz
-        """,
-        [now]
-      ) do
+           """
+           UPDATE public.uber_transportation_quotes
+           SET revoked_at = $1::timestamptz
+           WHERE revoked_at IS NULL AND expires_at > $1::timestamptz
+           """,
+           [now]
+         ) do
       {:ok, _} -> :ok
       {:error, error} -> {:error, error}
     end
