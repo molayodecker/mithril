@@ -145,6 +145,10 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
     end
   end
 
+  def call(_user_id, _body) do
+    {:error, {:status, 400, %{error: "Cleaner and customer coordinates are required"}}}
+  end
+
   # Serialize requests from the same customer before calling paid routing APIs.
   # The transaction lock is released on success or failure.
   defp quote_serialized(user_id, cleaner_id, booking_id) do
@@ -183,10 +187,6 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
       {:ok, result} -> {:ok, result}
       {:error, reason} -> {:error, reason}
     end
-  end
-
-  def call(_user_id, _body) do
-    {:error, {:status, 400, %{error: "Cleaner and customer coordinates are required"}}}
   end
 
   defp ensure_uuid(value, label) do
