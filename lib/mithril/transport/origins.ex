@@ -61,6 +61,20 @@ defmodule Mithril.Transport.Origins do
     end
   end
 
+  # Persisted charges must not use the customer's current profile as a fallback.
+  def load_booking_destination_strict(booking) when is_map(booking) do
+    case coords(Map.get(booking, "latitude"), Map.get(booking, "longitude")) do
+      {:ok, destination} ->
+        {:ok, destination}
+
+      :error ->
+        case Router.geocode(Map.get(booking, "address") || "") do
+          {:ok, destination} -> {:ok, destination}
+          _ -> {:error, :destination_missing}
+        end
+    end
+  end
+
   defp coords_from_row(row) do
     case coords(
            Map.get(row, "latitude") || Map.get(row, "lat"),
