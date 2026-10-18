@@ -8,23 +8,32 @@ defmodule Mithril.Uber.TransportationReleaseGate do
 
   @spec sync(boolean()) :: :ok | {:error, term()}
   def sync(enabled) when is_boolean(enabled) do
-    with {:ok, current_enabled} <- read_current_enabled() do
-      if current_enabled == enabled do
-        :ok
-      else
-        with :ok <- write_enabled(enabled) do
-          if enabled, do: :ok, else: revoke_quotes()
-        end
-      end
+    case Repo.transaction(fn ->
+           with {:ok, current_enabled} <- read_current_enabled(),
+                :ok <- maybe_write(enabled, current_enabled),
+                :ok <- maybe_revoke(enabled) do
+             :ok
+           else
+             {:error, reason} -> Repo.rollback(reason)
+           end
+         end) do
+      {:ok, :ok} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
+
+  defp maybe_write(enabled, enabled), do: :ok
+  defp maybe_write(enabled, _current), do: write_enabled(enabled)
+
+  defp maybe_revoke(true), do: :ok
+  defp maybe_revoke(false), do: revoke_quotes()
 
   defp read_current_enabled do
     sql = """
     SELECT enabled
     FROM public.app_feature_flags
     WHERE key = $1 AND channel = $2
-    LIMIT 1
+    LIMIT 1 FOR UPDATE
     """
 
     case Repo.query(sql, [@flag_key, @flag_channel]) do
