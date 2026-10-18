@@ -6,7 +6,7 @@ defmodule Mithril.Uber.TransportationReleaseGate do
   @flag_key "BOOKING_UBER_TRANSPORTATION"
   @flag_channel "production"
 
-  @spec sync(boolean()) :: :ok | {:error, term()}
+  @spec sync(boolean(), DateTime.t()) :: :ok | {:error, term()}
   def sync(enabled, evaluated_at) when is_boolean(enabled) do
     case Repo.transaction(fn ->
            with {:ok, current_enabled, updated_at} <- read_current_enabled(),
@@ -32,7 +32,7 @@ defmodule Mithril.Uber.TransportationReleaseGate do
 
   defp ensure_fresh(_, _), do: :ok
 
-  defp maybe_write(enabled, enabled), do: :ok
+  # Record every completed evaluation, even if the flag value did not change.
   defp maybe_write(enabled, _current), do: write_enabled(enabled)
 
   defp maybe_revoke(true), do: :ok
@@ -57,15 +57,13 @@ defmodule Mithril.Uber.TransportationReleaseGate do
   end
 
   defp write_enabled(enabled) do
-    now = DateTime.utc_now() |> DateTime.to_iso8601()
-
     case Repo.query(
            """
            UPDATE public.app_feature_flags
-           SET enabled = $1, updated_at = $2::timestamptz
-           WHERE key = $3 AND channel = $4
+           SET enabled = $1, updated_at = clock_timestamp()
+           WHERE key = $2 AND channel = $3
            """,
-           [enabled, now, @flag_key, @flag_channel]
+           [enabled, @flag_key, @flag_channel]
          ) do
       {:ok, %{num_rows: 1}} -> :ok
       {:ok, _} -> {:error, :flag_missing}
