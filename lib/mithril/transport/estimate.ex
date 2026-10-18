@@ -32,7 +32,7 @@ defmodule Mithril.Transport.Estimate do
     end
   end
 
-  defp load_booking(booking_id) do
+  def load_booking(booking_id) do
     coordinate_kind = booking_coordinate_kind()
     latitude = latitude_expr(coordinate_kind)
     longitude = longitude_expr(coordinate_kind)
