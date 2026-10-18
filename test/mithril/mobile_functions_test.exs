@@ -27,8 +27,10 @@ defmodule Mithril.MobileFunctions.GatewayAuthTest do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Mithril.Repo)
     user_id = Ecto.UUID.generate()
 
-    assert match?({:ok, %{enabled: enabled}} when is_boolean(enabled),
-             UberTransportationReleaseGate.call(user_id, %{})) or
+    assert match?(
+             {:ok, %{enabled: enabled}} when is_boolean(enabled),
+             UberTransportationReleaseGate.call(user_id, %{})
+           ) or
              match?({:error, {:status, 503, _}}, UberTransportationReleaseGate.call(user_id, %{}))
   end
 
