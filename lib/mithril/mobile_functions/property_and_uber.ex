@@ -212,6 +212,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
          ) do
       {:ok, %{rows: [[id, customer_id, address]]}} ->
         {:ok, %{"id" => id, "customer_id" => customer_id, "address" => address}}
+
       {:ok, _} ->
         {:error, {:status, 404, %{error: "Booking not found"}}}
 
