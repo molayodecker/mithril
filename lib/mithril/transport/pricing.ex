@@ -45,8 +45,8 @@ defmodule Mithril.Transport.Pricing do
     sql = """
     SELECT currency, base_fee_minor, per_km_rate_minor, min_fee_minor, max_fee_minor, bands
     FROM public.transport_pricing_rules
-    WHERE enabled = true
-    ORDER BY CASE WHEN channel = 'production' THEN 0 ELSE 1 END, updated_at DESC
+    WHERE enabled = true AND channel = 'production'
+    ORDER BY updated_at DESC
     LIMIT 1
     """
 
