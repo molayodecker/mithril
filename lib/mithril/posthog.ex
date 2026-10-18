@@ -66,8 +66,8 @@ defmodule Mithril.Posthog do
               {:error, :flag_computation_failed}
             else
               if flag_present?(payload, flag_key) do
-              {:ok, read_boolean_flag(payload, flag_key)}
-            else
+                {:ok, read_boolean_flag(payload, flag_key)}
+              else
                 {:error, :flag_missing}
               end
             end
