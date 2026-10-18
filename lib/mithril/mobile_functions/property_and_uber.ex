@@ -149,31 +149,92 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
     {:error, {:status, 400, %{error: "Cleaner and customer coordinates are required"}}}
   end
 
-  # Serialize requests from the same customer before calling paid routing APIs.
-  # The transaction lock is released on success or failure.
-  # Provider calls run outside a DB transaction so a slow map provider
-  # cannot consume a Repo connection for the duration of its timeout.
+  # Reserve a per-customer slot in a short transaction before paid provider calls.
+  # The reservation is released even if routing or pricing fails.
   defp quote_serialized(user_id, cleaner_id, booking_id) do
     with {:ok, booking} <- authorize_booking(user_id, cleaner_id, booking_id),
          :ok <- ensure_gate(),
-         :ok <- enforce_limit(user_id),
-         {:ok, destination} <- booking_destination(booking),
-         {:ok, origin} <- load_origin(cleaner_id),
-         {:ok, route} <- route(origin, destination),
-         {:ok, priced} <- strict_price(route.distance_km),
-         :ok <- ensure_priced(priced),
-         {:ok, quote} <-
-           insert_quote(
-             user_id,
-             cleaner_id,
-             booking_id,
-             destination.latitude,
-             destination.longitude,
-             route,
-             priced
-           ) do
-      {:ok, present(route, priced, quote)}
+         {:ok, token} <- reserve_quote_slot(user_id) do
+      try do
+        with {:ok, destination} <- booking_destination(booking),
+             {:ok, origin} <- load_origin(cleaner_id),
+             {:ok, route} <- route(origin, destination),
+             {:ok, priced} <- strict_price(route.distance_km),
+             :ok <- ensure_priced(priced),
+             {:ok, quote} <-
+               insert_quote(
+                 user_id,
+                 cleaner_id,
+                 booking_id,
+                 destination.latitude,
+                 destination.longitude,
+                 route,
+                 priced
+               ) do
+          {:ok, present(route, priced, quote)}
+        end
+      after
+        release_quote_slot(token)
+      end
     end
+  end
+
+  defp reserve_quote_slot(user_id) do
+    case Repo.transaction(fn ->
+           with {:ok, _} <-
+                  Repo.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+                    "transport-quote:" <> user_id
+                  ]),
+                :ok <- enforce_limit(user_id),
+                {:ok, %{rows: [[pending]]}} <-
+                  Repo.query(
+                    """
+                    SELECT count(*) FROM public.transport_quote_reservations
+                    WHERE customer_id = $1::uuid AND expires_at > now()
+                    """,
+                    [DbUuid.dump!(user_id)]
+                  ),
+                :ok <- ensure_pending_capacity(user_id, pending),
+                {:ok, %{rows: [[token]]}} <-
+                  Repo.query(
+                    """
+                    INSERT INTO public.transport_quote_reservations (customer_id, expires_at)
+                    VALUES ($1::uuid, now() + interval '60 seconds')
+                    RETURNING id::text
+                    """,
+                    [DbUuid.dump!(user_id)]
+                  ) do
+             token
+           else
+             {:error, reason} -> Repo.rollback(reason)
+             _ -> Repo.rollback({:status, 503, %{error: "Quote reservation unavailable"}})
+           end
+         end) do
+      {:ok, token} -> {:ok, token}
+      {:error, {:status, _, _} = reason} -> {:error, reason}
+      {:error, _} -> {:error, {:status, 503, %{error: "Quote reservation unavailable"}}}
+    end
+  end
+
+  defp ensure_pending_capacity(user_id, pending) do
+    case Repo.query(
+           """
+           SELECT count(*) FROM public.uber_transportation_quotes
+           WHERE customer_id = $1::uuid AND revoked_at IS NULL AND expires_at > now()
+           """,
+           [DbUuid.dump!(user_id)]
+         ) do
+      {:ok, %{rows: [[count]]}} when count + pending < 5 -> :ok
+      {:ok, _} -> {:error, {:status, 429, %{error: "Too many active transport quotes"}}}
+      {:error, _} -> {:error, {:status, 503, %{error: "Quote limit unavailable"}}}
+    end
+  end
+
+  defp release_quote_slot(token) do
+    Repo.query(
+      "DELETE FROM public.transport_quote_reservations WHERE id = $1::uuid",
+      [DbUuid.dump!(token)]
+    )
   end
 
   defp ensure_uuid(value, label) do
