@@ -150,13 +150,12 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
   end
 
   # Reserve a per-customer slot in a short transaction before paid provider calls.
-  # The reservation is released even if routing or pricing fails.
+  # Every attempt counts for 15 minutes, including failed provider calls.
   defp quote_serialized(user_id, cleaner_id, booking_id) do
     with {:ok, booking} <- authorize_booking(user_id, cleaner_id, booking_id),
          :ok <- ensure_gate(),
-         {:ok, token} <- reserve_quote_slot(user_id) do
-      try do
-        with {:ok, destination} <- booking_destination(booking),
+         {:ok, _token} <- reserve_quote_slot(user_id) do
+      with {:ok, destination} <- booking_destination(booking),
              {:ok, origin} <- load_origin(cleaner_id),
              {:ok, route} <- route(origin, destination),
              {:ok, priced} <- strict_price(route.distance_km),
@@ -172,9 +171,6 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
                  priced
                ) do
           {:ok, present(route, priced, quote)}
-        end
-      after
-        release_quote_slot(token)
       end
     end
   end
@@ -199,7 +195,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
                   Repo.query(
                     """
                     INSERT INTO public.transport_quote_reservations (customer_id, expires_at)
-                    VALUES ($1::uuid, now() + interval '60 seconds')
+                    VALUES ($1::uuid, now() + interval '15 minutes')
                     RETURNING id::text
                     """,
                     [DbUuid.dump!(user_id)]
@@ -228,13 +224,6 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
       {:ok, _} -> {:error, {:status, 429, %{error: "Too many active transport quotes"}}}
       {:error, _} -> {:error, {:status, 503, %{error: "Quote limit unavailable"}}}
     end
-  end
-
-  defp release_quote_slot(token) do
-    Repo.query(
-      "DELETE FROM public.transport_quote_reservations WHERE id = $1::uuid",
-      [DbUuid.dump!(token)]
-    )
   end
 
   defp ensure_uuid(value, label) do
@@ -335,7 +324,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
   end
 
   defp load_origin(cleaner_id) do
-    case Origins.load_cleaner_origin(cleaner_id) do
+    case Origins.load_cleaner_origin_strict(cleaner_id) do
       {:ok, origin} ->
         {:ok, origin}
 
