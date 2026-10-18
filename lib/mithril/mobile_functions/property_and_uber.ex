@@ -156,21 +156,21 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
          :ok <- ensure_gate(),
          {:ok, _token} <- reserve_quote_slot(user_id) do
       with {:ok, destination} <- booking_destination(booking),
-             {:ok, origin} <- load_origin(cleaner_id),
-             {:ok, route} <- route(origin, destination),
-             {:ok, priced} <- strict_price(route.distance_km),
-             :ok <- ensure_priced(priced),
-             {:ok, quote} <-
-               insert_quote(
-                 user_id,
-                 cleaner_id,
-                 booking_id,
-                 destination.latitude,
-                 destination.longitude,
-                 route,
-                 priced
-               ) do
-          {:ok, present(route, priced, quote)}
+           {:ok, origin} <- load_origin(cleaner_id),
+           {:ok, route} <- route(origin, destination),
+           {:ok, priced} <- strict_price(route.distance_km),
+           :ok <- ensure_priced(priced),
+           {:ok, quote} <-
+             insert_quote(
+               user_id,
+               cleaner_id,
+               booking_id,
+               destination.latitude,
+               destination.longitude,
+               route,
+               priced
+             ) do
+        {:ok, present(route, priced, quote)}
       end
     end
   end
