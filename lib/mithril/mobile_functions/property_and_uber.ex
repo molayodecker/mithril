@@ -138,9 +138,12 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
          {:ok, cleaner_id} <- required_uuid(body, "cleaner_id"),
          {:ok, latitude} <- required_coord(body, "customer_latitude", -90, 90),
          {:ok, longitude} <- required_coord(body, "customer_longitude", -180, 180),
+         {:ok, booking_id} <- required_uuid(body, "booking_id"),
+         :ok <- authorize_booking(user_id, cleaner_id, booking_id),
+         :ok <- enforce_limit(user_id),
          {:ok, origin} <- load_origin(cleaner_id),
          {:ok, route} <- route(origin, %{latitude: latitude, longitude: longitude}),
-         {:ok, priced} <- Pricing.quote(route.distance_km),
+         {:ok, priced} <- strict_price(route.distance_km),
          :ok <- ensure_priced(priced),
          {:ok, quote} <- insert_quote(user_id, cleaner_id, latitude, longitude, route, priced) do
       {:ok, present(route, priced, quote)}
@@ -182,6 +185,46 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
 
       _ ->
         {:error, {:status, 400, %{error: "Invalid #{key}"}}}
+    end
+  end
+
+  # Only the customer of an existing booking can request a route from its
+  # assigned cleaner. Never allow arbitrary cleaner UUIDs to reveal home locations.
+  defp authorize_booking(user_id, cleaner_id, booking_id) do
+    case Repo.query(
+           """
+           SELECT 1 FROM public.bookings
+           WHERE id = $1::uuid AND customer_id = $2::uuid AND cleaner_id = $3::uuid
+             AND status IN ('pending', 'confirmed', 'scheduled', 'en_route', 'arrived', 'in_progress')
+           LIMIT 1
+           """,
+           [DbUuid.dump!(booking_id), DbUuid.dump!(user_id), DbUuid.dump!(cleaner_id)]
+         ) do
+      {:ok, %{rows: [[1]]}} -> :ok
+      {:ok, _} -> {:error, {:status, 404, %{error: "Booking not found"}}}
+      {:error, _} -> {:error, {:status, 503, %{error: "Booking authorization unavailable"}}}
+    end
+  end
+
+  # Bound the number of saved quotes per customer before the paid routing API.
+  defp enforce_limit(user_id) do
+    case Repo.query(
+           """
+           SELECT count(*) FROM public.uber_transportation_quotes
+           WHERE customer_id = $1::uuid AND expires_at > now()
+           """,
+           [DbUuid.dump!(user_id)]
+         ) do
+      {:ok, %{rows: [[count]]}} when is_integer(count) and count < 5 -> :ok
+      {:ok, _} -> {:error, {:status, 429, %{error: "Too many active transport quotes"}}}
+      {:error, _} -> {:error, {:status, 503, %{error: "Transport quote limit unavailable"}}}
+    end
+  end
+
+  defp strict_price(distance_km) do
+    case Pricing.quote_strict(distance_km) do
+      {:ok, priced} -> {:ok, priced}
+      {:error, _} -> {:error, {:status, 503, %{error: "Transport pricing unavailable"}}}
     end
   end
 
