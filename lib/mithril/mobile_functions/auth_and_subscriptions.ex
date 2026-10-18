@@ -6,18 +6,22 @@ defmodule Mithril.MobileFunctions.UberTransportationReleaseGate do
 
   @spec call(String.t(), map()) :: {:ok, map()} | {:error, term()}
   def call(_user_id, _body) do
-    case Posthog.fetch_boolean_flag_result(
+    with {:ok, %{rows: [[evaluated_at]]}} <- Mithril.Repo.query("SELECT clock_timestamp()", []) do
+      case Posthog.fetch_boolean_flag_result(
            Posthog.booking_uber_transportation_flag(),
            Posthog.uber_release_gate_distinct_id()
          ) do
       {:ok, enabled} ->
-        case TransportationReleaseGate.sync(enabled) do
+        case TransportationReleaseGate.sync(enabled, evaluated_at) do
           :ok -> {:ok, %{enabled: enabled}}
           {:error, _} -> {:error, {:status, 503, %{error: "Transport release gate unavailable"}}}
         end
 
       {:error, _} ->
         {:error, {:status, 503, %{error: "Transport release gate unavailable"}}}
+      end
+    else
+      _ -> {:error, {:status, 503, %{error: "Transport release gate unavailable"}}}
     end
   end
 end
