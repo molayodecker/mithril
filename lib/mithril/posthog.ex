@@ -80,6 +80,7 @@ defmodule Mithril.Posthog do
   defp flag_present?(payload, flag_key) when is_map(payload) do
     flags = Map.get(payload, "flags") || Map.get(payload, :flags) || %{}
     legacy = Map.get(payload, "featureFlags") || Map.get(payload, :featureFlags) || %{}
+
     (is_map(flags) and Map.has_key?(flags, flag_key)) or
       (is_map(legacy) and Map.has_key?(legacy, flag_key))
   end
