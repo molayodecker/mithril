@@ -6,21 +6,31 @@ defmodule Mithril.Uber.TransportationReleaseGate do
   @flag_key "BOOKING_UBER_TRANSPORTATION"
   @flag_channel "production"
 
-  @spec sync(boolean(), DateTime.t()) :: :ok | {:error, term()}
+  @spec sync(boolean(), DateTime.t()) :: {:ok, boolean()} | {:error, term()}
   def sync(enabled, evaluated_at) when is_boolean(enabled) do
     case Repo.transaction(fn ->
            with {:ok, current_enabled, updated_at} <- read_current_enabled(),
                 :ok <- ensure_fresh(evaluated_at, updated_at),
                 :ok <- maybe_write(enabled, current_enabled),
                 :ok <- maybe_revoke(enabled) do
-             :ok
+             enabled
            else
              {:error, reason} -> Repo.rollback(reason)
            end
          end) do
-      {:ok, :ok} -> :ok
-      {:error, :stale_evaluation} -> :ok
+      {:ok, enabled} -> {:ok, enabled}
+      {:error, :stale_evaluation} -> current_enabled()
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp current_enabled do
+    case Repo.query(
+           "SELECT enabled FROM public.app_feature_flags WHERE key = $1 AND channel = $2",
+           [@flag_key, @flag_channel]
+         ) do
+      {:ok, %{rows: [[enabled]]}} when is_boolean(enabled) -> {:ok, enabled}
+      _ -> {:error, :flag_unavailable}
     end
   end
 
