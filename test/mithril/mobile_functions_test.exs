@@ -45,20 +45,15 @@ defmodule Mithril.MobileFunctions.GatewayAuthTest do
              })
   end
 
-  test "review estimates do not require an existing booking" do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Mithril.Repo)
+  test "rejects trip estimates without a server-authorized booking" do
     user_id = Ecto.UUID.generate()
 
-    assert {:error, {:status, _status, body}} =
+    assert {:error, {:status, 400, %{error: "Invalid booking_id"}}} =
              Mithril.MobileGateway.invoke_function(user_id, "uber-trip-estimate", %{
                "cleaner_id" => Ecto.UUID.generate(),
                "customer_latitude" => 5.6037,
                "customer_longitude" => -0.187
              })
-
-    refute body.error == "Invalid booking_id"
-    refute Map.has_key?(body, :latitude)
-    refute Map.has_key?(body, "latitude")
   end
 end
 
