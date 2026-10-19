@@ -44,6 +44,22 @@ defmodule Mithril.MobileFunctions.GatewayAuthTest do
                "customer_longitude" => -0.2
              })
   end
+
+  test "review estimates do not require an existing booking" do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Mithril.Repo)
+    user_id = Ecto.UUID.generate()
+
+    assert {:error, {:status, _status, body}} =
+             Mithril.MobileGateway.invoke_function(user_id, "uber-trip-estimate", %{
+               "cleaner_id" => Ecto.UUID.generate(),
+               "customer_latitude" => 5.6037,
+               "customer_longitude" => -0.187
+             })
+
+    refute body.error == "Invalid booking_id"
+    refute Map.has_key?(body, :latitude)
+    refute Map.has_key?(body, "latitude")
+  end
 end
 
 defmodule Mithril.MobileFunctions.TimezoneTest do
