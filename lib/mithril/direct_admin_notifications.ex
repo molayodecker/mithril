@@ -27,8 +27,7 @@ defmodule Mithril.DirectAdminNotifications do
     with {:ok, uid} <- dump_uuid(user_id),
          :ok <- require_admin(uid),
          {:ok, paging} <- paging(params),
-         {:ok, total} <- count_deliveries(),
-         {:ok, unread_total} <- count_unread_deliveries(),
+         {:ok, {total, unread_total}} <- count_delivery_totals(),
          {:ok, rows} <- list_delivery_rows(paging) do
       {:ok,
        %{
@@ -157,19 +156,18 @@ defmodule Mithril.DirectAdminNotifications do
     end
   end
 
-  defp count_deliveries do
-    case Repo.query("SELECT COUNT(*)::int FROM public.notifications") do
-      {:ok, %{rows: [[total]]}} when is_integer(total) -> {:ok, total}
-      {:error, error} -> database_error(error)
-    end
-  end
+  defp count_delivery_totals do
+    case Repo.query("""
+         SELECT COUNT(*)::int,
+                COUNT(*) FILTER (WHERE COALESCE(read, false) = false)::int
+         FROM public.notifications
+         """) do
+      {:ok, %{rows: [[total, unread_total]]}}
+      when is_integer(total) and is_integer(unread_total) ->
+        {:ok, {total, unread_total}}
 
-  defp count_unread_deliveries do
-    case Repo.query(
-           "SELECT COUNT(*)::int FROM public.notifications WHERE COALESCE(read, false) = false"
-         ) do
-      {:ok, %{rows: [[total]]}} when is_integer(total) -> {:ok, total}
-      {:error, error} -> database_error(error)
+      {:error, error} ->
+        database_error(error)
     end
   end
 
