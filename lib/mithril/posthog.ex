@@ -66,7 +66,7 @@ defmodule Mithril.Posthog do
               {:error, :flag_computation_failed}
             else
               if flag_present?(payload, flag_key) do
-                {:ok, read_boolean_flag(payload, flag_key)}
+                read_boolean_flag_strict(payload, flag_key)
               else
                 {:error, :flag_missing}
               end
@@ -92,6 +92,32 @@ defmodule Mithril.Posthog do
   end
 
   defp flag_present?(_, _), do: false
+
+  defp read_boolean_flag_strict(payload, flag_key) do
+    flags = Map.get(payload, "flags") || Map.get(payload, :flags) || %{}
+    legacy = Map.get(payload, "featureFlags") || Map.get(payload, :featureFlags) || %{}
+
+    raw =
+      if is_map(flags) and Map.has_key?(flags, flag_key) do
+        Map.get(flags, flag_key)
+      else
+        if is_map(legacy), do: Map.get(legacy, flag_key), else: nil
+      end
+
+    cond do
+      is_boolean(raw) ->
+        {:ok, raw}
+
+      is_map(raw) and is_boolean(Map.get(raw, "enabled")) ->
+        {:ok, Map.get(raw, "enabled")}
+
+      is_map(raw) and is_boolean(Map.get(raw, :enabled)) ->
+        {:ok, Map.get(raw, :enabled)}
+
+      true ->
+        {:error, :invalid_flag_value}
+    end
+  end
 
   @spec read_boolean_flag(term(), String.t()) :: boolean()
   def read_boolean_flag(payload, flag_key) when is_binary(flag_key) do
