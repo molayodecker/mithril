@@ -9,9 +9,9 @@ defmodule Mithril.Uber.TransportationReleaseGate do
   @spec sync(boolean(), DateTime.t()) :: {:ok, boolean()} | {:error, term()}
   def sync(enabled, evaluated_at) when is_boolean(enabled) do
     case Repo.transaction(fn ->
-           with {:ok, current_enabled, updated_at} <- read_current_enabled(),
-                :ok <- ensure_fresh(evaluated_at, updated_at),
-                :ok <- maybe_write(enabled, current_enabled),
+           with {:ok, current_enabled, prior_evaluation_at} <- read_current_enabled(),
+                :ok <- ensure_fresh(evaluated_at, prior_evaluation_at),
+                :ok <- maybe_write(enabled, current_enabled, evaluated_at),
                 :ok <- maybe_revoke(enabled) do
              enabled
            else
@@ -34,8 +34,8 @@ defmodule Mithril.Uber.TransportationReleaseGate do
     end
   end
 
-  defp ensure_fresh(%DateTime{} = evaluated_at, %DateTime{} = updated_at) do
-    if DateTime.compare(evaluated_at, updated_at) == :lt,
+  defp ensure_fresh(%DateTime{} = evaluated_at, %DateTime{} = prior_evaluation_at) do
+    if DateTime.compare(evaluated_at, prior_evaluation_at) == :lt,
       do: {:error, :stale_evaluation},
       else: :ok
   end
@@ -43,24 +43,24 @@ defmodule Mithril.Uber.TransportationReleaseGate do
   defp ensure_fresh(_, _), do: :ok
 
   # Record every completed evaluation, even if the flag value did not change.
-  defp maybe_write(enabled, _current), do: write_enabled(enabled)
+  defp maybe_write(enabled, _current, evaluated_at), do: write_enabled(enabled, evaluated_at)
 
   defp maybe_revoke(true), do: :ok
   defp maybe_revoke(false), do: revoke_quotes()
 
   defp read_current_enabled do
     sql = """
-    SELECT enabled, updated_at
+    SELECT enabled, evaluated_at
     FROM public.app_feature_flags
     WHERE key = $1 AND channel = $2
     LIMIT 1 FOR UPDATE
     """
 
     case Repo.query(sql, [@flag_key, @flag_channel]) do
-      {:ok, %{rows: [[enabled, updated_at]]}} when is_boolean(enabled) ->
-        {:ok, enabled, updated_at}
+      {:ok, %{rows: [[enabled, prior_evaluation_at]]}} when is_boolean(enabled) ->
+        {:ok, enabled, prior_evaluation_at}
 
-      {:ok, %{rows: [[enabled, updated_at]]}} when enabled in [true, false] ->
+      {:ok, %{rows: [[enabled, prior_evaluation_at]]}} when enabled in [true, false] ->
         {:ok, enabled == true, updated_at}
 
       {:ok, %{rows: []}} ->
@@ -71,14 +71,14 @@ defmodule Mithril.Uber.TransportationReleaseGate do
     end
   end
 
-  defp write_enabled(enabled) do
+  defp write_enabled(enabled, evaluated_at) do
     case Repo.query(
            """
            UPDATE public.app_feature_flags
-           SET enabled = $1, updated_at = clock_timestamp()
-           WHERE key = $2 AND channel = $3
+           SET enabled = $1, updated_at = clock_timestamp(), evaluated_at = $2::timestamptz
+           WHERE key = $3 AND channel = $4
            """,
-           [enabled, @flag_key, @flag_channel]
+           [enabled, evaluated_at, @flag_key, @flag_channel]
          ) do
       {:ok, %{num_rows: 1}} -> :ok
       {:ok, _} -> {:error, :flag_missing}
