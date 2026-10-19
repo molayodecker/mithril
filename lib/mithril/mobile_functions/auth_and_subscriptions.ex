@@ -13,8 +13,8 @@ defmodule Mithril.MobileFunctions.UberTransportationReleaseGate do
            ) do
         {:ok, enabled} ->
           case TransportationReleaseGate.sync(enabled, evaluated_at) do
-            :ok ->
-              {:ok, %{enabled: enabled}}
+            {:ok, persisted_enabled} ->
+              {:ok, %{enabled: persisted_enabled}}
 
             {:error, _} ->
               {:error, {:status, 503, %{error: "Transport release gate unavailable"}}}
