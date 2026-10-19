@@ -92,6 +92,7 @@ defmodule Mithril.DirectAdminOpsDesksTest do
     assert page["page"] == 1
     assert page["limit"] == 25
     assert page["totalPages"] == 1
+    assert page["unreadTotal"] == 1
   end
 
   test "paginates notification deliveries" do
@@ -115,6 +116,7 @@ defmodule Mithril.DirectAdminOpsDesksTest do
     assert Enum.map(first["deliveries"], & &1["title"]) == ["Third", "Second"]
     assert first["total"] == 3
     assert first["totalPages"] == 2
+    assert first["unreadTotal"] == 3
 
     assert {:ok, second} =
              DirectAdminNotifications.list_deliveries(admin_id, %{"page" => 2, "limit" => 2})

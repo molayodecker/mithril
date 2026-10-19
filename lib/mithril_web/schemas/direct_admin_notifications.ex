@@ -68,9 +68,10 @@ defmodule MithrilWeb.Schemas.DirectAdminNotifications do
         page: %Schema{type: :integer, minimum: 1},
         limit: %Schema{type: :integer, minimum: 1, maximum: 100},
         total: %Schema{type: :integer, minimum: 0},
-        totalPages: %Schema{type: :integer, minimum: 1}
+        totalPages: %Schema{type: :integer, minimum: 1},
+        unreadTotal: %Schema{type: :integer, minimum: 0}
       },
-      required: [:deliveries, :page, :limit, :total, :totalPages]
+      required: [:deliveries, :page, :limit, :total, :totalPages, :unreadTotal]
     })
   end
 

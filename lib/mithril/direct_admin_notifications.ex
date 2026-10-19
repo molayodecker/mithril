@@ -28,6 +28,7 @@ defmodule Mithril.DirectAdminNotifications do
          :ok <- require_admin(uid),
          {:ok, paging} <- paging(params),
          {:ok, total} <- count_deliveries(),
+         {:ok, unread_total} <- count_unread_deliveries(),
          {:ok, rows} <- list_delivery_rows(paging) do
       {:ok,
        %{
@@ -35,7 +36,8 @@ defmodule Mithril.DirectAdminNotifications do
          "page" => paging.page,
          "limit" => paging.limit,
          "total" => total,
-         "totalPages" => total_pages(total, paging.limit)
+         "totalPages" => total_pages(total, paging.limit),
+         "unreadTotal" => unread_total
        }}
     else
       :error -> {:error, :invalid_user}
@@ -157,6 +159,15 @@ defmodule Mithril.DirectAdminNotifications do
 
   defp count_deliveries do
     case Repo.query("SELECT COUNT(*)::int FROM public.notifications") do
+      {:ok, %{rows: [[total]]}} when is_integer(total) -> {:ok, total}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp count_unread_deliveries do
+    case Repo.query(
+           "SELECT COUNT(*)::int FROM public.notifications WHERE COALESCE(read, false) = false"
+         ) do
       {:ok, %{rows: [[total]]}} when is_integer(total) -> {:ok, total}
       {:error, error} -> database_error(error)
     end
