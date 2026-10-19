@@ -434,7 +434,8 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
                        {:ok, %{num_rows: 1}} -> {id, expires}
                        _ -> Repo.rollback(:insert_failed)
                      end
-                   _ -> Repo.rollback(:insert_failed)
+                   _ ->
+                     Repo.rollback(:insert_failed)
                  end
                else
                  _ -> Repo.rollback(:invalid_booking_or_quota)
