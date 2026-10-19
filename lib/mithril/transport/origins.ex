@@ -17,6 +17,21 @@ defmodule Mithril.Transport.Origins do
     end
   end
 
+  def load_cleaner_origin_strict(cleaner_id) when is_binary(cleaner_id) do
+    case Repo.query("SELECT * FROM public.get_cleaner_trip_origin($1::uuid)", [
+           DbUuid.dump!(cleaner_id)
+         ]) do
+      {:ok, %{columns: columns, rows: [row]}} ->
+        coords_from_row(Map.new(Enum.zip(columns, row)))
+
+      {:ok, _} ->
+        {:error, :origin_missing}
+
+      {:error, _} ->
+        {:error, :origin_lookup_failed}
+    end
+  end
+
   def load_profile_origin(user_id) when is_binary(user_id) do
     postgis = """
     SELECT
@@ -57,6 +72,20 @@ defmodule Mithril.Transport.Origins do
               {:ok, coord} -> {:ok, coord}
               _ -> {:error, :destination_missing}
             end
+        end
+    end
+  end
+
+  # Persisted charges must not use the customer's current profile as a fallback.
+  def load_booking_destination_strict(booking) when is_map(booking) do
+    case coords(Map.get(booking, "latitude"), Map.get(booking, "longitude")) do
+      {:ok, destination} ->
+        {:ok, destination}
+
+      :error ->
+        case Router.geocode(Map.get(booking, "address") || "") do
+          {:ok, destination} -> {:ok, destination}
+          _ -> {:error, :destination_missing}
         end
     end
   end

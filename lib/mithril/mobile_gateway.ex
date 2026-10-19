@@ -29,6 +29,7 @@ defmodule Mithril.MobileGateway do
     sync-sumsub-review
     timezone
     uber-transportation-release-gate
+    uber-trip-estimate
   ))
 
   @migrated_functions @functions

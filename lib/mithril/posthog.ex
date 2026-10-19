@@ -18,12 +18,21 @@ defmodule Mithril.Posthog do
   def stripe_release_gate_distinct_id, do: @stripe_release_gate_distinct_id
 
   @spec fetch_boolean_flag(String.t(), String.t(), keyword()) :: boolean()
-  def fetch_boolean_flag(flag_key, distinct_id, opts \\ [])
+  def fetch_boolean_flag(flag_key, distinct_id, opts \\ []) do
+    case fetch_boolean_flag_result(flag_key, distinct_id, opts) do
+      {:ok, enabled} -> enabled
+      {:error, _} -> false
+    end
+  end
+
+  @spec fetch_boolean_flag_result(String.t(), String.t(), keyword()) ::
+          {:ok, boolean()} | {:error, term()}
+  def fetch_boolean_flag_result(flag_key, distinct_id, opts \\ [])
       when is_binary(flag_key) and is_binary(distinct_id) and is_list(opts) do
     api_key = api_key()
 
     if api_key == "" do
-      false
+      {:error, :not_configured}
     else
       host = flags_host()
 
@@ -51,14 +60,62 @@ defmodule Mithril.Posthog do
       try do
         case Task.await(task, @timeout_ms + 500) do
           {:ok, %{status: status, body: payload}} when status in 200..299 ->
-            read_boolean_flag(payload, flag_key)
+            if is_map(payload) and
+                 (Map.get(payload, "errorsWhileComputingFlags") == true or
+                    Map.get(payload, :errorsWhileComputingFlags) == true) do
+              {:error, :flag_computation_failed}
+            else
+              if flag_present?(payload, flag_key) do
+                read_boolean_flag_strict(payload, flag_key)
+              else
+                {:error, :flag_missing}
+              end
+            end
 
           _ ->
-            false
+            {:error, :evaluation_failed}
         end
       catch
-        :exit, _ -> false
+        :exit, _ ->
+          Task.shutdown(task, :brutal_kill)
+          {:error, :evaluation_failed}
       end
+    end
+  end
+
+  defp flag_present?(payload, flag_key) when is_map(payload) do
+    flags = Map.get(payload, "flags") || Map.get(payload, :flags) || %{}
+    legacy = Map.get(payload, "featureFlags") || Map.get(payload, :featureFlags) || %{}
+
+    (is_map(flags) and Map.has_key?(flags, flag_key)) or
+      (is_map(legacy) and Map.has_key?(legacy, flag_key))
+  end
+
+  defp flag_present?(_, _), do: false
+
+  defp read_boolean_flag_strict(payload, flag_key) do
+    flags = Map.get(payload, "flags") || Map.get(payload, :flags) || %{}
+    legacy = Map.get(payload, "featureFlags") || Map.get(payload, :featureFlags) || %{}
+
+    raw =
+      if is_map(flags) and Map.has_key?(flags, flag_key) do
+        Map.get(flags, flag_key)
+      else
+        if is_map(legacy), do: Map.get(legacy, flag_key), else: nil
+      end
+
+    cond do
+      is_boolean(raw) ->
+        {:ok, raw}
+
+      is_map(raw) and is_boolean(Map.get(raw, "enabled")) ->
+        {:ok, Map.get(raw, "enabled")}
+
+      is_map(raw) and is_boolean(Map.get(raw, :enabled)) ->
+        {:ok, Map.get(raw, :enabled)}
+
+      true ->
+        {:error, :invalid_flag_value}
     end
   end
 
