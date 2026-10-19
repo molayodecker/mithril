@@ -45,14 +45,15 @@ defmodule Mithril.MobileFunctions.GatewayAuthTest do
              })
   end
 
-  test "rejects trip estimates without a server-authorized booking" do
+  test "rejects a malformed booking id before routing" do
     user_id = Ecto.UUID.generate()
 
     assert {:error, {:status, 400, %{error: "Invalid booking_id"}}} =
              Mithril.MobileGateway.invoke_function(user_id, "uber-trip-estimate", %{
                "cleaner_id" => Ecto.UUID.generate(),
                "customer_latitude" => 5.6037,
-               "customer_longitude" => -0.187
+               "customer_longitude" => -0.187,
+               "booking_id" => "not-a-booking"
              })
   end
 end
@@ -63,10 +64,29 @@ defmodule Mithril.MobileFunctions.UberTripEstimateAuthorizationTest do
   alias Ecto.Adapters.SQL.Sandbox
   alias Mithril.Repo
 
+  @private_origin_latitude 5.551
+  @private_origin_longitude -0.201
+
   setup do
     :ok = Sandbox.checkout(Repo)
     create_bookings_table!()
+    create_cleaner_tables!()
+    install_origin_probe!()
     :ok
+  end
+
+  test "quotes a selected worker before a booking exists without returning the worker home" do
+    caller_id = Ecto.UUID.generate()
+
+    assert {:error, {:status, 404, body}} =
+             Mithril.MobileGateway.invoke_function(caller_id, "uber-trip-estimate", %{
+               "cleaner_id" => Ecto.UUID.generate(),
+               "customer_latitude" => 5.6037,
+               "customer_longitude" => -0.187
+             })
+
+    assert body.error == "Cleaner not found"
+    refute_private_origin(body)
   end
 
   test "hides a booking the caller does not own before reading the cleaner origin" do
@@ -97,6 +117,47 @@ defmodule Mithril.MobileFunctions.UberTripEstimateAuthorizationTest do
     )
 
     booking_id
+  end
+
+  defp refute_private_origin(body) do
+    refute Map.has_key?(body, :latitude)
+    refute Map.has_key?(body, :longitude)
+    refute Map.has_key?(body, :origin)
+
+    refute Enum.any?(
+             Map.values(body),
+             &(&1 == @private_origin_latitude or &1 == @private_origin_longitude)
+           )
+  end
+
+  defp create_cleaner_tables! do
+    Repo.query!("""
+    CREATE TABLE IF NOT EXISTS public.user_roles (
+      user_id uuid NOT NULL,
+      role_id text NOT NULL
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE IF NOT EXISTS public.cleaner_data (
+      user_id uuid NOT NULL,
+      status text,
+      verified boolean
+    )
+    """)
+  end
+
+  defp install_origin_probe! do
+    Repo.query!("DROP FUNCTION IF EXISTS public.get_cleaner_trip_origin(uuid)")
+
+    Repo.query!("""
+    CREATE FUNCTION public.get_cleaner_trip_origin(p_cleaner_id uuid)
+    RETURNS TABLE (latitude double precision, longitude double precision)
+    LANGUAGE sql
+    AS $$
+      SELECT #{@private_origin_latitude}::double precision, #{@private_origin_longitude}::double precision
+    $$
+    """)
   end
 
   defp create_bookings_table! do
