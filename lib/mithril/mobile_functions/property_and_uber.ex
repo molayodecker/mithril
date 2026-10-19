@@ -154,7 +154,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
   defp quote_serialized(user_id, cleaner_id, booking_id) do
     with {:ok, booking} <- authorize_booking(user_id, cleaner_id, booking_id),
          :ok <- ensure_gate(),
-         {:ok, _token} <- reserve_quote_slot(user_id) do
+         {:ok, token} <- reserve_quote_slot(user_id) do
       with {:ok, destination} <- booking_destination(booking),
            {:ok, origin} <- load_origin(cleaner_id),
            {:ok, route} <- route(origin, destination),
@@ -181,6 +181,11 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
                   Repo.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
                     "transport-quote:" <> user_id
                   ]),
+                {:ok, _} <-
+                  Repo.query(
+                    "DELETE FROM public.transport_quote_reservations WHERE customer_id = $1::uuid AND expires_at <= now()",
+                    [DbUuid.dump!(user_id)]
+                  ),
                 :ok <- enforce_limit(user_id),
                 {:ok, %{rows: [[pending]]}} <-
                   Repo.query(
@@ -235,12 +240,18 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
   end
 
   defp required_uuid(body, key) do
-    value = body |> Map.get(key) |> to_string() |> String.trim()
+    case Map.get(body, key) do
+      value when is_binary(value) ->
+        value = String.trim(value)
 
-    if Regex.match?(@uuid_regex, value) do
-      {:ok, value}
-    else
-      {:error, {:status, 400, %{error: "Invalid #{key}"}}}
+        if Regex.match?(@uuid_regex, value) do
+          {:ok, value}
+        else
+          {:error, {:status, 400, %{error: "Invalid #{key}"}}}
+        end
+
+      _ ->
+        {:error, {:status, 400, %{error: "Invalid #{key}"}}}
     end
   end
 
@@ -365,7 +376,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
        {:status, 422,
         %{error: "Transport price is not available", code: "transport_price_unavailable"}}}
 
-  defp insert_quote(user_id, cleaner_id, booking_id, latitude, longitude, route, priced) do
+  defp insert_quote(user_id, cleaner_id, booking_id, token, latitude, longitude, route, priced) do
     expires_at = DateTime.utc_now() |> DateTime.add(@quote_ttl_seconds, :second)
     display = display(priced.amount_minor)
 
@@ -414,12 +425,22 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
                         ]
                       ) do
                  case Repo.query(sql, params) do
-                   {:ok, %{rows: [[id, expires]]}} -> {id, expires}
+                   {:ok, %{rows: [[id, expires]]}} ->
+                     case Repo.query(
+                            "DELETE FROM public.transport_quote_reservations WHERE id = $1::uuid AND customer_id = $2::uuid",
+                            [DbUuid.dump!(token), DbUuid.dump!(user_id)]
+                          ) do
+                       {:ok, %{num_rows: 1}} -> {id, expires}
+                       _ -> Repo.rollback(:insert_failed)
+                     end
                    _ -> Repo.rollback(:insert_failed)
                  end
                else
                  _ -> Repo.rollback(:invalid_booking_or_quota)
                end
+
+             {:error, _} ->
+               Repo.rollback(:gate_unavailable)
 
              _ ->
                Repo.rollback(:disabled)
@@ -430,6 +451,9 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
 
       {:error, :disabled} ->
         {:error, {:status, 409, %{error: "Transport is disabled"}}}
+
+      {:error, :gate_unavailable} ->
+        {:error, {:status, 503, %{error: "Transport flag unavailable"}}}
 
       {:error, :invalid_booking_or_quota} ->
         {:error, {:status, 409, %{error: "Booking changed or quote limit reached"}}}
