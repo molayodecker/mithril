@@ -126,6 +126,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
 
   alias Mithril.DbUuid
   alias Mithril.Repo
+  alias Mithril.Transport.Estimate
   alias Mithril.Transport.Origins
   alias Mithril.Transport.Pricing
   alias Mithril.Transport.Router
@@ -136,9 +137,10 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
   def call(user_id, body) when is_binary(user_id) and is_map(body) do
     with :ok <- ensure_uuid(user_id, "customer"),
          {:ok, cleaner_id} <- required_uuid(body, "cleaner_id"),
-         {:ok, latitude} <- required_coord(body, "customer_latitude", -90, 90),
-         {:ok, longitude} <- required_coord(body, "customer_longitude", -180, 180),
-         {:ok, result} <- quote_for_destination(user_id, cleaner_id, latitude, longitude) do
+         {:ok, _latitude} <- required_coord(body, "customer_latitude", -90, 90),
+         {:ok, _longitude} <- required_coord(body, "customer_longitude", -180, 180),
+         {:ok, booking_id} <- required_uuid(body, "booking_id"),
+         {:ok, result} <- quote_serialized(user_id, cleaner_id, booking_id) do
       {:ok, result}
     end
   end
@@ -147,23 +149,30 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
     {:error, {:status, 400, %{error: "Cleaner and customer coordinates are required"}}}
   end
 
-  # Review quotes before a booking exists. The selected customer pin is stored on
-  # the quote so booking creation can require the same destination. Cleaner
-  # origin coordinates are used for routing and are never returned.
   # Reserve a per-customer slot in a short transaction before paid provider calls.
   # Every attempt counts for 15 minutes, including failed provider calls.
-  defp quote_for_destination(user_id, cleaner_id, latitude, longitude) do
-    destination = %{latitude: latitude, longitude: longitude}
-
-    with :ok <- ensure_gate(),
-         {:ok, token} <- reserve_quote_slot(user_id),
-         {:ok, origin} <- load_origin(cleaner_id),
-         {:ok, route} <- route(origin, destination),
-         {:ok, priced} <- strict_price(route.distance_km),
-         :ok <- ensure_priced(priced),
-         {:ok, quote} <-
-           insert_quote(user_id, cleaner_id, token, latitude, longitude, route, priced) do
-      {:ok, present(route, priced, quote)}
+  defp quote_serialized(user_id, cleaner_id, booking_id) do
+    with {:ok, booking} <- authorize_booking(user_id, cleaner_id, booking_id),
+         :ok <- ensure_gate(),
+         {:ok, token} <- reserve_quote_slot(user_id) do
+      with {:ok, destination} <- booking_destination(booking),
+           {:ok, origin} <- load_origin(cleaner_id),
+           {:ok, route} <- route(origin, destination),
+           {:ok, priced} <- strict_price(route.distance_km),
+           :ok <- ensure_priced(priced),
+           {:ok, quote} <-
+             insert_quote(
+               user_id,
+               cleaner_id,
+               booking_id,
+               token,
+               destination.latitude,
+               destination.longitude,
+               route,
+               priced
+             ) do
+        {:ok, present(route, priced, quote)}
+      end
     end
   end
 
@@ -263,6 +272,36 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
     end
   end
 
+  # Only the customer of an existing booking can request a route from its
+  # assigned cleaner. Never allow arbitrary cleaner UUIDs to reveal home locations.
+  defp authorize_booking(user_id, cleaner_id, booking_id) do
+    case Repo.query(
+           """
+           SELECT id, customer_id, address FROM public.bookings
+           WHERE id = $1::uuid AND customer_id = $2::uuid AND cleaner_id = $3::uuid
+             AND status IN ('pending', 'confirmed', 'scheduled', 'en_route', 'arrived', 'in_progress')
+           LIMIT 1
+           """,
+           [DbUuid.dump!(booking_id), DbUuid.dump!(user_id), DbUuid.dump!(cleaner_id)]
+         ) do
+      {:ok, %{rows: [[_id, _customer_id, _address]]}} ->
+        Estimate.load_booking(booking_id)
+
+      {:ok, _} ->
+        {:error, {:status, 404, %{error: "Booking not found"}}}
+
+      {:error, _} ->
+        {:error, {:status, 503, %{error: "Booking authorization unavailable"}}}
+    end
+  end
+
+  defp booking_destination(booking) do
+    case Origins.load_booking_destination_strict(booking) do
+      {:ok, destination} -> {:ok, destination}
+      _ -> {:error, {:status, 422, %{error: "Booking destination is unavailable"}}}
+    end
+  end
+
   defp ensure_gate do
     case Repo.query(
            "SELECT enabled FROM public.app_feature_flags WHERE key = 'BOOKING_UBER_TRANSPORTATION' AND channel = 'production'",
@@ -338,7 +377,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
        {:status, 422,
         %{error: "Transport price is not available", code: "transport_price_unavailable"}}}
 
-  defp insert_quote(user_id, cleaner_id, token, latitude, longitude, route, priced) do
+  defp insert_quote(user_id, cleaner_id, booking_id, token, latitude, longitude, route, priced) do
     expires_at = DateTime.utc_now() |> DateTime.add(@quote_ttl_seconds, :second)
     display = display(priced.amount_minor)
 
@@ -372,16 +411,35 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
                 ) do
              {:ok, %{rows: [[true]]}} ->
                with :ok <- enforce_limit(user_id),
-                    {:ok, %{rows: [[id, expires]]}} <- Repo.query(sql, params),
-                    {:ok, %{num_rows: 1}} <-
+                    {:ok, %{rows: [[1]]}} <-
                       Repo.query(
-                        "DELETE FROM public.transport_quote_reservations WHERE id = $1::uuid AND customer_id = $2::uuid",
-                        [DbUuid.dump!(token), DbUuid.dump!(user_id)]
+                        """
+                        SELECT 1 FROM public.bookings
+                        WHERE id = $1::uuid AND customer_id = $2::uuid AND cleaner_id = $3::uuid
+                          AND status IN ('pending', 'confirmed', 'scheduled', 'en_route', 'arrived', 'in_progress')
+                        FOR UPDATE
+                        """,
+                        [
+                          DbUuid.dump!(booking_id),
+                          DbUuid.dump!(user_id),
+                          DbUuid.dump!(cleaner_id)
+                        ]
                       ) do
-                 {id, expires}
+                 case Repo.query(sql, params) do
+                   {:ok, %{rows: [[id, expires]]}} ->
+                     case Repo.query(
+                            "DELETE FROM public.transport_quote_reservations WHERE id = $1::uuid AND customer_id = $2::uuid",
+                            [DbUuid.dump!(token), DbUuid.dump!(user_id)]
+                          ) do
+                       {:ok, %{num_rows: 1}} -> {id, expires}
+                       _ -> Repo.rollback(:insert_failed)
+                     end
+
+                   _ ->
+                     Repo.rollback(:insert_failed)
+                 end
                else
-                 {:error, {:status, _, _} = reason} -> Repo.rollback(reason)
-                 _ -> Repo.rollback(:insert_failed)
+                 _ -> Repo.rollback(:invalid_booking_or_quota)
                end
 
              {:error, _} ->
@@ -394,14 +452,14 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
       {:ok, {id, expires}} ->
         {:ok, %{id: id, expires_at: expires_iso(expires), display: display}}
 
-      {:error, {:status, _, _} = reason} ->
-        {:error, reason}
-
       {:error, :disabled} ->
         {:error, {:status, 409, %{error: "Transport is disabled"}}}
 
       {:error, :gate_unavailable} ->
         {:error, {:status, 503, %{error: "Transport flag unavailable"}}}
+
+      {:error, :invalid_booking_or_quota} ->
+        {:error, {:status, 409, %{error: "Booking changed or quote limit reached"}}}
 
       _ ->
         {:error, {:status, 500, %{error: "Could not save the transport quote"}}}
