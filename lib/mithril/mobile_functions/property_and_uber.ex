@@ -165,6 +165,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
                user_id,
                cleaner_id,
                booking_id,
+               token,
                destination.latitude,
                destination.longitude,
                route,
