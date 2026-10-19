@@ -61,7 +61,7 @@ defmodule Mithril.Uber.TransportationReleaseGate do
         {:ok, enabled, prior_evaluation_at}
 
       {:ok, %{rows: [[enabled, prior_evaluation_at]]}} when enabled in [true, false] ->
-        {:ok, enabled == true, updated_at}
+        {:ok, enabled == true, prior_evaluation_at}
 
       {:ok, %{rows: []}} ->
         {:ok, false, nil}
