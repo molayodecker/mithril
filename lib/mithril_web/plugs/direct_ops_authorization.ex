@@ -35,6 +35,7 @@ defmodule MithrilWeb.Plugs.DirectOpsAuthorization do
 
         cond do
           permissions == [] and "reviewer" in roles -> conn
+          "reviewer" in roles and permission_for(rest, conn.method) == "billing" -> conn
           permission_for(rest, conn.method) in permissions -> conn
           true -> reject(conn)
         end
