@@ -14,6 +14,7 @@ defmodule Mithril.WhatsApp.ChefWebhook do
   def handle(params, signature) when is_map(params) do
     token = Application.get_env(:mithril, :twilio_auth_token)
     url = Application.get_env(:mithril, :twilio_chef_webhook_url)
+
     valid_params =
       params
       |> Enum.filter(fn {_key, value} -> is_binary(value) end)
@@ -58,9 +59,9 @@ defmodule Mithril.WhatsApp.ChefWebhook do
   @doc "Only unfinished chef conversations retain routing ownership."
   def active?(phone) when is_binary(phone) do
     case Repo.query(
-      "SELECT 1 FROM public.whatsapp_chef_intakes WHERE phone = $1 AND status IN ('in_progress', 'confirm') LIMIT 1",
-      [phone]
-    ) do
+           "SELECT 1 FROM public.whatsapp_chef_intakes WHERE phone = $1 AND status IN ('in_progress', 'confirm') LIMIT 1",
+           [phone]
+         ) do
       {:ok, %{rows: [[1]]}} -> true
       _ -> false
     end
@@ -77,9 +78,9 @@ defmodule Mithril.WhatsApp.ChefWebhook do
 
       row =
         case Repo.query(
-          "SELECT step, status, answers, last_message_sid FROM public.whatsapp_chef_intakes WHERE phone = $1",
-          [phone]
-        ) do
+               "SELECT step, status, answers, last_message_sid FROM public.whatsapp_chef_intakes WHERE phone = $1",
+               [phone]
+             ) do
           {:ok, %{rows: [item]}} -> item
           {:ok, %{rows: []}} -> nil
           {:error, reason} -> Repo.rollback(reason)
@@ -97,6 +98,7 @@ defmodule Mithril.WhatsApp.ChefWebhook do
             [step, status, answers, _] ->
               atom_status = String.to_existing_atom(status)
               current = %{step: step, status: atom_status, answers: answers}
+
               case ChefIntake.advance(current, body) do
                 {next, text, _completed} ->
                   {next, text <> "\nThank you. Our team will review your enquiry."}
@@ -109,21 +111,21 @@ defmodule Mithril.WhatsApp.ChefWebhook do
         status = Atom.to_string(state.status)
 
         case Repo.query(
-          """
-          INSERT INTO public.whatsapp_chef_intakes
-            (phone, step, status, answers, last_message_sid, submitted_at, inserted_at, updated_at)
-          VALUES ($1, $2, $3, $4::jsonb, $5,
-            CASE WHEN $3 = 'completed' THEN now() ELSE NULL END, now(), now())
-          ON CONFLICT (phone) DO UPDATE
-            SET step = EXCLUDED.step, status = EXCLUDED.status,
-                answers = EXCLUDED.answers, last_message_sid = EXCLUDED.last_message_sid,
-                submitted_at = CASE WHEN EXCLUDED.status = 'completed'
-                  THEN COALESCE(whatsapp_chef_intakes.submitted_at, now())
-                  ELSE NULL END,
-                updated_at = now()
-          """,
-          [phone, state.step, status, Jason.encode!(state.answers), sid]
-        ) do
+               """
+               INSERT INTO public.whatsapp_chef_intakes
+                 (phone, step, status, answers, last_message_sid, submitted_at, inserted_at, updated_at)
+               VALUES ($1, $2, $3, $4::jsonb, $5,
+                 CASE WHEN $3 = 'completed' THEN now() ELSE NULL END, now(), now())
+               ON CONFLICT (phone) DO UPDATE
+                 SET step = EXCLUDED.step, status = EXCLUDED.status,
+                     answers = EXCLUDED.answers, last_message_sid = EXCLUDED.last_message_sid,
+                     submitted_at = CASE WHEN EXCLUDED.status = 'completed'
+                       THEN COALESCE(whatsapp_chef_intakes.submitted_at, now())
+                       ELSE NULL END,
+                     updated_at = now()
+               """,
+               [phone, state.step, status, Jason.encode!(state.answers), sid]
+             ) do
           {:ok, _} -> answer
           {:error, reason} -> Repo.rollback(reason)
         end
