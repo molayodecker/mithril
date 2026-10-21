@@ -23,7 +23,16 @@ defmodule MithrilWeb.Schemas.Direct do
             budget: %Schema{type: :string},
             start_date: %Schema{type: :string, format: :date}
           },
-          required: [:location, :chef_type, :cuisine, :arrangement, :people, :duties, :budget, :start_date]
+          required: [
+            :location,
+            :chef_type,
+            :cuisine,
+            :arrangement,
+            :people,
+            :duties,
+            :budget,
+            :start_date
+          ]
         },
         submittedAt: %Schema{type: :string, format: :"date-time", nullable: true},
         updatedAt: %Schema{type: :string, format: :"date-time", nullable: true}
