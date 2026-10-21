@@ -32,7 +32,6 @@ defmodule Mithril.Direct do
                  'updatedAt', updated_at
                )
                FROM public.whatsapp_chef_completed_enquiries
-               WHERE 1 = 1
                ORDER BY submitted_at DESC NULLS LAST
                LIMIT 100
              """,
