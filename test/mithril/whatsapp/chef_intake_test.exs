@@ -5,8 +5,18 @@ defmodule Mithril.WhatsApp.ChefIntakeTest do
   test "walks through all eight fields and requires confirmation" do
     {state, text} = ChefIntake.start()
     assert text =~ "Which area"
-    values = ["East Legon", "1", "3", "2", "5", "Cooking and shopping",
-              "GH₵2000 per month", Date.utc_today() |> Date.add(7) |> Date.to_iso8601()]
+
+    values = [
+      "East Legon",
+      "1",
+      "3",
+      "2",
+      "5",
+      "Cooking and shopping",
+      "GH₵2000 per month",
+      Date.utc_today() |> Date.add(7) |> Date.to_iso8601()
+    ]
+
     {state, text} =
       Enum.reduce(values, {state, text}, fn value, {state, _text} ->
         {next, reply} = ChefIntake.advance(state, value)
