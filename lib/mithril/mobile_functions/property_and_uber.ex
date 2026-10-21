@@ -129,6 +129,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
   alias Mithril.Transport.Estimate
   alias Mithril.Transport.Origins
   alias Mithril.Transport.Pricing
+  alias Mithril.Transport.ReviewSelections
   alias Mithril.Transport.Router
 
   @quote_ttl_seconds 15 * 60
@@ -137,16 +138,69 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
   def call(user_id, body) when is_binary(user_id) and is_map(body) do
     with :ok <- ensure_uuid(user_id, "customer"),
          {:ok, cleaner_id} <- required_uuid(body, "cleaner_id"),
-         {:ok, _latitude} <- required_coord(body, "customer_latitude", -90, 90),
-         {:ok, _longitude} <- required_coord(body, "customer_longitude", -180, 180),
-         {:ok, booking_id} <- required_uuid(body, "booking_id"),
-         {:ok, result} <- quote_serialized(user_id, cleaner_id, booking_id) do
-      {:ok, result}
+         {:ok, latitude} <- required_coord(body, "customer_latitude", -90, 90),
+         {:ok, longitude} <- required_coord(body, "customer_longitude", -180, 180) do
+      case optional_uuid(body, "booking_id") do
+        :absent ->
+          quote_for_review(user_id, cleaner_id, latitude, longitude)
+
+        {:ok, booking_id} ->
+          quote_serialized(user_id, cleaner_id, booking_id)
+
+        {:error, _} = error ->
+          error
+      end
     end
   end
 
   def call(_user_id, _body) do
     {:error, {:status, 400, %{error: "Cleaner and customer coordinates are required"}}}
+  end
+
+  # Review runs before a booking exists. Routing uses the destination stored
+  # when this customer ranked the selected worker, not caller-controlled pins.
+  # The response never includes the worker's home coordinates.
+  defp quote_for_review(user_id, cleaner_id, latitude, longitude) do
+    with :ok <- authorize_cleaner(cleaner_id),
+         {:ok, destination} <-
+           load_review_destination(user_id, cleaner_id, latitude, longitude),
+         :ok <- ensure_gate(),
+         {:ok, token} <- reserve_quote_slot(user_id),
+         {:ok, origin} <- load_origin(cleaner_id),
+         {:ok, route} <- route(origin, destination),
+         {:ok, priced} <- strict_price(route.distance_km),
+         :ok <- ensure_priced(priced),
+         {:ok, quote} <-
+           insert_quote(
+             user_id,
+             cleaner_id,
+             nil,
+             token,
+             destination.latitude,
+             destination.longitude,
+             route,
+             priced
+           ) do
+      {:ok, present(route, priced, quote)}
+    end
+  end
+
+  defp load_review_destination(user_id, cleaner_id, latitude, longitude) do
+    case ReviewSelections.fetch(user_id, cleaner_id) do
+      {:ok, destination} ->
+        if ReviewSelections.same_destination?(destination, latitude, longitude) do
+          {:ok, destination}
+        else
+          {:error,
+           {:status, 409, %{error: "Review destination does not match the selected worker"}}}
+        end
+
+      {:error, :not_found} ->
+        {:error, {:status, 409, %{error: "Worker is not in the current review"}}}
+
+      {:error, :unavailable} ->
+        {:error, {:status, 503, %{error: "Review selection unavailable"}}}
+    end
   end
 
   # Reserve a per-customer slot in a short transaction before paid provider calls.
@@ -256,6 +310,25 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
     end
   end
 
+  defp optional_uuid(body, key) do
+    case Map.get(body, key) do
+      nil ->
+        :absent
+
+      value when is_binary(value) ->
+        trimmed = String.trim(value)
+
+        cond do
+          trimmed == "" -> :absent
+          Regex.match?(@uuid_regex, trimmed) -> {:ok, trimmed}
+          true -> {:error, {:status, 400, %{error: "Invalid #{key}"}}}
+        end
+
+      _ ->
+        {:error, {:status, 400, %{error: "Invalid #{key}"}}}
+    end
+  end
+
   defp required_coord(body, key, min, max) do
     case Map.get(body, key) do
       value when is_number(value) and value >= min and value <= max ->
@@ -269,6 +342,44 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
 
       _ ->
         {:error, {:status, 400, %{error: "Invalid #{key}"}}}
+    end
+  end
+
+  # A review quote has no booking yet. Confirm the selected user is an active
+  # verified cleaner before reading the private trip origin.
+  defp authorize_cleaner(cleaner_id) do
+    case Process.get(:uber_trip_estimate_authorize_cleaner) do
+      [next | rest] ->
+        Process.put(:uber_trip_estimate_authorize_cleaner, rest)
+        next
+
+      _ ->
+        query_cleaner(cleaner_id)
+    end
+  end
+
+  defp query_cleaner(cleaner_id) do
+    case Repo.query(
+           """
+           SELECT 1
+           FROM public.user_roles ur
+           INNER JOIN public.cleaner_data cd ON cd.user_id = ur.user_id
+           WHERE ur.user_id = $1::uuid
+             AND ur.role_id = 'cleaner'
+             AND cd.status = 'active'
+             AND cd.verified IS TRUE
+           LIMIT 1
+           """,
+           [DbUuid.dump!(cleaner_id)]
+         ) do
+      {:ok, %{rows: [[1]]}} ->
+        :ok
+
+      {:ok, _} ->
+        {:error, {:status, 404, %{error: "Cleaner not found"}}}
+
+      {:error, _} ->
+        {:error, {:status, 503, %{error: "Cleaner authorization unavailable"}}}
     end
   end
 
@@ -401,7 +512,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
       display,
       latitude,
       longitude,
-      DateTime.to_iso8601(expires_at)
+      expires_at
     ]
 
     case Repo.transaction(fn ->
@@ -411,20 +522,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
                 ) do
              {:ok, %{rows: [[true]]}} ->
                with :ok <- enforce_limit(user_id),
-                    {:ok, %{rows: [[1]]}} <-
-                      Repo.query(
-                        """
-                        SELECT 1 FROM public.bookings
-                        WHERE id = $1::uuid AND customer_id = $2::uuid AND cleaner_id = $3::uuid
-                          AND status IN ('pending', 'confirmed', 'scheduled', 'en_route', 'arrived', 'in_progress')
-                        FOR UPDATE
-                        """,
-                        [
-                          DbUuid.dump!(booking_id),
-                          DbUuid.dump!(user_id),
-                          DbUuid.dump!(cleaner_id)
-                        ]
-                      ) do
+                    :ok <- confirm_quote_subject(user_id, cleaner_id, booking_id) do
                  case Repo.query(sql, params) do
                    {:ok, %{rows: [[id, expires]]}} ->
                      case Repo.query(
@@ -439,7 +537,20 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
                      Repo.rollback(:insert_failed)
                  end
                else
-                 _ -> Repo.rollback(:invalid_booking_or_quota)
+                 {:error, :auth_unavailable} ->
+                   Repo.rollback(:auth_unavailable)
+
+                 {:error, :booking_auth_unavailable} ->
+                   Repo.rollback(:booking_auth_unavailable)
+
+                 {:error, :cleaner_unavailable} ->
+                   Repo.rollback(:cleaner_unavailable)
+
+                 {:error, :selection_missing} ->
+                   Repo.rollback(:selection_missing)
+
+                 _ ->
+                   Repo.rollback(:invalid_booking_or_quota)
                end
 
              {:error, _} ->
@@ -461,28 +572,108 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
       {:error, :invalid_booking_or_quota} ->
         {:error, {:status, 409, %{error: "Booking changed or quote limit reached"}}}
 
+      {:error, :cleaner_unavailable} ->
+        {:error, {:status, 404, %{error: "Cleaner not found"}}}
+
+      {:error, :selection_missing} ->
+        {:error, {:status, 409, %{error: "Worker is not in the current review"}}}
+
+      {:error, :auth_unavailable} ->
+        release_quote_slot(user_id, token)
+        {:error, {:status, 503, %{error: "Cleaner authorization unavailable"}}}
+
+      {:error, :booking_auth_unavailable} ->
+        release_quote_slot(user_id, token)
+        {:error, {:status, 503, %{error: "Booking authorization unavailable"}}}
+
       _ ->
         {:error, {:status, 500, %{error: "Could not save the transport quote"}}}
     end
   end
 
+  defp release_quote_slot(user_id, token) do
+    _ =
+      Repo.query(
+        "DELETE FROM public.transport_quote_reservations WHERE id = $1::uuid AND customer_id = $2::uuid",
+        [DbUuid.dump!(token), DbUuid.dump!(user_id)]
+      )
+
+    :ok
+  end
+
+  defp confirm_quote_subject(user_id, cleaner_id, nil) do
+    with :ok <- confirm_cleaner_available(cleaner_id),
+         :ok <- lock_review_selection(user_id, cleaner_id) do
+      :ok
+    end
+  end
+
+  defp confirm_quote_subject(user_id, cleaner_id, booking_id) when is_binary(booking_id) do
+    case Repo.query(
+           """
+           SELECT 1 FROM public.bookings
+           WHERE id = $1::uuid AND customer_id = $2::uuid AND cleaner_id = $3::uuid
+             AND status IN ('pending', 'confirmed', 'scheduled', 'en_route', 'arrived', 'in_progress')
+           FOR UPDATE
+           """,
+           [DbUuid.dump!(booking_id), DbUuid.dump!(user_id), DbUuid.dump!(cleaner_id)]
+         ) do
+      {:ok, %{rows: [[1]]}} -> :ok
+      {:error, _} -> {:error, :booking_auth_unavailable}
+      _ -> {:error, :invalid_booking}
+    end
+  end
+
+  defp confirm_cleaner_available(cleaner_id) do
+    case authorize_cleaner(cleaner_id) do
+      :ok -> :ok
+      {:error, {:status, 503, _}} -> {:error, :auth_unavailable}
+      {:error, _} -> {:error, :cleaner_unavailable}
+    end
+  end
+
+  defp lock_review_selection(user_id, cleaner_id) do
+    case ReviewSelections.lock(user_id, cleaner_id) do
+      :ok -> :ok
+      {:error, :unavailable} -> {:error, :auth_unavailable}
+      {:error, :not_found} -> {:error, :selection_missing}
+    end
+  end
+
+  # Distance and price only. The worker home used for routing is not returned.
   defp present(route, priced, quote) do
     fee_major = priced.amount_minor / 100
 
-    %{
-      distance_km: Float.round(route.distance_km, 2),
-      distance_miles: Float.round(route.distance_km / 1.609344, 2),
-      duration_seconds: route.duration_seconds,
-      currency_code: "GHS",
-      estimate_display: quote.display,
-      low_estimate_major: fee_major,
-      high_estimate_major: fee_major,
-      customer_fee_major: fee_major,
-      quote_id: quote.id,
-      quote_expires_at: quote.expires_at,
-      product_id: "instaclean",
-      product_name: "Instaclean transport"
-    }
+    Map.take(
+      %{
+        distance_km: Float.round(route.distance_km, 2),
+        distance_miles: Float.round(route.distance_km / 1.609344, 2),
+        duration_seconds: route.duration_seconds,
+        currency_code: "GHS",
+        estimate_display: quote.display,
+        low_estimate_major: fee_major,
+        high_estimate_major: fee_major,
+        customer_fee_major: fee_major,
+        quote_id: quote.id,
+        quote_expires_at: quote.expires_at,
+        product_id: "instaclean",
+        product_name: "Instaclean transport"
+      },
+      [
+        :distance_km,
+        :distance_miles,
+        :duration_seconds,
+        :currency_code,
+        :estimate_display,
+        :low_estimate_major,
+        :high_estimate_major,
+        :customer_fee_major,
+        :quote_id,
+        :quote_expires_at,
+        :product_id,
+        :product_name
+      ]
+    )
   end
 
   defp display(amount_minor) do
