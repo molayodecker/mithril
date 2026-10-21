@@ -31,10 +31,25 @@ defmodule Mithril.WhatsApp.Recruitment do
         from = Map.get(params, "From", "")
         body = params |> Map.get("Body", "") |> to_string() |> String.trim()
 
-        if String.upcase(body) == "CHEF" or ChefWebhook.active?(from) do
-          ChefWebhook.handle_verified(params)
-        else
-          {:ok, Conversation.handle(params)}
+        case String.upcase(body) do
+          "APPLY" ->
+            if ChefWebhook.active?(from) do
+              with :ok <- ChefWebhook.pause(from) do
+                {:ok, Conversation.handle(params)}
+              end
+            else
+              {:ok, Conversation.handle(params)}
+            end
+
+          "CHEF" ->
+            ChefWebhook.handle_verified(Map.put(params, "Body", "CHEF"))
+
+          _ ->
+            if ChefWebhook.active?(from) do
+              ChefWebhook.handle_verified(params)
+            else
+              {:ok, Conversation.handle(params)}
+            end
         end
     end
   end
