@@ -19,5 +19,22 @@ defmodule Mithril.Repo.Migrations.CreateWhatsAppChefIntakes do
       check: "step BETWEEN 0 AND 8", prefix: "public")
 
     create index(:whatsapp_chef_intakes, [:status, :updated_at], prefix: "public")
+
+    create table(:whatsapp_chef_processed_messages, primary_key: false, prefix: "public") do
+      add :message_sid, :text, primary_key: true
+      add :phone, :text, null: false
+      timestamps(updated_at: false, type: :utc_datetime)
+    end
+
+    create index(:whatsapp_chef_processed_messages, [:phone], prefix: "public")
+
+    create table(:whatsapp_chef_completed_enquiries, prefix: "public") do
+      add :phone, :text, null: false
+      add :answers, :map, null: false
+      add :submitted_at, :utc_datetime, null: false
+      timestamps(type: :utc_datetime)
+    end
+
+    create index(:whatsapp_chef_completed_enquiries, [:submitted_at], prefix: "public")
   end
 end
