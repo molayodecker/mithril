@@ -47,6 +47,12 @@ defmodule MithrilWeb.WhatsAppRecruitmentController do
 
       {:error, :not_configured} ->
         send_resp(conn, 503, "Not configured")
+
+      {:error, :database} ->
+        send_resp(conn, 503, "Temporarily unavailable")
+
+      {:error, :invalid_request} ->
+        send_resp(conn, 400, "Invalid request")
     end
   end
 
