@@ -63,6 +63,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimateAuthorizationTest do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Mithril.Repo
+  alias Mithril.Transport.ReviewSelections
 
   @private_origin_latitude 5.551
   @private_origin_longitude -0.201
@@ -94,6 +95,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimateAuthorizationTest do
     cleaner_id = Ecto.UUID.generate()
     ensure_quote_storage!()
     insert_verified_cleaner!(cleaner_id)
+    remember_review!(caller_id, cleaner_id)
 
     assert {:ok, body} =
              Mithril.MobileGateway.invoke_function(caller_id, "uber-trip-estimate", %{
@@ -106,6 +108,69 @@ defmodule Mithril.MobileFunctions.UberTripEstimateAuthorizationTest do
     assert body.customer_fee_major > 0
     assert is_binary(body.quote_id)
     refute_private_origin(body)
+  end
+
+  test "rejects a review quote unless the worker was selected for this customer pin" do
+    caller_id = Ecto.UUID.generate()
+    cleaner_id = Ecto.UUID.generate()
+    ensure_quote_storage!()
+    insert_verified_cleaner!(cleaner_id)
+
+    assert {:error, {:status, 409, body}} =
+             Mithril.MobileGateway.invoke_function(caller_id, "uber-trip-estimate", %{
+               "cleaner_id" => cleaner_id,
+               "customer_latitude" => 5.6037,
+               "customer_longitude" => -0.187
+             })
+
+    assert body.error == "Worker is not in the current review"
+    refute_private_origin(body)
+  end
+
+  test "rejects a review quote when the destination is not the ranked pin" do
+    caller_id = Ecto.UUID.generate()
+    cleaner_id = Ecto.UUID.generate()
+    ensure_quote_storage!()
+    insert_verified_cleaner!(cleaner_id)
+    remember_review!(caller_id, cleaner_id)
+
+    assert {:error, {:status, 409, body}} =
+             Mithril.MobileGateway.invoke_function(caller_id, "uber-trip-estimate", %{
+               "cleaner_id" => cleaner_id,
+               "customer_latitude" => 5.0,
+               "customer_longitude" => 0.0
+             })
+
+    assert body.error == "Review destination does not match the selected worker"
+    refute_private_origin(body)
+  end
+
+  test "preserves a cleaner authorization outage after routing and releases the quote slot" do
+    caller_id = Ecto.UUID.generate()
+    cleaner_id = Ecto.UUID.generate()
+    ensure_quote_storage!()
+    insert_verified_cleaner!(cleaner_id)
+    remember_review!(caller_id, cleaner_id)
+
+    Process.put(:uber_trip_estimate_authorize_cleaner, [
+      :ok,
+      {:error, {:status, 503, %{error: "Cleaner authorization unavailable"}}}
+    ])
+
+    assert {:error, {:status, 503, %{error: "Cleaner authorization unavailable"}}} =
+             Mithril.MobileGateway.invoke_function(caller_id, "uber-trip-estimate", %{
+               "cleaner_id" => cleaner_id,
+               "customer_latitude" => 5.6037,
+               "customer_longitude" => -0.187
+             })
+
+    [[count]] =
+      Repo.query!(
+        "SELECT count(*) FROM public.transport_quote_reservations WHERE customer_id = $1::uuid",
+        [Ecto.UUID.dump!(caller_id)]
+      ).rows
+
+    assert count == 0
   end
 
   test "hides a booking the caller does not own before reading the cleaner origin" do
@@ -136,6 +201,13 @@ defmodule Mithril.MobileFunctions.UberTripEstimateAuthorizationTest do
     )
 
     booking_id
+  end
+
+  defp remember_review!(customer_id, cleaner_id) do
+    ReviewSelections.remember(customer_id, [cleaner_id], %{
+      latitude: 5.6037,
+      longitude: -0.187
+    })
   end
 
   defp insert_verified_cleaner!(cleaner_id) do
@@ -215,6 +287,19 @@ defmodule Mithril.MobileFunctions.UberTripEstimateAuthorizationTest do
       expires_at timestamptz NOT NULL,
       revoked_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE IF NOT EXISTS public.transport_review_selections (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      customer_id uuid NOT NULL,
+      cleaner_id uuid NOT NULL,
+      latitude double precision NOT NULL,
+      longitude double precision NOT NULL,
+      expires_at timestamptz NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (customer_id, cleaner_id)
     )
     """)
   end

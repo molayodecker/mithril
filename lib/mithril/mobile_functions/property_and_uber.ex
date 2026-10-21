@@ -129,6 +129,7 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
   alias Mithril.Transport.Estimate
   alias Mithril.Transport.Origins
   alias Mithril.Transport.Pricing
+  alias Mithril.Transport.ReviewSelections
   alias Mithril.Transport.Router
 
   @quote_ttl_seconds 15 * 60
@@ -156,13 +157,13 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
     {:error, {:status, 400, %{error: "Cleaner and customer coordinates are required"}}}
   end
 
-  # Review runs before a booking exists. The customer pin is the destination.
-  # The worker must already be an active verified cleaner, and the response
-  # never includes the worker's home coordinates.
+  # Review runs before a booking exists. Routing uses the destination stored
+  # when this customer ranked the selected worker, not caller-controlled pins.
+  # The response never includes the worker's home coordinates.
   defp quote_for_review(user_id, cleaner_id, latitude, longitude) do
-    destination = %{latitude: latitude, longitude: longitude}
-
     with :ok <- authorize_cleaner(cleaner_id),
+         {:ok, destination} <-
+           load_review_destination(user_id, cleaner_id, latitude, longitude),
          :ok <- ensure_gate(),
          {:ok, token} <- reserve_quote_slot(user_id),
          {:ok, origin} <- load_origin(cleaner_id),
@@ -175,12 +176,30 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
              cleaner_id,
              nil,
              token,
-             latitude,
-             longitude,
+             destination.latitude,
+             destination.longitude,
              route,
              priced
            ) do
       {:ok, present(route, priced, quote)}
+    end
+  end
+
+  defp load_review_destination(user_id, cleaner_id, latitude, longitude) do
+    case ReviewSelections.fetch(user_id, cleaner_id) do
+      {:ok, destination} ->
+        if ReviewSelections.same_destination?(destination, latitude, longitude) do
+          {:ok, destination}
+        else
+          {:error,
+           {:status, 409, %{error: "Review destination does not match the selected worker"}}}
+        end
+
+      {:error, :not_found} ->
+        {:error, {:status, 409, %{error: "Worker is not in the current review"}}}
+
+      {:error, :unavailable} ->
+        {:error, {:status, 503, %{error: "Review selection unavailable"}}}
     end
   end
 
@@ -329,6 +348,17 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
   # A review quote has no booking yet. Confirm the selected user is an active
   # verified cleaner before reading the private trip origin.
   defp authorize_cleaner(cleaner_id) do
+    case Process.get(:uber_trip_estimate_authorize_cleaner) do
+      [next | rest] ->
+        Process.put(:uber_trip_estimate_authorize_cleaner, rest)
+        next
+
+      _ ->
+        query_cleaner(cleaner_id)
+    end
+  end
+
+  defp query_cleaner(cleaner_id) do
     case Repo.query(
            """
            SELECT 1
@@ -507,8 +537,20 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
                      Repo.rollback(:insert_failed)
                  end
                else
-                 {:error, :cleaner_unavailable} -> Repo.rollback(:cleaner_unavailable)
-                 _ -> Repo.rollback(:invalid_booking_or_quota)
+                 {:error, :auth_unavailable} ->
+                   Repo.rollback(:auth_unavailable)
+
+                 {:error, :booking_auth_unavailable} ->
+                   Repo.rollback(:booking_auth_unavailable)
+
+                 {:error, :cleaner_unavailable} ->
+                   Repo.rollback(:cleaner_unavailable)
+
+                 {:error, :selection_missing} ->
+                   Repo.rollback(:selection_missing)
+
+                 _ ->
+                   Repo.rollback(:invalid_booking_or_quota)
                end
 
              {:error, _} ->
@@ -533,15 +575,36 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
       {:error, :cleaner_unavailable} ->
         {:error, {:status, 404, %{error: "Cleaner not found"}}}
 
+      {:error, :selection_missing} ->
+        {:error, {:status, 409, %{error: "Worker is not in the current review"}}}
+
+      {:error, :auth_unavailable} ->
+        release_quote_slot(user_id, token)
+        {:error, {:status, 503, %{error: "Cleaner authorization unavailable"}}}
+
+      {:error, :booking_auth_unavailable} ->
+        release_quote_slot(user_id, token)
+        {:error, {:status, 503, %{error: "Booking authorization unavailable"}}}
+
       _ ->
         {:error, {:status, 500, %{error: "Could not save the transport quote"}}}
     end
   end
 
-  defp confirm_quote_subject(_user_id, cleaner_id, nil) do
-    case authorize_cleaner(cleaner_id) do
-      :ok -> :ok
-      _ -> {:error, :cleaner_unavailable}
+  defp release_quote_slot(user_id, token) do
+    _ =
+      Repo.query(
+        "DELETE FROM public.transport_quote_reservations WHERE id = $1::uuid AND customer_id = $2::uuid",
+        [DbUuid.dump!(token), DbUuid.dump!(user_id)]
+      )
+
+    :ok
+  end
+
+  defp confirm_quote_subject(user_id, cleaner_id, nil) do
+    with :ok <- confirm_cleaner_available(cleaner_id),
+         :ok <- lock_review_selection(user_id, cleaner_id) do
+      :ok
     end
   end
 
@@ -556,7 +619,24 @@ defmodule Mithril.MobileFunctions.UberTripEstimate do
            [DbUuid.dump!(booking_id), DbUuid.dump!(user_id), DbUuid.dump!(cleaner_id)]
          ) do
       {:ok, %{rows: [[1]]}} -> :ok
+      {:error, _} -> {:error, :booking_auth_unavailable}
       _ -> {:error, :invalid_booking}
+    end
+  end
+
+  defp confirm_cleaner_available(cleaner_id) do
+    case authorize_cleaner(cleaner_id) do
+      :ok -> :ok
+      {:error, {:status, 503, _}} -> {:error, :auth_unavailable}
+      {:error, _} -> {:error, :cleaner_unavailable}
+    end
+  end
+
+  defp lock_review_selection(user_id, cleaner_id) do
+    case ReviewSelections.lock(user_id, cleaner_id) do
+      :ok -> :ok
+      {:error, :unavailable} -> {:error, :auth_unavailable}
+      {:error, :not_found} -> {:error, :selection_missing}
     end
   end
 

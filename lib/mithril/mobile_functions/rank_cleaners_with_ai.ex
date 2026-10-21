@@ -6,6 +6,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
   alias Mithril.RateLimiter
   alias Mithril.Repo
   alias Mithril.Transport.Ranking
+  alias Mithril.Transport.ReviewSelections
 
   @max_cleaners 25
   @max_bio_chars 500
@@ -19,6 +20,12 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
 
   @spec call(String.t() | nil, map()) :: {:ok, map()} | {:error, term()}
   def call(user_id, body) when is_map(body) do
+    user_id
+    |> rank_result(body)
+    |> tap(&remember_review_workers(user_id, body, &1))
+  end
+
+  defp rank_result(user_id, body) do
     if ai_request?(body) do
       cleaners = Map.get(body, "cleaners")
 
@@ -36,6 +43,57 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
       Ranking.for_destination(user_id, body)
     end
   end
+
+  defp remember_review_workers(user_id, body, {:ok, %{cleaners: cleaners}})
+       when is_list(cleaners) do
+    ids =
+      Enum.flat_map(cleaners, fn
+        %{cleaner_id: id} when is_binary(id) -> [id]
+        %{"cleaner_id" => id} when is_binary(id) -> [id]
+        _ -> []
+      end)
+
+    case review_destination(body) do
+      {:ok, dest} -> ReviewSelections.remember(user_id, ids, dest)
+      :error -> :ok
+    end
+  end
+
+  defp remember_review_workers(_user_id, _body, _result), do: :ok
+
+  defp review_destination(body) when is_map(body) do
+    draft = Map.get(body, "bookingDraft") || Map.get(body, "booking_draft") || %{}
+
+    lat =
+      parse_review_coord(
+        Map.get(body, "customer_latitude") || Map.get(body, "lat") ||
+          Map.get(draft, "latitude")
+      )
+
+    lng =
+      parse_review_coord(
+        Map.get(body, "customer_longitude") || Map.get(body, "lng") ||
+          Map.get(draft, "longitude")
+      )
+
+    if is_number(lat) and is_number(lng) and abs(lat) <= 90 and abs(lng) <= 180 do
+      {:ok, %{latitude: lat * 1.0, longitude: lng * 1.0}}
+    else
+      :error
+    end
+  end
+
+  defp parse_review_coord(value) when is_integer(value), do: value * 1.0
+  defp parse_review_coord(value) when is_float(value), do: value
+
+  defp parse_review_coord(value) when is_binary(value) do
+    case Float.parse(String.trim(value)) do
+      {parsed, ""} -> parsed
+      _ -> nil
+    end
+  end
+
+  defp parse_review_coord(_), do: nil
 
   defp ai_request?(body) do
     is_map(Map.get(body, "bookingDraft") || Map.get(body, "booking_draft")) or

@@ -6,6 +6,7 @@ defmodule Mithril.Transport.Ranking do
   alias Mithril.Repo
   alias Mithril.Transport.Origins
   alias Mithril.Transport.Pricing
+  alias Mithril.Transport.ReviewSelections
   alias Mithril.Transport.Router
 
   @radius_meters 10_000
@@ -50,6 +51,8 @@ defmodule Mithril.Transport.Ranking do
           |> Map.put(:score, max(0, 100 - index * 5))
           |> Map.put(:reason, "Route duration rank")
         end)
+
+      ReviewSelections.remember(user_id, Enum.map(ranked, & &1.cleaner_id), dest)
 
       {:ok,
        %{
