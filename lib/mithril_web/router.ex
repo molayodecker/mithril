@@ -171,6 +171,7 @@ defmodule MithrilWeb.Router do
     post "/matches/:id/hire", DirectController, :hire_match
 
     get "/admin/placements", DirectController, :list_admin_placements
+    get "/admin/chef-intakes", DirectController, :list_admin_chef_intakes
     get "/admin/candidates", DirectController, :list_admin_candidates
     get "/admin/cleaner-applications", DirectController, :list_admin_cleaner_applications
     get "/admin/cleaner-applications/:id", DirectController, :show_admin_cleaner_application
