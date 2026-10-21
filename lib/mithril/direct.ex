@@ -21,19 +21,23 @@ defmodule Mithril.Direct do
   def list_admin_chef_intakes(user_id) do
     with {:ok, uid} <- dump_uuid(user_id),
          :ok <- require_admin(uid),
-         {:ok, result} <- Repo.query("""
-           SELECT jsonb_build_object(
-             'phone', phone,
-             'status', status,
-             'answers', answers,
-             'submittedAt', submitted_at,
-             'updatedAt', updated_at
-           )
-           FROM public.whatsapp_chef_intakes
-           WHERE status = 'completed'
-           ORDER BY submitted_at DESC NULLS LAST
-           LIMIT 100
-         """, []) do
+         {:ok, result} <-
+           Repo.query(
+             """
+               SELECT jsonb_build_object(
+                 'phone', phone,
+                 'status', status,
+                 'answers', answers,
+                 'submittedAt', submitted_at,
+                 'updatedAt', updated_at
+               )
+               FROM public.whatsapp_chef_intakes
+               WHERE status = 'completed'
+               ORDER BY submitted_at DESC NULLS LAST
+               LIMIT 100
+             """,
+             []
+           ) do
       {:ok, Enum.map(result.rows, &hd/1)}
     else
       :error -> {:error, :invalid_user}
