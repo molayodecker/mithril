@@ -1,6 +1,52 @@
 defmodule MithrilWeb.Schemas.Direct do
   @moduledoc "OpenAPI schemas for the Instaclean Direct API."
 
+  defmodule AdminChefIntake do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminChefIntake",
+      type: :object,
+      properties: %{
+        phone: %Schema{type: :string},
+        status: %Schema{type: :string, enum: ~w(completed)},
+        answers: %Schema{
+          type: :object,
+          properties: %{
+            location: %Schema{type: :string},
+            chef_type: %Schema{type: :string},
+            cuisine: %Schema{type: :string},
+            arrangement: %Schema{type: :string},
+            people: %Schema{type: :integer},
+            duties: %Schema{type: :string},
+            budget: %Schema{type: :string},
+            start_date: %Schema{type: :string, format: :date}
+          },
+          required: [:location, :chef_type, :cuisine, :arrangement, :people, :duties, :budget, :start_date]
+        },
+        submittedAt: %Schema{type: :string, format: :"date-time", nullable: true},
+        updatedAt: %Schema{type: :string, format: :"date-time", nullable: true}
+      },
+      required: [:phone, :status, :answers, :submittedAt, :updatedAt]
+    })
+  end
+
+  defmodule AdminChefIntakesResponse do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+    alias MithrilWeb.Schemas.Direct.AdminChefIntake
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminChefIntakesResponse",
+      type: :object,
+      properties: %{
+        enquiries: %Schema{type: :array, items: AdminChefIntake}
+      },
+      required: [:enquiries]
+    })
+  end
+
   defmodule CreatePlacementRequest do
     require OpenApiSpex
     alias OpenApiSpex.Schema
