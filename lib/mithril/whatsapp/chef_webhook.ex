@@ -67,6 +67,21 @@ defmodule Mithril.WhatsApp.ChefWebhook do
     end
   end
 
+  @doc "Pause an unfinished chef conversation before the APPLY bot takes over."
+  def pause(phone) when is_binary(phone) do
+    case Repo.query(
+           """
+           UPDATE public.whatsapp_chef_intakes
+           SET status = 'paused', updated_at = now()
+           WHERE phone = $1 AND status IN ('in_progress', 'confirm')
+           """,
+           [phone]
+         ) do
+      {:ok, _} -> :ok
+      {:error, _} -> {:error, :database}
+    end
+  end
+
   defp transaction(phone, sid, body) do
     Repo.transaction(fn ->
       # An advisory transaction lock serializes replies from one sender.
@@ -93,6 +108,12 @@ defmodule Mithril.WhatsApp.ChefWebhook do
         {state, answer} =
           case row do
             nil ->
+              ChefIntake.start()
+
+            [_step, _status, _answers, _] when body in ["CHEF", "chef", "Chef"] ->
+              ChefIntake.start()
+
+            [_step, "paused", _answers, _] ->
               ChefIntake.start()
 
             [step, status, answers, _] ->
