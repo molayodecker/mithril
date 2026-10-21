@@ -62,6 +62,7 @@ defmodule MithrilWeb.Plugs.DirectOpsAuthorization do
   defp permission_for(["live-jobs" | _], _), do: "live"
   defp permission_for(["bookings" | _], _), do: "bookings"
   defp permission_for(["customers" | _], _), do: "users"
+  defp permission_for(["chef-intakes" | _], _), do: "placements"
   defp permission_for(["placements" | _], _), do: "placements"
   defp permission_for(["candidates" | _], _), do: "placements"
   defp permission_for(["cleaner-applications" | _], _), do: "cleaner_applications"

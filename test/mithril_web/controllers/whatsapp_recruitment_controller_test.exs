@@ -12,6 +12,7 @@ defmodule MithrilWeb.WhatsAppRecruitmentControllerTest do
   @alias_url "https://api.tryinstaclean.com/functions/v1/join-as-cleaner-bot"
 
   setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Mithril.Repo)
     Leads.Memory.reset()
     :ok
   end

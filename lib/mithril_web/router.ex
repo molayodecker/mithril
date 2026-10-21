@@ -73,6 +73,8 @@ defmodule MithrilWeb.Router do
   scope "/", MithrilWeb do
     pipe_through :whatsapp
 
+    post "/whatsapp/chef-intake", WhatsAppChefController, :receive_message
+
     get "/whatsapp/join-as-cleaner-bot", WhatsAppRecruitmentController, :serve
     post "/whatsapp/join-as-cleaner-bot", WhatsAppRecruitmentController, :serve
     options "/whatsapp/join-as-cleaner-bot", WhatsAppRecruitmentController, :serve
@@ -169,6 +171,7 @@ defmodule MithrilWeb.Router do
     post "/matches/:id/hire", DirectController, :hire_match
 
     get "/admin/placements", DirectController, :list_admin_placements
+    get "/admin/chef-intakes", DirectController, :list_admin_chef_intakes
     get "/admin/candidates", DirectController, :list_admin_candidates
     get "/admin/cleaner-applications", DirectController, :list_admin_cleaner_applications
     get "/admin/cleaner-applications/:id", DirectController, :show_admin_cleaner_application

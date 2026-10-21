@@ -6,6 +6,7 @@ defmodule MithrilWeb.DirectController do
 
   alias MithrilWeb.Schemas.Direct.{
     AdminCandidatesResponse,
+    AdminChefIntakesResponse,
     AdminCleanerApplicationDetail,
     AdminCleanerApplicationDraftDetail,
     AdminCleanerApplicationDraftListResponse,
@@ -132,6 +133,18 @@ defmodule MithrilWeb.DirectController do
     summary: "List vetted placement candidates for Direct operations",
     responses: [ok: {"Admin placement candidates", "application/json", AdminCandidatesResponse}]
   )
+
+  operation(:list_admin_chef_intakes,
+    operation_id: "direct.listAdminChefIntakes",
+    summary: "List completed WhatsApp chef enquiries for Direct operations",
+    responses: [ok: {"Chef enquiries", "application/json", AdminChefIntakesResponse}]
+  )
+
+  def list_admin_chef_intakes(conn, _params) do
+    respond(conn, Direct.list_admin_chef_intakes(user_id(conn)), fn enquiries ->
+      %{enquiries: enquiries}
+    end)
+  end
 
   def list_admin_candidates(conn, _params) do
     respond(conn, Direct.list_admin_candidates(user_id(conn)), fn candidates ->

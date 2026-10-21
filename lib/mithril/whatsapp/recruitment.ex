@@ -7,6 +7,7 @@ defmodule Mithril.WhatsApp.Recruitment do
   require Logger
 
   alias Mithril.DirectAdminWhatsApp
+  alias Mithril.WhatsApp.ChefWebhook
   alias Mithril.WhatsApp.Recruitment.Conversation
   alias Mithril.WhatsApp.Recruitment.GhanaCard
   alias Mithril.WhatsApp.TwilioSignature
@@ -27,7 +28,24 @@ defmodule Mithril.WhatsApp.Recruitment do
 
       true ->
         _ = maybe_record_admin_inbound(params)
-        {:ok, Conversation.handle(params)}
+        from = Map.get(params, "From", "")
+        body = params |> Map.get("Body", "") |> to_string() |> String.trim()
+
+        case ChefWebhook.active?(from) do
+          {:error, reason} ->
+            {:error, reason}
+
+          {:ok, true} ->
+            # APPLY cannot switch workflows; only EXIT closes a chef session.
+            ChefWebhook.handle_verified(params)
+
+          {:ok, false} ->
+            if String.upcase(body) == "CHEF" do
+              ChefWebhook.handle_verified(Map.put(params, "Body", "CHEF"))
+            else
+              {:ok, Conversation.handle(params)}
+            end
+        end
     end
   end
 
