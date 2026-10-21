@@ -133,6 +133,12 @@ defmodule MithrilWeb.DirectController do
     responses: [ok: {"Admin placement candidates", "application/json", AdminCandidatesResponse}]
   )
 
+  def list_admin_chef_intakes(conn, _params) do
+    respond(conn, Direct.list_admin_chef_intakes(user_id(conn)), fn enquiries ->
+      %{enquiries: enquiries}
+    end)
+  end
+
   def list_admin_candidates(conn, _params) do
     respond(conn, Direct.list_admin_candidates(user_id(conn)), fn candidates ->
       %{candidates: candidates}
