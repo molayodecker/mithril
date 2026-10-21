@@ -56,106 +56,126 @@ defmodule Mithril.WhatsApp.ChefWebhook do
     end
   end
 
-  @doc "Only unfinished chef conversations retain routing ownership."
+  @doc "Checks chef ownership and propagates database failures."
   def active?(phone) when is_binary(phone) do
     case Repo.query(
-           "SELECT 1 FROM public.whatsapp_chef_intakes WHERE phone = $1 AND status IN ('in_progress', 'confirm') LIMIT 1",
+           "SELECT status FROM public.whatsapp_chef_intakes WHERE phone = $1",
            [phone]
          ) do
-      {:ok, %{rows: [[1]]}} -> true
-      _ -> false
-    end
-  end
-
-  @doc "Pause an unfinished chef conversation before the APPLY bot takes over."
-  def pause(phone) when is_binary(phone) do
-    case Repo.query(
-           """
-           UPDATE public.whatsapp_chef_intakes
-           SET status = 'paused', updated_at = now()
-           WHERE phone = $1 AND status IN ('in_progress', 'confirm')
-           """,
-           [phone]
-         ) do
-      {:ok, _} -> :ok
+      {:ok, %{rows: [[status]]}} -> {:ok, status in ["in_progress", "confirm"]}
+      {:ok, %{rows: []}} -> {:ok, false}
       {:error, _} -> {:error, :database}
     end
   end
 
   defp transaction(phone, sid, body) do
     Repo.transaction(fn ->
-      # An advisory transaction lock serializes replies from one sender.
-      # Use the same transaction for the read and the write.
       case Repo.query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", ["chef:" <> phone]) do
         {:ok, _} -> :ok
         {:error, reason} -> Repo.rollback(reason)
       end
 
-      row =
-        case Repo.query(
-               "SELECT step, status, answers, last_message_sid FROM public.whatsapp_chef_intakes WHERE phone = $1",
-               [phone]
-             ) do
-          {:ok, %{rows: [item]}} -> item
-          {:ok, %{rows: []}} -> nil
-          {:error, reason} -> Repo.rollback(reason)
-        end
+      # Every webhook message is recorded atomically with the state transition.
+      # A delayed Twilio retry cannot advance a later question.
+      case Repo.query(
+             """
+             INSERT INTO public.whatsapp_chef_processed_messages (message_sid, phone, inserted_at)
+             VALUES ($1, $2, now())
+             ON CONFLICT (message_sid) DO NOTHING
+             RETURNING message_sid
+             """,
+             [sid, phone]
+           ) do
+        {:ok, %{rows: []}} ->
+          ""
 
-      if row != nil and Enum.at(row, 3) == sid do
-        # Duplicate delivery: send no TwiML message.
-        ""
-      else
-        # The ChefIntake state machine rejects APPLY without changing answers.
-        {state, answer} =
-          case row do
-            nil ->
-              ChefIntake.start()
+        {:ok, %{rows: [[_]]}} ->
+          process_message(phone, sid, String.upcase(String.trim(body)), body)
 
-            [_step, _status, _answers, _] when body in ["CHEF", "chef", "Chef"] ->
-              ChefIntake.start()
-
-            [_step, "paused", _answers, _] ->
-              ChefIntake.start()
-
-            [step, status, answers, _] ->
-              atom_status = String.to_existing_atom(status)
-              current = %{step: step, status: atom_status, answers: answers}
-
-              case ChefIntake.advance(current, body) do
-                {next, text, _completed} ->
-                  {next, text <> "\nThank you. Our team will review your enquiry."}
-
-                {next, text} ->
-                  {next, text}
-              end
-          end
-
-        status = Atom.to_string(state.status)
-
-        case Repo.query(
-               """
-               INSERT INTO public.whatsapp_chef_intakes
-                 (phone, step, status, answers, last_message_sid, submitted_at, inserted_at, updated_at)
-               VALUES ($1, $2, $3, $4::jsonb, $5,
-                 CASE WHEN $3 = 'completed' THEN now() ELSE NULL END, now(), now())
-               ON CONFLICT (phone) DO UPDATE
-                 SET step = EXCLUDED.step, status = EXCLUDED.status,
-                     answers = EXCLUDED.answers, last_message_sid = EXCLUDED.last_message_sid,
-                     submitted_at = CASE WHEN EXCLUDED.status = 'completed'
-                       THEN COALESCE(whatsapp_chef_intakes.submitted_at, now())
-                       ELSE NULL END,
-                     updated_at = now()
-               """,
-               [phone, state.step, status, Jason.encode!(state.answers), sid]
-             ) do
-          {:ok, _} -> answer
-          {:error, reason} -> Repo.rollback(reason)
-        end
+        {:error, reason} ->
+          Repo.rollback(reason)
       end
     end)
     |> case do
       {:ok, answer} -> {:ok, twiml(answer)}
       {:error, _} -> {:error, :database}
+    end
+  end
+
+  defp process_message(phone, sid, command, body) do
+    row =
+      case Repo.query(
+             "SELECT step, status, answers FROM public.whatsapp_chef_intakes WHERE phone = $1",
+             [phone]
+           ) do
+        {:ok, %{rows: [item]}} -> item
+        {:ok, %{rows: []}} -> nil
+        {:error, reason} -> Repo.rollback(reason)
+      end
+
+    cond do
+      command == "EXIT" and match?([_, status, _] when status in ["in_progress", "confirm"], row) ->
+        query_or_rollback(
+          "UPDATE public.whatsapp_chef_intakes SET status = 'paused', last_message_sid = $2, updated_at = now() WHERE phone = $1",
+          [phone, sid]
+        )
+
+        "Chef enquiry closed. You can now reply APPLY to start a cleaner application, or CHEF to begin again."
+
+      command == "CHEF" or row == nil or match?([_, "paused", _], row) ->
+        {state, reply} = ChefIntake.start()
+        store_state(phone, sid, state)
+        reply
+
+      true ->
+        [step, status, answers] = row
+        current = %{step: step, status: String.to_existing_atom(status), answers: answers}
+
+        case ChefIntake.advance(current, body) do
+          {state, reply, _completed_answers} ->
+            # An immutable copy is saved before changing the active session.
+            if status != "completed" do
+              query_or_rollback(
+                """
+                INSERT INTO public.whatsapp_chef_completed_enquiries
+                  (phone, answers, submitted_at, inserted_at, updated_at)
+                VALUES ($1, $2::jsonb, now(), now(), now())
+                """,
+                [phone, Jason.encode!(state.answers)]
+              )
+            end
+
+            store_state(phone, sid, state)
+            reply <> "\nThank you. Our team will review your enquiry."
+
+          {state, reply} ->
+            store_state(phone, sid, state)
+            reply
+        end
+    end
+  end
+
+  defp store_state(phone, sid, state) do
+    query_or_rollback(
+      """
+      INSERT INTO public.whatsapp_chef_intakes
+        (phone, step, status, answers, last_message_sid, submitted_at, inserted_at, updated_at)
+      VALUES ($1, $2, $3, $4::jsonb, $5,
+        CASE WHEN $3 = 'completed' THEN now() ELSE NULL END, now(), now())
+      ON CONFLICT (phone) DO UPDATE
+        SET step = EXCLUDED.step, status = EXCLUDED.status,
+            answers = EXCLUDED.answers, last_message_sid = EXCLUDED.last_message_sid,
+            submitted_at = CASE WHEN EXCLUDED.status = 'completed' THEN now() ELSE NULL END,
+            updated_at = now()
+      """,
+      [phone, state.step, Atom.to_string(state.status), Jason.encode!(state.answers), sid]
+    )
+  end
+
+  defp query_or_rollback(sql, params) do
+    case Repo.query(sql, params) do
+      {:ok, _} -> :ok
+      {:error, reason} -> Repo.rollback(reason)
     end
   end
 
