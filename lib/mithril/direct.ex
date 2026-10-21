@@ -26,13 +26,13 @@ defmodule Mithril.Direct do
              """
                SELECT jsonb_build_object(
                  'phone', phone,
-                 'status', status,
+                 'status', 'completed',
                  'answers', answers,
                  'submittedAt', submitted_at,
                  'updatedAt', updated_at
                )
-               FROM public.whatsapp_chef_intakes
-               WHERE status = 'completed'
+               FROM public.whatsapp_chef_completed_enquiries
+               WHERE 1 = 1
                ORDER BY submitted_at DESC NULLS LAST
                LIMIT 100
              """,
