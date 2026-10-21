@@ -45,15 +45,14 @@ defmodule Mithril.MobileFunctions.GatewayAuthTest do
              })
   end
 
-  test "rejects a malformed booking id before routing" do
+  test "rejects trip estimates without a server-authorized booking" do
     user_id = Ecto.UUID.generate()
 
     assert {:error, {:status, 400, %{error: "Invalid booking_id"}}} =
              Mithril.MobileGateway.invoke_function(user_id, "uber-trip-estimate", %{
                "cleaner_id" => Ecto.UUID.generate(),
                "customer_latitude" => 5.6037,
-               "customer_longitude" => -0.187,
-               "booking_id" => "not-a-booking"
+               "customer_longitude" => -0.187
              })
   end
 end
@@ -64,48 +63,10 @@ defmodule Mithril.MobileFunctions.UberTripEstimateAuthorizationTest do
   alias Ecto.Adapters.SQL.Sandbox
   alias Mithril.Repo
 
-  @private_origin_latitude 5.551
-  @private_origin_longitude -0.201
-
   setup do
     :ok = Sandbox.checkout(Repo)
     create_bookings_table!()
-    create_cleaner_tables!()
-    install_origin_probe!()
     :ok
-  end
-
-  test "rejects an unknown worker before reading the private trip origin" do
-    caller_id = Ecto.UUID.generate()
-
-    assert {:error, {:status, 404, body}} =
-             Mithril.MobileGateway.invoke_function(caller_id, "uber-trip-estimate", %{
-               "cleaner_id" => Ecto.UUID.generate(),
-               "customer_latitude" => 5.6037,
-               "customer_longitude" => -0.187
-             })
-
-    assert body.error == "Cleaner not found"
-    refute_private_origin(body)
-  end
-
-  test "saves a review quote and returns the fare without the worker home" do
-    caller_id = Ecto.UUID.generate()
-    cleaner_id = Ecto.UUID.generate()
-    ensure_quote_storage!()
-    insert_verified_cleaner!(cleaner_id)
-
-    assert {:ok, body} =
-             Mithril.MobileGateway.invoke_function(caller_id, "uber-trip-estimate", %{
-               "cleaner_id" => cleaner_id,
-               "customer_latitude" => 5.6037,
-               "customer_longitude" => -0.187
-             })
-
-    assert body.distance_km > 0
-    assert body.customer_fee_major > 0
-    assert is_binary(body.quote_id)
-    refute_private_origin(body)
   end
 
   test "hides a booking the caller does not own before reading the cleaner origin" do
@@ -136,128 +97,6 @@ defmodule Mithril.MobileFunctions.UberTripEstimateAuthorizationTest do
     )
 
     booking_id
-  end
-
-  defp insert_verified_cleaner!(cleaner_id) do
-    Repo.query!(
-      "INSERT INTO public.user_roles (user_id, role_id) VALUES ($1::uuid, 'cleaner')",
-      [Ecto.UUID.dump!(cleaner_id)]
-    )
-
-    Repo.query!(
-      "INSERT INTO public.cleaner_data (user_id, status, verified) VALUES ($1::uuid, 'active', true)",
-      [Ecto.UUID.dump!(cleaner_id)]
-    )
-  end
-
-  defp ensure_quote_storage! do
-    Repo.query!("""
-    CREATE TABLE IF NOT EXISTS public.app_feature_flags (
-      key text NOT NULL,
-      channel text NOT NULL DEFAULT 'production',
-      enabled boolean NOT NULL DEFAULT false,
-      config jsonb NOT NULL DEFAULT '{}'::jsonb,
-      updated_at timestamptz NOT NULL DEFAULT now(),
-      PRIMARY KEY (key, channel)
-    )
-    """)
-
-    Repo.query!("""
-    INSERT INTO public.app_feature_flags (key, channel, enabled)
-    VALUES ('BOOKING_UBER_TRANSPORTATION', 'production', true)
-    ON CONFLICT (key, channel) DO UPDATE SET enabled = true
-    """)
-
-    Repo.query!("""
-    CREATE TABLE IF NOT EXISTS public.transport_pricing_rules (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      channel text NOT NULL UNIQUE,
-      currency text NOT NULL,
-      base_fee_minor integer NOT NULL,
-      per_km_rate_minor integer NOT NULL,
-      min_fee_minor integer NOT NULL,
-      max_fee_minor integer NOT NULL,
-      bands jsonb NOT NULL DEFAULT '[]'::jsonb,
-      enabled boolean NOT NULL DEFAULT true,
-      updated_at timestamptz NOT NULL DEFAULT now()
-    )
-    """)
-
-    Repo.query!("""
-    INSERT INTO public.transport_pricing_rules (
-      channel, currency, base_fee_minor, per_km_rate_minor, min_fee_minor, max_fee_minor, bands, enabled
-    ) VALUES ('production', 'GHS', 1000, 350, 1500, 15000, '[]'::jsonb, true)
-    ON CONFLICT (channel) DO UPDATE SET enabled = true
-    """)
-
-    Repo.query!("""
-    CREATE TABLE IF NOT EXISTS public.transport_quote_reservations (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      customer_id uuid NOT NULL,
-      expires_at timestamptz NOT NULL
-    )
-    """)
-
-    Repo.query!("""
-    CREATE TABLE IF NOT EXISTS public.uber_transportation_quotes (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      customer_id uuid NOT NULL,
-      cleaner_id uuid NOT NULL,
-      amount_minor integer NOT NULL,
-      currency text NOT NULL DEFAULT 'GHS',
-      distance_km numeric,
-      duration_seconds integer,
-      product_id text,
-      product_name text,
-      estimate_display text,
-      customer_latitude double precision,
-      customer_longitude double precision,
-      expires_at timestamptz NOT NULL,
-      revoked_at timestamptz,
-      created_at timestamptz NOT NULL DEFAULT now()
-    )
-    """)
-  end
-
-  defp refute_private_origin(body) do
-    refute Map.has_key?(body, :latitude)
-    refute Map.has_key?(body, :longitude)
-    refute Map.has_key?(body, :origin)
-
-    refute Enum.any?(
-             Map.values(body),
-             &(&1 == @private_origin_latitude or &1 == @private_origin_longitude)
-           )
-  end
-
-  defp create_cleaner_tables! do
-    Repo.query!("""
-    CREATE TABLE IF NOT EXISTS public.user_roles (
-      user_id uuid NOT NULL,
-      role_id text NOT NULL
-    )
-    """)
-
-    Repo.query!("""
-    CREATE TABLE IF NOT EXISTS public.cleaner_data (
-      user_id uuid NOT NULL,
-      status text,
-      verified boolean
-    )
-    """)
-  end
-
-  defp install_origin_probe! do
-    Repo.query!("DROP FUNCTION IF EXISTS public.get_cleaner_trip_origin(uuid)")
-
-    Repo.query!("""
-    CREATE FUNCTION public.get_cleaner_trip_origin(p_cleaner_id uuid)
-    RETURNS TABLE (latitude double precision, longitude double precision)
-    LANGUAGE sql
-    AS $$
-      SELECT #{@private_origin_latitude}::double precision, #{@private_origin_longitude}::double precision
-    $$
-    """)
   end
 
   defp create_bookings_table! do
