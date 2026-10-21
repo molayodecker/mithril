@@ -13,7 +13,7 @@ defmodule Mithril.Repo.Migrations.CreateWhatsAppChefIntakes do
     end
 
     create constraint(:whatsapp_chef_intakes, :chef_intake_status_check,
-      check: "status IN ('in_progress', 'confirm', 'completed')", prefix: "public")
+      check: "status IN ('in_progress', 'confirm', 'completed', 'paused')", prefix: "public")
 
     create constraint(:whatsapp_chef_intakes, :chef_intake_step_check,
       check: "step BETWEEN 0 AND 8", prefix: "public")
