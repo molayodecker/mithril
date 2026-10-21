@@ -105,11 +105,7 @@ defmodule Mithril.WhatsApp.ChefWebhook do
         # Duplicate delivery: send no TwiML message.
         ""
       else
-        # Commands for other services must never be treated as chef answers.
-        if String.upcase(String.trim(body)) == "APPLY" and row != nil and
-             Enum.at(row, 1) in ["in_progress", "confirm"] do
-          "You have an active chef enquiry. Finish it first, or reply RESTART to restart your chef enquiry. APPLY is unavailable during this conversation."
-        else
+        # The ChefIntake state machine rejects APPLY without changing answers.
         {state, answer} =
           case row do
             nil ->
@@ -154,7 +150,6 @@ defmodule Mithril.WhatsApp.ChefWebhook do
              ) do
           {:ok, _} -> answer
           {:error, reason} -> Repo.rollback(reason)
-        end
         end
       end
     end)
