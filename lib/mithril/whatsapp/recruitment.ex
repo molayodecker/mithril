@@ -31,17 +31,20 @@ defmodule Mithril.WhatsApp.Recruitment do
         from = Map.get(params, "From", "")
         body = params |> Map.get("Body", "") |> to_string() |> String.trim()
 
-        cond do
-          ChefWebhook.active?(from) ->
-            # An active chef enquiry owns all inbound messages, including APPLY.
-            # The chef handler rejects APPLY without advancing the questionnaire.
+        case ChefWebhook.active?(from) do
+          {:error, reason} ->
+            {:error, reason}
+
+          {:ok, true} ->
+            # APPLY cannot switch workflows; only EXIT closes a chef session.
             ChefWebhook.handle_verified(params)
 
-          String.upcase(body) == "CHEF" ->
-            ChefWebhook.handle_verified(Map.put(params, "Body", "CHEF"))
-
-          true ->
-            {:ok, Conversation.handle(params)}
+          {:ok, false} ->
+            if String.upcase(body) == "CHEF" do
+              ChefWebhook.handle_verified(Map.put(params, "Body", "CHEF"))
+            else
+              {:ok, Conversation.handle(params)}
+            end
         end
     end
   end
