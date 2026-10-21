@@ -40,6 +40,32 @@ defmodule Mithril.WhatsApp.ChefWebhook do
     end
   end
 
+  @doc "Uses the recruitment endpoint's already-verified Twilio signature."
+  def handle_verified(params) when is_map(params) do
+    from = Map.get(params, "From", "")
+    sid = Map.get(params, "MessageSid", "")
+    body = Map.get(params, "Body", "")
+
+    if is_binary(from) and String.starts_with?(from, "whatsapp:+") and
+         byte_size(from) <= 32 and is_binary(sid) and
+         byte_size(sid) > 0 and byte_size(sid) <= 100 and is_binary(body) do
+      transaction(from, sid, body)
+    else
+      {:error, :invalid_request}
+    end
+  end
+
+  @doc "Only unfinished chef conversations retain routing ownership."
+  def active?(phone) when is_binary(phone) do
+    case Repo.query(
+      "SELECT 1 FROM public.whatsapp_chef_intakes WHERE phone = $1 AND status IN ('in_progress', 'confirm') LIMIT 1",
+      [phone]
+    ) do
+      {:ok, %{rows: [[1]]}} -> true
+      _ -> false
+    end
+  end
+
   defp transaction(phone, sid, body) do
     Repo.transaction(fn ->
       # An advisory transaction lock serializes replies from one sender.
