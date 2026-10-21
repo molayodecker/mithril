@@ -43,6 +43,16 @@ defmodule Mithril.WhatsApp.ChefIntakeTest do
     assert message =~ "isn't valid"
   end
 
+  test "APPLY cannot switch or advance an active chef enquiry" do
+    {state, _} = ChefIntake.start()
+    {state, _} = ChefIntake.advance(state, "East Legon")
+
+    {blocked, reply} = ChefIntake.advance(state, "APPLY")
+    assert blocked == state
+    assert reply =~ "Complete it before"
+    assert blocked.answers["location"] == "East Legon"
+  end
+
   test "an unfinished chef conversation can restart without carrying answers" do
     {state, _} = ChefIntake.start()
     {state, _} = ChefIntake.advance(state, "East Legon")
