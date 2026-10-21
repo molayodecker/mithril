@@ -10,6 +10,7 @@ defmodule Mithril.WhatsApp.RecruitmentTest do
   @to "whatsapp:+233246326939"
 
   setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Mithril.Repo)
     Leads.Memory.reset()
     :ok
   end
