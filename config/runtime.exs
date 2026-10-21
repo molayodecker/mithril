@@ -362,6 +362,10 @@ if app_url = System.get_env("APP_URL") do
   config :mithril, :app_url, String.trim_trailing(app_url, "/")
 end
 
+if chef_webhook_url = System.get_env("TWILIO_CHEF_WEBHOOK_URL") do
+  config :mithril, :twilio_chef_webhook_url, chef_webhook_url
+end
+
 if twilio_webhook_url = System.get_env("TWILIO_WEBHOOK_URL") do
   config :mithril, :twilio_webhook_url, twilio_webhook_url
 end
