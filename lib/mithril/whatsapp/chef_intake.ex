@@ -9,8 +9,10 @@ defmodule Mithril.WhatsApp.ChefIntake do
 
   @questions [
     {"location", "Which area in Ghana do you need the chef?"},
-    {"chef_type", "What type of chef? Reply: 1 Home cook, 2 Personal chef, 3 Professional chef, 4 Event chef, 5 Meal prep chef, 6 Pastry chef."},
-    {"cuisine", "What cuisine? Reply: 1 Ghanaian/local, 2 Continental/international, 3 Both, 4 Special dietary meals."},
+    {"chef_type",
+     "What type of chef? Reply: 1 Home cook, 2 Personal chef, 3 Professional chef, 4 Event chef, 5 Meal prep chef, 6 Pastry chef."},
+    {"cuisine",
+     "What cuisine? Reply: 1 Ghanaian/local, 2 Continental/international, 3 Both, 4 Special dietary meals."},
     {"arrangement", "What arrangement? Reply: 1 Live-in, 2 Live-out, 3 Part-time, 4 Occasional."},
     {"people", "How many people will the chef cook for? Enter a number."},
     {"duties", "What duties do you need? For example: cooking, groceries, meal planning."},
@@ -18,8 +20,14 @@ defmodule Mithril.WhatsApp.ChefIntake do
     {"start_date", "When should the chef start? Reply with a date (YYYY-MM-DD)."}
   ]
 
-  @types %{"1" => "home_cook", "2" => "personal_chef", "3" => "professional_chef",
-           "4" => "event_chef", "5" => "meal_prep_chef", "6" => "pastry_chef"}
+  @types %{
+    "1" => "home_cook",
+    "2" => "personal_chef",
+    "3" => "professional_chef",
+    "4" => "event_chef",
+    "5" => "meal_prep_chef",
+    "6" => "pastry_chef"
+  }
   @cuisines %{"1" => "ghanaian", "2" => "continental", "3" => "both", "4" => "special_dietary"}
   @arrangements %{"1" => "live_in", "2" => "live_out", "3" => "part_time", "4" => "occasional"}
 
@@ -100,8 +108,11 @@ defmodule Mithril.WhatsApp.ChefIntake do
 
   defp normalize("start_date", value) do
     case Date.from_iso8601(value) do
-      {:ok, date} -> if Date.compare(date, Date.utc_today()) == :lt, do: :error, else: {:ok, value}
-      _ -> :error
+      {:ok, date} ->
+        if Date.compare(date, Date.utc_today()) == :lt, do: :error, else: {:ok, value}
+
+      _ ->
+        :error
     end
   end
 
