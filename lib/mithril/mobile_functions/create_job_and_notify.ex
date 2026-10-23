@@ -410,5 +410,4 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
   end
 
   defp expo_token?(token) when is_binary(token), do: Regex.match?(@expo_token_regex, token)
-  defp expo_token?(_), do: false
 end
