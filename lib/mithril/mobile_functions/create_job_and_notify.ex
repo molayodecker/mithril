@@ -372,6 +372,7 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
 
   defp job_offer_channel_id(version) when is_integer(version) and version >= 3,
     do: "job_offers_v3"
+
   defp job_offer_channel_id(_), do: "job_offers_v2"
 
   defp load_push_targets(cleaner_ids) do
