@@ -348,14 +348,14 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
       0
     else
       messages =
-        Enum.map(targets, fn token ->
+        Enum.map(targets, fn {token, channel_version} ->
           %{
             to: token,
             title: "New cleaning job near you",
             body: "Tap to claim and view details",
-            sound: "default",
+            sound: "instaclean_job_offer.wav",
             priority: "high",
-            channelId: "job_offers",
+            channelId: job_offer_channel_id(channel_version),
             data: %{
               type: "job_offer",
               jobId: job_id,
@@ -370,26 +370,39 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
     end
   end
 
+  defp job_offer_channel_id(version) when is_integer(version) and version >= 3,
+    do: "job_offers_v3"
+
+  defp job_offer_channel_id(_), do: "job_offers_v2"
+
   defp load_push_targets(cleaner_ids) do
     sql = """
-    SELECT DISTINCT token
+    SELECT token, max(channel_version)
     FROM (
-      SELECT expo_push_token AS token
-      FROM public.cleaner_devices
-      WHERE cleaner_id = ANY($1::uuid[]) AND expo_push_token IS NOT NULL
+      SELECT cd.expo_push_token AS token,
+             dt.android_notification_channel_version AS channel_version
+      FROM public.cleaner_devices cd
+      LEFT JOIN public.device_tokens dt ON dt.token = cd.expo_push_token
+      WHERE cd.cleaner_id = ANY($1::uuid[]) AND cd.expo_push_token IS NOT NULL
       UNION ALL
-      SELECT token
+      SELECT token, android_notification_channel_version
       FROM public.device_tokens
       WHERE user_id = ANY($1::uuid[]) AND token IS NOT NULL
     ) tokens
+    GROUP BY token
     """
 
     case Repo.query(sql, [DbUuid.dump_all!(cleaner_ids)]) do
       {:ok, %{rows: rows}} ->
         rows
-        |> Enum.map(fn [token] -> token end)
-        |> Enum.filter(&expo_token?/1)
-        |> Enum.uniq()
+        |> Enum.flat_map(fn
+          [token, version] when is_binary(token) ->
+            if expo_token?(token), do: [{token, version}], else: []
+
+          _ ->
+            []
+        end)
+        |> Enum.uniq_by(&elem(&1, 0))
 
       _ ->
         []
@@ -397,5 +410,4 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
   end
 
   defp expo_token?(token) when is_binary(token), do: Regex.match?(@expo_token_regex, token)
-  defp expo_token?(_), do: false
 end
