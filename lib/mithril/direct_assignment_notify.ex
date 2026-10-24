@@ -39,7 +39,8 @@ defmodule Mithril.DirectAssignmentNotify do
     if Application.get_env(:mithril, :start_oban, true) do
       case Oban.insert(DirectAssignmentDelivery.new(%{booking_id: booking_id})) do
         {:ok, _job} -> :ok
-        {:error, reason} -> Logger.error("direct assignment retry enqueue failed: #{inspect(reason)}")
+        {:error, reason} ->
+          Logger.error("direct assignment retry enqueue failed: #{inspect(reason)}")
       end
     end
   end
