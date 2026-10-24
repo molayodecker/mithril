@@ -11,6 +11,7 @@ defmodule Mithril.DirectAssignmentNotify do
 
   alias Mithril.Notifications
   alias Mithril.Repo
+  alias Mithril.Workers.DirectAssignmentDelivery
 
   @offer_title "You were selected for a job"
   @offer_message "You've been selected for a job. Accept it in the app before it is offered to other workers."
@@ -19,6 +20,7 @@ defmodule Mithril.DirectAssignmentNotify do
   def notify_chosen_worker(booking_id) when is_binary(booking_id) do
     case Ecto.UUID.dump(booking_id) do
       {:ok, booking_uuid} ->
+        schedule_retry(booking_id)
         claim_and_send(booking_uuid, booking_id)
 
       :error ->
@@ -32,33 +34,55 @@ defmodule Mithril.DirectAssignmentNotify do
 
   def notify_chosen_worker(_booking_id), do: :skipped
 
-  defp claim_and_send(booking_uuid, booking_id) do
-    case claim_offer(booking_uuid, booking_id) do
-      {:send, context} ->
-        Notifications.notify(context)
-        :sent
-
-      :skip ->
-        :skipped
+  # Enqueue before calling the provider so a process crash cannot lose the offer.
+  defp schedule_retry(booking_id) do
+    if Application.get_env(:mithril, :start_oban, true) do
+      case Oban.insert(DirectAssignmentDelivery.new(%{booking_id: booking_id})) do
+        {:ok, _job} -> :ok
+        {:error, reason} -> Logger.error("direct assignment retry enqueue failed: #{inspect(reason)}")
+      end
     end
   end
 
-  defp claim_offer(booking_uuid, booking_id) do
+  @doc false
+  def deliver_pending(booking_id) when is_binary(booking_id) do
+    case Ecto.UUID.dump(booking_id) do
+      {:ok, booking_uuid} -> claim_and_send(booking_uuid, booking_id)
+      :error -> :skipped
+    end
+  end
+
+  def deliver_pending(_), do: :skipped
+
+  defp claim_and_send(booking_uuid, booking_id) do
     Repo.transaction(fn ->
       case load_offer(booking_uuid) do
         {:ok, offer} ->
           case claim_inbox(offer, booking_id) do
-            :send -> offer_context(offer, booking_id)
-            :skip -> Repo.rollback(:skip)
+            {:send, notification_id} ->
+              context = offer_context(offer, booking_id)
+
+              if Notifications.notify(context) do
+                mark_outbound_sent(notification_id)
+                :sent
+              else
+                Repo.rollback(:delivery_failed)
+              end
+
+            :skip ->
+              :skipped
           end
 
         :miss ->
-          Repo.rollback(:skip)
+          :skipped
       end
     end)
     |> case do
-      {:ok, context} -> {:send, context}
-      _ -> :skip
+      {:ok, result} -> result
+      {:error, :delivery_failed} -> :failed
+      {:error, reason} ->
+        Logger.warning("direct assignment delivery failed: #{inspect(reason)}")
+        :failed
     end
   end
 
@@ -141,12 +165,10 @@ defmodule Mithril.DirectAssignmentNotify do
         :skip
 
       {:ok, %{rows: [[notification_id, _outbound_sent]]}} ->
-        mark_outbound_sent(notification_id)
-        :send
+        {:send, notification_id}
 
       {:ok, %{rows: []}} ->
-        insert_inbox(offer, booking_id)
-        :send
+        {:send, insert_inbox(offer, booking_id)}
 
       {:error, error} ->
         Logger.warning("direct assignment inbox claim failed: #{inspect(error)}")
@@ -166,6 +188,8 @@ defmodule Mithril.DirectAssignmentNotify do
   end
 
   defp insert_inbox(offer, booking_id) do
+    notification_id = Ecto.UUID.dump!(Ecto.UUID.generate())
+
     Repo.query!(
       """
       INSERT INTO public.notifications (id, user_id, type, title, message, read, data)
@@ -177,18 +201,20 @@ defmodule Mithril.DirectAssignmentNotify do
           'type', 'direct_assignment_offer',
           'audience', 'cleaner',
           'assignment_phase', 'exclusive',
-          'outbound_sent', true
+          'outbound_sent', false
         )
       )
       """,
       [
-        Ecto.UUID.dump!(Ecto.UUID.generate()),
+        notification_id,
         offer.cleaner_id,
         @offer_title,
         @offer_message,
         booking_id
       ]
     )
+
+    notification_id
   end
 
   defp offer_context(offer, booking_id) do
