@@ -115,6 +115,7 @@ defmodule Mithril.Notifications.Outbound do
   defp template_content_sid("cleaner_arrived"), do: env(:twilio_template_cleaner_arrived)
   defp template_content_sid("cleaner_assigned"), do: env(:twilio_template_cleaner_assigned)
   defp template_content_sid("new_booking"), do: env(:twilio_template_new_booking)
+  defp template_content_sid("assignment_offer"), do: env(:twilio_template_new_booking)
   defp template_content_sid("payment_received"), do: env(:twilio_template_payment_received)
   defp template_content_sid(_), do: nil
 
@@ -171,6 +172,14 @@ defmodule Mithril.Notifications.Outbound do
     "Instaclean: #{cleaner} has been assigned#{suffix}."
   end
 
+  defp message_body("assignment_offer", variables) do
+    date = present(variables["date"]) || "the scheduled time"
+    address = present(variables["address"])
+    tail = if address, do: " · #{address}", else: ""
+
+    "Instaclean: You've been selected for a job · #{date}#{tail}. Open the app to accept before it's offered to other workers."
+  end
+
   defp message_body("new_booking", variables) do
     customer = present(variables["customerName"]) || "a customer"
     date = present(variables["date"]) || "the scheduled time"
@@ -222,6 +231,7 @@ defmodule Mithril.Notifications.Outbound do
   defp subject("payment_received"), do: "Instaclean payment receipt"
   defp subject("cleaner_assigned"), do: "Your Instaclean professional is assigned"
   defp subject("new_booking"), do: "New Instaclean booking"
+  defp subject("assignment_offer"), do: "You were selected for an Instaclean job"
   defp subject("cleaner_en_route"), do: "Your Instaclean professional is on the way"
   defp subject("cleaner_arrived"), do: "Your Instaclean professional has arrived"
   defp subject("cleaner_milestone_support"), do: "Instaclean booking status update"

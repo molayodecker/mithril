@@ -3,6 +3,7 @@ defmodule Mithril.Stripe.Webhook do
 
   require Logger
 
+  alias Mithril.DirectAssignmentNotify
   alias Mithril.Repo
   alias Mithril.Stripe
 
@@ -41,6 +42,7 @@ defmodule Mithril.Stripe.Webhook do
          true <- currency != "",
          {:ok, result} <-
            settle(payment_intent_id, amount_minor, currency, metadata) do
+      notify_settled_assignment(result)
       {:ok, Map.put(result, :event, "payment_intent.succeeded")}
     else
       false ->
@@ -60,6 +62,13 @@ defmodule Mithril.Stripe.Webhook do
         {:error, reason}
     end
   end
+
+  defp notify_settled_assignment(%{assignment_notify: true, booking_id: booking_id})
+       when is_binary(booking_id) do
+    DirectAssignmentNotify.notify_chosen_worker(booking_id)
+  end
+
+  defp notify_settled_assignment(_result), do: :skipped
 
   defp settle(payment_intent_id, stripe_amount_minor, stripe_currency, metadata) do
     Repo.transaction(fn ->
@@ -96,7 +105,13 @@ defmodule Mithril.Stripe.Webhook do
             true ->
               mark_attempt_paid!(attempt.attempt_id)
               mark_booking_paid!(attempt.booking_uuid, attempt.reference)
-              %{settled: true, reference: attempt.reference}
+
+              %{
+                settled: true,
+                assignment_notify: true,
+                booking_id: attempt.booking_id,
+                reference: attempt.reference
+              }
           end
       end
     end)
