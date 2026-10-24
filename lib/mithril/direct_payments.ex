@@ -9,6 +9,7 @@ defmodule Mithril.DirectPayments do
 
   require Logger
 
+  alias Mithril.DirectAssignmentNotify
   alias Mithril.Paystack
   alias Mithril.Repo
 
@@ -39,6 +40,8 @@ defmodule Mithril.DirectPayments do
          {:ok, receipt} <- Paystack.verify(attempt.reference),
          :ok <- verify_receipt(attempt, receipt),
          {:ok, booking_status} <- mark_paid(bid, attempt, receipt) do
+      DirectAssignmentNotify.notify_chosen_worker(booking_id)
+
       {:ok,
        %{
          id: booking_id,

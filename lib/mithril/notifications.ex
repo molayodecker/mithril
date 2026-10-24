@@ -13,6 +13,7 @@ defmodule Mithril.Notifications do
   require Logger
 
   alias Mithril.Auth.SMS
+  alias Mithril.Notifications.Outbound
   alias Mithril.Notifications.SendNotification
   alias Mithril.Repo
 
@@ -66,10 +67,59 @@ defmodule Mithril.Notifications do
 
   def load_party(_), do: nil
 
+  defp deliver(%{kind: :direct_assignment_offer} = ctx) do
+    if SendNotification.configured?() do
+      SendNotification.deliver(ctx)
+    else
+      sms_sent = deliver_sms(ctx)
+      whatsapp_sent = deliver_assignment_whatsapp(ctx)
+      sms_sent or whatsapp_sent
+    end
+  end
+
   defp deliver(ctx) do
     cond do
       SendNotification.configured?() -> SendNotification.deliver(ctx)
       true -> deliver_sms(ctx)
+    end
+  end
+
+  defp deliver_assignment_whatsapp(ctx) do
+    phone = party_phone(ctx[:worker])
+
+    if phone do
+      result =
+        Outbound.deliver(%{
+          "channel" => "whatsapp",
+          "phone" => phone,
+          "template" => "assignment_offer",
+          "variables" => %{
+            "address" => ctx[:address] || "",
+            "service" => ctx[:service_name] || "Instaclean booking",
+            "scheduled_date" => first_listed_date(ctx),
+            "scheduled_time" => ctx[:scheduled_time] || "",
+            "date" => visit_summary(ctx),
+            "customerName" => party_name(ctx[:customer], "a customer"),
+            "recipientType" => "cleaner"
+          }
+        })
+
+      result["whatsappSent"] == true
+    else
+      false
+    end
+  end
+
+  defp party_phone(nil), do: nil
+
+  defp party_phone(party) do
+    present(party[:phone] || party["phone"])
+  end
+
+  defp first_listed_date(ctx) do
+    case List.wrap(ctx[:dates]) do
+      [date | _] when is_binary(date) -> date
+      _ -> ""
     end
   end
 
@@ -138,6 +188,14 @@ defmodule Mithril.Notifications do
     address = ctx[:address] || ""
     tail = if address != "", do: " · #{address}", else: ""
     "Instaclean job reminder: #{summary}#{tail} · #{customer}"
+  end
+
+  defp worker_sms(%{kind: :direct_assignment_offer} = ctx) do
+    summary = visit_summary(ctx)
+    address = ctx[:address] || ""
+    tail = if address != "", do: " · #{address}", else: ""
+
+    "Instaclean: You've been selected for a job · #{summary}#{tail}. Open the app to accept before it's offered to other workers."
   end
 
   defp worker_sms(%{kind: :dispatch_assignment} = ctx) do

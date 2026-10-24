@@ -20,6 +20,9 @@ defmodule Mithril.Notifications.SendNotificationTest do
     assert SendNotification.template_for(:assisted_booking, :worker) ==
              {"new_booking", "direct_worker"}
 
+    assert SendNotification.template_for(:direct_assignment_offer, :worker) ==
+             {"assignment_offer", "direct_assignment_offer"}
+
     assert SendNotification.template_for(:assisted_booking, :customer) ==
              {"cleaner_assigned", "direct_customer"}
   end

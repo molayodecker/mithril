@@ -1016,7 +1016,8 @@ defmodule Mithril.DirectBookings do
              turnover_restocking_notes,
              turnover_source,
              turnover_opportunity_id,
-             property_id
+             property_id,
+             direct_assigned_cleaner_id
            ) VALUES (
              $1, $2, $3, $4, $5::date, $6::time, $7, $7, $8,
              NULLIF($9::text, ''), $10::numeric, $11::integer, $12::integer,
@@ -1027,7 +1028,7 @@ defmodule Mithril.DirectBookings do
              $30, NULLIF($31::text, ''), NULLIF($32::text, ''), NULLIF($33::text, ''),
              NULLIF($34::text, ''), $35, $36, NULLIF($37::text, ''), NULLIF($38::text, ''),
              $39::timestamptz, $40::timestamptz, NULLIF($41::text, ''), NULLIF($42::text, ''),
-             NULLIF($43::text, ''), $44::uuid, $45::uuid
+             NULLIF($43::text, ''), $44::uuid, $45::uuid, $46::uuid
            )
            RETURNING id::text
            """,
@@ -1076,7 +1077,8 @@ defmodule Mithril.DirectBookings do
              blank_to_nil(Map.get(input, :turnover_restocking_notes)),
              blank_to_nil(Map.get(input, :turnover_source)),
              Map.get(input, :turnover_opportunity_id),
-             Map.get(input, :property_id)
+             Map.get(input, :property_id),
+             if(Map.get(input, :direct_assignment) == true, do: input.cleaner_id, else: nil)
            ]
          ) do
       {:ok, %{rows: [[id]]}} ->
@@ -1475,13 +1477,15 @@ defmodule Mithril.DirectBookings do
          {:ok, scheduled_time} <- iso_time(params["scheduledTime"]),
          {:ok, address} <- required_text(params["address"], 3, 500),
          {:ok, idempotency_key} <- optional_idempotency_key(params["idempotencyKey"]),
-         {:ok, visit} <- visit_details(params) do
+         {:ok, visit} <- visit_details(params),
+         {:ok, direct_assignment} <- boolean_param(params["directAssignment"], false) do
       {:ok,
        Map.merge(input, %{
          scheduled_time: scheduled_time,
          address: address,
          special_instructions: optional_text(params["specialInstructions"], 4_000),
-         idempotency_key: idempotency_key
+         idempotency_key: idempotency_key,
+         direct_assignment: direct_assignment
        })
        |> Map.merge(visit)}
     else
