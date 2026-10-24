@@ -240,7 +240,13 @@ defmodule MithrilWeb.Schemas.DirectBooking do
         turnoverRestockingNotes: %Schema{type: :string, nullable: true, maxLength: 2000},
         turnoverSource: %Schema{type: :string, nullable: true, enum: ~w(manual airbnb_ical)},
         turnoverOpportunityId: %Schema{type: :string, format: :uuid, nullable: true},
-        propertyId: %Schema{type: :string, format: :uuid, nullable: true}
+        propertyId: %Schema{type: :string, format: :uuid, nullable: true},
+        directAssignment: %Schema{
+          type: :boolean,
+          default: false,
+          description:
+            "True when the customer chose this worker. Payment then asks that worker to accept before the job is offered to anyone else."
+        }
       },
       required: [
         :serviceId,
@@ -299,6 +305,12 @@ defmodule MithrilWeb.Schemas.DirectBooking do
         turnoverSource: %Schema{type: :string, nullable: true, enum: ~w(manual airbnb_ical)},
         turnoverOpportunityId: %Schema{type: :string, format: :uuid, nullable: true},
         propertyId: %Schema{type: :string, format: :uuid, nullable: true},
+        directAssignment: %Schema{
+          type: :boolean,
+          default: false,
+          description:
+            "True when the customer chose this worker. Payment then asks that worker to accept before the job is offered to anyone else."
+        },
         recurrenceInterval: %Schema{
           type: :string,
           enum: ~w(daily weekly monthly quarterly annually),
