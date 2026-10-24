@@ -90,6 +90,38 @@ defmodule Mithril.DirectAssignmentNotifyTest do
     assert body =~ "accept"
   end
 
+  test "provider failure remains retryable without duplicating the inbox offer" do
+    booking_id = Ecto.UUID.generate()
+    cleaner_id = Ecto.UUID.generate()
+    customer_id = Ecto.UUID.generate()
+    insert_people!(cleaner_id, customer_id)
+    insert_booking!(booking_id, cleaner_id, customer_id, "exclusive", nil)
+
+    previous_adapter = Application.get_env(:mithril, :sms_adapter)
+    Application.put_env(:mithril, :sms_adapter, Mithril.Auth.SMS.Disabled)
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :sms_adapter, previous_adapter)
+    end)
+
+    assert :failed == DirectAssignmentNotify.notify_chosen_worker(booking_id)
+    assert Application.get_env(:mithril, :test_sms_messages) == []
+
+    Application.put_env(:mithril, :sms_adapter, Mithril.Auth.SMS.Test)
+    assert :sent == DirectAssignmentNotify.deliver_pending(booking_id)
+    assert :skipped == DirectAssignmentNotify.deliver_pending(booking_id)
+
+    assert [{"+233200000001", _body}] =
+             Application.get_env(:mithril, :test_sms_messages)
+
+    assert [[1, true]] =
+             Repo.query!("""
+             SELECT count(*), bool_and(data->>'outbound_sent' = 'true')
+             FROM public.notifications
+             WHERE type = 'direct_assignment_offer'
+             """).rows
+  end
+
   test "an accepted or unchosen assignment does not notify" do
     booking_id = Ecto.UUID.generate()
     cleaner_id = Ecto.UUID.generate()
