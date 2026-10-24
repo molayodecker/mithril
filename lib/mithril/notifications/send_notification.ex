@@ -75,6 +75,9 @@ defmodule Mithril.Notifications.SendNotification do
   def template_for(:admin_notify_cleaner, :worker),
     do: {"booking_reminder", "direct_admin_cleaner_reminder"}
 
+  def template_for(:direct_assignment_offer, :worker),
+    do: {"assignment_offer", "direct_assignment_offer"}
+
   def template_for(_kind, :customer), do: {"cleaner_assigned", "direct_customer"}
   def template_for(_kind, :worker), do: {"new_booking", "direct_worker"}
 

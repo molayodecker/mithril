@@ -4,6 +4,7 @@ defmodule Mithril.Paystack.Webhook do
   require Logger
 
   alias Mithril.DbUuid
+  alias Mithril.DirectAssignmentNotify
   alias Mithril.DirectCancellation
   alias Mithril.Repo
 
@@ -126,8 +127,17 @@ defmodule Mithril.Paystack.Webhook do
         end
       end)
       |> normalize_transaction()
+      |> notify_settled_assignment()
     end
   end
+
+  defp notify_settled_assignment({:ok, %{settled: true, booking_id: booking_id}} = result)
+       when is_binary(booking_id) do
+    DirectAssignmentNotify.notify_chosen_worker(booking_id)
+    result
+  end
+
+  defp notify_settled_assignment(result), do: result
 
   defp apply_charge(attempt, event) do
     cond do

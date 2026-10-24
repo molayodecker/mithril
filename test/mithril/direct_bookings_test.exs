@@ -88,6 +88,70 @@ defmodule Mithril.DirectBookingsTest do
              ).rows
   end
 
+  test "a chosen worker is stored as a direct assignment so payment can ask them to accept" do
+    previous = Application.get_env(:mithril, :direct_client_bookings, false)
+    Application.put_env(:mithril, :direct_client_bookings, true)
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :direct_client_bookings, previous)
+    end)
+
+    customer_id = Ecto.UUID.generate()
+    cleaner_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.users (id, email, status)
+      VALUES ($1, 'customer@example.com', 'active'),
+             ($2, 'cleaner@example.com', 'active')
+      """,
+      [Ecto.UUID.dump!(customer_id), Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_data (
+        user_id, verified, status, hourly_rate, specialties
+      ) VALUES ($1, true, 'active', 50, ARRAY['regular_cleaning'])
+      """,
+      [Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    params = %{
+      "serviceId" => 1,
+      "cleanerId" => cleaner_id,
+      "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 3)),
+      "scheduledTime" => "10:00",
+      "durationHours" => 3,
+      "address" => "Labone, Accra",
+      "timezone" => "Africa/Accra",
+      "directAssignment" => true
+    }
+
+    assert {:ok, created} = DirectBookings.create_customer_booking(customer_id, params)
+
+    assert [[assigned_cleaner]] =
+             Repo.query!(
+               "SELECT direct_assigned_cleaner_id FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(created.id)]
+             ).rows
+
+    assert Ecto.UUID.load!(assigned_cleaner) == cleaner_id
+
+    platform_params =
+      params
+      |> Map.delete("directAssignment")
+      |> Map.put("scheduledTime", "14:00")
+
+    assert {:ok, platform} = DirectBookings.create_customer_booking(customer_id, platform_params)
+
+    assert [[nil]] =
+             Repo.query!(
+               "SELECT direct_assigned_cleaner_id FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(platform.id)]
+             ).rows
+  end
+
   test "recurring checkout creates one pending subscription for each Paystack interval" do
     previous = Application.get_env(:mithril, :direct_client_bookings, false)
     Application.put_env(:mithril, :direct_client_bookings, true)
@@ -1580,6 +1644,7 @@ defmodule Mithril.DirectBookingsTest do
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       customer_id uuid NOT NULL,
       cleaner_id uuid,
+      direct_assigned_cleaner_id uuid,
       service_id integer NOT NULL,
       title text,
       status text NOT NULL DEFAULT 'pending',
