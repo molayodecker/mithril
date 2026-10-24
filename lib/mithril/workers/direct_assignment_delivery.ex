@@ -4,7 +4,11 @@ defmodule Mithril.Workers.DirectAssignmentDelivery do
   use Oban.Worker,
     queue: :notifications,
     max_attempts: 10,
-    unique: [period: 86_400, keys: [:booking_id], states: [:available, :scheduled, :retryable, :executing]]
+    unique: [
+      period: 86_400,
+      keys: [:booking_id],
+      states: [:available, :scheduled, :retryable, :executing]
+    ]
 
   alias Mithril.DirectAssignmentNotify
 
