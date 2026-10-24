@@ -25,7 +25,7 @@ AS $$
     p.avatar_url
   FROM public.profiles p
   WHERE auth.uid() IS NOT NULL
-    AND p.id = ANY(COALESCE(p_customer_ids, ARRAY[]::uuid[])[1:100])
+    AND p.id = ANY((COALESCE(p_customer_ids, ARRAY[]::uuid[]))[1:100])
     AND p.deleted_at IS NULL
     AND p.deactivated_at IS NULL
     AND COALESCE(p.deletion_status::text, 'none') NOT IN ('scheduled', 'processing', 'completed')
