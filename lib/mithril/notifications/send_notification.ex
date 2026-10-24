@@ -146,7 +146,7 @@ defmodule Mithril.Notifications.SendNotification do
           })
 
         whatsapp =
-          if phone and not Keyword.get(opts, :sms_fallback_to_whatsapp, false) do
+          if parallel_whatsapp?(phone, opts) do
             post(%{
               "template" => template,
               "channel" => "whatsapp",
@@ -162,6 +162,13 @@ defmodule Mithril.Notifications.SendNotification do
 
         transport or whatsapp
     end
+  end
+
+  # `and` / `not` require booleans. A phone string must not raise after SMS has
+  # already been accepted, or the assignment retry will send the same text again.
+  @doc false
+  def parallel_whatsapp?(phone, opts) when is_list(opts) do
+    phone != nil and Keyword.get(opts, :sms_fallback_to_whatsapp, false) == false
   end
 
   defp post(body) do
