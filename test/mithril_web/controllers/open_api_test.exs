@@ -129,5 +129,15 @@ defmodule MithrilWeb.OpenApiTest do
     assert spec["components"]["schemas"]["DirectAdminAssignServiceRequestRequest"]["properties"][
              "sendNotifications"
            ]
+
+    pending_edit = spec["components"]["schemas"]["PendingBookingForEdit"]["properties"]
+    assert pending_edit["booking_source"]["nullable"] == true
+    assert pending_edit["direct_assigned_cleaner_id"]["nullable"] == true
+    assert pending_edit["final_amount_minor"]["type"] == "integer"
+    assert pending_edit["supplies_option"]["nullable"] == true
+    assert pending_edit["transportation_included"]["type"] == "boolean"
+    assert pending_edit["transportation_minor"]["type"] == "integer"
+    assert pending_edit["transportation_quote_id"]["nullable"] == true
+    assert spec["components"]["schemas"]["PendingBookingForEditRows"]["items"]["$ref"]
   end
 end
