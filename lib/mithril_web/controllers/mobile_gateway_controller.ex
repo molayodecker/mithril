@@ -3,6 +3,7 @@ defmodule MithrilWeb.MobileGatewayController do
   use OpenApiSpex.ControllerSpecs
 
   alias Mithril.MobileGateway
+  alias MithrilWeb.Schemas.MobileRpc.RpcResult
   alias OpenApiSpex.Schema
 
   tags(["mobile"])
@@ -14,7 +15,7 @@ defmodule MithrilWeb.MobileGatewayController do
       name: [in: :path, schema: %Schema{type: :string}, required: true]
     ],
     responses: [
-      ok: {"Function result", "application/json", %Schema{type: :object}}
+      ok: {"Function result", "application/json", RpcResult}
     ]
   )
 
