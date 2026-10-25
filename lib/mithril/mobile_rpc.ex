@@ -33,6 +33,7 @@ defmodule Mithril.MobileRpc do
     get_active_pricing_rule
     get_ai_match_settings
     get_assigned_cleaner_for_customer_booking
+    get_assigned_customer_profiles
     get_available_cleaners_for_booking
     get_available_timeslots
     get_best_available_cleaners
