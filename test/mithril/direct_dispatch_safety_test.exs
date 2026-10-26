@@ -459,8 +459,8 @@ defmodule Mithril.DirectDispatchSafetyTest do
 
     assert cleaner_id == Ecto.UUID.dump!(worker_id)
     assert direct_cleaner_id == Ecto.UUID.dump!(worker_id)
-    assert not is_nil(accepted_at)
-    assert phase == "accepted"
+    assert is_nil(accepted_at)
+    assert phase == "exclusive"
     assert scheduled_date == ~D[2099-09-08]
     assert Time.compare(scheduled_time, ~T[10:00:00]) == :eq
 

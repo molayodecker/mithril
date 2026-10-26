@@ -8,6 +8,9 @@ defmodule Mithril.Notifications.ExpoPush do
   def valid_token?(token) when is_binary(token), do: Regex.match?(@token_regex, token)
   def valid_token?(_), do: false
 
+  defp maybe_put(message, _key, nil), do: message
+  defp maybe_put(message, key, value), do: Map.put(message, key, value)
+
   @spec send_tokens([String.t()], map()) :: non_neg_integer()
   def send_tokens(tokens, payload) when is_list(tokens) and is_map(payload) do
     tokens
@@ -21,11 +24,13 @@ defmodule Mithril.Notifications.ExpoPush do
             to: token,
             title: payload.title,
             body: payload.body,
-            sound: "default",
+            sound: payload[:sound] || "default",
             priority: "high",
             channelId: payload[:channel_id] || "booking_updates",
             data: payload[:data] || %{}
           }
+          |> maybe_put(:badge, payload[:badge])
+          |> maybe_put(:interruptionLevel, payload[:interruption_level])
         end)
 
       case Req.post(@expo_url, json: messages) do

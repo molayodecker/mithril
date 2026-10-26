@@ -124,7 +124,8 @@ defmodule Mithril.DirectAssignmentNotify do
          | _
        ]) do
     payment_status == "paid" and is_nil(cleaner_accepted_at) and not is_nil(cleaner_id) and
-      cleaner_id == direct_assigned_cleaner_id and assignment_phase in [nil, "exclusive"]
+      (is_nil(direct_assigned_cleaner_id) or cleaner_id == direct_assigned_cleaner_id) and
+      assignment_phase in [nil, "exclusive"]
   end
 
   defp chosen_worker_offer?(_row), do: false
@@ -206,7 +207,7 @@ defmodule Mithril.DirectAssignmentNotify do
           'booking_id', $5::text,
           'bookingId', $5::text,
           'type', 'direct_assignment_offer',
-          'audience', 'cleaner',
+          'audience', 'worker',
           'assignment_phase', 'exclusive',
           'outbound_sent', false
         )

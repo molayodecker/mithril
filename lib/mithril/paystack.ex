@@ -4,10 +4,12 @@ defmodule Mithril.Paystack do
   @callback initialize(map()) :: {:ok, map()} | {:error, term()}
   @callback verify(String.t()) :: {:ok, map()} | {:error, term()}
   @callback refund(map()) :: {:ok, map()} | {:error, term()}
+  @callback create_customer(map()) :: {:ok, map()} | {:error, term()}
 
   def initialize(attrs) when is_map(attrs), do: adapter().initialize(attrs)
   def verify(reference) when is_binary(reference), do: adapter().verify(reference)
   def refund(attrs) when is_map(attrs), do: adapter().refund(attrs)
+  def create_customer(attrs) when is_map(attrs), do: adapter().create_customer(attrs)
 
   def configured? do
     adapter() != Mithril.Paystack.Disabled and adapter().configured?()
@@ -30,6 +32,9 @@ defmodule Mithril.Paystack.Disabled do
 
   @impl true
   def refund(_attrs), do: {:error, :payment_not_configured}
+
+  @impl true
+  def create_customer(_attrs), do: {:error, :payment_not_configured}
 
   def configured?, do: false
 end
@@ -67,6 +72,17 @@ defmodule Mithril.Paystack.Test do
   end
 
   @impl true
+  def create_customer(attrs) do
+    email = attrs |> Map.get(:email) |> to_string() |> String.trim()
+
+    if email == "" do
+      {:error, :missing_email}
+    else
+      {:ok, %{customer_code: "CUS_test", email: email}}
+    end
+  end
+
+  @impl true
   def refund(attrs) do
     case Application.get_env(:mithril, :paystack_test_refund_result, :ok) do
       :ok ->
@@ -99,6 +115,7 @@ defmodule Mithril.Paystack.HTTP do
   @behaviour Mithril.Paystack
 
   @initialize_url "https://api.paystack.co/transaction/initialize"
+  @customer_url "https://api.paystack.co/customer"
   @refund_url "https://api.paystack.co/refund"
 
   @impl true
@@ -165,6 +182,39 @@ defmodule Mithril.Paystack.HTTP do
   end
 
   @impl true
+  def create_customer(attrs) do
+    with {:ok, secret} <- secret_key() do
+      email = attrs |> Map.get(:email) |> to_string() |> String.trim()
+
+      body =
+        %{email: email}
+        |> maybe_put(:first_name, Map.get(attrs, :first_name))
+        |> maybe_put(:last_name, Map.get(attrs, :last_name))
+        |> maybe_put(:phone, Map.get(attrs, :phone))
+
+      case Req.post(@customer_url, json: body, auth: {:bearer, secret}) do
+        {:ok, %{status: status, body: %{"status" => true, "data" => data}}}
+        when status in 200..299 ->
+          {:ok, %{customer_code: data["customer_code"], email: email}}
+
+        {:ok, %{status: status, body: %{"message" => message}}}
+        when status in 400..499 and is_binary(message) ->
+          if String.contains?(String.downcase(message), "exist") do
+            fetch_customer(email, secret)
+          else
+            {:error, {:provider, status, message}}
+          end
+
+        {:ok, %{status: status, body: body}} ->
+          {:error, {:provider, status, provider_message(body)}}
+
+        {:error, _} ->
+          {:error, :provider_unavailable}
+      end
+    end
+  end
+
+  @impl true
   def refund(attrs) do
     with {:ok, secret} <- secret_key() do
       body =
@@ -203,6 +253,22 @@ defmodule Mithril.Paystack.HTTP do
   defp refund_id(%{"id" => id}) when is_integer(id), do: Integer.to_string(id)
   defp refund_id(%{"id" => id}) when is_binary(id) and id != "", do: id
   defp refund_id(_), do: nil
+
+  defp fetch_customer(email, secret) do
+    url = @customer_url <> "/" <> URI.encode(email)
+
+    case Req.get(url, auth: {:bearer, secret}) do
+      {:ok, %{status: status, body: %{"status" => true, "data" => data}}}
+      when status in 200..299 ->
+        {:ok, %{customer_code: data["customer_code"], email: email}}
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, {:provider, status, provider_message(body)}}
+
+      {:error, _} ->
+        {:error, :provider_unavailable}
+    end
+  end
 
   defp secret_key do
     case Application.get_env(:mithril, :paystack_secret_key) do

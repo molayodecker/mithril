@@ -565,9 +565,9 @@ defmodule Mithril.DirectDispatchSafety do
                    $3::timestamptz + make_interval(secs => ($4::numeric * 3600)::double precision),
                    '[)'
                  ),
-                 cleaner_accepted_at = now(),
-                 assignment_phase = 'accepted',
-                 assignment_hold_until = NULL,
+                 cleaner_accepted_at = NULL,
+                 assignment_phase = 'exclusive',
+                 assignment_hold_until = now() + interval '30 minutes',
                  assignment_reminder_sent_at = NULL,
                  customer_reminder_5d_sent_at = NULL,
                  customer_reminder_5d_claimed_at = NULL,
