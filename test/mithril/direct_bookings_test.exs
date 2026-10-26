@@ -1801,7 +1801,9 @@ defmodule Mithril.DirectBookingsTest do
       scheduled_time time,
       special_instructions text,
       paystack_plan_interval text,
-      billing_mode text
+      billing_mode text,
+      home_size text,
+      extra_task_ids text[]
     )
     """)
 
