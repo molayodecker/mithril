@@ -133,7 +133,9 @@ defmodule MithrilWeb.Schemas.DirectBooking do
           description: "Repeat schedule. Omit for a one-time visit."
         },
         extraTaskIds: %Schema{
-          type: :array, nullable: true, items: %Schema{type: :string, maxLength: 64}
+          type: :array,
+          nullable: true,
+          items: %Schema{type: :string, maxLength: 64}
         },
         serviceDurationOptionId: %Schema{type: :string, format: :uuid, nullable: true},
         visitDurationHours: %Schema{type: :number, minimum: 0, nullable: true}
