@@ -213,7 +213,7 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewals do
            ) VALUES (
              $1::uuid, $2::uuid, $2::uuid, $3::integer, 'Regular Cleaning Service',
              $4::date, $5::time, COALESCE($6::numeric, 2), $7, $8::geometry,
-             $9, $10, COALESCE($11::uuid[], '{}'), $12, $12, $12, $13, $14::uuid,
+             $9, $10, COALESCE($11::text[], '{}'), $12, $12, $12, $13, $14::uuid,
              CASE WHEN $2::uuid IS NULL THEN 'pending' ELSE 'confirmed' END,
              'pending', 'paystack', $15, 0, false, 0, COALESCE($16, 'v1'),
              'Africa/Accra', 'customer_provided', 0, $17, $15
