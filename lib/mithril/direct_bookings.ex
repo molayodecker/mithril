@@ -1631,7 +1631,9 @@ defmodule Mithril.DirectBookings do
           {:ok, dumped} -> {:ok, Ecto.UUID.load!(dumped)}
           _ -> {:error, :invalid_request}
         end
-      _ -> {:ok, nil}
+
+      _ ->
+        {:ok, nil}
     end
   end
 
