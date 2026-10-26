@@ -497,6 +497,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
     assert previous_worker == Ecto.UUID.dump!(previous_worker_id)
     assert assigned_worker == Ecto.UUID.dump!(worker_id)
     assert status == "assigned"
+
     assert [["direct_assignment_offer", data]] =
              Repo.query!(
                "SELECT type, data FROM public.notifications WHERE user_id = $1",
