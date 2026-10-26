@@ -18,18 +18,19 @@ defmodule Mithril.Notifications.InboxPush do
           tokens
           |> Enum.group_by(&channel(push.type, &1.channel_version))
           |> Enum.map(fn {channel_id, group} ->
-            delivered = sender.(
-              Enum.map(group, & &1.token),
-              %{
-                title: push.title,
-                body: push.body,
-                sound: sound(push.type),
-                channel_id: channel_id,
-                badge: push.badge,
-                interruption_level: interruption_level(push.type),
-                data: push.data
-              }
-            )
+            delivered =
+              sender.(
+                Enum.map(group, & &1.token),
+                %{
+                  title: push.title,
+                  body: push.body,
+                  sound: sound(push.type),
+                  channel_id: channel_id,
+                  badge: push.badge,
+                  interruption_level: interruption_level(push.type),
+                  data: push.data
+                }
+              )
 
             delivered == length(group)
           end)

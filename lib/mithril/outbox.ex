@@ -64,26 +64,25 @@ defmodule Mithril.Outbox do
   end
 
   defp claim do
-    Repo.query(
-      """
-      UPDATE public.mithril_outbox
-      SET status = 'sending',
-          attempts = attempts + 1,
-          claimed_at = now()
-      WHERE id IN (
-        SELECT id
-        FROM public.mithril_outbox
-        WHERE status = 'pending'
-          AND available_at <= now()
-        ORDER BY inserted_at
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
-      )
-      RETURNING id, kind, payload, attempts, claimed_at
-      """
+    Repo.query("""
+    UPDATE public.mithril_outbox
+    SET status = 'sending',
+        attempts = attempts + 1,
+        claimed_at = now()
+    WHERE id IN (
+      SELECT id
+      FROM public.mithril_outbox
+      WHERE status = 'pending'
+        AND available_at <= now()
+      ORDER BY inserted_at
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
     )
+    RETURNING id, kind, payload, attempts, claimed_at
+    """)
     |> case do
-      {:ok, %{rows: []}} -> {:ok, nil}
+      {:ok, %{rows: []}} ->
+        {:ok, nil}
 
       {:ok, %{rows: [[id, kind, payload, attempts, claimed_at]]}} ->
         {:ok,

@@ -78,6 +78,7 @@ defmodule Mithril.OutboxTest do
     )
 
     assert :ok == Outbox.drain(tokens: ["ExponentPushToken[test]"], push: fn _, _ -> 0 end)
+
     assert [["pending", 1]] =
              Repo.query!("SELECT status, attempts FROM public.mithril_outbox").rows
   end
