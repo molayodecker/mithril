@@ -14,24 +14,27 @@ defmodule Mithril.Notifications.InboxPush do
         tokens = load_tokens(push.user_id, opts)
         sender = Keyword.get(opts, :push, &ExpoPush.send_tokens/2)
 
-        tokens
-        |> Enum.group_by(&channel(push.type, &1.channel_version))
-        |> Enum.each(fn {channel_id, group} ->
-          sender.(
-            Enum.map(group, & &1.token),
-            %{
-              title: push.title,
-              body: push.body,
-              sound: sound(push.type),
-              channel_id: channel_id,
-              badge: push.badge,
-              interruption_level: interruption_level(push.type),
-              data: push.data
-            }
-          )
-        end)
+        results =
+          tokens
+          |> Enum.group_by(&channel(push.type, &1.channel_version))
+          |> Enum.map(fn {channel_id, group} ->
+            delivered = sender.(
+              Enum.map(group, & &1.token),
+              %{
+                title: push.title,
+                body: push.body,
+                sound: sound(push.type),
+                channel_id: channel_id,
+                badge: push.badge,
+                interruption_level: interruption_level(push.type),
+                data: push.data
+              }
+            )
 
-        :ok
+            delivered == length(group)
+          end)
+
+        if Enum.all?(results), do: :ok, else: {:error, :push_delivery_failed}
 
       :skip ->
         :ok

@@ -112,7 +112,8 @@ defmodule Mithril.DirectDispatchSafety do
              :ok <- ensure_assignable_request(request.status),
              {:ok, request} <- resolve_assignment_window(request, params, rid),
              :ok <- ensure_worker_available(worker_uid, request),
-             :ok <- reassign_related_booking(request, worker_uid, locked_booking),
+             :ok <-
+               reassign_related_booking(Map.put(request, :id, rid), worker_uid, locked_booking),
              {:ok, assigned} <-
                DirectDispatch.assign_admin_service_request(user_id, request_id, params) do
           assigned
@@ -522,7 +523,8 @@ defmodule Mithril.DirectDispatchSafety do
           worker_uid,
           request.requested_start_at,
           request.duration_hours,
-          timezone
+          timezone,
+          request.id
         )
     end
   end
@@ -536,7 +538,8 @@ defmodule Mithril.DirectDispatchSafety do
          worker_uid,
          requested_start_at,
          duration_hours,
-         timezone
+         timezone,
+         request_id
        ) do
     with {:ok, _} <-
            Repo.query("SELECT set_config('app.booking_assignment_write', '1', true)"),
@@ -577,6 +580,21 @@ defmodule Mithril.DirectDispatchSafety do
              RETURNING id
              """,
              [booking_id, worker_uid, requested_start_at, duration_hours, timezone]
+           ),
+         {:ok, %{num_rows: 1}} <-
+           Repo.query(
+             """
+             INSERT INTO public.notifications (user_id, type, title, message, read, data, dedupe_key)
+             VALUES ($1, 'direct_assignment_offer', 'You were selected for a job',
+                     'You have been selected as a replacement. Accept the job in the app within 30 minutes.',
+                     false,
+                     jsonb_build_object('booking_id', $2::text, 'bookingId', $2::text,
+                                        'type', 'direct_assignment_offer', 'audience', 'worker',
+                                        'assignment_phase', 'exclusive', 'outbound_sent', false),
+                     'replacement_offer:' || $3::text)
+             ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
+             """,
+             [worker_uid, booking_id, request_id]
            ) do
       :ok
     else

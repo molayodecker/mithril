@@ -69,6 +69,19 @@ defmodule Mithril.OutboxTest do
     assert status == "sent"
   end
 
+  test "retries a failed push instead of losing the outbox event" do
+    user_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      "INSERT INTO public.mithril_outbox (kind, dedupe_key, payload) VALUES ('inbox_push', 'retry-offer', jsonb_build_object('user_id', $1::text, 'title', 'Offer', 'body', 'Accept', 'type', 'direct_assignment_offer'))",
+      [user_id]
+    )
+
+    assert :ok == Outbox.drain(tokens: ["ExponentPushToken[test]"], push: fn _, _ -> 0 end)
+    assert [["pending", 1]] =
+             Repo.query!("SELECT status, attempts FROM public.mithril_outbox").rows
+  end
+
   test "a new message push names the conversation and records the inbox row" do
     customer_id = Ecto.UUID.generate()
     cleaner_id = Ecto.UUID.generate()

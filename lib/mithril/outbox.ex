@@ -8,7 +8,6 @@ defmodule Mithril.Outbox do
   alias Mithril.PaystackCustomers
   alias Mithril.Repo
 
-  @batch 25
   @max_attempts 8
 
   @spec drain(keyword()) :: :ok
@@ -16,9 +15,13 @@ defmodule Mithril.Outbox do
     reclaim_stuck()
 
     case claim() do
-      {:ok, rows} ->
-        Enum.each(rows, &deliver(&1, opts))
+      {:ok, nil} ->
         :ok
+
+      {:ok, row} ->
+        deliver(row, opts)
+        # Claim just one row at a time so an unstarted batch cannot lose its lease.
+        drain(opts)
 
       {:error, %Postgrex.Error{postgres: %{code: :undefined_table}}} ->
         :ok
@@ -29,7 +32,10 @@ defmodule Mithril.Outbox do
     end
   end
 
-  defp deliver(%{id: id, kind: kind, payload: payload, attempts: attempts}, opts) do
+  defp deliver(
+         %{id: id, kind: kind, payload: payload, attempts: attempts, claimed_at: claimed_at},
+         opts
+       ) do
     result =
       try do
         case kind do
@@ -43,8 +49,8 @@ defmodule Mithril.Outbox do
       end
 
     case result do
-      :ok -> mark_sent(id)
-      {:error, reason} -> mark_retry(id, attempts, reason)
+      :ok -> mark_sent(id, claimed_at)
+      {:error, reason} -> mark_retry(id, claimed_at, attempts, reason)
     end
   end
 
@@ -70,37 +76,42 @@ defmodule Mithril.Outbox do
         WHERE status = 'pending'
           AND available_at <= now()
         ORDER BY inserted_at
-        LIMIT $1
+        LIMIT 1
         FOR UPDATE SKIP LOCKED
       )
-      RETURNING id, kind, payload, attempts
-      """,
-      [@batch]
+      RETURNING id, kind, payload, attempts, claimed_at
+      """
     )
     |> case do
-      {:ok, %{rows: rows}} ->
+      {:ok, %{rows: []}} -> {:ok, nil}
+
+      {:ok, %{rows: [[id, kind, payload, attempts, claimed_at]]}} ->
         {:ok,
-         Enum.map(rows, fn [id, kind, payload, attempts] ->
-           %{id: id, kind: kind, payload: payload || %{}, attempts: attempts}
-         end)}
+         %{
+           id: id,
+           kind: kind,
+           payload: payload || %{},
+           attempts: attempts,
+           claimed_at: claimed_at
+         }}
 
       other ->
         other
     end
   end
 
-  defp mark_sent(id) do
+  defp mark_sent(id, claimed_at) do
     Repo.query(
       """
       UPDATE public.mithril_outbox
       SET status = 'sent', sent_at = now(), last_error = NULL
-      WHERE id = $1::uuid
+      WHERE id = $1::uuid AND status = 'sending' AND claimed_at = $2
       """,
-      [DbUuid.dump!(id)]
+      [DbUuid.dump!(id), claimed_at]
     )
   end
 
-  defp mark_retry(id, attempts, reason) do
+  defp mark_retry(id, claimed_at, attempts, reason) do
     error = reason |> inspect() |> String.slice(0, 200)
 
     if attempts >= @max_attempts or reason in [:missing_email, :payment_not_configured] do
@@ -108,9 +119,9 @@ defmodule Mithril.Outbox do
         """
         UPDATE public.mithril_outbox
         SET status = 'failed', last_error = $2
-        WHERE id = $1::uuid
+        WHERE id = $1::uuid AND status = 'sending' AND claimed_at = $3
         """,
-        [DbUuid.dump!(id), error]
+        [DbUuid.dump!(id), error, claimed_at]
       )
     else
       Repo.query(
@@ -119,9 +130,9 @@ defmodule Mithril.Outbox do
         SET status = 'pending',
             available_at = now() + make_interval(mins => $2),
             last_error = $3
-        WHERE id = $1::uuid
+        WHERE id = $1::uuid AND status = 'sending' AND claimed_at = $4
         """,
-        [DbUuid.dump!(id), attempts, error]
+        [DbUuid.dump!(id), attempts, error, claimed_at]
       )
     end
   end
