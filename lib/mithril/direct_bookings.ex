@@ -1567,7 +1567,7 @@ defmodule Mithril.DirectBookings do
 
   defp optional_legacy_home_size(params) do
     case params do
-      %{"homeSize" => value} -> optional_text(value, 200)
+      %{"homeSize" => value} -> {:ok, optional_text(value, 200)}
       _ -> {:ok, nil}
     end
   end
@@ -1614,14 +1614,19 @@ defmodule Mithril.DirectBookings do
 
   defp optional_legacy_service_duration_option_id(params) do
     case params do
-      %{"serviceDurationOptionId" => value} -> optional_uuid(value)
+      %{"serviceDurationOptionId" => value} ->
+        case optional_uuid(value) do
+          {:ok, nil} -> {:ok, nil}
+          {:ok, dumped} -> {:ok, Ecto.UUID.load!(dumped)}
+          _ -> {:error, :invalid_request}
+        end
       _ -> {:ok, nil}
     end
   end
 
   defp optional_legacy_booking_source(params) do
     case params do
-      %{"bookingSource" => value} -> optional_text(value, 64)
+      %{"bookingSource" => value} -> {:ok, optional_text(value, 64)}
       _ -> {:ok, nil}
     end
   end
