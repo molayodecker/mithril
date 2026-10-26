@@ -552,7 +552,7 @@ defmodule Mithril.DirectBookingsTest do
       assert {:ok, replacement} =
                DirectBookings.replace_unpaid_booking(customer_id, old_id, params)
 
-      assert [["3 bed, 2 bath", ["fridge"], 1.5, "cleaner_direct_link"]] =
+      assert [["3 bed, 2 bath", ["fridge"], adjustment, "cleaner_direct_link"]] =
                Repo.query!(
                  """
                  SELECT home_size, extra_task_ids, duration_adjustment, booking_source
@@ -561,6 +561,8 @@ defmodule Mithril.DirectBookingsTest do
                  """,
                  [Ecto.UUID.dump!(replacement.id)]
                ).rows
+
+      assert Decimal.equal?(adjustment, Decimal.new("1.5"))
     end
 
     test "replaces a confirmed but still unpaid booking" do
