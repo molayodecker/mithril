@@ -594,7 +594,7 @@ defmodule Mithril.DirectDispatchSafety do
                      'replacement_offer:' || $3::text)
              ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
              """,
-             [worker_uid, booking_id, request_id]
+             [worker_uid, Ecto.UUID.load!(booking_id), Ecto.UUID.load!(request_id)]
            ) do
       :ok
     else
