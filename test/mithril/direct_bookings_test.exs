@@ -520,6 +520,51 @@ defmodule Mithril.DirectBookingsTest do
       assert paid_retry.paymentStatus == "paid"
     end
 
+    test "persists legacy booking metadata on replacement" do
+      customer_id = Ecto.UUID.generate()
+      cleaner_id = Ecto.UUID.generate()
+
+      old_id =
+        insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "pending")
+
+      Repo.query!(
+        """
+        UPDATE public.bookings
+        SET home_size = '2 bed, 1 bath',
+            extra_task_ids = ARRAY['oven']::text[],
+            duration_adjustment = 1,
+            booking_source = 'cleaner_direct_link'
+        WHERE id = $1
+        """,
+        [Ecto.UUID.dump!(old_id)]
+      )
+
+      insert_cleaner!(cleaner_id)
+
+      params =
+        replacement_params(cleaner_id,
+          homeSize: "3 bed, 2 bath",
+          extraTaskIds: ["fridge"],
+          durationAdjustment: 1.5,
+          bookingSource: "cleaner_direct_link"
+        )
+
+      assert {:ok, replacement} =
+               DirectBookings.replace_unpaid_booking(customer_id, old_id, params)
+
+      assert [["3 bed, 2 bath", ["fridge"], adjustment, "cleaner_direct_link"]] =
+               Repo.query!(
+                 """
+                 SELECT home_size, extra_task_ids, duration_adjustment, booking_source
+                 FROM public.bookings
+                 WHERE id = $1
+                 """,
+                 [Ecto.UUID.dump!(replacement.id)]
+               ).rows
+
+      assert Decimal.equal?(adjustment, Decimal.new("1.5"))
+    end
+
     test "replaces a confirmed but still unpaid booking" do
       customer_id = Ecto.UUID.generate()
       cleaner_id = Ecto.UUID.generate()
@@ -1718,6 +1763,11 @@ defmodule Mithril.DirectBookingsTest do
       turnover_source text,
       turnover_opportunity_id uuid,
       property_id uuid,
+      home_size text,
+      extra_task_ids text[],
+      duration_adjustment numeric DEFAULT 0,
+      service_duration_option_id uuid,
+      booking_source text,
       created_at timestamptz NOT NULL DEFAULT now(),
       cancelled_at timestamptz,
       cancelled_by uuid,
@@ -1751,7 +1801,9 @@ defmodule Mithril.DirectBookingsTest do
       scheduled_time time,
       special_instructions text,
       paystack_plan_interval text,
-      billing_mode text
+      billing_mode text,
+      home_size text,
+      extra_task_ids text[]
     )
     """)
 
@@ -1807,8 +1859,8 @@ defmodule Mithril.DirectBookingsTest do
       p_include_booking_cover boolean DEFAULT true,
       p_supplies_option text DEFAULT NULL,
       p_cleaner_id uuid DEFAULT NULL,
-      p_extra_task_ids integer[] DEFAULT NULL,
-      p_service_duration_option_id integer DEFAULT NULL,
+      p_extra_task_ids text[] DEFAULT NULL,
+      p_service_duration_option_id uuid DEFAULT NULL,
       p_visit_duration_hours numeric DEFAULT NULL,
       p_cleaning_scan_id uuid DEFAULT NULL
     ) RETURNS TABLE (

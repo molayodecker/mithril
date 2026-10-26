@@ -130,9 +130,10 @@ defmodule Mithril.DirectBookings do
 
   def preview_price(params) when is_map(params) do
     with {:ok, input} <- validate_pricing_input(params),
+         {:ok, legacy} <- legacy_booking_metadata(params),
          {:ok, service} <- service_details(input.service_id),
          :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
-         {:ok, pricing} <- compute_pricing(input) do
+         {:ok, pricing} <- compute_pricing(Map.merge(input, legacy)) do
       {:ok, Map.delete(pricing, "cleanerEarningsMinor")}
     end
   end
@@ -208,7 +209,9 @@ defmodule Mithril.DirectBookings do
                    path,
                    customer_id,
                    bid,
-                   merge_replacement_visit_details(replacement_input, original, params),
+                   replacement_input
+                   |> merge_replacement_visit_details(original, params)
+                   |> merge_replacement_legacy_details(original, params),
                    existing
                  ) do
             result
@@ -247,7 +250,9 @@ defmodule Mithril.DirectBookings do
                   requires_key_or_access_code, access_instructions, customer_contact_phone,
                   turnover_guest_checkout_at, turnover_next_checkin_at,
                   turnover_linen_handling, turnover_restocking_notes, turnover_source,
-                  turnover_opportunity_id, property_id
+                  turnover_opportunity_id, property_id,
+                  home_size, extra_task_ids, duration_adjustment,
+                  service_duration_option_id::text, booking_source
            FROM public.bookings
            WHERE id = $1 AND customer_id = $2
            FOR UPDATE
@@ -278,7 +283,12 @@ defmodule Mithril.DirectBookings do
              turnover_restocking_notes,
              turnover_source,
              turnover_opportunity_id,
-             property_id
+             property_id,
+             home_size,
+             extra_task_ids,
+             duration_adjustment,
+             service_duration_option_id,
+             booking_source
            ]
          ]
        }} ->
@@ -306,6 +316,13 @@ defmodule Mithril.DirectBookings do
              turnover_source: turnover_source,
              turnover_opportunity_id: turnover_opportunity_id,
              property_id: property_id
+           },
+           legacy: %{
+             home_size: home_size,
+             extra_task_ids: normalize_extra_task_ids(extra_task_ids),
+             duration_adjustment: decimal_number(duration_adjustment) || 0,
+             service_duration_option_id: service_duration_option_id,
+             booking_source: booking_source
            }
          }}
 
@@ -344,6 +361,25 @@ defmodule Mithril.DirectBookings do
         acc
       else
         Map.put(acc, field, original.visit[field])
+      end
+    end)
+  end
+
+  defp merge_replacement_legacy_details(input, original, params) do
+    mapping = %{
+      "homeSize" => :home_size,
+      "extraTaskIds" => :extra_task_ids,
+      "durationAdjustment" => :duration_adjustment,
+      "serviceDurationOptionId" => :service_duration_option_id,
+      "bookingSource" => :booking_source,
+      "visitDurationHours" => :visit_duration_hours
+    }
+
+    Enum.reduce(mapping, input, fn {key, field}, acc ->
+      if Map.has_key?(params, key) do
+        acc
+      else
+        Map.put(acc, field, original.legacy[field])
       end
     end)
   end
@@ -625,9 +661,9 @@ defmodule Mithril.DirectBookings do
              p_include_booking_cover => true,
              p_supplies_option => 'customer_provided'::text,
              p_cleaner_id => $5::uuid,
-             p_extra_task_ids => NULL,
-             p_service_duration_option_id => NULL,
-             p_visit_duration_hours => NULL,
+             p_extra_task_ids => $8::text[],
+             p_service_duration_option_id => $9::uuid,
+             p_visit_duration_hours => $10::numeric,
              p_cleaning_scan_id => NULL
            ) p
            """,
@@ -638,7 +674,10 @@ defmodule Mithril.DirectBookings do
              input.timezone,
              input.cleaner_id,
              Map.get(input, :recurrence_interval),
-             is_binary(Map.get(input, :recurrence_interval))
+             is_binary(Map.get(input, :recurrence_interval)),
+             legacy_extra_task_ids_for_pricing(input),
+             legacy_service_duration_option_id(input),
+             legacy_visit_duration_hours_for_pricing(input)
            ]
          ) do
       {:ok, %{rows: [[pricing]]}} ->
@@ -900,11 +939,13 @@ defmodule Mithril.DirectBookings do
              scheduled_time,
              special_instructions,
              paystack_plan_interval,
-             billing_mode
+             billing_mode,
+             home_size,
+             extra_task_ids
            ) VALUES (
              $1, $2, $3, $4, $5::numeric, $6, $7, $7, $8, $9, $10,
              $6, $11, 'pending', $12::date, $12::date, $13::time, NULLIF($14::text, ''),
-             $6, 'paystack_plan'
+             $6, 'paystack_plan', NULLIF($15::text, ''), $16::text[]
            )
            RETURNING id::text
            """,
@@ -922,7 +963,9 @@ defmodule Mithril.DirectBookings do
              non_negative_integer(pricing["discountRateBps"]),
              input.scheduled_date,
              input.scheduled_time,
-             input.special_instructions || ""
+             input.special_instructions || "",
+             blank_to_nil(Map.get(input, :home_size)),
+             legacy_extra_task_ids_for_storage(input)
            ]
          ) do
       {:ok, %{rows: [[id]]}} -> {:ok, id}
@@ -1017,7 +1060,12 @@ defmodule Mithril.DirectBookings do
              turnover_source,
              turnover_opportunity_id,
              property_id,
-             direct_assigned_cleaner_id
+             direct_assigned_cleaner_id,
+             home_size,
+             extra_task_ids,
+             duration_adjustment,
+             service_duration_option_id,
+             booking_source
            ) VALUES (
              $1, $2, $3, $4, $5::date, $6::time, $7, $7, $8,
              NULLIF($9::text, ''), $10::numeric, $11::integer, $12::integer,
@@ -1028,7 +1076,8 @@ defmodule Mithril.DirectBookings do
              $30, NULLIF($31::text, ''), NULLIF($32::text, ''), NULLIF($33::text, ''),
              NULLIF($34::text, ''), $35, $36, NULLIF($37::text, ''), NULLIF($38::text, ''),
              $39::timestamptz, $40::timestamptz, NULLIF($41::text, ''), NULLIF($42::text, ''),
-             NULLIF($43::text, ''), $44::uuid, $45::uuid, $46::uuid
+             NULLIF($43::text, ''), $44::uuid, $45::uuid, $46::uuid,
+             NULLIF($47::text, ''), $48::text[], $49::numeric, $50::uuid, NULLIF($51::text, '')
            )
            RETURNING id::text
            """,
@@ -1078,7 +1127,12 @@ defmodule Mithril.DirectBookings do
              blank_to_nil(Map.get(input, :turnover_source)),
              Map.get(input, :turnover_opportunity_id),
              Map.get(input, :property_id),
-             if(Map.get(input, :direct_assignment) == true, do: input.cleaner_id, else: nil)
+             if(Map.get(input, :direct_assignment) == true, do: input.cleaner_id, else: nil),
+             blank_to_nil(Map.get(input, :home_size)),
+             legacy_extra_task_ids_for_storage(input),
+             decimal_hours(Map.get(input, :duration_adjustment, 0) || 0),
+             dump_optional_uuid(Map.get(input, :service_duration_option_id)),
+             blank_to_nil(Map.get(input, :booking_source))
            ]
          ) do
       {:ok, %{rows: [[id]]}} ->
@@ -1478,6 +1532,7 @@ defmodule Mithril.DirectBookings do
          {:ok, address} <- required_text(params["address"], 3, 500),
          {:ok, idempotency_key} <- optional_idempotency_key(params["idempotencyKey"]),
          {:ok, visit} <- visit_details(params),
+         {:ok, legacy} <- legacy_booking_metadata(params),
          {:ok, direct_assignment} <- boolean_param(params["directAssignment"], false) do
       {:ok,
        Map.merge(input, %{
@@ -1487,11 +1542,169 @@ defmodule Mithril.DirectBookings do
          idempotency_key: idempotency_key,
          direct_assignment: direct_assignment
        })
-       |> Map.merge(visit)}
+       |> Map.merge(visit)
+       |> Map.merge(legacy)}
     else
       _ -> {:error, :invalid_request}
     end
   end
+
+  defp legacy_booking_metadata(params) do
+    with {:ok, home_size} <- optional_legacy_home_size(params),
+         {:ok, extra_task_ids} <- optional_legacy_extra_task_ids(params),
+         {:ok, duration_adjustment} <- optional_legacy_duration_adjustment(params),
+         {:ok, service_duration_option_id} <- optional_legacy_service_duration_option_id(params),
+         {:ok, booking_source} <- optional_legacy_booking_source(params),
+         {:ok, visit_duration_hours} <- optional_legacy_visit_duration_hours(params) do
+      {:ok,
+       %{
+         home_size: home_size,
+         extra_task_ids: extra_task_ids,
+         duration_adjustment: duration_adjustment,
+         service_duration_option_id: service_duration_option_id,
+         booking_source: booking_source,
+         visit_duration_hours: visit_duration_hours
+       }}
+    else
+      _ -> {:error, :invalid_request}
+    end
+  end
+
+  defp optional_legacy_home_size(params) do
+    case params do
+      %{"homeSize" => value} -> {:ok, optional_text(value, 200)}
+      _ -> {:ok, nil}
+    end
+  end
+
+  defp optional_legacy_extra_task_ids(params) do
+    case params do
+      %{"extraTaskIds" => nil} ->
+        {:ok, nil}
+
+      %{"extraTaskIds" => value} when is_list(value) ->
+        ids =
+          value
+          |> Enum.map(fn
+            item when is_binary(item) -> String.trim(item)
+            _ -> ""
+          end)
+          |> Enum.reject(&(&1 == ""))
+          |> Enum.uniq()
+
+        if length(ids) > 32 do
+          {:error, :invalid_request}
+        else
+          {:ok, ids}
+        end
+
+      %{"extraTaskIds" => _} ->
+        {:error, :invalid_request}
+
+      _ ->
+        {:ok, nil}
+    end
+  end
+
+  defp optional_legacy_duration_adjustment(params) do
+    case params do
+      %{"durationAdjustment" => nil} ->
+        {:ok, nil}
+
+      %{"durationAdjustment" => value} ->
+        case decimal_number(value) do
+          nil -> {:error, :invalid_request}
+          number when number < -12 or number > 12 -> {:error, :invalid_request}
+          number -> {:ok, number}
+        end
+
+      _ ->
+        {:ok, nil}
+    end
+  end
+
+  defp optional_legacy_service_duration_option_id(params) do
+    case params do
+      %{"serviceDurationOptionId" => value} ->
+        case optional_uuid(value) do
+          {:ok, nil} -> {:ok, nil}
+          {:ok, dumped} -> {:ok, Ecto.UUID.load!(dumped)}
+          _ -> {:error, :invalid_request}
+        end
+
+      _ ->
+        {:ok, nil}
+    end
+  end
+
+  defp optional_legacy_booking_source(params) do
+    case params do
+      %{"bookingSource" => value} -> {:ok, optional_text(value, 64)}
+      _ -> {:ok, nil}
+    end
+  end
+
+  defp optional_legacy_visit_duration_hours(params) do
+    case params do
+      %{"visitDurationHours" => nil} ->
+        {:ok, nil}
+
+      %{"visitDurationHours" => value} ->
+        case positive_number(value) do
+          {:ok, hours} when hours > 24 -> {:error, :invalid_request}
+          {:ok, hours} -> {:ok, hours}
+          :error -> {:error, :invalid_request}
+        end
+
+      _ ->
+        {:ok, nil}
+    end
+  end
+
+  defp normalize_extra_task_ids(nil), do: []
+  defp normalize_extra_task_ids(ids) when is_list(ids), do: ids
+  defp normalize_extra_task_ids(_), do: []
+
+  defp legacy_extra_task_ids_for_pricing(input) do
+    case Map.get(input, :extra_task_ids) do
+      ids when is_list(ids) and ids != [] -> ids
+      _ -> nil
+    end
+  end
+
+  defp legacy_extra_task_ids_for_storage(input) do
+    case Map.get(input, :extra_task_ids) do
+      ids when is_list(ids) and ids != [] -> ids
+      _ -> nil
+    end
+  end
+
+  defp legacy_service_duration_option_id(input) do
+    case Map.get(input, :service_duration_option_id) do
+      id when is_binary(id) and id != "" -> dump_optional_uuid(id)
+      _ -> nil
+    end
+  end
+
+  defp legacy_visit_duration_hours_for_pricing(input) do
+    case Map.get(input, :visit_duration_hours) do
+      hours when is_number(hours) and hours > 0 -> decimal_hours(hours)
+      _ -> nil
+    end
+  end
+
+  defp decimal_number(%Decimal{} = value), do: Decimal.to_float(value)
+  defp decimal_number(value) when is_integer(value), do: value * 1.0
+  defp decimal_number(value) when is_float(value), do: value
+
+  defp decimal_number(value) when is_binary(value) do
+    case Float.parse(value) do
+      {number, _} -> number
+      :error -> nil
+    end
+  end
+
+  defp decimal_number(_), do: nil
 
   defp visit_details(params) do
     with {:ok, booking_for_self} <- boolean_param(params["bookingForSelf"], true),
