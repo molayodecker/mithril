@@ -1579,7 +1579,9 @@ defmodule Mithril.DirectBookings do
 
   defp optional_legacy_extra_task_ids(params) do
     case params do
-      %{"extraTaskIds" => nil} -> {:ok, nil}
+      %{"extraTaskIds" => nil} ->
+        {:ok, nil}
+
       %{"extraTaskIds" => value} when is_list(value) ->
         ids =
           value
@@ -1606,7 +1608,9 @@ defmodule Mithril.DirectBookings do
 
   defp optional_legacy_duration_adjustment(params) do
     case params do
-      %{"durationAdjustment" => nil} -> {:ok, nil}
+      %{"durationAdjustment" => nil} ->
+        {:ok, nil}
+
       %{"durationAdjustment" => value} ->
         case decimal_number(value) do
           nil -> {:error, :invalid_request}
@@ -1640,7 +1644,9 @@ defmodule Mithril.DirectBookings do
 
   defp optional_legacy_visit_duration_hours(params) do
     case params do
-      %{"visitDurationHours" => nil} -> {:ok, nil}
+      %{"visitDurationHours" => nil} ->
+        {:ok, nil}
+
       %{"visitDurationHours" => value} ->
         case positive_number(value) do
           {:ok, hours} when hours > 24 -> {:error, :invalid_request}
