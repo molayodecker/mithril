@@ -246,7 +246,22 @@ defmodule MithrilWeb.Schemas.DirectBooking do
           default: false,
           description:
             "True when the customer chose this worker. Payment then asks that worker to accept before the job is offered to anyone else."
-        }
+        },
+        homeSize: %Schema{
+          type: :string,
+          nullable: true,
+          maxLength: 200,
+          description: "Legacy room summary persisted for cleaners and pricing snapshots."
+        },
+        extraTaskIds: %Schema{
+          type: :array,
+          nullable: true,
+          items: %Schema{type: :string, maxLength: 64}
+        },
+        durationAdjustment: %Schema{type: :number, nullable: true},
+        serviceDurationOptionId: %Schema{type: :string, format: :uuid, nullable: true},
+        bookingSource: %Schema{type: :string, nullable: true, maxLength: 64},
+        visitDurationHours: %Schema{type: :number, nullable: true, minimum: 0}
       },
       required: [
         :serviceId,
@@ -315,7 +330,22 @@ defmodule MithrilWeb.Schemas.DirectBooking do
           type: :string,
           enum: ~w(daily weekly monthly quarterly annually),
           nullable: true
-        }
+        },
+        homeSize: %Schema{
+          type: :string,
+          nullable: true,
+          maxLength: 200,
+          description: "Legacy room summary persisted for cleaners and pricing snapshots."
+        },
+        extraTaskIds: %Schema{
+          type: :array,
+          nullable: true,
+          items: %Schema{type: :string, maxLength: 64}
+        },
+        durationAdjustment: %Schema{type: :number, nullable: true},
+        serviceDurationOptionId: %Schema{type: :string, format: :uuid, nullable: true},
+        bookingSource: %Schema{type: :string, nullable: true, maxLength: 64},
+        visitDurationHours: %Schema{type: :number, nullable: true, minimum: 0}
       },
       required: [
         :serviceId,
