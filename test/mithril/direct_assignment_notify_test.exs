@@ -122,6 +122,31 @@ defmodule Mithril.DirectAssignmentNotifyTest do
              """).rows
   end
 
+  test "a paid platform assignment is offered and not accepted for the worker" do
+    booking_id = Ecto.UUID.generate()
+    cleaner_id = Ecto.UUID.generate()
+    customer_id = Ecto.UUID.generate()
+    insert_people!(cleaner_id, customer_id)
+    insert_platform_booking!(booking_id, cleaner_id, customer_id)
+
+    assert :sent == DirectAssignmentNotify.notify_chosen_worker(booking_id)
+
+    %{rows: [[title]]} =
+      Repo.query!(
+        """
+        SELECT title
+        FROM public.notifications
+        WHERE type = 'direct_assignment_offer'
+          AND data->>'bookingId' = $1
+        """,
+        [booking_id]
+      )
+
+    assert title == "You were selected for a job"
+    assert [{_phone, body}] = Application.get_env(:mithril, :test_sms_messages)
+    assert body =~ "accept"
+  end
+
   test "an accepted or unchosen assignment does not notify" do
     booking_id = Ecto.UUID.generate()
     cleaner_id = Ecto.UUID.generate()
@@ -161,6 +186,29 @@ defmodule Mithril.DirectAssignmentNotifyTest do
       VALUES ($1, 'Ama Cleaner'), ($2, 'Kofi Customer')
       """,
       [Ecto.UUID.dump!(cleaner_id), Ecto.UUID.dump!(customer_id)]
+    )
+  end
+
+  defp insert_platform_booking!(booking_id, cleaner_id, customer_id) do
+    Repo.query!(
+      """
+      INSERT INTO public.bookings (
+        id, cleaner_id, direct_assigned_cleaner_id, customer_id,
+        assignment_phase, payment_status, cleaner_accepted_at,
+        address, scheduled_date, scheduled_time, title
+      ) VALUES (
+        $1, $2, NULL, $3,
+        NULL, 'paid', NULL,
+        '148 Westlands Blvd', $4, $5, 'Regular Cleaning'
+      )
+      """,
+      [
+        Ecto.UUID.dump!(booking_id),
+        Ecto.UUID.dump!(cleaner_id),
+        Ecto.UUID.dump!(customer_id),
+        Date.add(Date.utc_today(), 3),
+        ~T[10:00:00]
+      ]
     )
   end
 

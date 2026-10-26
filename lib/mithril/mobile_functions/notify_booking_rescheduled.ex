@@ -133,7 +133,7 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
         booking_id,
         new_date,
         new_time,
-        "cleaner"
+        "worker"
       )
 
     _ =

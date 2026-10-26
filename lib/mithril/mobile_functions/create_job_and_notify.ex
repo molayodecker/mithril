@@ -360,7 +360,7 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
               type: "job_offer",
               jobId: job_id,
               screen: screen_path,
-              audience: "cleaner"
+              audience: "worker"
             }
           }
         end)

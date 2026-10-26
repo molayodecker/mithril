@@ -27,6 +27,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
           "cleaner_data",
           "service_types",
           "user_roles",
+          "notifications",
           "bookings"
         ] do
       Repo.query!("DROP TABLE IF EXISTS public.#{table} CASCADE")
@@ -64,6 +65,25 @@ defmodule Mithril.DirectDispatchSafetyTest do
       user_id uuid NOT NULL,
       role_id text NOT NULL
     )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.notifications (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id uuid NOT NULL,
+      type text NOT NULL,
+      title text NOT NULL,
+      message text NOT NULL,
+      read boolean NOT NULL DEFAULT false,
+      data jsonb,
+      dedupe_key text
+    )
+    """)
+
+    Repo.query!("""
+    CREATE UNIQUE INDEX notifications_user_dedupe_key_uniq
+      ON public.notifications (user_id, dedupe_key)
+      WHERE dedupe_key IS NOT NULL
     """)
 
     Repo.query!("""
@@ -459,8 +479,8 @@ defmodule Mithril.DirectDispatchSafetyTest do
 
     assert cleaner_id == Ecto.UUID.dump!(worker_id)
     assert direct_cleaner_id == Ecto.UUID.dump!(worker_id)
-    assert not is_nil(accepted_at)
-    assert phase == "accepted"
+    assert is_nil(accepted_at)
+    assert phase == "exclusive"
     assert scheduled_date == ~D[2099-09-08]
     assert Time.compare(scheduled_time, ~T[10:00:00]) == :eq
 
@@ -477,6 +497,15 @@ defmodule Mithril.DirectDispatchSafetyTest do
     assert previous_worker == Ecto.UUID.dump!(previous_worker_id)
     assert assigned_worker == Ecto.UUID.dump!(worker_id)
     assert status == "assigned"
+
+    assert [["direct_assignment_offer", data]] =
+             Repo.query!(
+               "SELECT type, data FROM public.notifications WHERE user_id = $1",
+               [Ecto.UUID.dump!(worker_id)]
+             ).rows
+
+    assert data["bookingId"] == booking_id
+    assert data["audience"] == "worker"
   end
 
   test "rejects invalid status jumps before assignment" do

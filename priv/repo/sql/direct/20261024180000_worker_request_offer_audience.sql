@@ -1,7 +1,7 @@
 -- Applied by scripts/apply_direct_schema.sh with the rest of priv/repo/sql/direct.
 --
 -- The payment trigger inserts a worker request without an audience. The open
--- app only loops the offer alert when the push says audience cleaner.
+-- app loops the offer alert when the push says audience worker.
 -- Channel and sound stay in 20261023160000_worker_request_offer_alert_sound.sql,
 -- which also keeps wallet_credited on booking_updates.
 
@@ -55,7 +55,7 @@ BEGIN
     'direct_assignment_offer',
     'direct_assignment_reminder'
   ) AND NOT (v_push_data ? 'audience') THEN
-    v_push_data := v_push_data || jsonb_build_object('audience', 'cleaner');
+    v_push_data := v_push_data || jsonb_build_object('audience', 'worker');
   END IF;
 
   v_interruption := public.inbox_notification_interruption_level(v_type);
@@ -124,4 +124,4 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.queue_inbox_notification_push(uuid, text, text, text, jsonb) IS
-  'Queues an Expo push for an inbox row. Worker requests without an audience are marked cleaner so the offer alert rings.';
+  'Queues an Expo push for an inbox row. Worker requests without an audience are marked worker so the offer alert rings.';
