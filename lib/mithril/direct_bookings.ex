@@ -130,9 +130,10 @@ defmodule Mithril.DirectBookings do
 
   def preview_price(params) when is_map(params) do
     with {:ok, input} <- validate_pricing_input(params),
+         {:ok, legacy} <- legacy_booking_metadata(params),
          {:ok, service} <- service_details(input.service_id),
          :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
-         {:ok, pricing} <- compute_pricing(input) do
+         {:ok, pricing} <- compute_pricing(Map.merge(input, legacy)) do
       {:ok, Map.delete(pricing, "cleanerEarningsMinor")}
     end
   end
@@ -938,11 +939,13 @@ defmodule Mithril.DirectBookings do
              scheduled_time,
              special_instructions,
              paystack_plan_interval,
-             billing_mode
+             billing_mode,
+             home_size,
+             extra_task_ids
            ) VALUES (
              $1, $2, $3, $4, $5::numeric, $6, $7, $7, $8, $9, $10,
              $6, $11, 'pending', $12::date, $12::date, $13::time, NULLIF($14::text, ''),
-             $6, 'paystack_plan'
+             $6, 'paystack_plan', NULLIF($15::text, ''), $16::text[]
            )
            RETURNING id::text
            """,
@@ -960,7 +963,9 @@ defmodule Mithril.DirectBookings do
              non_negative_integer(pricing["discountRateBps"]),
              input.scheduled_date,
              input.scheduled_time,
-             input.special_instructions || ""
+             input.special_instructions || "",
+             blank_to_nil(Map.get(input, :home_size)),
+             legacy_extra_task_ids_for_storage(input)
            ]
          ) do
       {:ok, %{rows: [[id]]}} -> {:ok, id}
@@ -1574,6 +1579,7 @@ defmodule Mithril.DirectBookings do
 
   defp optional_legacy_extra_task_ids(params) do
     case params do
+      %{"extraTaskIds" => nil} -> {:ok, nil}
       %{"extraTaskIds" => value} when is_list(value) ->
         ids =
           value
@@ -1600,6 +1606,7 @@ defmodule Mithril.DirectBookings do
 
   defp optional_legacy_duration_adjustment(params) do
     case params do
+      %{"durationAdjustment" => nil} -> {:ok, nil}
       %{"durationAdjustment" => value} ->
         case decimal_number(value) do
           nil -> {:error, :invalid_request}
@@ -1633,6 +1640,7 @@ defmodule Mithril.DirectBookings do
 
   defp optional_legacy_visit_duration_hours(params) do
     case params do
+      %{"visitDurationHours" => nil} -> {:ok, nil}
       %{"visitDurationHours" => value} ->
         case positive_number(value) do
           {:ok, hours} when hours > 24 -> {:error, :invalid_request}
