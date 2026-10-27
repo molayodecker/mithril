@@ -214,6 +214,8 @@ defmodule Mithril.MobileQuery do
     "cleaner_application_drafts" =>
       MapSet.new(~w(email payload current_step last_saved_at updated_at)),
     "cleaner_availability_exceptions" => MapSet.new(~w(exception_date reason)),
+    "availability" => MapSet.new(~w(day_of_week start_time end_time is_recurring)),
+    "cleaner_schedules" => MapSet.new(~w(day_of_week start_time end_time)),
     "cleaner_devices" => MapSet.new(~w(expo_push_token platform updated_at)),
     "device_tokens" =>
       MapSet.new(~w(token platform android_notification_channel_version app_version updated_at)),
