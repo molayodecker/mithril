@@ -10,6 +10,7 @@ defmodule Mithril.MobileQuery do
     app_feature_flags
     app_update_policy
     auth_identity_lookup
+    availability
     booking_job_photos
     booking_micro_tasks
     booking_settings
@@ -19,6 +20,7 @@ defmodule Mithril.MobileQuery do
     cleaner_availability_exceptions
     cleaner_data
     cleaner_devices
+    cleaner_schedules
     cleaner_tracking
     co_cleaner_invitations
     co_cleaner_relationships
@@ -134,6 +136,8 @@ defmodule Mithril.MobileQuery do
     "cleaner_application_drafts" => MapSet.new(~w(insert update upsert delete)),
     "cleaner_availability_exceptions" => MapSet.new(~w(insert update upsert delete)),
     "cleaner_devices" => MapSet.new(~w(insert update upsert delete)),
+    "cleaner_schedules" => MapSet.new(~w(insert update upsert delete)),
+    "availability" => MapSet.new(~w(insert update upsert delete)),
     "cleaner_tracking" => MapSet.new(~w(insert)),
     "device_tokens" => MapSet.new(~w(insert update upsert delete)),
     "messages" => MapSet.new(~w(insert)),
@@ -152,6 +156,8 @@ defmodule Mithril.MobileQuery do
     "cleaner_application_drafts" =>
       MapSet.new(~w(user_id email payload current_step last_saved_at updated_at)),
     "cleaner_availability_exceptions" => MapSet.new(~w(cleaner_id exception_date reason)),
+    "availability" => MapSet.new(~w(cleaner_id day_of_week start_time end_time is_recurring)),
+    "cleaner_schedules" => MapSet.new(~w(cleaner_id day_of_week start_time end_time)),
     "cleaner_devices" => MapSet.new(~w(cleaner_id expo_push_token platform updated_at)),
     "cleaner_tracking" =>
       MapSet.new(~w(booking_id cleaner_id latitude longitude accuracy heading)),
@@ -208,6 +214,8 @@ defmodule Mithril.MobileQuery do
     "cleaner_application_drafts" =>
       MapSet.new(~w(email payload current_step last_saved_at updated_at)),
     "cleaner_availability_exceptions" => MapSet.new(~w(exception_date reason)),
+    "availability" => MapSet.new(~w(day_of_week start_time end_time is_recurring)),
+    "cleaner_schedules" => MapSet.new(~w(day_of_week start_time end_time)),
     "cleaner_devices" => MapSet.new(~w(expo_push_token platform updated_at)),
     "device_tokens" =>
       MapSet.new(~w(token platform android_notification_channel_version app_version updated_at)),

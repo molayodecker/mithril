@@ -233,6 +233,8 @@ defmodule Mithril.MobileScope do
   defp force_column("user_profiles"), do: "user_id"
   defp force_column("users"), do: "id"
   defp force_column("cleaner_availability_exceptions"), do: "cleaner_id"
+  defp force_column("availability"), do: "cleaner_id"
+  defp force_column("cleaner_schedules"), do: "cleaner_id"
   defp force_column("cleaner_devices"), do: "cleaner_id"
   defp force_column(_), do: nil
 
