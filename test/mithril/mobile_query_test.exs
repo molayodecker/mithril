@@ -77,6 +77,31 @@ defmodule Mithril.MobileQueryTest do
     assert "cleaner-1" in params
   end
 
+  test "weekly hours updates are scoped to the caller and never accept cleaner_id patches" do
+    for table <- ["availability", "cleaner_schedules"] do
+      assert {:ok, %{sql: sql, params: [%{"start_time" => "09:00:00"} | params]}} =
+               MobileQuery.compile("cleaner-1", %{
+                 "table" => table,
+                 "action" => "update",
+                 "patch" => %{"start_time" => "09:00:00"},
+                 "filters" => [%{"op" => "eq", "column" => "day_of_week", "value" => 1}]
+               })
+
+      assert sql =~ "UPDATE public.#{table}"
+      assert sql =~ "SET start_time = "
+      assert sql =~ "#{table}.cleaner_id::text = "
+      assert "cleaner-1" in params
+
+      assert {:error, :forbidden} =
+               MobileQuery.compile("cleaner-1", %{
+                 "table" => table,
+                 "action" => "update",
+                 "patch" => %{"cleaner_id" => "cleaner-2"},
+                 "filters" => [%{"op" => "eq", "column" => "day_of_week", "value" => 1}]
+               })
+    end
+  end
+
   test "compiles an allowlisted embed" do
     assert {:ok, %{sql: sql}} =
              MobileQuery.compile("user-1", %{
