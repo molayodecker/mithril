@@ -13,6 +13,7 @@ defmodule Mithril.MobileGateway do
     connect-property-calendar
     claim-job
     create-job-and-notify
+    delete-job-photo
     delete-property-media
     initialize-stripe-booking-payment
     stripe-verify-payment-intent
@@ -28,6 +29,7 @@ defmodule Mithril.MobileGateway do
     sumsub-config/token
     sync-sumsub-review
     timezone
+    upload-job-photo
     uber-transportation-release-gate
     uber-trip-estimate
   ))

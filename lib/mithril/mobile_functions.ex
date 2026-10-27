@@ -20,6 +20,7 @@ defmodule Mithril.MobileFunctions do
   alias Mithril.MobileFunctions.Timezone
   alias Mithril.MobileFunctions.UberTransportationReleaseGate
   alias Mithril.MobileFunctions.UberTripEstimate
+  alias Mithril.MobileFunctions.UploadJobPhoto
 
   @spec invoke(String.t(), String.t(), map()) :: {:ok, map()} | {:error, term()}
   def invoke(_user_id, name, _body)
@@ -76,6 +77,12 @@ defmodule Mithril.MobileFunctions do
 
   def invoke(user_id, "delete-property-media", body) when is_map(body),
     do: DeletePropertyMedia.call(user_id, body)
+
+  def invoke(user_id, "upload-job-photo", body) when is_map(body),
+    do: UploadJobPhoto.call(user_id, body)
+
+  def invoke(user_id, "delete-job-photo", body) when is_map(body),
+    do: UploadJobPhoto.delete(user_id, body)
 
   def invoke(user_id, "cancel-subscription", body) when is_map(body),
     do: CancelSubscription.call(user_id, body)
