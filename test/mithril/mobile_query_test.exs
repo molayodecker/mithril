@@ -45,6 +45,38 @@ defmodule Mithril.MobileQueryTest do
              })
   end
 
+  test "weekly availability writes stay scoped to the signed-in cleaner" do
+    assert {:ok, %{sql: sql, params: [rows]}} =
+             MobileQuery.compile("cleaner-1", %{
+               "table" => "availability",
+               "action" => "insert",
+               "rows" => [
+                 %{
+                   "cleaner_id" => "someone-else",
+                   "day_of_week" => 1,
+                   "start_time" => "08:00:00",
+                   "end_time" => "17:00:00",
+                   "is_recurring" => true
+                 }
+               ]
+             })
+
+    assert sql =~ "INSERT INTO public.availability"
+    assert hd(rows)["cleaner_id"] == "cleaner-1"
+
+    assert {:ok, %{sql: select_sql, params: params}} =
+             MobileQuery.compile("cleaner-1", %{
+               "table" => "cleaner_schedules",
+               "action" => "select",
+               "columns" => ["day_of_week", "start_time", "end_time"],
+               "filters" => [%{"op" => "eq", "column" => "cleaner_id", "value" => "cleaner-1"}]
+             })
+
+    assert select_sql =~ "public.cleaner_schedules"
+    assert select_sql =~ "cleaner_schedules.cleaner_id::text = "
+    assert "cleaner-1" in params
+  end
+
   test "compiles an allowlisted embed" do
     assert {:ok, %{sql: sql}} =
              MobileQuery.compile("user-1", %{
