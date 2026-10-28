@@ -47,6 +47,15 @@ defmodule Mithril.Paystack.Test do
   def initialize(attrs) do
     reference = attrs.reference
 
+    if not (is_binary(reference) and Regex.match?(~r/^[A-Za-z0-9.=-]+$/, reference)) do
+      {:error, :invalid_reference}
+    else
+      initialize_valid_reference(attrs, reference)
+    end
+  end
+
+  defp initialize_valid_reference(attrs, reference) do
+
     record = %{
       authorization_url: "https://checkout.paystack.com/#{reference}",
       access_code: "access_#{reference}",
@@ -60,7 +69,15 @@ defmodule Mithril.Paystack.Test do
     }
 
     put_attempt(reference, record)
-    {:ok, Map.take(record, [:authorization_url, :access_code, :reference])}
+
+    case Application.get_env(:mithril, :paystack_test_initialize_result, :ok) do
+      :ambiguous_once ->
+        Application.put_env(:mithril, :paystack_test_initialize_result, :ok)
+        {:error, :provider_unavailable}
+
+      _ ->
+        {:ok, Map.take(record, [:authorization_url, :access_code, :reference])}
+    end
   end
 
   @impl true
