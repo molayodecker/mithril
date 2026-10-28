@@ -391,7 +391,16 @@ defmodule Mithril.DirectPaymentRequests do
         end
 
       {:error, reason} ->
-        _ = mark_delivery_error(request["id"], reason)
+        _ =
+          if reason in [:sms_not_configured, :invalid_phone] do
+            # Neither provider accepted the message. A replay may safely
+            # claim delivery again once configuration or the phone is fixed.
+            release_unsent_delivery(request["id"], reason)
+          else
+            # An unknown provider outcome must not create duplicate sends.
+            mark_delivery_error(request["id"], reason)
+          end
+
         {:ok, admin_json(Map.put(request, "delivery_error", Atom.to_string(reason)))}
     end
   end
@@ -695,6 +704,17 @@ defmodule Mithril.DirectPaymentRequests do
       UPDATE public.direct_payment_requests
       SET delivery_error = $2, updated_at = now()
       WHERE id = $1 AND sent_at IS NULL
+      """,
+      [id, Atom.to_string(reason)]
+    )
+  end
+
+  defp release_unsent_delivery(id, reason) do
+    Repo.query(
+      """
+      UPDATE public.direct_payment_requests
+      SET delivery_claimed_at = NULL, delivery_error = $2, updated_at = now()
+      WHERE id = $1 AND sent_at IS NULL AND twilio_message_sid IS NULL
       """,
       [id, Atom.to_string(reason)]
     )
