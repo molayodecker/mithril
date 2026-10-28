@@ -596,6 +596,53 @@ defmodule Mithril.MobileQueryTest do
     refute sql =~ "customer_id"
   end
 
+  test "job photo comparisons are writable only for the assigned cleaner's active booking" do
+    assert {:ok, %{sql: sql, params: [_rows, "cleaner-a"]}} =
+             MobileQuery.compile("cleaner-a", %{
+               "table" => "job_photo_comparisons",
+               "action" => "insert",
+               "rows" => [
+                 %{
+                   "booking_id" => "b1",
+                   "before_photo_url" => "r2://job-photos/b1/1-before.jpg",
+                   "after_photo_url" => "r2://job-photos/b1/1-after.jpg",
+                   "title" => "Cleaning Transformation"
+                 }
+               ]
+             })
+
+    assert sql =~ "INSERT INTO public.job_photo_comparisons"
+    assert sql =~ "cleaner_id::text = $2::text"
+    assert sql =~ "cancelled"
+    refute sql =~ "customer_id"
+
+    assert {:ok, %{sql: update_sql, params: params}} =
+             MobileQuery.compile("cleaner-a", %{
+               "table" => "job_photo_comparisons",
+               "action" => "update",
+               "patch" => %{"composite_photo_url" => "r2://job-photos/b1/comparisons/c1.png"},
+               "filters" => [%{"op" => "eq", "column" => "id", "value" => "c1"}]
+             })
+
+    assert update_sql =~ "UPDATE public.job_photo_comparisons"
+    assert update_sql =~ "cleaner_id::text = "
+    assert "cleaner-a" in params
+
+    assert {:error, :forbidden} =
+             MobileQuery.compile("cleaner-a", %{
+               "table" => "job_photo_comparisons",
+               "action" => "update",
+               "patch" => %{"booking_id" => "b2"}
+             })
+
+    assert {:error, :forbidden} =
+             MobileQuery.compile("cleaner-a", %{
+               "table" => "booking_job_photos",
+               "action" => "insert",
+               "rows" => [%{"booking_id" => "b1", "storage_path" => "b1/1-before.jpg"}]
+             })
+  end
+
   test "unclaimed jobs are visible only through the caller's job offers" do
     assert {:ok, %{sql: sql}} =
              MobileQuery.compile("cleaner-a", %{

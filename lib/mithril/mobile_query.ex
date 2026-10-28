@@ -149,7 +149,8 @@ defmodule Mithril.MobileQuery do
     "property_calendar_feeds" => MapSet.new(~w(insert update delete)),
     "property_media" => MapSet.new(~w(insert delete)),
     "property_preferred_cleaners" => MapSet.new(~w(insert delete)),
-    "property_private_instructions" => MapSet.new(~w(insert update upsert delete))
+    "property_private_instructions" => MapSet.new(~w(insert update upsert delete)),
+    "job_photo_comparisons" => MapSet.new(~w(insert update delete))
   }
 
   @insert_columns %{
@@ -207,6 +208,10 @@ defmodule Mithril.MobileQuery do
     "property_private_instructions" =>
       MapSet.new(
         ~w(owner_id property_id wifi_network wifi_password parking_notes other_notes updated_at)
+      ),
+    "job_photo_comparisons" =>
+      MapSet.new(
+        ~w(booking_id before_photo_url after_photo_url title description composite_photo_url)
       )
   }
 
@@ -239,7 +244,8 @@ defmodule Mithril.MobileQuery do
       )),
     "property_calendar_feeds" => MapSet.new(~w(name source updated_at)),
     "property_private_instructions" =>
-      MapSet.new(~w(wifi_network wifi_password parking_notes other_notes updated_at))
+      MapSet.new(~w(wifi_network wifi_password parking_notes other_notes updated_at)),
+    "job_photo_comparisons" => MapSet.new(~w(composite_photo_url title description))
   }
 
   def compile(user_id, query) when is_binary(user_id) and is_map(query) do
