@@ -347,7 +347,8 @@ for {env_key, config_key} <- [
       {"TWILIO_TEMPLATE_CLEANER_ARRIVED", :twilio_template_cleaner_arrived},
       {"TWILIO_TEMPLATE_CLEANER_ASSIGNED", :twilio_template_cleaner_assigned},
       {"TWILIO_TEMPLATE_NEW_BOOKING", :twilio_template_new_booking},
-      {"TWILIO_TEMPLATE_PAYMENT_RECEIVED", :twilio_template_payment_received}
+      {"TWILIO_TEMPLATE_PAYMENT_RECEIVED", :twilio_template_payment_received},
+      {"TWILIO_TEMPLATE_PAYMENT_REQUEST", :twilio_template_payment_request}
     ] do
   if content_sid = System.get_env(env_key) do
     config :mithril, config_key, content_sid
@@ -366,8 +367,20 @@ if chef_webhook_url = System.get_env("TWILIO_CHEF_WEBHOOK_URL") do
   config :mithril, :twilio_chef_webhook_url, chef_webhook_url
 end
 
+if chef_webhook_alias = System.get_env("TWILIO_CHEF_WEBHOOK_URL_ALIAS") do
+  config :mithril, :twilio_chef_webhook_url_alias, chef_webhook_alias
+end
+
+if chef_whatsapp_from = System.get_env("TWILIO_CHEF_WHATSAPP_FROM") do
+  config :mithril, :twilio_chef_whatsapp_from, chef_whatsapp_from
+end
+
 if twilio_webhook_url = System.get_env("TWILIO_WEBHOOK_URL") do
   config :mithril, :twilio_webhook_url, twilio_webhook_url
+end
+
+if payment_callback = System.get_env("TWILIO_PAYMENT_STATUS_CALLBACK_URL") do
+  config :mithril, :twilio_payment_status_callback_url, payment_callback
 end
 
 if twilio_webhook_alias = System.get_env("TWILIO_WEBHOOK_URL_ALIAS") do

@@ -17,6 +17,8 @@ defmodule Mithril.DirectAdminMoneyFixtures do
           "worker_loan_events",
           "worker_loan_requests",
           "worker_loan_accounts",
+          "direct_payment_requests",
+          "whatsapp_content_templates",
           "admin_billing_invoices",
           "admin_payment_advices",
           "job_invoices",

@@ -6,6 +6,7 @@ defmodule Mithril.Paystack.Webhook do
   alias Mithril.DbUuid
   alias Mithril.DirectAssignmentNotify
   alias Mithril.DirectCancellation
+  alias Mithril.DirectPaymentRequests
   alias Mithril.Repo
 
   @refund_events ~w(
@@ -119,8 +120,7 @@ defmodule Mithril.Paystack.Webhook do
       Repo.transaction(fn ->
         case lock_attempt(reference) do
           nil ->
-            Logger.info("paystack webhook unknown charge reference=#{reference}")
-            %{ignored: true, reason: "unknown_reference", reference: reference}
+            settle_unmatched_charge(event)
 
           attempt ->
             apply_charge(attempt, event)
@@ -138,6 +138,22 @@ defmodule Mithril.Paystack.Webhook do
   end
 
   defp notify_settled_assignment(result), do: result
+
+  # Booking charges live on payment_attempts. A payment-request link uses its own
+  # reference, so an unknown booking reference can still be a public bill.
+  defp settle_unmatched_charge(event) do
+    case DirectPaymentRequests.settle_charge(event) do
+      :unknown ->
+        Logger.info("paystack webhook unknown charge reference=#{event.reference}")
+        %{ignored: true, reason: "unknown_reference", reference: event.reference}
+
+      {:ok, result} ->
+        result
+
+      {:error, reason} ->
+        Repo.rollback(reason)
+    end
+  end
 
   defp apply_charge(attempt, event) do
     cond do

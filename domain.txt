@@ -7,6 +7,8 @@ Paystack webhook:    https://api.tryinstaclean.com/webhooks/paystack
 Sumsub webhook:      https://api.tryinstaclean.com/webhooks/sumsub
 WhatsApp webhook:    https://api.tryinstaclean.com/whatsapp/join-as-cleaner-bot
 WhatsApp alias:      https://api.tryinstaclean.com/functions/v1/join-as-cleaner-bot
+Chef WhatsApp:       https://api.tryinstaclean.com/whatsapp/chef-intake
+Chef WhatsApp alias: https://api.tryinstaclean.com/functions/v1/chef-intake
 Health:              https://api.tryinstaclean.com/health
 Ready:               https://api.tryinstaclean.com/ready
 OpenAPI:             https://api.tryinstaclean.com/openapi.json
@@ -21,6 +23,8 @@ Paystack webhook:    https://dev.tryinstaclean.com/webhooks/paystack
 Sumsub webhook:      https://dev.tryinstaclean.com/webhooks/sumsub
 WhatsApp webhook:    https://dev.tryinstaclean.com/whatsapp/join-as-cleaner-bot
 WhatsApp alias:      https://dev.tryinstaclean.com/functions/v1/join-as-cleaner-bot
+Chef WhatsApp:       https://dev.tryinstaclean.com/whatsapp/chef-intake
+Chef WhatsApp alias: https://dev.tryinstaclean.com/functions/v1/chef-intake
 Health:              https://dev.tryinstaclean.com/health
 Ready:               https://dev.tryinstaclean.com/ready
 OpenAPI:             https://dev.tryinstaclean.com/openapi.json

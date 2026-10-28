@@ -39,4 +39,16 @@ defmodule Mithril.GuestMobileRateLimitTest do
     assert :ok = GuestMobileRateLimit.check_guest_timezone(ip)
     assert {:error, :rate_limited} = GuestMobileRateLimit.check_guest_timezone(ip)
   end
+
+  test "the static guest timezone route uses the timezone limit", %{ip: ip} do
+    conn = Plug.Test.conn(:post, "/mobile/guest/actions/timezone", "")
+    ip_parts = ip |> String.split(".") |> Enum.map(&String.to_integer/1) |> List.to_tuple()
+    conn = %{conn | remote_ip: ip_parts}
+
+    assert %{halted: false} = MithrilWeb.Plugs.GuestMobileRateLimit.call(conn, [])
+    assert %{halted: false} = MithrilWeb.Plugs.GuestMobileRateLimit.call(conn, [])
+
+    assert %{status: 429, halted: true} =
+             MithrilWeb.Plugs.GuestMobileRateLimit.call(conn, [])
+  end
 end

@@ -1,70 +1,63 @@
 defmodule Mithril.WhatsApp.ChefWebhook do
   @moduledoc """
-  Signed Twilio inbound webhook for the chef inquiry flow.
+  Signed Twilio inbound webhook for the dedicated chef WhatsApp bot.
 
-  Completed enquiries remain in public.whatsapp_chef_intakes pending a
-  subsequent Direct placement integration. Never say an order was submitted
-  to Direct until that integration succeeds.
+  This bot is a separate sender from cleaner recruitment. Completed enquiries
+  remain in public.whatsapp_chef_intakes pending a subsequent Direct placement
+  integration. Never say an order was submitted to Direct until that
+  integration succeeds.
   """
 
   alias Mithril.Repo
   alias Mithril.WhatsApp.ChefIntake
   alias Mithril.WhatsApp.TwilioSignature
 
+  def configured? do
+    present?(Application.get_env(:mithril, :twilio_auth_token)) and
+      present?(Application.get_env(:mithril, :twilio_chef_webhook_url))
+  end
+
   def handle(params, signature) when is_map(params) do
-    token = Application.get_env(:mithril, :twilio_auth_token)
-    url = Application.get_env(:mithril, :twilio_chef_webhook_url)
-
-    valid_params =
-      params
-      |> Enum.filter(fn {_key, value} -> is_binary(value) end)
-      |> Map.new()
-
     cond do
-      not (is_binary(token) and byte_size(token) > 0 and is_binary(url) and byte_size(url) > 0) ->
+      not configured?() ->
         {:error, :not_configured}
 
-      not TwilioSignature.valid?(valid_params, signature, token, url) ->
+      not valid_signature?(params, signature) ->
         {:error, :unauthorized}
 
-      true ->
-        from = Map.get(params, "From", "")
-        sid = Map.get(params, "MessageSid", "")
-        body = Map.get(params, "Body", "")
+      not addressed_to_chef?(params) ->
+        {:error, :invalid_request}
 
-        if String.starts_with?(from, "whatsapp:+") and byte_size(from) <= 32 and
-             is_binary(sid) and byte_size(sid) > 0 and byte_size(sid) <= 100 do
-          transaction(from, sid, body)
-        else
-          {:error, :invalid_request}
-        end
+      true ->
+        ingest(params)
     end
   end
 
-  @doc "Uses the recruitment endpoint's already-verified Twilio signature."
-  def handle_verified(params) when is_map(params) do
+  @doc "TwiML that sends cleaner-recruitment traffic to the chef WhatsApp line."
+  def recruitment_redirect_twiml do
+    twiml(recruitment_redirect_text())
+  end
+
+  def recruitment_redirect_text do
+    case display_line(chef_from()) do
+      nil ->
+        "This WhatsApp line is for cleaner applications. Reply APPLY to start. Chef enquiries use a separate Instaclean WhatsApp bot."
+
+      {display, link} ->
+        "Chef enquiries have their own WhatsApp bot. Message #{display} or open #{link}."
+    end
+  end
+
+  defp ingest(params) do
     from = Map.get(params, "From", "")
     sid = Map.get(params, "MessageSid", "")
     body = Map.get(params, "Body", "")
 
-    if is_binary(from) and String.starts_with?(from, "whatsapp:+") and
-         byte_size(from) <= 32 and is_binary(sid) and
-         byte_size(sid) > 0 and byte_size(sid) <= 100 and is_binary(body) do
+    if is_binary(from) and String.starts_with?(from, "whatsapp:+") and byte_size(from) <= 32 and
+         is_binary(sid) and byte_size(sid) > 0 and byte_size(sid) <= 100 and is_binary(body) do
       transaction(from, sid, body)
     else
       {:error, :invalid_request}
-    end
-  end
-
-  @doc "Checks chef ownership and propagates database failures."
-  def active?(phone) when is_binary(phone) do
-    case Repo.query(
-           "SELECT status FROM public.whatsapp_chef_intakes WHERE phone = $1",
-           [phone]
-         ) do
-      {:ok, %{rows: [[status]]}} -> {:ok, status in ["in_progress", "confirm"]}
-      {:ok, %{rows: []}} -> {:ok, false}
-      {:error, _} -> {:error, :database}
     end
   end
 
@@ -120,7 +113,10 @@ defmodule Mithril.WhatsApp.ChefWebhook do
           [phone, sid]
         )
 
-        "Chef enquiry closed. You can now reply APPLY to start a cleaner application, or CHEF to begin again."
+        "Chef enquiry closed. Reply CHEF to begin again."
+
+      command == "APPLY" ->
+        cleaner_redirect_text()
 
       command == "CHEF" or row == nil or match?([_, "paused", _], row) ->
         {state, reply} = ChefIntake.start()
@@ -178,6 +174,89 @@ defmodule Mithril.WhatsApp.ChefWebhook do
       {:error, reason} -> Repo.rollback(reason)
     end
   end
+
+  defp valid_signature?(params, signature) do
+    token = Application.get_env(:mithril, :twilio_auth_token)
+
+    string_params =
+      params
+      |> Enum.filter(fn {_key, value} ->
+        is_binary(value) or is_number(value) or is_boolean(value)
+      end)
+      |> Map.new(fn {key, value} -> {to_string(key), value} end)
+
+    Enum.any?(webhook_urls(), fn url ->
+      TwilioSignature.valid?(string_params, signature, token, url)
+    end)
+  end
+
+  defp webhook_urls do
+    [
+      Application.get_env(:mithril, :twilio_chef_webhook_url),
+      Application.get_env(:mithril, :twilio_chef_webhook_url_alias)
+    ]
+    |> Enum.filter(&present?/1)
+  end
+
+  defp addressed_to_chef?(params) do
+    case chef_from() do
+      nil ->
+        true
+
+      expected ->
+        canonical(Map.get(params, "To", "")) == canonical(expected)
+    end
+  end
+
+  defp chef_from do
+    case Application.get_env(:mithril, :twilio_chef_whatsapp_from) do
+      value when is_binary(value) ->
+        trimmed = String.trim(value)
+        if trimmed == "", do: nil, else: trimmed
+
+      _ ->
+        nil
+    end
+  end
+
+  defp cleaner_redirect_text do
+    case display_line(Application.get_env(:mithril, :twilio_whatsapp_from)) do
+      nil ->
+        "This WhatsApp line is for chef enquiries. To apply as a cleaner, visit tryinstaclean.com/join-as-cleaner."
+
+      {display, link} ->
+        "This WhatsApp line is for chef enquiries. To apply as a cleaner, message #{display} or open #{link}."
+    end
+  end
+
+  defp display_line(value) when is_binary(value) do
+    e164 =
+      value
+      |> String.trim()
+      |> String.replace(~r/^whatsapp:/i, "")
+
+    digits = String.replace(e164, ~r/\D/, "")
+
+    if String.starts_with?(e164, "+") and byte_size(digits) >= 10 do
+      {e164, "https://wa.me/#{digits}"}
+    else
+      nil
+    end
+  end
+
+  defp display_line(_), do: nil
+
+  defp canonical(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> String.replace(~r/^whatsapp:/i, "")
+    |> String.replace(~r/\s+/, "")
+  end
+
+  defp canonical(_), do: ""
+
+  defp present?(value) when is_binary(value), do: String.trim(value) != ""
+  defp present?(_), do: false
 
   defp twiml(""), do: "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>"
 
