@@ -17,11 +17,13 @@ defmodule Mithril.DirectPaymentRequests do
   alias Mithril.Repo
   alias Mithril.WhatsApp.PaymentTemplate
   alias Mithril.WhatsApp.Recruitment.Outbound
+  alias Mithril.WhatsApp.TwilioSignature
 
   @columns ~w(
     id public_token customer_user_id customer_name phone_e164 email description
     amount_minor currency status channel paystack_reference authorization_url
-    delivery_error idempotency_key sent_at paid_at created_at
+    delivery_error idempotency_key delivery_claimed_at twilio_message_sid
+    sms_fallback_claimed_at sent_at paid_at created_at
   )
   @min_minor 100
   @max_minor 2_147_483_647
@@ -85,11 +87,13 @@ defmodule Mithril.DirectPaymentRequests do
 
               case ensure_authorization(row) do
                 {:ok, checkout} -> checkout
-                {:error, reason} -> Repo.rollback(reason)
+                # A rotated reference must commit even when initialization failed.
+                {:error, reason} -> {:checkout_error, reason}
               end
           end
         end)
         |> normalize_transaction()
+        |> unwrap_checkout_error()
       end
     else
       {:error, :not_found}
@@ -113,10 +117,12 @@ defmodule Mithril.DirectPaymentRequests do
               else: Repo.rollback(:not_found)
 
           %{"paystack_reference" => stored} = row ->
-            if stored != String.trim(reference) do
+            submitted = String.trim(reference)
+
+            if stored != submitted and not previous_reference?(row["id"], submitted) do
               Repo.rollback(:not_found)
             else
-              case confirm_paid(row) do
+              case confirm_paid(row, submitted) do
                 {:ok, paid} -> public_json(paid)
                 {:error, reason} -> Repo.rollback(reason)
               end
@@ -144,7 +150,7 @@ defmodule Mithril.DirectPaymentRequests do
              "#{select_sql()} WHERE paystack_reference = $1 FOR UPDATE",
              [reference]
            ) do
-        {:ok, %{rows: []}} -> :unknown
+        {:ok, %{rows: []}} -> settle_previous_reference(reference, event)
         {:ok, %{rows: [row]}} -> apply_webhook(row_map(row), event)
         {:error, error} -> database_error(error)
       end
@@ -154,6 +160,92 @@ defmodule Mithril.DirectPaymentRequests do
   end
 
   def settle_charge(_), do: :unknown
+
+  @doc "Reconcile an authenticated Twilio delivery callback. A failed WhatsApp send triggers SMS once."
+  def payment_status_callback(token, params, signature) when is_map(params) do
+    base = Application.get_env(:mithril, :twilio_payment_status_callback_url)
+    auth_token = Application.get_env(:mithril, :twilio_auth_token)
+
+    with true <- token_ok?(token),
+         true <- is_binary(base) and String.starts_with?(base, "https://"),
+         true <- TwilioSignature.valid?(params, signature, auth_token, String.trim_trailing(base, "/") <> "/" <> token) do
+      status = params["MessageStatus"] || params["SmsStatus"]
+      sid = params["MessageSid"] || params["SmsSid"]
+
+      if status in ["failed", "undelivered"] and is_binary(sid) and sid != "" do
+        send_failed_whatsapp_sms(token, sid)
+      else
+        :ok
+      end
+    else
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  defp send_failed_whatsapp_sms(token, sid) do
+    case Repo.query(
+           """
+           UPDATE public.direct_payment_requests
+           SET sms_fallback_claimed_at = now(), updated_at = now()
+           WHERE public_token = $1 AND status = 'unpaid'
+             AND sms_fallback_claimed_at IS NULL
+             AND (twilio_message_sid IS NULL OR twilio_message_sid = $2)
+             AND delivery_claimed_at IS NOT NULL
+           RETURNING #{Enum.join(@columns, ", ")}
+           """,
+           [token, sid]
+         ) do
+      {:ok, %{rows: [row]}} ->
+        request = row_map(row)
+
+        case sms(request) do
+          {:ok, "sms", nil} ->
+            _ = Repo.query(
+              """
+              UPDATE public.direct_payment_requests
+              SET channel = 'sms', sent_at = now(), delivery_error = NULL, updated_at = now()
+              WHERE id = $1
+              """,
+              [request["id"]]
+            )
+
+          {:error, reason} ->
+            _ = Repo.query(
+              """
+              UPDATE public.direct_payment_requests
+              SET delivery_error = $2, updated_at = now()
+              WHERE id = $1
+              """,
+              [request["id"], "sms_fallback_" <> Atom.to_string(reason)]
+            )
+        end
+
+        :ok
+
+      {:ok, %{rows: []}} -> :ok
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp settle_previous_reference(reference, event) do
+    columns = Enum.map_join(@columns, ", ", &"request.#{&1}")
+
+    case Repo.query(
+           """
+           SELECT #{columns}
+           FROM public.direct_payment_requests request
+           JOIN public.direct_payment_request_references old
+             ON old.payment_request_id = request.id
+           WHERE old.reference = $1
+           FOR UPDATE OF request
+           """,
+           [reference]
+         ) do
+      {:ok, %{rows: [row]}} -> apply_webhook(row_map(row), event)
+      {:ok, %{rows: []}} -> :unknown
+      {:error, error} -> database_error(error)
+    end
+  end
 
   def sms_body(request) when is_map(request) do
     url = pay_url(request["public_token"])
@@ -179,7 +271,7 @@ defmodule Mithril.DirectPaymentRequests do
   defp insert_and_send(admin_uid, input) do
     id = Ecto.UUID.generate()
     token = random_token()
-    reference = "icpr_" <> random_hex(12)
+    reference = "icpr-" <> random_hex(12)
 
     params = [
       dump!(id),
@@ -241,9 +333,22 @@ defmodule Mithril.DirectPaymentRequests do
   defp send_and_present(row) do
     request = row_map(row)
 
+    case claim_delivery(request["id"]) do
+      {:ok, nil} ->
+        {:ok, admin_json(request)}
+
+      {:ok, claimed} ->
+        deliver_claimed(claimed)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp deliver_claimed(request) do
     case deliver(request) do
-      {:ok, channel} ->
-        case mark_sent(request["id"], channel) do
+      {:ok, channel, message_sid} ->
+        case mark_sent(request["id"], channel, message_sid) do
           {:ok, updated} ->
             {:ok, admin_json(updated)}
 
@@ -260,10 +365,26 @@ defmodule Mithril.DirectPaymentRequests do
     end
   end
 
+  defp claim_delivery(id) do
+    case Repo.query(
+           """
+           UPDATE public.direct_payment_requests
+           SET delivery_claimed_at = now(), updated_at = now()
+           WHERE id = $1 AND sent_at IS NULL AND delivery_claimed_at IS NULL
+           RETURNING #{Enum.join(@columns, ", ")}
+           """,
+           [id]
+         ) do
+      {:ok, %{rows: [row]}} -> {:ok, row_map(row)}
+      {:ok, %{rows: []}} -> {:ok, nil}
+      {:error, error} -> database_error(error)
+    end
+  end
+
   defp deliver(request) do
     case whatsapp(request) do
-      :ok ->
-        {:ok, "whatsapp"}
+      {:ok, sid} ->
+        {:ok, "whatsapp", sid}
 
       {:error, :twilio_unavailable} ->
         {:error, :delivery_unknown}
@@ -274,7 +395,8 @@ defmodule Mithril.DirectPaymentRequests do
   end
 
   defp whatsapp(request) do
-    with {:ok, sid} <- PaymentTemplate.ensure(),
+    with {:ok, callback_url} <- payment_callback_url(request["public_token"]),
+         {:ok, sid} <- PaymentTemplate.ensure(),
          {:ok, from} <- admin_from() do
       Outbound.send_content(
         "whatsapp:" <> request["phone_e164"],
@@ -285,14 +407,25 @@ defmodule Mithril.DirectPaymentRequests do
           "description" => request["description"],
           "amountLabel" => DirectAdminInvoices.money(request["amount_minor"]),
           "publicToken" => request["public_token"]
-        })
+        }),
+        callback_url
       )
+    end
+  end
+
+  defp payment_callback_url(token) do
+    base = Application.get_env(:mithril, :twilio_payment_status_callback_url)
+
+    if is_binary(base) and String.starts_with?(base, "https://") do
+      {:ok, String.trim_trailing(base, "/") <> "/" <> token}
+    else
+      {:error, :twilio_not_configured}
     end
   end
 
   defp sms(request) do
     case SMS.send_message(request["phone_e164"], sms_body(request)) do
-      :ok -> {:ok, "sms"}
+      :ok -> {:ok, "sms", nil}
       {:error, :sms_not_configured} -> {:error, :sms_not_configured}
       {:error, :invalid_phone} -> {:error, :invalid_phone}
       {:error, _} -> {:error, :sms_delivery_failed}
@@ -363,13 +496,60 @@ defmodule Mithril.DirectPaymentRequests do
 
         {:error, reason} ->
           Logger.warning("payment request checkout failed #{inspect(reason)}")
+          # The provider may have accepted the first request before its HTTP
+          # response was lost. Preserve that reference for late webhooks, then
+          # issue a fresh one for the next public checkout attempt.
+          _ = rotate_reference(row)
           {:error, :payment_unavailable}
       end
     end
   end
 
-  defp confirm_paid(row) do
-    case Paystack.verify(row["paystack_reference"]) do
+  defp rotate_reference(row) do
+    new_reference = "icpr-" <> random_hex(12)
+
+    with {:ok, _} <-
+           Repo.query(
+             """
+             INSERT INTO public.direct_payment_request_references
+               (reference, payment_request_id)
+             VALUES ($1, $2)
+             ON CONFLICT (reference) DO NOTHING
+             """,
+             [row["paystack_reference"], row["id"]]
+           ),
+         {:ok, %{rows: [[_]]}} <-
+           Repo.query(
+             """
+             UPDATE public.direct_payment_requests
+             SET paystack_reference = $2, authorization_url = NULL, updated_at = now()
+             WHERE id = $1 AND paystack_reference = $3 AND status = 'unpaid'
+             RETURNING id
+             """,
+             [row["id"], new_reference, row["paystack_reference"]]
+           ) do
+      :ok
+    else
+      _ -> {:error, :payment_conflict}
+    end
+  end
+
+  defp previous_reference?(id, reference) do
+    case Repo.query(
+           """
+           SELECT 1 FROM public.direct_payment_request_references
+           WHERE payment_request_id = $1 AND reference = $2
+           LIMIT 1
+           """,
+           [id, reference]
+         ) do
+      {:ok, %{rows: [[1]]}} -> true
+      _ -> false
+    end
+  end
+
+  defp confirm_paid(row, reference) do
+    case Paystack.verify(reference) do
       {:ok, receipt} ->
         cond do
           receipt_value(receipt, :status) != "success" ->
@@ -381,7 +561,7 @@ defmodule Mithril.DirectPaymentRequests do
           receipt_value(receipt, :currency) != (row["currency"] || "GHS") ->
             {:error, :amount_mismatch}
 
-          receipt_value(receipt, :reference) not in [nil, row["paystack_reference"]] ->
+          receipt_value(receipt, :reference) not in [nil, reference] ->
             {:error, :amount_mismatch}
 
           true ->
@@ -459,15 +639,19 @@ defmodule Mithril.DirectPaymentRequests do
     end
   end
 
-  defp mark_sent(id, channel) do
+  defp mark_sent(id, channel, sid) do
     case Repo.query(
            """
            UPDATE public.direct_payment_requests
-           SET channel = $2, sent_at = now(), delivery_error = NULL, updated_at = now()
+           SET channel = CASE WHEN sms_fallback_claimed_at IS NULL THEN $2 ELSE channel END,
+               twilio_message_sid = $3,
+               sent_at = now(),
+               delivery_error = CASE WHEN sms_fallback_claimed_at IS NULL THEN NULL ELSE delivery_error END,
+               updated_at = now()
            WHERE id = $1
            RETURNING #{Enum.join(@columns, ", ")}
            """,
-           [id, channel]
+           [id, channel, sid]
          ) do
       {:ok, %{rows: [row]}} -> {:ok, row_map(row)}
       {:error, error} -> database_error(error)
@@ -761,6 +945,9 @@ defmodule Mithril.DirectPaymentRequests do
   defp normalize_transaction({:ok, value}), do: {:ok, value}
   defp normalize_transaction({:error, reason}) when is_atom(reason), do: {:error, reason}
   defp normalize_transaction({:error, error}), do: database_error(error)
+
+  defp unwrap_checkout_error({:ok, {:checkout_error, reason}}), do: {:error, reason}
+  defp unwrap_checkout_error(result), do: result
 
   defp database_error(error) do
     Logger.error("Direct payment request database error: #{inspect(error)}")
