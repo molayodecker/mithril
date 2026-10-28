@@ -118,7 +118,9 @@ defmodule Mithril.MobileFunctions.JobPhotos do
 
     case query do
       {:ok, %{rows: [[1]]}} -> :ok
-      _ -> {:error, :not_found}
+      {:ok, %{rows: []}} -> {:error, :not_found}
+      {:error, _reason} -> {:error, :database_unavailable}
+      _ -> {:error, :database_unavailable}
     end
   end
 
@@ -126,6 +128,7 @@ defmodule Mithril.MobileFunctions.JobPhotos do
     case registered(booking_id, path) do
       {:error, :not_found} -> :ok
       :ok -> {:error, :still_registered}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -158,6 +161,9 @@ defmodule Mithril.MobileFunctions.JobPhotos do
 
   defp fail(:forbidden), do: {:error, {:status, 403, %{error: "forbidden"}}}
   defp fail(:not_found), do: {:error, {:status, 404, %{error: "not_found"}}}
+  defp fail(:database_unavailable),
+    do: {:error, {:status, 503, %{error: "database_unavailable"}}}
+
   defp fail(:storage_unavailable), do: {:error, {:status, 502, %{error: "storage_unavailable"}}}
 
   defp fail(:storage_not_configured),
