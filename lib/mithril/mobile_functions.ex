@@ -13,6 +13,7 @@ defmodule Mithril.MobileFunctions do
   alias Mithril.MobileFunctions.NotifyPaymentFailureOps
   alias Mithril.MobileFunctions.Paystack
   alias Mithril.MobileFunctions.RankCleanersWithAi
+  alias Mithril.MobileFunctions.ReplaceCleanerWeeklyAvailability
   alias Mithril.MobileFunctions.RequestDataExport
   alias Mithril.MobileFunctions.SendAppNotification
   alias Mithril.MobileFunctions.SumsubToken
@@ -88,6 +89,9 @@ defmodule Mithril.MobileFunctions do
 
   def invoke(user_id, "rank-cleaners-with-ai", body) when is_map(body),
     do: RankCleanersWithAi.call(user_id, body)
+
+  def invoke(user_id, "replace-cleaner-weekly-availability", body) when is_map(body),
+    do: ReplaceCleanerWeeklyAvailability.call(user_id, body)
 
   def invoke(user_id, "request-data-export", body) when is_map(body),
     do: RequestDataExport.call(user_id, body)

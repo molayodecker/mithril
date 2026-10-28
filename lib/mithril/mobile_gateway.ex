@@ -23,6 +23,7 @@ defmodule Mithril.MobileGateway do
     paystack-initiate-transfer
     paystack-resolve-bank-account
     rank-cleaners-with-ai
+    replace-cleaner-weekly-availability
     request-data-export
     send-app-notification
     sumsub-config/token
