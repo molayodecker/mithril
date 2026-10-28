@@ -97,7 +97,9 @@ defmodule Mithril.MobileFunctions.JobPhotosTest do
     insert_job_photo!(booking_id, cleaner_id, path)
 
     # Transactional DDL simulates a failed registration lookup without using R2.
-    Repo.query!("ALTER TABLE public.booking_job_photos RENAME TO booking_job_photos_unavailable_test")
+    Repo.query!(
+      "ALTER TABLE public.booking_job_photos RENAME TO booking_job_photos_unavailable_test"
+    )
 
     # The SQL sandbox rolls back the table rename and failed lookup at test exit.
     assert {:error, {:status, 503, %{error: "database_unavailable"}}} =
