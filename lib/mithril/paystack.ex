@@ -55,7 +55,6 @@ defmodule Mithril.Paystack.Test do
   end
 
   defp initialize_valid_reference(attrs, reference) do
-
     record = %{
       authorization_url: "https://checkout.paystack.com/#{reference}",
       access_code: "access_#{reference}",
