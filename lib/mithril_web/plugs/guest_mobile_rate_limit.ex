@@ -32,10 +32,10 @@ defmodule MithrilWeb.Plugs.GuestMobileRateLimit do
   end
 
   defp guest_route_kind(conn) do
-    case normalize_route_name(conn.path_params["name"]) do
-      "timezone" -> :timezone
-      _ -> :guest_prep
-    end
+    if conn.request_path == "/mobile/guest/actions/timezone" or
+         normalize_route_name(conn.path_params["name"]) == "timezone",
+       do: :timezone,
+       else: :guest_prep
   end
 
   defp normalize_route_name(name) when is_binary(name), do: name
