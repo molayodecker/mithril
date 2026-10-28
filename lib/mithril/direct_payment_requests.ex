@@ -168,7 +168,13 @@ defmodule Mithril.DirectPaymentRequests do
 
     with true <- token_ok?(token),
          true <- is_binary(base) and String.starts_with?(base, "https://"),
-         true <- TwilioSignature.valid?(params, signature, auth_token, String.trim_trailing(base, "/") <> "/" <> token) do
+         true <-
+           TwilioSignature.valid?(
+             params,
+             signature,
+             auth_token,
+             String.trim_trailing(base, "/") <> "/" <> token
+           ) do
       status = params["MessageStatus"] || params["SmsStatus"]
       sid = params["MessageSid"] || params["SmsSid"]
 
@@ -200,30 +206,35 @@ defmodule Mithril.DirectPaymentRequests do
 
         case sms(request) do
           {:ok, "sms", nil} ->
-            _ = Repo.query(
-              """
-              UPDATE public.direct_payment_requests
-              SET channel = 'sms', sent_at = now(), delivery_error = NULL, updated_at = now()
-              WHERE id = $1
-              """,
-              [request["id"]]
-            )
+            _ =
+              Repo.query(
+                """
+                UPDATE public.direct_payment_requests
+                SET channel = 'sms', sent_at = now(), delivery_error = NULL, updated_at = now()
+                WHERE id = $1
+                """,
+                [request["id"]]
+              )
 
           {:error, reason} ->
-            _ = Repo.query(
-              """
-              UPDATE public.direct_payment_requests
-              SET delivery_error = $2, updated_at = now()
-              WHERE id = $1
-              """,
-              [request["id"], "sms_fallback_" <> Atom.to_string(reason)]
-            )
+            _ =
+              Repo.query(
+                """
+                UPDATE public.direct_payment_requests
+                SET delivery_error = $2, updated_at = now()
+                WHERE id = $1
+                """,
+                [request["id"], "sms_fallback_" <> Atom.to_string(reason)]
+              )
         end
 
         :ok
 
-      {:ok, %{rows: []}} -> :ok
-      {:error, error} -> database_error(error)
+      {:ok, %{rows: []}} ->
+        :ok
+
+      {:error, error} ->
+        database_error(error)
     end
   end
 
