@@ -6,7 +6,7 @@ defmodule Mithril.MobileFunctions.JobPhotos do
   alias Mithril.R2Storage
 
   @booking_id ~r/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-  @photo_path ~r/^[0-9a-f-]{36}\/\d{16,}-(before|during|after)\.(jpg|jpeg|png|webp)$/i
+  @photo_path ~r/^[0-9a-f-]{36}\/\d{16,}-(before|during|after|issue)\.(jpg|jpeg|png|webp)$/i
   @composite_path ~r/^[0-9a-f-]{36}\/comparisons\/[0-9a-f-]{36}\.png$/i
   @max_bytes 5 * 1024 * 1024
 
