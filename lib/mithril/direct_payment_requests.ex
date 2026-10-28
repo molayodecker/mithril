@@ -112,7 +112,9 @@ defmodule Mithril.DirectPaymentRequests do
             Repo.rollback(:not_found)
 
           %{"status" => "paid", "paystack_reference" => stored} = row ->
-            if stored == String.trim(reference),
+            submitted = String.trim(reference)
+
+            if stored == submitted or previous_reference?(row["id"], submitted),
               do: public_json(row),
               else: Repo.rollback(:not_found)
 
@@ -216,6 +218,24 @@ defmodule Mithril.DirectPaymentRequests do
                 [request["id"]]
               )
 
+            :ok
+
+          {:error, :sms_not_configured} ->
+            # No provider call was made. Release only this definite non-send so
+            # a retried signed Twilio callback can deliver after configuration.
+            _ =
+              Repo.query(
+                """
+                UPDATE public.direct_payment_requests
+                SET sms_fallback_claimed_at = NULL,
+                    delivery_error = 'sms_fallback_sms_not_configured', updated_at = now()
+                WHERE id = $1
+                """,
+                [request["id"]]
+              )
+
+            {:error, :sms_retryable}
+
           {:error, reason} ->
             _ =
               Repo.query(
@@ -226,9 +246,9 @@ defmodule Mithril.DirectPaymentRequests do
                 """,
                 [request["id"], "sms_fallback_" <> Atom.to_string(reason)]
               )
-        end
 
-        :ok
+            :ok
+        end
 
       {:ok, %{rows: []}} ->
         :ok
