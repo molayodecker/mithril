@@ -47,6 +47,7 @@ defmodule Mithril.GuestMobileRateLimitTest do
 
     assert %{halted: false} = MithrilWeb.Plugs.GuestMobileRateLimit.call(conn, [])
     assert %{halted: false} = MithrilWeb.Plugs.GuestMobileRateLimit.call(conn, [])
+
     assert %{status: 429, halted: true} =
              MithrilWeb.Plugs.GuestMobileRateLimit.call(conn, [])
   end
