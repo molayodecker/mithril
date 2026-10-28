@@ -161,6 +161,7 @@ defmodule Mithril.MobileFunctions.JobPhotos do
 
   defp fail(:forbidden), do: {:error, {:status, 403, %{error: "forbidden"}}}
   defp fail(:not_found), do: {:error, {:status, 404, %{error: "not_found"}}}
+
   defp fail(:database_unavailable),
     do: {:error, {:status, 503, %{error: "database_unavailable"}}}
 
