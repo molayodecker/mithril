@@ -91,6 +91,22 @@ defmodule Mithril.MobileFunctions.JobPhotosTest do
              })
   end
 
+  test "database lookup failure never authorizes R2 deletion" do
+    {cleaner_id, _customer_id, booking_id} = insert_booking!("in_progress")
+    path = "#{booking_id}/1760000000000000-before.jpg"
+    insert_job_photo!(booking_id, cleaner_id, path)
+
+    # Transactional DDL simulates a failed registration lookup without using R2.
+    Repo.query!("ALTER TABLE public.booking_job_photos RENAME TO booking_job_photos_unavailable_test")
+
+    # The SQL sandbox rolls back the table rename and failed lookup at test exit.
+    assert {:error, {:status, 503, %{error: "database_unavailable"}}} =
+             JobPhotos.delete(cleaner_id, %{
+               "booking_id" => booking_id,
+               "storage_path" => path
+             })
+  end
+
   test "customers can resolve a registered photo URL but cannot delete it" do
     {cleaner_id, customer_id, booking_id} = insert_booking!("in_progress")
     path = "#{booking_id}/1760000000000000-before.jpg"
