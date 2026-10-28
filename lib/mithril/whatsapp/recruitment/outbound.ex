@@ -28,7 +28,8 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
   A non-2xx response whose Twilio code means the number is not on WhatsApp
   returns `{:error, :not_on_whatsapp}` so the caller can send SMS instead.
   """
-  def send_content(to, from, content_sid, variables) when is_map(variables) do
+  def send_content(to, from, content_sid, variables, status_callback_url \\ nil)
+      when is_map(variables) do
     with {:ok, env} <- twilio_env() do
       fields =
         [
@@ -37,6 +38,7 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
           {"ContentVariables", Jason.encode!(variables)}
         ]
         |> maybe_from(env, from)
+        |> maybe_status_callback(status_callback_url)
 
       post_content(env, fields)
     end
@@ -106,6 +108,11 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
     end
   end
 
+  defp maybe_status_callback(fields, url) when is_binary(url) and url != "",
+    do: [{"StatusCallback", url} | fields]
+
+  defp maybe_status_callback(fields, _), do: fields
+
   defp post_message(env, fields) do
     case Application.get_env(:mithril, :twilio_http, :http) do
       :noop -> :ok
@@ -116,7 +123,7 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
 
   defp post_content(env, fields) do
     case Application.get_env(:mithril, :twilio_http, :http) do
-      :noop -> :ok
+      :noop -> {:ok, "SMtest-payment-request"}
       {:error, reason} -> {:error, reason}
       _ -> post_content_http(env, fields)
     end
@@ -143,8 +150,12 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
     url = "https://api.twilio.com/2010-04-01/Accounts/#{env.sid}/Messages.json"
 
     case Req.post(url, form: fields, auth: {:basic, "#{env.sid}:#{env.token}"}) do
+      {:ok, %{status: status, body: %{"sid" => sid}}}
+      when status in 200..299 and is_binary(sid) and sid != "" ->
+        {:ok, sid}
+
       {:ok, %{status: status}} when status in 200..299 ->
-        :ok
+        {:error, :twilio_unavailable}
 
       {:ok, %{status: status, body: body}} ->
         if not_on_whatsapp?(body) do
