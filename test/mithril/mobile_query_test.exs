@@ -77,6 +77,25 @@ defmodule Mithril.MobileQueryTest do
     assert "cleaner-1" in params
   end
 
+  test "weekday blocks can be read only for the signed-in cleaner" do
+    assert {:ok, %{sql: sql, params: params}} =
+             MobileQuery.compile("cleaner-1", %{
+               "table" => "cleaner_weekday_blocks",
+               "action" => "select",
+               "columns" => ["day_of_week"]
+             })
+
+    assert sql =~ "cleaner_weekday_blocks.cleaner_id::text = "
+    assert "cleaner-1" in params
+
+    assert {:error, :forbidden} =
+             MobileQuery.compile("cleaner-1", %{
+               "table" => "cleaner_weekday_blocks",
+               "action" => "insert",
+               "rows" => [%{"cleaner_id" => "cleaner-1", "day_of_week" => 0}]
+             })
+  end
+
   test "weekly hours updates are scoped to the caller and never accept cleaner_id patches" do
     for table <- ["availability", "cleaner_schedules"] do
       assert {:ok, %{sql: sql, params: [%{"start_time" => "09:00:00"} | params]}} =

@@ -1603,6 +1603,7 @@ defmodule Mithril.DirectBookingsTest do
     Repo.query!("DROP TABLE IF EXISTS public.turnover_opportunities CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.properties CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.subscriptions CASCADE")
+    Repo.query!("DROP TABLE IF EXISTS public.cleaner_weekday_blocks CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.cleaner_availability_exceptions CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.cleaner_data CASCADE")
     Repo.query!("DROP TABLE IF EXISTS public.service_types CASCADE")
@@ -1831,6 +1832,14 @@ defmodule Mithril.DirectBookingsTest do
     CREATE TABLE public.cleaner_availability_exceptions (
       cleaner_id uuid NOT NULL,
       exception_date date NOT NULL
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.cleaner_weekday_blocks (
+      cleaner_id uuid NOT NULL,
+      day_of_week smallint NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
+      PRIMARY KEY (cleaner_id, day_of_week)
     )
     """)
 

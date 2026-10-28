@@ -22,6 +22,7 @@ defmodule Mithril.MobileQuery do
     cleaner_devices
     cleaner_schedules
     cleaner_tracking
+    cleaner_weekday_blocks
     co_cleaner_invitations
     co_cleaner_relationships
     conversation_list

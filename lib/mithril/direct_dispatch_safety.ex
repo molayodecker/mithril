@@ -460,11 +460,19 @@ defmodule Mithril.DirectDispatchSafety do
     case Repo.query(
            """
            SELECT
-             EXISTS(
-               SELECT 1
-               FROM public.cleaner_availability_exceptions cae
-               WHERE cae.cleaner_id = $1
-                 AND cae.exception_date = $4::date
+             (
+               EXISTS(
+                 SELECT 1
+                 FROM public.cleaner_availability_exceptions cae
+                 WHERE cae.cleaner_id = $1
+                   AND cae.exception_date = $4::date
+               )
+               OR EXISTS(
+                 SELECT 1
+                 FROM public.cleaner_weekday_blocks block
+                 WHERE block.cleaner_id = $1
+                   AND block.day_of_week = EXTRACT(DOW FROM $4::date)::int
+               )
              ),
              public.cleaner_has_booking_conflict(
                $1,
