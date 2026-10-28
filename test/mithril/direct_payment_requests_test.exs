@@ -323,6 +323,8 @@ defmodule Mithril.DirectPaymentRequestsTest do
 
     assert {:ok, shown} = DirectPaymentRequests.public_show(token)
     assert shown["status"] == "paid"
+    assert {:ok, verified} = DirectPaymentRequests.verify(token, %{"reference" => old_reference})
+    assert verified["status"] == "paid"
   end
 
   test "late WhatsApp delivery failure sends only one SMS fallback" do
@@ -350,6 +352,62 @@ defmodule Mithril.DirectPaymentRequestsTest do
              Repo.query!(
                "SELECT channel FROM public.direct_payment_requests WHERE public_token = $1",
                [token]
+             ).rows
+  end
+
+  test "a definitively unsent SMS fallback can retry on a signed callback" do
+    admin_id = Fixtures.insert_user!("admin")
+    assert {:ok, created} = DirectPaymentRequests.create(admin_id, request())
+    token = created["publicToken"]
+    params = %{"MessageSid" => "SMtest-payment-request", "MessageStatus" => "undelivered"}
+    url = "https://api.tryinstaclean.com/webhooks/twilio/payment-status/#{token}"
+    payload = Enum.reduce(Enum.sort(params), url, fn {key, value}, acc -> acc <> key <> value end)
+    signature = :crypto.mac(:hmac, :sha, "test-signing-token", payload) |> Base.encode64()
+
+    Application.put_env(:mithril, :sms_adapter, Mithril.Auth.SMS.Disabled)
+
+    assert {:error, :sms_retryable} =
+             DirectPaymentRequests.payment_status_callback(token, params, signature)
+
+    assert [[nil]] =
+             Repo.query!(
+               "SELECT sms_fallback_claimed_at FROM public.direct_payment_requests WHERE public_token = $1",
+               [token]
+             ).rows
+
+    Application.put_env(:mithril, :sms_adapter, Mithril.Auth.SMS.Test)
+    assert :ok = DirectPaymentRequests.payment_status_callback(token, params, signature)
+    assert [{"+233241234567", _}] = Application.get_env(:mithril, :test_sms_messages)
+  end
+
+  test "template approval is retried without creating duplicate content" do
+    Application.delete_env(:mithril, :twilio_template_payment_request)
+    caller = self()
+
+    Application.put_env(:mithril, :twilio_content_http, fn
+      :create, _body ->
+        send(caller, :created)
+        {:ok, "HXgenerated"}
+
+      :approve, _body ->
+        send(caller, :approval_attempt)
+        if Process.get(:approval_failed_once) do
+          :ok
+        else
+          Process.put(:approval_failed_once, true)
+          {:error, :temporary_failure}
+        end
+    end)
+
+    assert {:error, :temporary_failure} = PaymentTemplate.ensure()
+    assert {:ok, "HXgenerated"} = PaymentTemplate.ensure()
+    assert_received :created
+    assert_received :approval_attempt
+    assert_received :approval_attempt
+    refute_received :created
+    assert [["submitted"]] =
+             Repo.query!(
+               "SELECT approval_status FROM public.whatsapp_content_templates WHERE name = 'instaclean_tap_to_pay'"
              ).rows
   end
 
@@ -408,6 +466,8 @@ defmodule Mithril.DirectPaymentRequestsTest do
       :twilio_auth_token,
       :twilio_payment_status_callback_url,
       :paystack_test_initialize_result,
+      :twilio_content_http,
+      :sms_adapter,
       :direct_public_url,
       :test_sms_messages
     ]
