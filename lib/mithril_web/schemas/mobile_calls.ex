@@ -223,6 +223,302 @@ defmodule MithrilWeb.Schemas.MobileCalls do
     })
   end
 
+  defmodule LocationTimeRequest do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileLocationTimeRequest",
+      type: :object,
+      properties: %{
+        p_timezone: %Schema{type: :string},
+        p_duration_hours: %Schema{type: :number}
+      },
+      required: [:p_timezone, :p_duration_hours]
+    })
+  end
+
+  defmodule LocationTime do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileLocationTime",
+      type: :object,
+      properties: %{
+        current_timestamp_tz: %Schema{type: :string, nullable: true},
+        local_date: %Schema{type: :string, nullable: true},
+        local_time: %Schema{type: :string, nullable: true},
+        latest_start_time: %Schema{type: :string, nullable: true},
+        same_day_cutoff_at: %Schema{type: :string, nullable: true},
+        is_past_day_cutoff: %Schema{type: :boolean, nullable: true},
+        is_today_impossible: %Schema{type: :boolean, nullable: true}
+      }
+    })
+  end
+
+  defmodule LocationTimeResponse do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileLocationTimeResponse",
+      type: :object,
+      properties: %{
+        data: %Schema{type: :array, items: MithrilWeb.Schemas.MobileCalls.LocationTime}
+      },
+      required: [:data]
+    })
+  end
+
+  defmodule AvailableTimeslotsRequest do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileAvailableTimeslotsRequest",
+      type: :object,
+      properties: %{
+        p_booking_date: %Schema{type: :string},
+        p_timezone: %Schema{type: :string},
+        p_duration_hours: %Schema{type: :number},
+        p_exclude_booking_id: %Schema{type: :string, nullable: true}
+      },
+      required: [:p_booking_date, :p_timezone, :p_duration_hours]
+    })
+  end
+
+  defmodule AvailableTimeslot do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileAvailableTimeslot",
+      type: :object,
+      properties: %{
+        time_12h: %Schema{type: :string, nullable: true},
+        time_24h: %Schema{type: :string, nullable: true},
+        is_meta_row: %Schema{type: :boolean, nullable: true},
+        disable_same_day_booking: %Schema{type: :boolean, nullable: true},
+        duration_hours: %Schema{type: :number, nullable: true},
+        same_day_cutoff: %Schema{type: :number, nullable: true},
+        slot_interval_minutes: %Schema{type: :number, nullable: true},
+        travel_buffer: %Schema{type: :number, nullable: true},
+        work_day_end: %Schema{type: :number, nullable: true},
+        work_day_start: %Schema{type: :number, nullable: true}
+      }
+    })
+  end
+
+  defmodule AvailableTimeslotsResponse do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileAvailableTimeslotsResponse",
+      type: :object,
+      properties: %{
+        data: %Schema{type: :array, items: MithrilWeb.Schemas.MobileCalls.AvailableTimeslot}
+      },
+      required: [:data]
+    })
+  end
+
+  defmodule ValidateTimeslotRequest do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileValidateTimeslotRequest",
+      type: :object,
+      properties: %{
+        p_start_time_12h: %Schema{type: :string},
+        p_duration_hours: %Schema{type: :number},
+        p_booking_date: %Schema{type: :string},
+        p_timezone: %Schema{type: :string, nullable: true}
+      },
+      required: [:p_start_time_12h, :p_duration_hours, :p_booking_date]
+    })
+  end
+
+  defmodule ValidateTimeslotResponse do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileValidateTimeslotResponse",
+      type: :object,
+      properties: %{
+        data: %Schema{type: :boolean}
+      },
+      required: [:data]
+    })
+  end
+
+  defmodule TimezoneRequest do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileTimezoneRequest",
+      type: :object,
+      properties: %{
+        lat: %Schema{type: :number},
+        lng: %Schema{type: :number}
+      },
+      required: [:lat, :lng]
+    })
+  end
+
+  defmodule TimezoneResult do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileTimezoneResult",
+      type: :object,
+      properties: %{
+        timezone: %Schema{type: :string},
+        name: %Schema{type: :string, nullable: true}
+      },
+      required: [:timezone]
+    })
+  end
+
+  defmodule TimezoneResponse do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileTimezoneResponse",
+      type: :object,
+      properties: %{
+        data: MithrilWeb.Schemas.MobileCalls.TimezoneResult
+      },
+      required: [:data]
+    })
+  end
+
+  defmodule ExtraTaskLaborRequest do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileExtraTaskLaborRequest",
+      type: :object,
+      properties: %{
+        p_service_id: %Schema{type: :integer},
+        p_cleaner_id: %Schema{type: :string, nullable: true},
+        p_task_ids: %Schema{type: :array, items: %Schema{type: :string}, nullable: true}
+      },
+      required: [:p_service_id]
+    })
+  end
+
+  defmodule ExtraTaskLaborQuote do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileExtraTaskLaborQuote",
+      type: :object,
+      properties: %{
+        task_id: %Schema{type: :string},
+        labor_major: %Schema{type: :number},
+        pricing_mode: %Schema{type: :string, nullable: true}
+      },
+      required: [:task_id, :labor_major]
+    })
+  end
+
+  defmodule ExtraTaskLaborResponse do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileExtraTaskLaborResponse",
+      type: :object,
+      properties: %{
+        data: %Schema{type: :array, items: MithrilWeb.Schemas.MobileCalls.ExtraTaskLaborQuote}
+      },
+      required: [:data]
+    })
+  end
+
+  defmodule ManageExtraTasksRequest do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileManageExtraTasksRequest",
+      type: :object,
+      properties: %{
+        action: %Schema{type: :string, nullable: true},
+        new_hours: %Schema{type: :number, nullable: true},
+        task_id: %Schema{type: :string, nullable: true}
+      }
+    })
+  end
+
+  defmodule ExtraTaskCatalogItem do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileExtraTaskCatalogItem",
+      type: :object,
+      properties: %{
+        id: %Schema{type: :string},
+        label: %Schema{type: :string},
+        hours: %Schema{type: :number},
+        icon_key: %Schema{type: :string, nullable: true},
+        task_id: %Schema{type: :string, nullable: true},
+        name: %Schema{type: :string, nullable: true},
+        title: %Schema{type: :string, nullable: true},
+        pricing_mode: %Schema{type: :string, nullable: true},
+        flat_price_minor: %Schema{type: :integer, nullable: true}
+      },
+      required: [:id, :label, :hours]
+    })
+  end
+
+  defmodule ExtraTaskCatalogResponse do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileExtraTaskCatalogResponse",
+      type: :object,
+      properties: %{
+        data: %Schema{type: :array, items: MithrilWeb.Schemas.MobileCalls.ExtraTaskCatalogItem}
+      },
+      required: [:data]
+    })
+  end
+
+  defmodule AiMatchSettings do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileAiMatchSettings",
+      type: :object,
+      properties: %{
+        enabled: %Schema{type: :boolean},
+        model: %Schema{type: :string},
+        fallback_model: %Schema{type: :string},
+        allowed_models: %Schema{type: :array, items: %Schema{type: :string}},
+        temperature: %Schema{type: :number},
+        max_tokens: %Schema{type: :integer},
+        response_format: %Schema{type: :string}
+      },
+      required: [
+        :enabled,
+        :model,
+        :fallback_model,
+        :allowed_models,
+        :temperature,
+        :max_tokens,
+        :response_format
+      ]
+    })
+  end
+
+  defmodule AiMatchSettingsResponse do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileAiMatchSettingsResponse",
+      type: :object,
+      properties: %{
+        data: MithrilWeb.Schemas.MobileCalls.AiMatchSettings
+      },
+      required: [:data]
+    })
+  end
+
   def operation({:user_rpc, "is_location_in_active_service_area"}) do
     post("mobile.checkServiceArea", "Whether coordinates are inside the active service area",
       request: ServiceAreaRequest,
@@ -275,6 +571,114 @@ defmodule MithrilWeb.Schemas.MobileCalls do
   def operation({:user_rpc, "get_verification_service_catalog"}) do
     post("mobile.getVerificationServiceCatalog", "Services a provider can verify",
       response: VerificationServiceCatalogResponse
+    )
+  end
+
+  def operation({:user_rpc, "get_location_current_time"}) do
+    post("mobile.getLocationTime", "Local time and same-day cutoff for a timezone",
+      request: LocationTimeRequest,
+      response: LocationTimeResponse
+    )
+  end
+
+  def operation({:guest_rpc, "get_location_current_time"}) do
+    post(
+      "mobile.getLocationTimeGuest",
+      "Local time and same-day cutoff for a timezone, without a signed-in user",
+      request: LocationTimeRequest,
+      response: LocationTimeResponse
+    )
+  end
+
+  def operation({:user_rpc, "get_available_timeslots"}) do
+    post("mobile.getAvailableTimeslots", "Bookable times for a date",
+      request: AvailableTimeslotsRequest,
+      response: AvailableTimeslotsResponse
+    )
+  end
+
+  def operation({:guest_rpc, "get_available_timeslots"}) do
+    post(
+      "mobile.getAvailableTimeslotsGuest",
+      "Bookable times for a date, without a signed-in user",
+      request: AvailableTimeslotsRequest,
+      response: AvailableTimeslotsResponse
+    )
+  end
+
+  def operation({:user_rpc, "validate_booking_timeslot"}) do
+    post("mobile.validateBookingTimeslot", "Whether one booking start time is allowed",
+      request: ValidateTimeslotRequest,
+      response: ValidateTimeslotResponse
+    )
+  end
+
+  def operation({:guest_rpc, "validate_booking_timeslot"}) do
+    post(
+      "mobile.validateBookingTimeslotGuest",
+      "Whether one booking start time is allowed, without a signed-in user",
+      request: ValidateTimeslotRequest,
+      response: ValidateTimeslotResponse
+    )
+  end
+
+  def operation({:user_action, "timezone"}) do
+    post("mobile.getTimezone", "IANA timezone for coordinates",
+      request: TimezoneRequest,
+      response: TimezoneResponse
+    )
+  end
+
+  def operation({:guest_action, "timezone"}) do
+    post("mobile.getTimezoneGuest", "IANA timezone for coordinates, without a signed-in user",
+      request: TimezoneRequest,
+      response: TimezoneResponse
+    )
+  end
+
+  def operation({:user_rpc, "compute_extra_task_labor_quotes"}) do
+    post("mobile.getExtraTaskLaborQuotes", "Labor price for selected extra tasks",
+      request: ExtraTaskLaborRequest,
+      response: ExtraTaskLaborResponse
+    )
+  end
+
+  def operation({:guest_rpc, "compute_extra_task_labor_quotes"}) do
+    post(
+      "mobile.getExtraTaskLaborQuotesGuest",
+      "Labor price for selected extra tasks, without a signed-in user",
+      request: ExtraTaskLaborRequest,
+      response: ExtraTaskLaborResponse
+    )
+  end
+
+  def operation({:user_rpc, "manage_extra_tasks"}) do
+    post("mobile.manageExtraTasks", "Read or update the extra-task catalog",
+      request: ManageExtraTasksRequest,
+      response: ExtraTaskCatalogResponse
+    )
+  end
+
+  def operation({:guest_rpc, "manage_extra_tasks"}) do
+    post(
+      "mobile.manageExtraTasksGuest",
+      "Read the extra-task catalog without a signed-in user",
+      request: ManageExtraTasksRequest,
+      response: ExtraTaskCatalogResponse
+    )
+  end
+
+  def operation({:user_rpc, "get_ai_match_settings"}) do
+    post("mobile.getAiMatchSettings", "AI match settings for the signed-in user",
+      response: AiMatchSettingsResponse
+    )
+  end
+
+  def operation({:guest_rpc, "get_ai_match_settings"}) do
+    post(
+      "mobile.getAiMatchSettingsGuest",
+      "AI match settings without a signed-in user",
+      response: AiMatchSettingsResponse
     )
   end
 

@@ -46,6 +46,15 @@ defmodule MithrilWeb.MobileCallRoutesTest do
 
     assert spec.paths["/mobile/calls/get-my-wallet-balance"].post.operationId ==
              "mobile.getMyWalletBalance"
+
+    assert spec.paths["/mobile/guest/calls/get-available-timeslots"].post.operationId ==
+             "mobile.getAvailableTimeslotsGuest"
+
+    assert spec.paths["/mobile/guest/actions/timezone"].post.operationId ==
+             "mobile.getTimezoneGuest"
+
+    assert spec.components.schemas["MobileAvailableTimeslotsRequest"]
+    assert spec.components.schemas["MobileTimezoneRequest"]
   end
 
   test "POST /mobile/calls/get-my-wallet-balance requires a bearer token" do
