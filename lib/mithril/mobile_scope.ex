@@ -36,7 +36,6 @@ defmodule Mithril.MobileScope do
     conversation_list
     reviews
     job_offers
-    job_photo_comparisons
     booking_job_photos
     booking_micro_tasks
     co_cleaner_relationships
@@ -144,6 +143,10 @@ defmodule Mithril.MobileScope do
         {:ok,
          "AND (jsonb_populate_record(NULL::public.#{table}, value)).property_id IN (#{property_ids(index)})"}
 
+      table == "job_photo_comparisons" ->
+        {:ok,
+         "AND (jsonb_populate_record(NULL::public.job_photo_comparisons, value)).booking_id IN (#{assigned_active_booking_ids(index)})"}
+
       true ->
         :none
     end
@@ -186,10 +189,15 @@ defmodule Mithril.MobileScope do
       table == "messages" ->
         {:ok, "messages.conversation_id IN (#{conversation_ids(index)})"}
 
+      table == "job_photo_comparisons" and action == "select" ->
+        {:ok, "job_photo_comparisons.booking_id IN (#{booking_ids(index)})"}
+
+      table == "job_photo_comparisons" ->
+        {:ok, "job_photo_comparisons.booking_id IN (#{assigned_active_booking_ids(index)})"}
+
       table in [
         "booking_micro_tasks",
         "booking_job_photos",
-        "job_photo_comparisons",
         "cleaner_tracking"
       ] ->
         {:ok, "#{table}.booking_id IN (#{booking_ids(index)})"}
@@ -259,6 +267,14 @@ defmodule Mithril.MobileScope do
 
   defp booking_ids(index) do
     "SELECT id FROM public.bookings WHERE customer_id::text = $#{index}::text OR cleaner_id::text = $#{index}::text"
+  end
+
+  defp assigned_active_booking_ids(index) do
+    """
+    SELECT id FROM public.bookings
+    WHERE cleaner_id::text = $#{index}::text
+      AND status::text NOT IN ('cancelled', 'completed')
+    """
   end
 
   defp conversation_ids(index) do

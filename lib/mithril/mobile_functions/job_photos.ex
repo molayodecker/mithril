@@ -1,5 +1,7 @@
 defmodule Mithril.MobileFunctions.JobPhotos do
-  @moduledoc """Authenticated job-photo operations for private Cloudflare R2 media."""
+  @moduledoc """
+  Authenticated job-photo operations for private Cloudflare R2 media.
+  """
 
   alias Mithril.DbUuid
   alias Mithril.Repo
@@ -66,9 +68,20 @@ defmodule Mithril.MobileFunctions.JobPhotos do
   defp authorize(user_id, booking_id, mode) when is_binary(user_id) do
     sql =
       if mode == :write do
-        "SELECT 1 FROM public.bookings WHERE id = $1::uuid AND cleaner_id = $2::uuid LIMIT 1"
+        """
+        SELECT 1 FROM public.bookings
+        WHERE id = $1::uuid
+          AND cleaner_id = $2::uuid
+          AND status::text NOT IN ('cancelled', 'completed')
+        LIMIT 1
+        """
       else
-        "SELECT 1 FROM public.bookings WHERE id = $1::uuid AND (cleaner_id = $2::uuid OR customer_id = $2::uuid) LIMIT 1"
+        """
+        SELECT 1 FROM public.bookings
+        WHERE id = $1::uuid
+          AND (cleaner_id = $2::uuid OR customer_id = $2::uuid)
+        LIMIT 1
+        """
       end
 
     case Repo.query(sql, [DbUuid.dump!(booking_id), DbUuid.dump!(user_id)]) do
@@ -84,9 +97,23 @@ defmodule Mithril.MobileFunctions.JobPhotos do
       if Regex.match?(@composite_path, path) do
         comparison_id = path |> String.split("/") |> List.last() |> Path.rootname()
 
-        Repo.query("SELECT 1 FROM public.job_photo_comparisons WHERE booking_id = $1::uuid AND id = $2::uuid LIMIT 1", [DbUuid.dump!(booking_id), DbUuid.dump!(comparison_id)])
+        Repo.query(
+          """
+          SELECT 1 FROM public.job_photo_comparisons
+          WHERE booking_id = $1::uuid AND id = $2::uuid
+          LIMIT 1
+          """,
+          [DbUuid.dump!(booking_id), DbUuid.dump!(comparison_id)]
+        )
       else
-        Repo.query("SELECT 1 FROM public.booking_job_photos WHERE booking_id = $1::uuid AND storage_path = $2 LIMIT 1", [DbUuid.dump!(booking_id), path])
+        Repo.query(
+          """
+          SELECT 1 FROM public.booking_job_photos
+          WHERE booking_id = $1::uuid AND storage_path = $2
+          LIMIT 1
+          """,
+          [DbUuid.dump!(booking_id), path]
+        )
       end
 
     case query do
@@ -99,7 +126,6 @@ defmodule Mithril.MobileFunctions.JobPhotos do
     case registered(booking_id, path) do
       {:error, :not_found} -> :ok
       :ok -> {:error, :still_registered}
-      error -> error
     end
   end
 
@@ -125,12 +151,17 @@ defmodule Mithril.MobileFunctions.JobPhotos do
     if valid == mime, do: :ok, else: {:error, :invalid_photo}
   end
 
-  defp expiry(%{"expires_in" => seconds}) when is_integer(seconds), do: min(max(seconds, 1), 604_800)
+  defp expiry(%{"expires_in" => seconds}) when is_integer(seconds),
+    do: min(max(seconds, 1), 604_800)
+
   defp expiry(_), do: 3600
 
   defp fail(:forbidden), do: {:error, {:status, 403, %{error: "forbidden"}}}
   defp fail(:not_found), do: {:error, {:status, 404, %{error: "not_found"}}}
   defp fail(:storage_unavailable), do: {:error, {:status, 502, %{error: "storage_unavailable"}}}
-  defp fail(:storage_not_configured), do: {:error, {:status, 503, %{error: "storage_not_configured"}}}
+
+  defp fail(:storage_not_configured),
+    do: {:error, {:status, 503, %{error: "storage_not_configured"}}}
+
   defp fail(reason), do: {:error, {:status, 400, %{error: to_string(reason)}}}
 end

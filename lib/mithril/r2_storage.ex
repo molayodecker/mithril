@@ -1,5 +1,7 @@
 defmodule Mithril.R2Storage do
-  @moduledoc """Private Cloudflare R2 objects using S3 Signature V4."""
+  @moduledoc """
+  Private Cloudflare R2 objects using S3 Signature V4.
+  """
 
   @region "auto"
   @service "s3"
@@ -10,7 +12,9 @@ defmodule Mithril.R2Storage do
 
   def delete(key), do: request(:delete, key, "", nil)
 
-  def signed_url(key, expires_seconds \\ 3600) when expires_seconds in 1..604_800 do
+  def signed_url(key, expires_seconds \\ 3600)
+
+  def signed_url(key, expires_seconds) when is_binary(key) and expires_seconds in 1..604_800 do
     with {:ok, config} <- config() do
       now = DateTime.utc_now()
       stamp = Calendar.strftime(now, "%Y%m%dT%H%M%SZ")
@@ -19,6 +23,7 @@ defmodule Mithril.R2Storage do
       credential = "#{config.access_key}/#{scope}"
       host = "#{config.account_id}.r2.cloudflarestorage.com"
       uri = object_uri(config.bucket, key)
+
       query =
         [
           {"X-Amz-Algorithm", "AWS4-HMAC-SHA256"},
@@ -48,17 +53,22 @@ defmodule Mithril.R2Storage do
       hash = sha256(bytes)
       verb = method |> Atom.to_string() |> String.upcase()
       type_headers = if content_type, do: [{"content-type", content_type}], else: []
-      signed_headers = [
-        {"host", host},
-        {"x-amz-content-sha256", hash},
-        {"x-amz-date", stamp}
-      ] ++ type_headers
+
+      signed_headers =
+        [
+          {"host", host},
+          {"x-amz-content-sha256", hash},
+          {"x-amz-date", stamp}
+        ] ++ type_headers
+
       sorted = Enum.sort_by(signed_headers, &elem(&1, 0))
       header_names = Enum.map_join(sorted, ";", &elem(&1, 0))
       header_lines = Enum.map_join(sorted, "", fn {k, v} -> "#{k}:#{v}\n" end)
       canonical = "#{verb}\n#{uri}\n\n#{header_lines}\n#{header_names}\n#{hash}"
       signature = sign(config.secret_key, date, stamp, scope, canonical)
-      authorization = "AWS4-HMAC-SHA256 Credential=#{config.access_key}/#{scope}, SignedHeaders=#{header_names}, Signature=#{signature}"
+
+      authorization =
+        "AWS4-HMAC-SHA256 Credential=#{config.access_key}/#{scope}, SignedHeaders=#{header_names}, Signature=#{signature}"
 
       case Req.request(
              method: method,
@@ -92,22 +102,30 @@ defmodule Mithril.R2Storage do
   end
 
   defp object_uri(bucket, key) do
-    "/" <> Enum.map_join([bucket | String.split(key, "/")], "/", &URI.encode(&1, &URI.char_unreserved?/1))
+    encoded =
+      Enum.map_join([bucket | String.split(key, "/")], "/", fn part ->
+        URI.encode(part, &URI.char_unreserved?/1)
+      end)
+
+    "/" <> encoded
   end
 
   defp canonical_query(pairs) do
     pairs
-    |> Enum.map(fn {k, v} -> {URI.encode(k, &URI.char_unreserved?/1), URI.encode(v, &URI.char_unreserved?/1)} end)
+    |> Enum.map(fn {k, v} ->
+      {URI.encode(k, &URI.char_unreserved?/1), URI.encode(v, &URI.char_unreserved?/1)}
+    end)
     |> Enum.sort()
     |> Enum.map_join("&", fn {k, v} -> "#{k}=#{v}" end)
   end
 
   defp sign(secret, date, stamp, scope, canonical) do
-    key = "AWS4" <> secret
-    |> hmac(date)
-    |> hmac(@region)
-    |> hmac(@service)
-    |> hmac("aws4_request")
+    key =
+      ("AWS4" <> secret)
+      |> hmac(date)
+      |> hmac(@region)
+      |> hmac(@service)
+      |> hmac("aws4_request")
 
     string_to_sign = "AWS4-HMAC-SHA256\n#{stamp}\n#{scope}\n#{sha256(canonical)}"
     hmac(key, string_to_sign) |> Base.encode16(case: :lower)
