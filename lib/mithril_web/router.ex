@@ -75,6 +75,8 @@ defmodule MithrilWeb.Router do
   scope "/", MithrilWeb do
     pipe_through :whatsapp
 
+    post "/webhooks/twilio/payment-status/:token", DirectPaymentStatusController, :update
+
     post "/whatsapp/chef-intake", WhatsAppChefController, :receive_message
     post "/functions/v1/chef-intake", WhatsAppChefController, :receive_message
 
