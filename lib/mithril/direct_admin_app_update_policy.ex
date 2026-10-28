@@ -6,6 +6,7 @@ defmodule Mithril.DirectAdminAppUpdatePolicy do
   alias Mithril.Auth
   alias Mithril.Repo
 
+  @apps ~w(customer worker)
   @channels ~w(production preview)
   @version_re ~r/^[0-9]+\.[0-9]+\.[0-9]+$/
 
@@ -14,6 +15,7 @@ defmodule Mithril.DirectAdminAppUpdatePolicy do
          :ok <- require_admin(uid) do
       case Repo.query("""
            SELECT jsonb_build_object(
+             'app', app,
              'channel', channel,
              'minVersion', min_version,
              'recommendedVersion', recommended_version,
@@ -22,8 +24,9 @@ defmodule Mithril.DirectAdminAppUpdatePolicy do
              'updatedAt', updated_at
            )
            FROM public.app_update_policy
-           WHERE channel IN ('production', 'preview')
-           ORDER BY channel ASC
+           WHERE app IN ('customer', 'worker')
+             AND channel IN ('production', 'preview')
+           ORDER BY app ASC, channel ASC
            """) do
         {:ok, result} -> {:ok, Enum.map(result.rows, &hd/1)}
         {:error, error} -> database_error(error)
@@ -40,15 +43,25 @@ defmodule Mithril.DirectAdminAppUpdatePolicy do
          {:ok, input} <- validate_save(params) do
       case Repo.query(
              """
-             UPDATE public.app_update_policy
+             INSERT INTO public.app_update_policy (
+               app,
+               channel,
+               min_version,
+               recommended_version,
+               required_message,
+               recommended_message,
+               updated_at
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, timezone('utc', now()))
+             ON CONFLICT (app, channel) DO UPDATE
              SET
-               min_version = $2,
-               recommended_version = $3,
-               required_message = $4,
-               recommended_message = $5,
+               min_version = EXCLUDED.min_version,
+               recommended_version = EXCLUDED.recommended_version,
+               required_message = EXCLUDED.required_message,
+               recommended_message = EXCLUDED.recommended_message,
                updated_at = timezone('utc', now())
-             WHERE channel = $1
              RETURNING jsonb_build_object(
+               'app', app,
                'channel', channel,
                'minVersion', min_version,
                'recommendedVersion', recommended_version,
@@ -58,6 +71,7 @@ defmodule Mithril.DirectAdminAppUpdatePolicy do
              )
              """,
              [
+               input.app,
                input.channel,
                input.min_version,
                input.recommended_version,
@@ -76,11 +90,13 @@ defmodule Mithril.DirectAdminAppUpdatePolicy do
   end
 
   defp validate_save(params) do
+    app = params["app"] || params[:app]
     channel = params["channel"] || params[:channel]
     min_version = params["minVersion"] || params[:minVersion]
     required_message = params["requiredMessage"] || params[:requiredMessage]
 
-    with true <- channel in @channels,
+    with true <- app in @apps,
+         true <- channel in @channels,
          {:ok, min_version} <- required_version(min_version),
          {:ok, recommended_version} <-
            optional_version(params["recommendedVersion"] || params[:recommendedVersion]),
@@ -89,6 +105,7 @@ defmodule Mithril.DirectAdminAppUpdatePolicy do
            optional_text(params["recommendedMessage"] || params[:recommendedMessage], 500) do
       {:ok,
        %{
+         app: app,
          channel: channel,
          min_version: min_version,
          recommended_version: normalize_recommended(min_version, recommended_version),

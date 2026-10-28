@@ -294,6 +294,7 @@ defmodule MithrilWeb.Router do
 
     post "/guest/rpc/:name", MobileGatewayController, :guest_rpc
     post "/guest/functions/*name", MobileGatewayController, :guest_function
+    get "/guest/app-update-policy", MobileAppUpdatePolicyController, :show
     MithrilWeb.MobileCallRouter.guest_routes()
   end
 
