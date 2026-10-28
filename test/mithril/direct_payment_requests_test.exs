@@ -25,11 +25,13 @@ defmodule Mithril.DirectPaymentRequestsTest do
     Application.put_env(:mithril, :twilio_whatsapp_admin_from, "+233559100642")
     Application.put_env(:mithril, :twilio_http, :noop)
     Application.put_env(:mithril, :twilio_auth_token, "test-signing-token")
+
     Application.put_env(
       :mithril,
       :twilio_payment_status_callback_url,
       "https://api.tryinstaclean.com/webhooks/twilio/payment-status"
     )
+
     Application.put_env(:mithril, :direct_public_url, "https://direct.tryinstaclean.com")
     Application.put_env(:mithril, :test_sms_messages, [])
     Application.put_env(:mithril, :paystack_test_initialize_result, :ok)
@@ -306,9 +308,7 @@ defmodule Mithril.DirectPaymentRequestsTest do
     assert {:error, :payment_unavailable} = DirectPaymentRequests.checkout(token, %{})
 
     [[old_reference]] =
-      Repo.query!(
-        "SELECT reference FROM public.direct_payment_request_references LIMIT 1"
-      ).rows
+      Repo.query!("SELECT reference FROM public.direct_payment_request_references LIMIT 1").rows
 
     assert {:ok, checkout} = DirectPaymentRequests.checkout(token, %{})
     refute checkout["reference"] == old_reference
@@ -345,12 +345,12 @@ defmodule Mithril.DirectPaymentRequestsTest do
 
     assert [{"+233241234567", body}] = Application.get_env(:mithril, :test_sms_messages)
     assert body =~ created["payUrl"]
-    assert {:ok, [row]} =
-             case Repo.query("SELECT channel FROM public.direct_payment_requests WHERE public_token = $1", [token]) do
-               {:ok, %{rows: rows}} -> {:ok, rows}
-               other -> other
-             end
-    assert row == ["sms"]
+
+    assert [["sms"]] =
+             Repo.query!(
+               "SELECT channel FROM public.direct_payment_requests WHERE public_token = $1",
+               [token]
+             ).rows
   end
 
   test "a delivery claim prevents replay after an uncertain provider response" do
@@ -362,9 +362,11 @@ defmodule Mithril.DirectPaymentRequestsTest do
     assert {:ok, replayed} = DirectPaymentRequests.create(admin_id, request())
     assert replayed["id"] == created["id"]
     assert Application.get_env(:mithril, :test_sms_messages) == []
-    assert [[1]] = Repo.query!(
-      "SELECT count(*) FROM public.direct_payment_requests WHERE delivery_claimed_at IS NOT NULL"
-    ).rows
+
+    assert [[1]] =
+             Repo.query!(
+               "SELECT count(*) FROM public.direct_payment_requests WHERE delivery_claimed_at IS NOT NULL"
+             ).rows
   end
 
   defp request(overrides \\ %{}) do
