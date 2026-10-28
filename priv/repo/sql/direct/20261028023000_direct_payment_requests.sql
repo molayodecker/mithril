@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS public.direct_payment_requests (
   authorization_url text,
   delivery_error text,
   idempotency_key uuid NOT NULL,
+  delivery_claimed_at timestamptz,
+  twilio_message_sid text,
+  sms_fallback_claimed_at timestamptz,
   sent_at timestamptz,
   paid_at timestamptz,
   created_by uuid NOT NULL REFERENCES public.users(id),
@@ -25,8 +28,29 @@ CREATE TABLE IF NOT EXISTS public.direct_payment_requests (
   CONSTRAINT direct_payment_requests_idempotency UNIQUE (created_by, idempotency_key)
 );
 
+-- Existing staging tables created before the delivery claim was introduced.
+ALTER TABLE public.direct_payment_requests
+  ADD COLUMN IF NOT EXISTS delivery_claimed_at timestamptz;
+
+ALTER TABLE public.direct_payment_requests
+  ADD COLUMN IF NOT EXISTS twilio_message_sid text;
+
+ALTER TABLE public.direct_payment_requests
+  ADD COLUMN IF NOT EXISTS sms_fallback_claimed_at timestamptz;
+
 CREATE INDEX IF NOT EXISTS direct_payment_requests_created_at_idx
   ON public.direct_payment_requests (created_at DESC);
+
+-- Preserve failed/ambiguous initialization references. A late webhook from a
+-- provider attempt must still settle the original request after a safe retry.
+CREATE TABLE IF NOT EXISTS public.direct_payment_request_references (
+  reference text PRIMARY KEY,
+  payment_request_id uuid NOT NULL REFERENCES public.direct_payment_requests(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS direct_payment_request_references_request_idx
+  ON public.direct_payment_request_references (payment_request_id);
 
 CREATE TABLE IF NOT EXISTS public.whatsapp_content_templates (
   name text PRIMARY KEY,
