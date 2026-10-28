@@ -8,6 +8,7 @@ defmodule Mithril.MobileFunctions do
   alias Mithril.MobileFunctions.CreateJobAndNotify
   alias Mithril.MobileFunctions.DeletePropertyMedia
   alias Mithril.MobileFunctions.InitializeStripeBookingPayment
+  alias Mithril.MobileFunctions.JobPhotos
   alias Mithril.MobileFunctions.StripeVerifyPaymentIntent
   alias Mithril.MobileFunctions.NotifyBookingRescheduled
   alias Mithril.MobileFunctions.NotifyPaymentFailureOps
@@ -76,6 +77,15 @@ defmodule Mithril.MobileFunctions do
 
   def invoke(user_id, "delete-property-media", body) when is_map(body),
     do: DeletePropertyMedia.call(user_id, body)
+
+  def invoke(user_id, "upload-job-photo", body) when is_map(body),
+    do: JobPhotos.upload(user_id, body)
+
+  def invoke(user_id, "get-job-photo-url", body) when is_map(body),
+    do: JobPhotos.url(user_id, body)
+
+  def invoke(user_id, "delete-job-photo", body) when is_map(body),
+    do: JobPhotos.delete(user_id, body)
 
   def invoke(user_id, "cancel-subscription", body) when is_map(body),
     do: CancelSubscription.call(user_id, body)
