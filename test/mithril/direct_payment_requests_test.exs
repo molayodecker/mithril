@@ -24,8 +24,15 @@ defmodule Mithril.DirectPaymentRequestsTest do
     Application.put_env(:mithril, :twilio_template_payment_request, "HXpayment")
     Application.put_env(:mithril, :twilio_whatsapp_admin_from, "+233559100642")
     Application.put_env(:mithril, :twilio_http, :noop)
+    Application.put_env(:mithril, :twilio_auth_token, "test-signing-token")
+    Application.put_env(
+      :mithril,
+      :twilio_payment_status_callback_url,
+      "https://api.tryinstaclean.com/webhooks/twilio/payment-status"
+    )
     Application.put_env(:mithril, :direct_public_url, "https://direct.tryinstaclean.com")
     Application.put_env(:mithril, :test_sms_messages, [])
+    Application.put_env(:mithril, :paystack_test_initialize_result, :ok)
     :ok
   end
 
@@ -211,6 +218,7 @@ defmodule Mithril.DirectPaymentRequestsTest do
     assert checkout["currency"] == "GHS"
     assert checkout["authorizationUrl"] =~ "https://checkout.paystack.com/"
     reference = checkout["reference"]
+    assert Regex.match?(~r/^[A-Za-z0-9.=-]+$/, reference)
 
     assert {:ok, paid} =
              DirectPaymentRequests.settle_charge(%{
@@ -289,6 +297,76 @@ defmodule Mithril.DirectPaymentRequestsTest do
              })
   end
 
+  test "ambiguous Paystack initialization rotates the reference and retains late settlement" do
+    admin_id = Fixtures.insert_user!("admin")
+    assert {:ok, created} = DirectPaymentRequests.create(admin_id, request())
+    token = created["publicToken"]
+    Application.put_env(:mithril, :paystack_test_initialize_result, :ambiguous_once)
+
+    assert {:error, :payment_unavailable} = DirectPaymentRequests.checkout(token, %{})
+
+    [[old_reference]] =
+      Repo.query!(
+        "SELECT reference FROM public.direct_payment_request_references LIMIT 1"
+      ).rows
+
+    assert {:ok, checkout} = DirectPaymentRequests.checkout(token, %{})
+    refute checkout["reference"] == old_reference
+
+    assert {:ok, %{settled: true}} =
+             DirectPaymentRequests.settle_charge(%{
+               reference: old_reference,
+               status: "success",
+               amount_minor: 15_000,
+               currency: "GHS"
+             })
+
+    assert {:ok, shown} = DirectPaymentRequests.public_show(token)
+    assert shown["status"] == "paid"
+  end
+
+  test "late WhatsApp delivery failure sends only one SMS fallback" do
+    admin_id = Fixtures.insert_user!("admin")
+    assert {:ok, created} = DirectPaymentRequests.create(admin_id, request())
+    token = created["publicToken"]
+    params = %{"MessageSid" => "SMtest-payment-request", "MessageStatus" => "undelivered"}
+    url = "https://api.tryinstaclean.com/webhooks/twilio/payment-status/#{token}"
+    payload = Enum.reduce(Enum.sort(params), url, fn {key, value}, acc -> acc <> key <> value end)
+    signature = :crypto.mac(:hmac, :sha, "test-signing-token", payload) |> Base.encode64()
+
+    for _ <- 1..2 do
+      conn =
+        build_conn()
+        |> put_req_header("x-twilio-signature", signature)
+        |> post("/webhooks/twilio/payment-status/#{token}", params)
+
+      assert conn.status == 204
+    end
+
+    assert [{"+233241234567", body}] = Application.get_env(:mithril, :test_sms_messages)
+    assert body =~ created["payUrl"]
+    assert {:ok, [row]} =
+             case Repo.query("SELECT channel FROM public.direct_payment_requests WHERE public_token = $1", [token]) do
+               {:ok, %{rows: rows}} -> {:ok, rows}
+               other -> other
+             end
+    assert row == ["sms"]
+  end
+
+  test "a delivery claim prevents replay after an uncertain provider response" do
+    Application.put_env(:mithril, :twilio_http, {:error, :twilio_unavailable})
+    admin_id = Fixtures.insert_user!("admin")
+    assert {:ok, created} = DirectPaymentRequests.create(admin_id, request())
+    assert created["sent"] == false
+
+    assert {:ok, replayed} = DirectPaymentRequests.create(admin_id, request())
+    assert replayed["id"] == created["id"]
+    assert Application.get_env(:mithril, :test_sms_messages) == []
+    assert [[1]] = Repo.query!(
+      "SELECT count(*) FROM public.direct_payment_requests WHERE delivery_claimed_at IS NOT NULL"
+    ).rows
+  end
+
   defp request(overrides \\ %{}) do
     Map.merge(
       %{
@@ -325,6 +403,9 @@ defmodule Mithril.DirectPaymentRequestsTest do
       :twilio_template_payment_request,
       :twilio_whatsapp_admin_from,
       :twilio_http,
+      :twilio_auth_token,
+      :twilio_payment_status_callback_url,
+      :paystack_test_initialize_result,
       :direct_public_url,
       :test_sms_messages
     ]
