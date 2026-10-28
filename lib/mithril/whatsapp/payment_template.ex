@@ -72,12 +72,17 @@ defmodule Mithril.WhatsApp.PaymentTemplate do
   end
 
   def ensure do
-    case content_sid() do
-      sid when is_binary(sid) and sid != "" ->
-        {:ok, sid}
+    case env_sid() do
+      sid when is_binary(sid) and sid != "" -> {:ok, sid}
+      _ -> ensure_stored()
+    end
+  end
 
-      _ ->
-        create()
+  defp ensure_stored do
+    case stored_template() do
+      {sid, "submitted"} when is_binary(sid) -> {:ok, sid}
+      {sid, _status} when is_binary(sid) -> approve_and_mark(sid)
+      _ -> create()
     end
   end
 
@@ -85,11 +90,36 @@ defmodule Mithril.WhatsApp.PaymentTemplate do
     case request_create(definition()) do
       {:ok, sid} ->
         _ = store_sid(sid)
-        _ = request_approval(sid)
-        {:ok, sid}
+        approve_and_mark(sid)
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp approve_and_mark(sid) do
+    case request_approval(sid) do
+      :ok -> mark_submitted(sid)
+      {:ok, _} -> mark_submitted(sid)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp mark_submitted(sid) do
+    if table?("public.whatsapp_content_templates") do
+      case Repo.query(
+             """
+             UPDATE public.whatsapp_content_templates
+             SET approval_status = 'submitted', updated_at = now()
+             WHERE name = $1 AND content_sid = $2
+             """,
+             [@name, sid]
+           ) do
+        {:ok, _} -> {:ok, sid}
+        {:error, _} -> {:error, :template_not_created}
+      end
+    else
+      {:ok, sid}
     end
   end
 
@@ -165,12 +195,19 @@ defmodule Mithril.WhatsApp.PaymentTemplate do
   end
 
   defp stored_sid do
+    case stored_template() do
+      {sid, _} -> sid
+      _ -> nil
+    end
+  end
+
+  defp stored_template do
     if table?("public.whatsapp_content_templates") do
       case Repo.query(
-             "SELECT content_sid FROM public.whatsapp_content_templates WHERE name = $1",
+             "SELECT content_sid, approval_status FROM public.whatsapp_content_templates WHERE name = $1",
              [@name]
            ) do
-        {:ok, %{rows: [[sid]]}} when is_binary(sid) and sid != "" -> sid
+        {:ok, %{rows: [[sid, status]]}} when is_binary(sid) and sid != "" -> {sid, status}
         _ -> nil
       end
     else
@@ -183,9 +220,10 @@ defmodule Mithril.WhatsApp.PaymentTemplate do
       Repo.query(
         """
         INSERT INTO public.whatsapp_content_templates (name, content_sid, approval_status)
-        VALUES ($1, $2, 'submitted')
+        VALUES ($1, $2, 'created')
         ON CONFLICT (name) DO UPDATE
-          SET content_sid = EXCLUDED.content_sid, updated_at = now()
+          SET content_sid = EXCLUDED.content_sid,
+              approval_status = 'created', updated_at = now()
         """,
         [@name, sid]
       )
