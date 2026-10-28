@@ -9,6 +9,7 @@ defmodule MithrilWeb.Schemas.DirectAdminAppUpdatePolicy do
       title: "DirectAdminAppUpdatePolicy",
       type: :object,
       properties: %{
+        app: %Schema{type: :string, enum: ["customer", "worker"]},
         channel: %Schema{type: :string, enum: ["production", "preview"]},
         minVersion: %Schema{type: :string, example: "1.5.30"},
         recommendedVersion: %Schema{type: :string, nullable: true, example: "1.5.31"},
@@ -16,7 +17,7 @@ defmodule MithrilWeb.Schemas.DirectAdminAppUpdatePolicy do
         recommendedMessage: %Schema{type: :string, nullable: true},
         updatedAt: %Schema{type: :string, format: :"date-time"}
       },
-      required: [:channel, :minVersion, :requiredMessage, :updatedAt]
+      required: [:app, :channel, :minVersion, :requiredMessage, :updatedAt]
     })
   end
 
@@ -41,13 +42,14 @@ defmodule MithrilWeb.Schemas.DirectAdminAppUpdatePolicy do
       title: "DirectAdminAppUpdatePolicySaveRequest",
       type: :object,
       properties: %{
+        app: %Schema{type: :string, enum: ["customer", "worker"]},
         channel: %Schema{type: :string, enum: ["production", "preview"]},
         minVersion: %Schema{type: :string, example: "1.5.30"},
         recommendedVersion: %Schema{type: :string, nullable: true, example: "1.5.31"},
         requiredMessage: %Schema{type: :string, maxLength: 500},
         recommendedMessage: %Schema{type: :string, nullable: true, maxLength: 500}
       },
-      required: [:channel, :minVersion, :requiredMessage]
+      required: [:app, :channel, :minVersion, :requiredMessage]
     })
   end
 

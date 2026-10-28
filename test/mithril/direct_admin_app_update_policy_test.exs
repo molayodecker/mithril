@@ -35,12 +35,15 @@ defmodule Mithril.DirectAdminAppUpdatePolicyTest do
 
     Repo.query!("""
     CREATE TABLE public.app_update_policy (
-      channel text PRIMARY KEY,
+      app text NOT NULL DEFAULT 'customer',
+      channel text NOT NULL,
       min_version text NOT NULL,
       recommended_version text,
       required_message text NOT NULL DEFAULT 'There is a newer version of Instaclean available. Please update to continue.',
       recommended_message text DEFAULT 'A new version of Instaclean is available with improvements and fixes.',
       updated_at timestamptz NOT NULL DEFAULT timezone('utc', now()),
+      PRIMARY KEY (app, channel),
+      CONSTRAINT app_update_policy_app_check CHECK (app IN ('customer', 'worker')),
       CONSTRAINT app_update_policy_channel_check CHECK (channel IN ('production', 'preview')),
       CONSTRAINT app_update_policy_min_version_format_check CHECK (min_version ~ '^[0-9]+\\.[0-9]+\\.[0-9]+$'),
       CONSTRAINT app_update_policy_recommended_version_format_check CHECK (
@@ -50,10 +53,10 @@ defmodule Mithril.DirectAdminAppUpdatePolicyTest do
     """)
 
     Repo.query!("""
-    INSERT INTO public.app_update_policy (channel, min_version, recommended_version)
+    INSERT INTO public.app_update_policy (app, channel, min_version, recommended_version)
     VALUES
-      ('production', '1.5.29', NULL),
-      ('preview', '1.5.29', NULL)
+      ('customer', 'production', '1.5.29', NULL),
+      ('customer', 'preview', '1.5.29', NULL)
     """)
 
     :ok
@@ -63,7 +66,12 @@ defmodule Mithril.DirectAdminAppUpdatePolicyTest do
     admin_id = insert_admin!()
 
     assert {:ok, policies} = DirectAdminAppUpdatePolicy.list(admin_id)
-    assert Enum.map(policies, & &1["channel"]) == ["preview", "production"]
+
+    assert Enum.map(policies, &{&1["app"], &1["channel"]}) == [
+             {"customer", "preview"},
+             {"customer", "production"}
+           ]
+
     assert Enum.all?(policies, &(&1["minVersion"] == "1.5.29"))
   end
 
@@ -74,6 +82,7 @@ defmodule Mithril.DirectAdminAppUpdatePolicyTest do
 
     assert {:error, :forbidden} =
              DirectAdminAppUpdatePolicy.save(guest_id, %{
+               "app" => "customer",
                "channel" => "preview",
                "minVersion" => "1.5.30",
                "requiredMessage" => "Please update."
@@ -85,6 +94,7 @@ defmodule Mithril.DirectAdminAppUpdatePolicyTest do
 
     assert {:ok, policy} =
              DirectAdminAppUpdatePolicy.save(admin_id, %{
+               "app" => "customer",
                "channel" => "preview",
                "minVersion" => "1.5.31",
                "recommendedVersion" => "1.5.30",
@@ -92,6 +102,7 @@ defmodule Mithril.DirectAdminAppUpdatePolicyTest do
                "recommendedMessage" => "A nicer build is ready."
              })
 
+    assert policy["app"] == "customer"
     assert policy["channel"] == "preview"
     assert policy["minVersion"] == "1.5.31"
     assert policy["recommendedVersion"] == nil
@@ -104,6 +115,7 @@ defmodule Mithril.DirectAdminAppUpdatePolicyTest do
 
     assert {:ok, policy} =
              DirectAdminAppUpdatePolicy.save(admin_id, %{
+               "app" => "customer",
                "channel" => "production",
                "minVersion" => "1.5.30",
                "recommendedVersion" => "1.5.31",
@@ -114,11 +126,34 @@ defmodule Mithril.DirectAdminAppUpdatePolicyTest do
     assert policy["recommendedVersion"] == "1.5.31"
   end
 
+  test "creates a worker policy without changing the customer row" do
+    admin_id = insert_admin!()
+
+    assert {:ok, worker_policy} =
+             DirectAdminAppUpdatePolicy.save(admin_id, %{
+               "app" => "worker",
+               "channel" => "production",
+               "minVersion" => "1.8.1",
+               "requiredMessage" => "Update Instaclean Pro to continue."
+             })
+
+    assert worker_policy["app"] == "worker"
+    assert worker_policy["minVersion"] == "1.8.1"
+
+    assert {:ok, policies} = DirectAdminAppUpdatePolicy.list(admin_id)
+
+    customer_production =
+      Enum.find(policies, &(&1["app"] == "customer" and &1["channel"] == "production"))
+
+    assert customer_production["minVersion"] == "1.5.29"
+  end
+
   test "rejects invalid marketing versions" do
     admin_id = insert_admin!()
 
     assert {:error, :invalid_request} =
              DirectAdminAppUpdatePolicy.save(admin_id, %{
+               "app" => "customer",
                "channel" => "preview",
                "minVersion" => "1.5",
                "requiredMessage" => "Please update."
