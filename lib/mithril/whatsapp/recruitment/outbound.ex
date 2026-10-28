@@ -22,6 +22,26 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
     end
   end
 
+  @doc """
+  Sends an approved WhatsApp content template.
+
+  A non-2xx response whose Twilio code means the number is not on WhatsApp
+  returns `{:error, :not_on_whatsapp}` so the caller can send SMS instead.
+  """
+  def send_content(to, from, content_sid, variables) when is_map(variables) do
+    with {:ok, env} <- twilio_env() do
+      fields =
+        [
+          {"To", to},
+          {"ContentSid", content_sid},
+          {"ContentVariables", Jason.encode!(variables)}
+        ]
+        |> maybe_from(env, from)
+
+      post_content(env, fields)
+    end
+  end
+
   defp send_quick(spec, ctx) do
     sid = content_sid(spec.template)
 
@@ -94,6 +114,14 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
     end
   end
 
+  defp post_content(env, fields) do
+    case Application.get_env(:mithril, :twilio_http, :http) do
+      :noop -> :ok
+      {:error, reason} -> {:error, reason}
+      _ -> post_content_http(env, fields)
+    end
+  end
+
   defp post_message_http(env, fields) do
     url = "https://api.twilio.com/2010-04-01/Accounts/#{env.sid}/Messages.json"
 
@@ -110,4 +138,28 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
         {:error, :twilio_failed}
     end
   end
+
+  defp post_content_http(env, fields) do
+    url = "https://api.twilio.com/2010-04-01/Accounts/#{env.sid}/Messages.json"
+
+    case Req.post(url, form: fields, auth: {:basic, "#{env.sid}:#{env.token}"}) do
+      {:ok, %{status: status}} when status in 200..299 ->
+        :ok
+
+      {:ok, %{status: status, body: body}} ->
+        if not_on_whatsapp?(body) do
+          {:error, :not_on_whatsapp}
+        else
+          Logger.warning("whatsapp template send failed status=#{status} body=#{inspect(body)}")
+          {:error, :twilio_rejected}
+        end
+
+      {:error, error} ->
+        Logger.warning("whatsapp template send unavailable #{inspect(error)}")
+        {:error, :twilio_unavailable}
+    end
+  end
+
+  defp not_on_whatsapp?(%{"code" => code}) when code in [63003, 63024, "63003", "63024"], do: true
+  defp not_on_whatsapp?(_), do: false
 end

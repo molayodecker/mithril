@@ -49,7 +49,7 @@ defmodule Mithril.WhatsApp.ChefIntakeTest do
 
     {blocked, reply} = ChefIntake.advance(state, "APPLY")
     assert blocked == state
-    assert reply =~ "Complete it before"
+    assert reply =~ "This WhatsApp line is for chef enquiries"
     assert blocked.answers["location"] == "East Legon"
   end
 

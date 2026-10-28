@@ -112,6 +112,8 @@ defmodule Mithril.MobileRpc do
   def allowlisted?(name) when is_binary(name), do: MapSet.member?(@names, name)
   def allowlisted?(_), do: false
 
+  def names, do: @names |> MapSet.to_list() |> Enum.sort()
+
   def compile(name, args) when is_binary(name) and is_map(args) do
     with :ok <- validate_name(name),
          {:ok, pairs} <- arg_pairs(args) do

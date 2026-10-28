@@ -83,6 +83,7 @@ defmodule MithrilWeb.ApiSpec do
     ]
   end
 
+  defp security_for_path("/mobile/guest/" <> _rest), do: []
   defp security_for_path("/mobile/" <> _rest), do: [%{"bearerAuth" => []}]
   defp security_for_path("/internal/parity/" <> _rest), do: [%{"parityToken" => []}]
 

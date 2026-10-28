@@ -23,6 +23,7 @@ defmodule Mithril.MobileGateway do
     paystack-initiate-transfer
     paystack-resolve-bank-account
     rank-cleaners-with-ai
+    replace-cleaner-weekly-availability
     request-data-export
     send-app-notification
     sumsub-config/token
@@ -98,6 +99,12 @@ defmodule Mithril.MobileGateway do
   end
 
   def call_guest_rpc(_name, _args), do: {:error, :unknown_function}
+
+  def guest_rpc_names, do: @guest_rpcs |> MapSet.to_list() |> Enum.sort()
+
+  def function_names, do: @functions |> MapSet.to_list() |> Enum.sort()
+
+  def guest_function_names, do: @guest_functions |> MapSet.to_list() |> Enum.sort()
 
   def call_guest_function(name, body) when is_binary(name) and is_map(body) do
     if MapSet.member?(@guest_functions, name) do

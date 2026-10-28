@@ -34,6 +34,14 @@ defmodule Mithril.WhatsApp.RecruitmentTest do
     refute xml =~ "What is your email address?"
   end
 
+  test "CHEF points to the separate chef WhatsApp bot" do
+    {:ok, xml} = Recruitment.handle_webhook(signed_params("CHEF"), sign(signed_params("CHEF")))
+
+    assert xml =~ "Chef enquiries have their own WhatsApp bot"
+    assert xml =~ "https://wa.me/233200000001"
+    refute xml =~ "Instaclean Chef Services"
+  end
+
   test "rejects an invalid Twilio signature" do
     assert {:error, :unauthorized} =
              Recruitment.handle_webhook(signed_params("APPLY"), "not-a-real-signature")

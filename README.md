@@ -135,7 +135,19 @@ POST /whatsapp/join-as-cleaner-bot
 
 `/functions/v1/join-as-cleaner-bot` is an alias for the previous Supabase URL. Set `TWILIO_WEBHOOK_URL` to the URL Twilio is actually configured with (signature checks use that exact string).
 
-Required env: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WEBHOOK_URL`. `APP_URL` should stay `https://tryinstaclean.com` so APPLY / WEB / SIGNUP links open the website.
+Required env: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WEBHOOK_URL`. `APP_URL` should stay `https://tryinstaclean.com` so APPLY / WEB / SIGNUP links open the website. `CHEF` on this line does not start a chef enquiry; it points people to the chef bot.
+
+### WhatsApp chef bot
+
+Chef enquiries are a separate Twilio WhatsApp sender. Point that sender's inbound webhook at:
+
+```text
+POST /whatsapp/chef-intake
+```
+
+`/functions/v1/chef-intake` is an alias. Signature checks use `TWILIO_CHEF_WEBHOOK_URL` (and optional `TWILIO_CHEF_WEBHOOK_URL_ALIAS`).
+
+Required env: `TWILIO_AUTH_TOKEN`, `TWILIO_CHEF_WEBHOOK_URL`. Set `TWILIO_CHEF_WHATSAPP_FROM` to that sender (`whatsapp:+233...`) so recruitment can advertise it and inbound `To` is rejected unless it matches. `TWILIO_WHATSAPP_FROM` remains the cleaner-recruitment sender.
 
 ### Direct Paystack checkout
 
@@ -147,6 +159,18 @@ POST /direct/bookings/:id/payment/verify
 ```
 
 The charged amount is the stored booking snapshot, never a client-supplied total. Paystack's callback must return to that booking's Direct confirmation URL.
+
+## Deployment
+
+Every successful [CI](.github/workflows/ci.yml) run on `main` deploys that commit to **staging** (`instaclean-mithril-staging`) via the [Deploy](.github/workflows/deploy.yml) workflow.
+
+**Production** (`api.tryinstaclean.com`) is promoted manually. Use the exact `main` commit SHA that already passed CI and deployed to staging (`commit_sha` is required).
+
+```bash
+gh workflow run Deploy --repo molayodecker/mithril --ref main -f environment=production -f commit_sha=6aa47cff835d81b524316ded34b58d1582ea4aa6
+```
+
+Replace `commit_sha` with the SHA you are promoting (for example from the latest green CI run on `main` or the `staging/<sha>` tag written after staging deploy). Track the run in GitHub Actions → **Deploy**.
 
 ## Database and backups
 

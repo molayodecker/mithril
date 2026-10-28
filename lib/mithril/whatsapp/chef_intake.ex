@@ -53,7 +53,7 @@ defmodule Mithril.WhatsApp.ChefIntake do
         start()
 
       String.upcase(response) == "APPLY" and state.status in [:in_progress, :confirm] ->
-        {state, "You are in the chef enquiry. Complete it before starting a cleaner application."}
+        {state, "This WhatsApp line is for chef enquiries. Reply EXIT to close it."}
 
       state.status == :completed ->
         {state, "Your enquiry is complete. Reply CHEF to start another enquiry."}

@@ -1,6 +1,8 @@
 defmodule MithrilWeb.Router do
   use Phoenix.Router
 
+  require MithrilWeb.MobileCallRouter
+
   pipeline :api do
     plug :accepts, ["json"]
     plug OpenApiSpex.Plug.PutApiSpec, module: MithrilWeb.ApiSpec
@@ -74,6 +76,7 @@ defmodule MithrilWeb.Router do
     pipe_through :whatsapp
 
     post "/whatsapp/chef-intake", WhatsAppChefController, :receive_message
+    post "/functions/v1/chef-intake", WhatsAppChefController, :receive_message
 
     get "/whatsapp/join-as-cleaner-bot", WhatsAppRecruitmentController, :serve
     post "/whatsapp/join-as-cleaner-bot", WhatsAppRecruitmentController, :serve
@@ -135,6 +138,9 @@ defmodule MithrilWeb.Router do
     pipe_through [:api]
 
     get "/invoices/:token", DirectAdminInvoicesController, :public_show
+    get "/pay/:token", DirectPaymentRequestsController, :public_show
+    post "/pay/:token/checkout", DirectPaymentRequestsController, :checkout
+    post "/pay/:token/verify", DirectPaymentRequestsController, :verify
     # Catalog, worker list, and price preview do not use the caller id.
     # Booking writes stay behind :direct_gateway.
     get "/booking-services", DirectBookingController, :list_services
@@ -262,6 +268,8 @@ defmodule MithrilWeb.Router do
     put "/admin/billing/invoices/:id", DirectAdminBillingController, :upsert_invoice
     get "/admin/billing/payment-advices", DirectAdminBillingController, :index_advices
     put "/admin/billing/payment-advices/:id", DirectAdminBillingController, :upsert_advice
+    get "/admin/billing/payment-requests", DirectPaymentRequestsController, :index
+    post "/admin/billing/payment-requests", DirectPaymentRequestsController, :create
     get "/admin/worker-loan-requests", DirectAdminWorkerLoansController, :index
     get "/admin/worker-loan-requests/:id", DirectAdminWorkerLoansController, :show
     post "/admin/worker-loan-requests/:id/review", DirectAdminWorkerLoansController, :review
@@ -284,6 +292,7 @@ defmodule MithrilWeb.Router do
 
     post "/guest/rpc/:name", MobileGatewayController, :guest_rpc
     post "/guest/functions/*name", MobileGatewayController, :guest_function
+    MithrilWeb.MobileCallRouter.guest_routes()
   end
 
   scope "/mobile", MithrilWeb do
@@ -292,5 +301,6 @@ defmodule MithrilWeb.Router do
     post "/rpc/:name", MobileGatewayController, :rpc
     post "/query", MobileGatewayController, :query
     post "/functions/*name", MobileGatewayController, :function
+    MithrilWeb.MobileCallRouter.user_routes()
   end
 end
