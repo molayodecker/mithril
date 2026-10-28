@@ -49,7 +49,7 @@ defmodule Mithril.MobileFunctions.JobPhotos do
        when is_binary(booking_id) and is_binary(path) do
     if Regex.match?(@booking_id, booking_id) and
          String.starts_with?(path, booking_id <> "/") and
-         (Regex.match?(@photo_path, path) or Regex.match?(@composite_path, path)) do
+         (Regex.match?(@photo_path, path) or valid_composite_path?(path)) do
       {:ok, booking_id, path}
     else
       {:error, :bad_request}
@@ -57,6 +57,11 @@ defmodule Mithril.MobileFunctions.JobPhotos do
   end
 
   defp validate(_), do: {:error, :bad_request}
+
+  defp valid_composite_path?(path) do
+    Regex.match?(@composite_path, path) and
+      Regex.match?(@booking_id, path |> String.split("/") |> List.last() |> Path.rootname())
+  end
 
   defp authorize(user_id, booking_id, mode) when is_binary(user_id) do
     sql =
@@ -75,7 +80,16 @@ defmodule Mithril.MobileFunctions.JobPhotos do
   defp authorize(_, _, _), do: {:error, :forbidden}
 
   defp registered(booking_id, path) do
-    case Repo.query("SELECT 1 FROM public.booking_job_photos WHERE booking_id = $1::uuid AND storage_path = $2 LIMIT 1", [DbUuid.dump!(booking_id), path]) do
+    query =
+      if Regex.match?(@composite_path, path) do
+        comparison_id = path |> String.split("/") |> List.last() |> Path.rootname()
+
+        Repo.query("SELECT 1 FROM public.job_photo_comparisons WHERE booking_id = $1::uuid AND id = $2::uuid LIMIT 1", [DbUuid.dump!(booking_id), DbUuid.dump!(comparison_id)])
+      else
+        Repo.query("SELECT 1 FROM public.booking_job_photos WHERE booking_id = $1::uuid AND storage_path = $2 LIMIT 1", [DbUuid.dump!(booking_id), path])
+      end
+
+    case query do
       {:ok, %{rows: [[1]]}} -> :ok
       _ -> {:error, :not_found}
     end
