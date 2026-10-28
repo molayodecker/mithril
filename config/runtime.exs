@@ -379,6 +379,10 @@ if twilio_webhook_url = System.get_env("TWILIO_WEBHOOK_URL") do
   config :mithril, :twilio_webhook_url, twilio_webhook_url
 end
 
+if payment_callback = System.get_env("TWILIO_PAYMENT_STATUS_CALLBACK_URL") do
+  config :mithril, :twilio_payment_status_callback_url, payment_callback
+end
+
 if twilio_webhook_alias = System.get_env("TWILIO_WEBHOOK_URL_ALIAS") do
   config :mithril, :twilio_webhook_url_alias, twilio_webhook_alias
 end
