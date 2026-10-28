@@ -391,6 +391,7 @@ defmodule Mithril.DirectPaymentRequestsTest do
 
       :approve, _body ->
         send(caller, :approval_attempt)
+
         if Process.get(:approval_failed_once) do
           :ok
         else
@@ -405,6 +406,7 @@ defmodule Mithril.DirectPaymentRequestsTest do
     assert_received :approval_attempt
     assert_received :approval_attempt
     refute_received :created
+
     assert [["submitted"]] =
              Repo.query!(
                "SELECT approval_status FROM public.whatsapp_content_templates WHERE name = 'instaclean_tap_to_pay'"
