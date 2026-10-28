@@ -429,6 +429,33 @@ defmodule Mithril.DirectPaymentRequestsTest do
              ).rows
   end
 
+  test "a definite SMS non-send releases delivery for a safe replay" do
+    Application.put_env(:mithril, :twilio_http, {:error, :not_on_whatsapp})
+    Application.put_env(:mithril, :sms_adapter, Mithril.Auth.SMS.Disabled)
+    admin_id = Fixtures.insert_user!("admin")
+
+    assert {:ok, created} = DirectPaymentRequests.create(admin_id, request())
+    assert created["sent"] == false
+
+    assert [[nil]] =
+             Repo.query!(
+               "SELECT delivery_claimed_at FROM public.direct_payment_requests WHERE public_token = $1",
+               [created["publicToken"]]
+             ).rows
+
+    Application.put_env(:mithril, :sms_adapter, Mithril.Auth.SMS.Test)
+
+    assert {:ok, replayed} = DirectPaymentRequests.create(admin_id, request())
+    assert replayed["id"] == created["id"]
+    assert replayed["sent"] == true
+    assert replayed["channel"] == "sms"
+    assert [{"+233241234567", _}] = Application.get_env(:mithril, :test_sms_messages)
+
+    assert {:ok, again} = DirectPaymentRequests.create(admin_id, request())
+    assert again["id"] == created["id"]
+    assert length(Application.get_env(:mithril, :test_sms_messages)) == 1
+  end
+
   defp request(overrides \\ %{}) do
     Map.merge(
       %{
