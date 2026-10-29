@@ -205,6 +205,22 @@ defmodule Mithril.DirectPaymentRequestsTest do
     assert {:error, :forbidden} = DirectPaymentRequests.list(customer_id)
   end
 
+  test "a payment request checkout uses the test paystack key" do
+    Application.put_env(:mithril, :paystack_payment_request_secret_key, "sk_test_payment_request")
+    admin_id = Fixtures.insert_user!("admin")
+    assert {:ok, created} = DirectPaymentRequests.create(admin_id, request())
+    token = created["publicToken"]
+
+    assert {:ok, checkout} = DirectPaymentRequests.checkout(token, %{})
+    reference = checkout["reference"]
+    assert PaystackTest.get_attempt(reference).paystack_secret == "sk_test_payment_request"
+
+    PaystackTest.forget_attempt(reference)
+    assert {:ok, again} = DirectPaymentRequests.checkout(token, %{})
+    assert again["reference"] == reference
+    assert PaystackTest.get_attempt(reference).paystack_secret == "sk_test_payment_request"
+  end
+
   test "a public checkout charges the saved amount and a webhook can mark it paid" do
     admin_id = Fixtures.insert_user!("admin")
     assert {:ok, created} = DirectPaymentRequests.create(admin_id, request())
@@ -498,7 +514,8 @@ defmodule Mithril.DirectPaymentRequestsTest do
       :twilio_content_http,
       :sms_adapter,
       :direct_public_url,
-      :test_sms_messages
+      :test_sms_messages,
+      :paystack_payment_request_secret_key
     ]
     |> Map.new(fn key -> {key, Application.get_env(:mithril, key)} end)
   end

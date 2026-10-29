@@ -162,6 +162,10 @@ if paystack_secret = System.get_env("PAYSTACK_SECRET_KEY") do
   config :mithril, :paystack_adapter, Mithril.Paystack.HTTP
 end
 
+if payment_request_secret = System.get_env("PAYSTACK_PAYMENT_REQUEST_SECRET_KEY") do
+  config :mithril, :paystack_payment_request_secret_key, payment_request_secret
+end
+
 if stripe_secret = System.get_env("STRIPE_SECRET_KEY") do
   config :mithril, :stripe_secret_key, stripe_secret
   config :mithril, :stripe_adapter, Mithril.Stripe.HTTP

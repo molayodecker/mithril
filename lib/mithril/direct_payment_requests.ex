@@ -495,7 +495,7 @@ defmodule Mithril.DirectPaymentRequests do
   defp ensure_authorization(row) do
     url = row["authorization_url"]
 
-    if paystack_checkout_url?(url) do
+    if reusable_checkout?(url, row["paystack_reference"]) do
       {:ok, checkout_json(row, url)}
     else
       email = row["email"] || @receipt_email
@@ -513,7 +513,7 @@ defmodule Mithril.DirectPaymentRequests do
         }
       }
 
-      case Paystack.initialize(attrs) do
+      case initialize_payment(attrs) do
         {:ok, %{authorization_url: authorization_url, reference: reference}} ->
           if paystack_checkout_url?(authorization_url) and reference == row["paystack_reference"] do
             case store_authorization(row["id"], authorization_url) do
@@ -588,8 +588,45 @@ defmodule Mithril.DirectPaymentRequests do
     end
   end
 
+  defp reusable_checkout?(url, reference) do
+    paystack_checkout_url?(url) and
+      case payment_request_secret() do
+        nil -> true
+        _secret -> match?({:ok, _}, verify_payment(reference))
+      end
+  end
+
+  defp initialize_payment(attrs) do
+    Paystack.initialize(put_payment_secret(attrs))
+  end
+
+  defp verify_payment(reference) do
+    case payment_request_secret() do
+      nil -> Paystack.verify(reference)
+      secret -> Paystack.verify(reference, secret)
+    end
+  end
+
+  defp put_payment_secret(attrs) do
+    case payment_request_secret() do
+      nil -> attrs
+      secret -> Map.put(attrs, :paystack_secret, secret)
+    end
+  end
+
+  defp payment_request_secret do
+    case Application.get_env(:mithril, :paystack_payment_request_secret_key) do
+      secret when is_binary(secret) ->
+        secret = String.trim(secret)
+        if secret == "", do: nil, else: secret
+
+      _ ->
+        nil
+    end
+  end
+
   defp confirm_paid(row, reference) do
-    case Paystack.verify(reference) do
+    case verify_payment(reference) do
       {:ok, receipt} ->
         cond do
           receipt_value(receipt, :status) != "success" ->

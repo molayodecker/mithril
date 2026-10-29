@@ -8,6 +8,14 @@ defmodule Mithril.Paystack do
 
   def initialize(attrs) when is_map(attrs), do: adapter().initialize(attrs)
   def verify(reference) when is_binary(reference), do: adapter().verify(reference)
+
+  def verify(reference, secret)
+      when is_binary(reference) and is_binary(secret) and secret != "" do
+    case adapter() do
+      Mithril.Paystack.HTTP -> Mithril.Paystack.HTTP.verify_with_secret(reference, secret)
+      _ -> adapter().verify(reference)
+    end
+  end
   def refund(attrs) when is_map(attrs), do: adapter().refund(attrs)
   def create_customer(attrs) when is_map(attrs), do: adapter().create_customer(attrs)
 
@@ -64,7 +72,8 @@ defmodule Mithril.Paystack.Test do
       status: "success",
       split_code: Map.get(attrs, :split_code),
       split: Map.get(attrs, :split),
-      metadata: Map.get(attrs, :metadata)
+      metadata: Map.get(attrs, :metadata),
+      paystack_secret: Map.get(attrs, :paystack_secret)
     }
 
     put_attempt(reference, record)
@@ -121,8 +130,13 @@ defmodule Mithril.Paystack.Test do
     Application.put_env(:mithril, :paystack_test_attempts, Map.put(attempts, reference, record))
   end
 
-  defp get_attempt(reference) do
+  def get_attempt(reference) do
     Application.get_env(:mithril, :paystack_test_attempts, %{})[reference]
+  end
+
+  def forget_attempt(reference) do
+    attempts = Application.get_env(:mithril, :paystack_test_attempts, %{})
+    Application.put_env(:mithril, :paystack_test_attempts, Map.delete(attempts, reference))
   end
 end
 
@@ -136,7 +150,8 @@ defmodule Mithril.Paystack.HTTP do
 
   @impl true
   def initialize(attrs) do
-    with {:ok, secret} <- secret_key() do
+    with {:ok, secret} <- secret_key(attrs) do
+      attrs = Map.delete(attrs, :paystack_secret)
       body =
         %{
           email: attrs.email,
@@ -170,30 +185,34 @@ defmodule Mithril.Paystack.HTTP do
   @impl true
   def verify(reference) do
     with {:ok, secret} <- secret_key() do
-      url = "https://api.paystack.co/transaction/verify/#{URI.encode(reference)}"
+      verify_with_secret(reference, secret)
+    end
+  end
 
-      case Req.get(url, auth: {:bearer, secret}) do
-        {:ok, %{status: status, body: %{"status" => true, "data" => data}}}
-        when status in 200..299 ->
-          {:ok,
-           %{
-             status: data["status"],
-             amount: data["amount"],
-             currency: data["currency"],
-             reference: data["reference"],
-             metadata: data["metadata"],
-             authorization: data["authorization"]
-           }}
+  def verify_with_secret(reference, secret) when is_binary(secret) and secret != "" do
+    url = "https://api.paystack.co/transaction/verify/#{URI.encode(reference)}"
 
-        {:ok, %{status: 404}} ->
-          {:error, :not_found}
+    case Req.get(url, auth: {:bearer, secret}) do
+      {:ok, %{status: status, body: %{"status" => true, "data" => data}}}
+      when status in 200..299 ->
+        {:ok,
+         %{
+           status: data["status"],
+           amount: data["amount"],
+           currency: data["currency"],
+           reference: data["reference"],
+           metadata: data["metadata"],
+           authorization: data["authorization"]
+         }}
 
-        {:ok, %{status: status, body: body}} ->
-          {:error, {:provider, status, provider_message(body)}}
+      {:ok, %{status: 404}} ->
+        {:error, :not_found}
 
-        {:error, _} ->
-          {:error, :provider_unavailable}
-      end
+      {:ok, %{status: status, body: body}} ->
+        {:error, {:provider, status, provider_message(body)}}
+
+      {:error, _} ->
+        {:error, :provider_unavailable}
     end
   end
 
@@ -283,6 +302,13 @@ defmodule Mithril.Paystack.HTTP do
 
       {:error, _} ->
         {:error, :provider_unavailable}
+    end
+  end
+
+  defp secret_key(attrs) when is_map(attrs) do
+    case Map.get(attrs, :paystack_secret) do
+      secret when is_binary(secret) and secret != "" -> {:ok, secret}
+      _ -> secret_key()
     end
   end
 
