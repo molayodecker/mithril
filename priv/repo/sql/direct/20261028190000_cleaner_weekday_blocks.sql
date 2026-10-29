@@ -33,6 +33,13 @@ BEGIN
     RAISE EXCEPTION 'invalid weekday' USING ERRCODE = '22023';
   END IF;
 
+  -- Serialize replacements for this worker, including when no block rows exist.
+  -- Row locks are held until the surrounding RPC transaction commits.
+  PERFORM 1 FROM public.users WHERE id = caller FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'not authorized' USING ERRCODE = '42501';
+  END IF;
+
   DELETE FROM public.cleaner_weekday_blocks
   WHERE cleaner_id = caller;
 
