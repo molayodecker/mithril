@@ -138,6 +138,173 @@ defmodule Mithril.DirectPaymentRequestsTest do
     assert Application.get_env(:mithril, :test_sms_messages) == []
   end
 
+  test "sends one reminder later only when the request is still unpaid" do
+    Application.put_env(:mithril, :twilio_http, {:error, :not_on_whatsapp})
+    admin_id = Fixtures.insert_user!("admin")
+
+    assert {:ok, created} =
+             DirectPaymentRequests.create(
+               admin_id,
+               request(%{"remindIfUnpaid" => true, "idempotencyKey" => Ecto.UUID.generate()})
+             )
+
+    assert created["remindIfUnpaid"] == true
+    assert created["remindersSent"] == 0
+    assert created["reminderPaused"] == false
+    assert created["reminderSentAt"] == nil
+    assert created["nextReminderAt"]
+    assert created["channel"] == "sms"
+    assert length(Application.get_env(:mithril, :test_sms_messages)) == 1
+
+    assert :ok = DirectPaymentRequests.deliver_unpaid_reminder(created["id"], 0)
+    assert [{_phone, reminder}, _original] = Application.get_env(:mithril, :test_sms_messages)
+    assert reminder =~ "Instaclean reminder:"
+    assert reminder =~ "still unpaid"
+    assert reminder =~ created["payUrl"]
+
+    assert :ok = DirectPaymentRequests.deliver_unpaid_reminder(created["id"], 0)
+    assert length(Application.get_env(:mithril, :test_sms_messages)) == 2
+
+    assert :ok = DirectPaymentRequests.deliver_unpaid_reminder(created["id"], 1)
+
+    assert {:ok, %{"requests" => requests}} = DirectPaymentRequests.list(admin_id)
+    listed = Enum.find(requests, &(&1["id"] == created["id"]))
+    assert listed["remindersSent"] == 2
+    assert listed["reminderSentAt"]
+    assert length(Application.get_env(:mithril, :test_sms_messages)) == 3
+
+    Repo.query!(
+      "UPDATE public.direct_payment_requests SET status = 'paid' WHERE id = $1",
+      [Ecto.UUID.dump!(created["id"])]
+    )
+
+    assert :ok = DirectPaymentRequests.deliver_unpaid_reminder(created["id"], 2)
+    assert length(Application.get_env(:mithril, :test_sms_messages)) == 3
+  end
+
+  test "does not schedule or send a reminder unless it was requested" do
+    Application.put_env(:mithril, :twilio_http, {:error, :not_on_whatsapp})
+    admin_id = Fixtures.insert_user!("admin")
+
+    assert {:ok, created} =
+             DirectPaymentRequests.create(
+               admin_id,
+               request(%{"idempotencyKey" => Ecto.UUID.generate()})
+             )
+
+    assert created["remindIfUnpaid"] == false
+    assert :ok = DirectPaymentRequests.deliver_unpaid_reminder(created["id"])
+    assert length(Application.get_env(:mithril, :test_sms_messages)) == 1
+  end
+
+  test "retries a reminder when WhatsApp delivery is unknown and does not also text" do
+    admin_id = Fixtures.insert_user!("admin")
+
+    assert {:ok, created} =
+             DirectPaymentRequests.create(
+               admin_id,
+               request(%{"remindIfUnpaid" => true, "idempotencyKey" => Ecto.UUID.generate()})
+             )
+
+    assert created["channel"] == "whatsapp"
+    Application.put_env(:mithril, :twilio_http, {:error, :twilio_unavailable})
+
+    assert {:error, :delivery_unknown} =
+             DirectPaymentRequests.deliver_unpaid_reminder(created["id"])
+
+    assert Application.get_env(:mithril, :test_sms_messages) == []
+
+    assert {:ok, %{"requests" => requests}} = DirectPaymentRequests.list(admin_id)
+    listed = Enum.find(requests, &(&1["id"] == created["id"]))
+    assert listed["reminderSentAt"] == nil
+  end
+
+  test "waits when a reminder send is already claimed" do
+    Application.put_env(:mithril, :twilio_http, {:error, :not_on_whatsapp})
+    admin_id = Fixtures.insert_user!("admin")
+
+    assert {:ok, created} =
+             DirectPaymentRequests.create(
+               admin_id,
+               request(%{"remindIfUnpaid" => true, "idempotencyKey" => Ecto.UUID.generate()})
+             )
+
+    Repo.query!(
+      "UPDATE public.direct_payment_requests SET reminder_claimed_at = now() WHERE id = $1",
+      [Ecto.UUID.dump!(created["id"])]
+    )
+
+    assert {:snooze, 660} = DirectPaymentRequests.deliver_unpaid_reminder(created["id"])
+    assert length(Application.get_env(:mithril, :test_sms_messages)) == 1
+  end
+
+  test "pauses reminders until they are resumed" do
+    Application.put_env(:mithril, :twilio_http, {:error, :not_on_whatsapp})
+    admin_id = Fixtures.insert_user!("admin")
+
+    assert {:ok, created} =
+             DirectPaymentRequests.create(
+               admin_id,
+               request(%{"remindIfUnpaid" => true, "idempotencyKey" => Ecto.UUID.generate()})
+             )
+
+    assert {:ok, paused} = DirectPaymentRequests.pause_reminders(admin_id, created["id"])
+    assert paused["reminderPaused"] == true
+    assert :ok = DirectPaymentRequests.deliver_unpaid_reminder(created["id"], 0)
+    assert length(Application.get_env(:mithril, :test_sms_messages)) == 1
+
+    assert {:ok, resumed} = DirectPaymentRequests.resume_reminders(admin_id, created["id"])
+    assert resumed["reminderPaused"] == false
+    assert :ok = DirectPaymentRequests.deliver_unpaid_reminder(created["id"], 0)
+    assert length(Application.get_env(:mithril, :test_sms_messages)) == 2
+  end
+
+  test "retries a payment link that was not sent" do
+    Application.put_env(:mithril, :twilio_http, {:error, :twilio_unavailable})
+    admin_id = Fixtures.insert_user!("admin")
+
+    assert {:ok, created} =
+             DirectPaymentRequests.create(
+               admin_id,
+               request(%{"idempotencyKey" => Ecto.UUID.generate()})
+             )
+
+    assert created["sent"] == false
+    Application.put_env(:mithril, :twilio_http, {:error, :not_on_whatsapp})
+
+    assert {:ok, retried} = DirectPaymentRequests.retry_message(admin_id, created["id"])
+    assert retried["sent"] == true
+    assert retried["channel"] == "sms"
+    assert [{_phone, body}] = Application.get_env(:mithril, :test_sms_messages)
+    assert body =~ retried["payUrl"]
+  end
+
+  test "retries a reminder after WhatsApp delivery is unknown" do
+    admin_id = Fixtures.insert_user!("admin")
+
+    assert {:ok, created} =
+             DirectPaymentRequests.create(
+               admin_id,
+               request(%{"remindIfUnpaid" => true, "idempotencyKey" => Ecto.UUID.generate()})
+             )
+
+    Application.put_env(:mithril, :twilio_http, {:error, :twilio_unavailable})
+
+    assert {:error, :delivery_unknown} =
+             DirectPaymentRequests.deliver_unpaid_reminder(created["id"], 0)
+
+    assert {:ok, %{"requests" => requests}} = DirectPaymentRequests.list(admin_id)
+    failed = Enum.find(requests, &(&1["id"] == created["id"]))
+    assert failed["reminderError"] == "delivery_unknown"
+    assert failed["remindersSent"] == 0
+
+    Application.put_env(:mithril, :twilio_http, :noop)
+    assert {:ok, retried} = DirectPaymentRequests.retry_message(admin_id, created["id"])
+    assert retried["remindersSent"] == 1
+    assert retried["reminderError"] == nil
+    assert Application.get_env(:mithril, :test_sms_messages) == []
+  end
+
   test "links an existing customer and accepts a phone that is not on their account" do
     admin_id = Fixtures.insert_user!("admin")
     customer_id = Fixtures.insert_user!()

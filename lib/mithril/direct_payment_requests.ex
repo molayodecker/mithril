@@ -18,13 +18,24 @@ defmodule Mithril.DirectPaymentRequests do
   alias Mithril.WhatsApp.PaymentTemplate
   alias Mithril.WhatsApp.Recruitment.Outbound
   alias Mithril.WhatsApp.TwilioSignature
+  alias Mithril.Workers.PaymentRequestReminder
 
   @columns ~w(
     id public_token customer_user_id customer_name phone_e164 email description
     amount_minor currency status channel paystack_reference authorization_url
     delivery_error idempotency_key delivery_claimed_at twilio_message_sid
-    sms_fallback_claimed_at sent_at paid_at created_at
+    sms_fallback_claimed_at sent_at remind_if_unpaid reminders_sent reminder_sent_at
+    reminder_paused_at reminder_error paid_at created_at
   )
+  # Offsets from the original send. 14 weeks is later than 30 days, so it is last.
+  @reminder_offsets [
+    24 * 60 * 60,
+    48 * 60 * 60,
+    72 * 60 * 60,
+    7 * 24 * 60 * 60,
+    30 * 24 * 60 * 60,
+    14 * 7 * 24 * 60 * 60
+  ]
   @min_minor 100
   @max_minor 2_147_483_647
   @email ~r/^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -278,11 +289,137 @@ defmodule Mithril.DirectPaymentRequests do
     end
   end
 
+  @doc "Send the scheduled reminder when the request is still unpaid."
+  def deliver_unpaid_reminder(id) when is_binary(id) do
+    with {:ok, uuid} <- dump_uuid(id),
+         {:ok, row} <- fetch_row(uuid) do
+      deliver_unpaid_reminder(id, row["reminders_sent"] || 0)
+    else
+      :error -> :ok
+      {:error, :not_found} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def deliver_unpaid_reminder(id, step) when is_binary(id) and is_integer(step) do
+    deliver_step(id, step, false)
+  end
+
+  def deliver_unpaid_reminder(_, _), do: :ok
+
+  def pause_reminders(user_id, id) do
+    with {:ok, admin_uid} <- dump_uuid(user_id),
+         :ok <- require_admin(admin_uid),
+         {:ok, uuid} <- dump_uuid(id) do
+      case Repo.query(
+             """
+             UPDATE public.direct_payment_requests
+             SET reminder_paused_at = COALESCE(reminder_paused_at, now()), updated_at = now()
+             WHERE id = $1 AND remind_if_unpaid AND status = 'unpaid'
+             RETURNING #{Enum.join(@columns, ", ")}
+             """,
+             [uuid]
+           ) do
+        {:ok, %{rows: [row]}} -> {:ok, admin_json(row_map(row))}
+        {:ok, %{rows: []}} -> reminder_action_error(uuid)
+        {:error, error} -> database_error(error)
+      end
+    else
+      :error -> {:error, :invalid_request}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def resume_reminders(user_id, id) do
+    with {:ok, admin_uid} <- dump_uuid(user_id),
+         :ok <- require_admin(admin_uid),
+         {:ok, uuid} <- dump_uuid(id) do
+      case Repo.query(
+             """
+             UPDATE public.direct_payment_requests
+             SET reminder_paused_at = NULL, updated_at = now()
+             WHERE id = $1
+               AND remind_if_unpaid
+               AND status = 'unpaid'
+               AND reminder_paused_at IS NOT NULL
+             RETURNING #{Enum.join(@columns, ", ")}
+             """,
+             [uuid]
+           ) do
+        {:ok, %{rows: [row]}} ->
+          mapped = row_map(row)
+          schedule_unpaid_reminder(mapped, 5)
+          {:ok, admin_json(mapped)}
+
+        {:ok, %{rows: []}} ->
+          resume_unchanged(uuid)
+
+        {:error, error} ->
+          database_error(error)
+      end
+    else
+      :error -> {:error, :invalid_request}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def retry_message(user_id, id) do
+    with {:ok, admin_uid} <- dump_uuid(user_id),
+         :ok <- require_admin(admin_uid),
+         {:ok, uuid} <- dump_uuid(id),
+         {:ok, row} <- fetch_row(uuid) do
+      cond do
+        is_nil(row["sent_at"]) ->
+          _ = release_failed_delivery(uuid)
+          send_fetched(uuid)
+
+        row["status"] == "paid" ->
+          {:error, :already_paid}
+
+        is_binary(row["reminder_error"]) ->
+          step = row["reminders_sent"] || 0
+
+          case deliver_step(id, step, true) do
+            :ok -> present_row(uuid)
+            {:snooze, _} -> {:error, :reminder_in_progress}
+            {:error, reason} -> {:error, reason}
+          end
+
+        true ->
+          {:error, :nothing_to_retry}
+      end
+    else
+      :error -> {:error, :invalid_request}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   def sms_body(request) when is_map(request) do
     url = pay_url(request["public_token"])
     amount = DirectAdminInvoices.money(request["amount_minor"])
     suffix = ". Tap here to pay: #{url}"
     prefix = "Instaclean: #{request["customer_name"]}, #{amount} for "
+    room = 300 - String.length(prefix) - String.length(suffix)
+
+    detail =
+      if room >= 8 do
+        request["description"]
+        |> to_string()
+        |> String.replace(~r/\s+/, " ")
+        |> String.trim()
+        |> String.slice(0, room)
+      else
+        "your bill"
+      end
+
+    prefix <> detail <> suffix
+  end
+
+  def reminder_sms_body(request) when is_map(request) do
+    url = pay_url(request["public_token"])
+    amount = DirectAdminInvoices.money(request["amount_minor"])
+    suffix = " is still unpaid. Tap here to pay: #{url}"
+    prefix = "Instaclean reminder: #{request["customer_name"]}, #{amount} for "
     room = 300 - String.length(prefix) - String.length(suffix)
 
     detail =
@@ -315,16 +452,18 @@ defmodule Mithril.DirectPaymentRequests do
       input.amount_minor,
       reference,
       admin_uid,
-      dump!(input.idempotency_key)
+      dump!(input.idempotency_key),
+      input.remind_if_unpaid
     ]
 
     case Repo.query(
            """
            INSERT INTO public.direct_payment_requests (
              id, public_token, customer_user_id, customer_name, phone_e164, email,
-             description, amount_minor, paystack_reference, created_by, idempotency_key
+             description, amount_minor, paystack_reference, created_by, idempotency_key,
+             remind_if_unpaid
            ) VALUES (
-             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
            )
            RETURNING #{Enum.join(@columns, ", ")}
            """,
@@ -351,6 +490,7 @@ defmodule Mithril.DirectPaymentRequests do
          ) do
       {:ok, %{rows: [row]}} ->
         mapped = row_map(row)
+        if mapped["sent_at"], do: schedule_unpaid_reminder(mapped)
         if mapped["sent_at"], do: {:ok, admin_json(mapped)}, else: send_and_present(row)
 
       {:ok, %{rows: []}} ->
@@ -362,8 +502,10 @@ defmodule Mithril.DirectPaymentRequests do
   end
 
   defp send_and_present(row) do
-    request = row_map(row)
+    send_mapped(row_map(row))
+  end
 
+  defp send_mapped(request) do
     case claim_delivery(request["id"]) do
       {:ok, nil} ->
         {:ok, admin_json(request)}
@@ -381,13 +523,15 @@ defmodule Mithril.DirectPaymentRequests do
       {:ok, channel, message_sid} ->
         case mark_sent(request["id"], channel, message_sid) do
           {:ok, updated} ->
+            schedule_unpaid_reminder(updated)
             {:ok, admin_json(updated)}
 
           {:error, _} ->
-            {:ok,
-             admin_json(
-               Map.merge(request, %{"channel" => channel, "sent_at" => DateTime.utc_now()})
-             )}
+            merged =
+              Map.merge(request, %{"channel" => channel, "sent_at" => DateTime.utc_now()})
+
+            schedule_unpaid_reminder(merged)
+            {:ok, admin_json(merged)}
         end
 
       {:error, reason} ->
@@ -746,6 +890,253 @@ defmodule Mithril.DirectPaymentRequests do
     )
   end
 
+  defp deliver_step(id, step, ignore_pause) when is_binary(id) and is_integer(step) do
+    with {:ok, uuid} <- dump_uuid(id),
+         {:ok, request} <- claim_reminder(uuid, step, ignore_pause) do
+      case request do
+        nil -> reminder_wait(uuid, step)
+        request -> send_reminder(request, step)
+      end
+    else
+      :error -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp schedule_unpaid_reminder(row, minimum_seconds \\ 1) do
+    step = row["reminders_sent"] || 0
+    sent_at = row["sent_at"]
+
+    cond do
+      row["remind_if_unpaid"] != true -> :ok
+      not is_nil(row["reminder_paused_at"]) -> :ok
+      is_nil(sent_at) -> :ok
+      step < 0 or step >= length(@reminder_offsets) -> :ok
+      true -> enqueue_reminder(row["id"], step, reminder_delay(sent_at, step, minimum_seconds))
+    end
+  end
+
+  defp enqueue_reminder(id, step, delay_seconds) do
+    if Application.get_env(:mithril, :start_oban, true) do
+      job =
+        PaymentRequestReminder.new(
+          %{"payment_request_id" => uuid_string(id), "step" => step},
+          schedule_in: {max(delay_seconds, 1), :second}
+        )
+
+      case Oban.insert(job) do
+        {:ok, _job} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.error("payment request reminder enqueue failed: #{inspect(reason)}")
+      end
+    end
+
+    :ok
+  end
+
+  defp reminder_delay(sent_at, step, minimum_seconds) do
+    target = DateTime.add(coerce_datetime(sent_at), Enum.at(@reminder_offsets, step), :second)
+    delay = DateTime.diff(target, DateTime.utc_now(), :second)
+    max(delay, minimum_seconds)
+  end
+
+  defp reminder_wait(id, step) do
+    case Repo.query(
+           """
+           SELECT 1
+           FROM public.direct_payment_requests
+           WHERE id = $1
+             AND remind_if_unpaid
+             AND status = 'unpaid'
+             AND reminder_paused_at IS NULL
+             AND reminders_sent = $2
+             AND reminder_claimed_at IS NOT NULL
+           """,
+           [id, step]
+         ) do
+      {:ok, %{num_rows: 1}} -> {:snooze, 660}
+      {:ok, _} -> :ok
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp claim_reminder(id, step, ignore_pause) do
+    case Repo.query(
+           """
+           UPDATE public.direct_payment_requests
+           SET reminder_claimed_at = now(), updated_at = now()
+           WHERE id = $1
+             AND remind_if_unpaid
+             AND status = 'unpaid'
+             AND sent_at IS NOT NULL
+             AND reminders_sent = $2
+             AND ($3 OR reminder_paused_at IS NULL)
+             AND (
+               reminder_claimed_at IS NULL
+               OR reminder_claimed_at < now() - interval '10 minutes'
+             )
+           RETURNING #{Enum.join(@columns, ", ")}
+           """,
+           [id, step, ignore_pause]
+         ) do
+      {:ok, %{rows: [row]}} -> {:ok, row_map(row)}
+      {:ok, %{rows: []}} -> {:ok, nil}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp send_reminder(request, step) do
+    case deliver_reminder_message(request) do
+      {:ok, _channel, _sid} ->
+        case mark_reminder_sent(request["id"], step) do
+          {:ok, nil} ->
+            :ok
+
+          {:ok, updated} ->
+            schedule_unpaid_reminder(updated, 24 * 60 * 60)
+            :ok
+
+          {:error, reason} ->
+            _ = release_reminder_claim(request["id"], step)
+            {:error, reason}
+        end
+
+      {:error, :twilio_unavailable} ->
+        _ = record_reminder_failure(request["id"], step, "delivery_unknown")
+        {:error, :delivery_unknown}
+
+      {:error, reason} ->
+        _ = record_reminder_failure(request["id"], step, Atom.to_string(reason))
+        {:error, reason}
+    end
+  end
+
+  defp deliver_reminder_message(request) do
+    case whatsapp(request) do
+      {:ok, sid} ->
+        {:ok, "whatsapp", sid}
+
+      {:error, :twilio_unavailable} ->
+        {:error, :twilio_unavailable}
+
+      _other ->
+        case SMS.send_message(request["phone_e164"], reminder_sms_body(request)) do
+          :ok -> {:ok, "sms", nil}
+          {:error, reason} -> {:error, reason}
+        end
+    end
+  end
+
+  defp mark_reminder_sent(id, step) do
+    case Repo.query(
+           """
+           UPDATE public.direct_payment_requests
+           SET reminders_sent = reminders_sent + 1,
+               reminder_sent_at = now(),
+               reminder_claimed_at = NULL,
+               reminder_error = NULL,
+               updated_at = now()
+           WHERE id = $1 AND reminders_sent = $2
+           RETURNING #{Enum.join(@columns, ", ")}
+           """,
+           [id, step]
+         ) do
+      {:ok, %{rows: [row]}} -> {:ok, row_map(row)}
+      {:ok, %{rows: []}} -> {:ok, nil}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp record_reminder_failure(id, step, reason) do
+    Repo.query(
+      """
+      UPDATE public.direct_payment_requests
+      SET reminder_claimed_at = NULL, reminder_error = $3, updated_at = now()
+      WHERE id = $1 AND reminders_sent = $2
+      """,
+      [id, step, reason]
+    )
+  end
+
+  defp release_reminder_claim(id, step) do
+    Repo.query(
+      """
+      UPDATE public.direct_payment_requests
+      SET reminder_claimed_at = NULL, updated_at = now()
+      WHERE id = $1 AND reminders_sent = $2
+      """,
+      [id, step]
+    )
+  end
+
+  defp release_failed_delivery(id) do
+    Repo.query(
+      """
+      UPDATE public.direct_payment_requests
+      SET delivery_claimed_at = NULL, delivery_error = NULL, updated_at = now()
+      WHERE id = $1 AND sent_at IS NULL AND twilio_message_sid IS NULL
+      """,
+      [id]
+    )
+  end
+
+  defp send_fetched(id) do
+    case fetch_row(id) do
+      {:ok, row} -> send_mapped(row)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp present_row(id) do
+    case fetch_row(id) do
+      {:ok, row} -> {:ok, admin_json(row)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp resume_unchanged(id) do
+    case fetch_row(id) do
+      {:ok,
+       %{"remind_if_unpaid" => true, "status" => "unpaid", "reminder_paused_at" => nil} = row} ->
+        {:ok, admin_json(row)}
+
+      other ->
+        reminder_action_result(other)
+    end
+  end
+
+  defp reminder_action_error(id) do
+    reminder_action_result(fetch_row(id))
+  end
+
+  defp reminder_action_result({:ok, %{"status" => "paid"}}), do: {:error, :already_paid}
+
+  defp reminder_action_result({:ok, %{"remind_if_unpaid" => true}}),
+    do: {:error, :invalid_request}
+
+  defp reminder_action_result({:ok, _}), do: {:error, :not_remindable}
+  defp reminder_action_result({:error, reason}), do: {:error, reason}
+
+  defp fetch_row(id) do
+    case Repo.query("#{select_sql()} WHERE id = $1", [id]) do
+      {:ok, %{rows: [row]}} -> {:ok, row_map(row)}
+      {:ok, %{rows: []}} -> {:error, :not_found}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp coerce_datetime(%DateTime{} = value), do: DateTime.truncate(value, :second)
+  defp coerce_datetime(%NaiveDateTime{} = value), do: DateTime.from_naive!(value, "Etc/UTC")
+
+  defp coerce_datetime(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, parsed, _} -> DateTime.truncate(parsed, :second)
+      _ -> DateTime.utc_now()
+    end
+  end
+
   defp release_unsent_delivery(id, reason) do
     Repo.query(
       """
@@ -840,7 +1231,8 @@ defmodule Mithril.DirectPaymentRequests do
          {:ok, amount} <- amount(params["amountMinor"] || params[:amountMinor]),
          {:ok, customer_id} <- optional_uuid(params["customerUserId"] || params[:customerUserId]),
          {:ok, email} <- optional_email(params["email"] || params[:email]),
-         {:ok, key} <- required_uuid(params["idempotencyKey"] || params[:idempotencyKey]) do
+         {:ok, key} <- required_uuid(params["idempotencyKey"] || params[:idempotencyKey]),
+         {:ok, remind} <- optional_flag(flag_value(params, "remindIfUnpaid")) do
       {:ok,
        %{
          customer_name: name,
@@ -849,7 +1241,8 @@ defmodule Mithril.DirectPaymentRequests do
          amount_minor: amount,
          customer_user_id: customer_id,
          email: email,
-         idempotency_key: key
+         idempotency_key: key,
+         remind_if_unpaid: remind
        }}
     end
   end
@@ -899,6 +1292,18 @@ defmodule Mithril.DirectPaymentRequests do
 
   defp required_uuid(_), do: {:error, :invalid_request}
 
+  defp flag_value(params, "remindIfUnpaid") do
+    cond do
+      Map.has_key?(params, "remindIfUnpaid") -> params["remindIfUnpaid"]
+      Map.has_key?(params, :remindIfUnpaid) -> params[:remindIfUnpaid]
+      true -> false
+    end
+  end
+
+  defp optional_flag(value) when value in [true, false], do: {:ok, value}
+  defp optional_flag(nil), do: {:ok, false}
+  defp optional_flag(_), do: {:error, :invalid_request}
+
   defp optional_email(nil), do: {:ok, nil}
   defp optional_email(""), do: {:ok, nil}
 
@@ -923,6 +1328,31 @@ defmodule Mithril.DirectPaymentRequests do
 
   defp clean_email(_), do: nil
 
+  defp next_reminder_at(row) do
+    step = row["reminders_sent"] || 0
+    sent_at = row["sent_at"]
+
+    cond do
+      row["remind_if_unpaid"] != true ->
+        nil
+
+      row["status"] == "paid" ->
+        nil
+
+      is_nil(sent_at) or not is_integer(step) ->
+        nil
+
+      step < 0 or step >= length(@reminder_offsets) ->
+        nil
+
+      true ->
+        sent_at
+        |> coerce_datetime()
+        |> DateTime.add(Enum.at(@reminder_offsets, step), :second)
+        |> timestamp()
+    end
+  end
+
   defp admin_json(row) do
     %{
       "id" => uuid_string(row["id"]),
@@ -941,7 +1371,13 @@ defmodule Mithril.DirectPaymentRequests do
       "deliveryError" => row["delivery_error"],
       "sentAt" => timestamp(row["sent_at"]),
       "paidAt" => timestamp(row["paid_at"]),
-      "createdAt" => timestamp(row["created_at"])
+      "createdAt" => timestamp(row["created_at"]),
+      "remindIfUnpaid" => row["remind_if_unpaid"] == true,
+      "remindersSent" => row["reminders_sent"] || 0,
+      "reminderSentAt" => timestamp(row["reminder_sent_at"]),
+      "reminderPaused" => not is_nil(row["reminder_paused_at"]),
+      "nextReminderAt" => next_reminder_at(row),
+      "reminderError" => row["reminder_error"]
     }
   end
 

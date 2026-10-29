@@ -39,6 +39,60 @@ defmodule MithrilWeb.DirectPaymentRequestsController do
     respond(conn, DirectPaymentRequests.create(user_id(conn), params))
   end
 
+  operation(:pause,
+    operation_id: "direct.pauseAdminPaymentRequestReminders",
+    summary: "Pause unpaid reminders for a payment request",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Payment request id"
+      ]
+    ],
+    responses: [ok: {"Payment request", "application/json", Request}]
+  )
+
+  def pause(conn, %{"id" => id}) do
+    respond(conn, DirectPaymentRequests.pause_reminders(user_id(conn), id))
+  end
+
+  operation(:resume,
+    operation_id: "direct.resumeAdminPaymentRequestReminders",
+    summary: "Resume unpaid reminders for a payment request",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Payment request id"
+      ]
+    ],
+    responses: [ok: {"Payment request", "application/json", Request}]
+  )
+
+  def resume(conn, %{"id" => id}) do
+    respond(conn, DirectPaymentRequests.resume_reminders(user_id(conn), id))
+  end
+
+  operation(:retry,
+    operation_id: "direct.retryAdminPaymentRequestMessage",
+    summary: "Retry a failed payment request message",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Payment request id"
+      ]
+    ],
+    responses: [ok: {"Payment request", "application/json", Request}]
+  )
+
+  def retry(conn, %{"id" => id}) do
+    respond(conn, DirectPaymentRequests.retry_message(user_id(conn), id))
+  end
+
   operation(:public_show,
     operation_id: "direct.showPublicPaymentRequest",
     summary: "Read a payment request by its public token",
@@ -117,6 +171,9 @@ defmodule MithrilWeb.DirectPaymentRequestsController do
   defp error_response(:invalid_email), do: {422, "invalid_email"}
   defp error_response(:customer_not_found), do: {404, "customer_not_found"}
   defp error_response(:already_paid), do: {409, "already_paid"}
+  defp error_response(:not_remindable), do: {409, "not_remindable"}
+  defp error_response(:nothing_to_retry), do: {409, "nothing_to_retry"}
+  defp error_response(:reminder_in_progress), do: {409, "reminder_in_progress"}
   defp error_response(:amount_mismatch), do: {409, "amount_mismatch"}
   defp error_response(:payment_incomplete), do: {409, "payment_incomplete"}
   defp error_response(:payment_conflict), do: {409, "payment_conflict"}
