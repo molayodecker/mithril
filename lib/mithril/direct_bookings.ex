@@ -781,11 +781,19 @@ defmodule Mithril.DirectBookings do
     case Repo.query(
            """
            SELECT
-             EXISTS(
-               SELECT 1
-               FROM public.cleaner_availability_exceptions cae
-               WHERE cae.cleaner_id = $1::uuid
-                 AND cae.exception_date = $2::date
+             (
+               EXISTS(
+                 SELECT 1
+                 FROM public.cleaner_availability_exceptions cae
+                 WHERE cae.cleaner_id = $1::uuid
+                   AND cae.exception_date = $2::date
+               )
+               OR EXISTS(
+                 SELECT 1
+                 FROM public.cleaner_weekday_blocks block
+                 WHERE block.cleaner_id = $1::uuid
+                   AND block.day_of_week = EXTRACT(DOW FROM $2::date)::int
+               )
              ),
              public.cleaner_has_booking_conflict(
                $1::uuid,

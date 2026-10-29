@@ -18,6 +18,7 @@ defmodule Mithril.DirectAdminBookingsTest do
           "payout_methods",
           "worker_loan_accounts",
           "wallets",
+          "cleaner_weekday_blocks",
           "cleaner_availability_exceptions",
           "cleaner_data",
           "bookings",
@@ -106,6 +107,14 @@ defmodule Mithril.DirectAdminBookingsTest do
     CREATE TABLE public.cleaner_availability_exceptions (
       cleaner_id uuid NOT NULL,
       exception_date date NOT NULL
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.cleaner_weekday_blocks (
+      cleaner_id uuid NOT NULL,
+      day_of_week smallint NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
+      PRIMARY KEY (cleaner_id, day_of_week)
     )
     """)
 

@@ -81,6 +81,7 @@ defmodule Mithril.MobileRpc do
     queue_avatar_storage_deletion
     reconcile_payout_name_mismatch_flag
     register_booking_job_photo
+    replace_cleaner_weekday_blocks
     register_device_push_token
     register_quick_task_upload
     release_own_welcome_promotion_reservation

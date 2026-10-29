@@ -21,6 +21,7 @@ defmodule Mithril.DirectDispatchSafetyTest do
 
     for table <- [
           "test_cleaner_conflicts",
+          "cleaner_weekday_blocks",
           "cleaner_availability_exceptions",
           "direct_service_requests",
           "placement_candidate_profiles",
@@ -153,6 +154,14 @@ defmodule Mithril.DirectDispatchSafetyTest do
     CREATE TABLE public.cleaner_availability_exceptions (
       cleaner_id uuid NOT NULL,
       exception_date date NOT NULL
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.cleaner_weekday_blocks (
+      cleaner_id uuid NOT NULL,
+      day_of_week smallint NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
+      PRIMARY KEY (cleaner_id, day_of_week)
     )
     """)
 
@@ -320,6 +329,23 @@ defmodule Mithril.DirectDispatchSafetyTest do
 
     Repo.query!(
       "INSERT INTO public.cleaner_availability_exceptions (cleaner_id, exception_date) VALUES ($1, '2099-09-08')",
+      [Ecto.UUID.dump!(worker_id)]
+    )
+
+    assert {:error, :candidate_unavailable} =
+             DirectDispatchSafety.assign_admin_service_request(admin_id, request_id, %{
+               "workerUserId" => worker_id
+             })
+  end
+
+  test "rejects dispatch assignment on a blocked weekday" do
+    %{admin_id: admin_id, worker_id: worker_id, request_id: request_id} = dispatch_fixture!()
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_weekday_blocks (cleaner_id, day_of_week)
+      SELECT $1, EXTRACT(DOW FROM DATE '2099-09-08')::int
+      """,
       [Ecto.UUID.dump!(worker_id)]
     )
 
