@@ -16,6 +16,7 @@ defmodule Mithril.Paystack do
       _ -> adapter().verify(reference)
     end
   end
+
   def refund(attrs) when is_map(attrs), do: adapter().refund(attrs)
   def create_customer(attrs) when is_map(attrs), do: adapter().create_customer(attrs)
 
@@ -152,6 +153,7 @@ defmodule Mithril.Paystack.HTTP do
   def initialize(attrs) do
     with {:ok, secret} <- secret_key(attrs) do
       attrs = Map.delete(attrs, :paystack_secret)
+
       body =
         %{
           email: attrs.email,
