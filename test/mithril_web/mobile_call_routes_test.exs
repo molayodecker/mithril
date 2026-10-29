@@ -53,6 +53,11 @@ defmodule MithrilWeb.MobileCallRoutesTest do
     assert spec.paths["/mobile/guest/actions/timezone"].post.operationId ==
              "mobile.getTimezoneGuest"
 
+    assert spec.paths["/mobile/calls/replace-cleaner-weekday-blocks"].post.operationId ==
+             "mobile.replaceCleanerWeekdayBlocks"
+
+    assert spec.components.schemas["MobileReplaceCleanerWeekdayBlocksRequest"]
+
     assert spec.components.schemas["MobileAvailableTimeslotsRequest"]
     assert spec.components.schemas["MobileTimezoneRequest"]
   end

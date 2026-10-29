@@ -519,6 +519,37 @@ defmodule MithrilWeb.Schemas.MobileCalls do
     })
   end
 
+  defmodule ReplaceCleanerWeekdayBlocksRequest do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileReplaceCleanerWeekdayBlocksRequest",
+      type: :object,
+      description:
+        "Weekdays the signed-in worker does not work. 0 is Sunday through 6 Saturday. An empty array clears every block.",
+      properties: %{
+        p_days: %Schema{
+          type: :array,
+          items: %Schema{type: :integer, minimum: 0, maximum: 6}
+        }
+      },
+      required: [:p_days]
+    })
+  end
+
+  defmodule ReplaceCleanerWeekdayBlocksResponse do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileReplaceCleanerWeekdayBlocksResponse",
+      type: :object,
+      properties: %{
+        data: %Schema{nullable: true}
+      },
+      required: [:data]
+    })
+  end
+
   def operation({:user_rpc, "is_location_in_active_service_area"}) do
     post("mobile.checkServiceArea", "Whether coordinates are inside the active service area",
       request: ServiceAreaRequest,
@@ -679,6 +710,15 @@ defmodule MithrilWeb.Schemas.MobileCalls do
       "mobile.getAiMatchSettingsGuest",
       "AI match settings without a signed-in user",
       response: AiMatchSettingsResponse
+    )
+  end
+
+  def operation({:user_rpc, "replace_cleaner_weekday_blocks"}) do
+    post(
+      "mobile.replaceCleanerWeekdayBlocks",
+      "Replace the signed-in worker's blocked weekdays",
+      request: ReplaceCleanerWeekdayBlocksRequest,
+      response: ReplaceCleanerWeekdayBlocksResponse
     )
   end
 
