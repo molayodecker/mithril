@@ -215,10 +215,22 @@ defmodule Mithril.DirectPaymentRequestsTest do
     reference = checkout["reference"]
     assert PaystackTest.get_attempt(reference).paystack_secret == "sk_test_payment_request"
 
-    PaystackTest.forget_attempt(reference)
     assert {:ok, again} = DirectPaymentRequests.checkout(token, %{})
-    assert again["reference"] == reference
-    assert PaystackTest.get_attempt(reference).paystack_secret == "sk_test_payment_request"
+    refute again["reference"] == reference
+
+    assert PaystackTest.get_attempt(again["reference"]).paystack_secret ==
+             "sk_test_payment_request"
+
+    assert {:ok, %{settled: true}} =
+             DirectPaymentRequests.settle_charge(%{
+               reference: reference,
+               status: "success",
+               amount_minor: 15_000,
+               currency: "GHS"
+             })
+
+    assert {:ok, shown} = DirectPaymentRequests.public_show(token)
+    assert shown["status"] == "paid"
   end
 
   test "a public checkout charges the saved amount and a webhook can mark it paid" do
