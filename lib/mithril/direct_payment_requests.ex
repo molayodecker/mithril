@@ -493,55 +493,64 @@ defmodule Mithril.DirectPaymentRequests do
   end
 
   defp ensure_authorization(row) do
-    url = row["authorization_url"]
+    # Paystack checkout sessions expire. Reusing a stored authorization URL
+    # shows "Session timeout exceeded", so every Pay click starts a new one.
+    # The public /pay link stays the same. An older session can still settle.
+    row = refresh_checkout(row)
+    email = row["email"] || @receipt_email
 
-    if reusable_checkout?(url, row["paystack_reference"]) do
-      {:ok, checkout_json(row, url)}
-    else
-      email = row["email"] || @receipt_email
-
-      attrs = %{
-        email: email,
-        amount: row["amount_minor"],
-        currency: row["currency"] || "GHS",
-        reference: row["paystack_reference"],
-        callback_url: pay_url(row["public_token"]),
-        metadata: %{
-          "payment_request_id" => uuid_string(row["id"]),
-          "public_token" => row["public_token"],
-          "kind" => "direct_payment_request"
-        }
+    attrs = %{
+      email: email,
+      amount: row["amount_minor"],
+      currency: row["currency"] || "GHS",
+      reference: row["paystack_reference"],
+      callback_url: pay_url(row["public_token"]),
+      metadata: %{
+        "payment_request_id" => uuid_string(row["id"]),
+        "public_token" => row["public_token"],
+        "kind" => "direct_payment_request"
       }
+    }
 
-      case initialize_payment(attrs) do
-        {:ok, %{authorization_url: authorization_url, reference: reference}} ->
-          if paystack_checkout_url?(authorization_url) and reference == row["paystack_reference"] do
-            case store_authorization(row["id"], authorization_url) do
-              {:ok, updated} ->
-                {:ok, checkout_json(updated, authorization_url)}
+    case initialize_payment(attrs) do
+      {:ok, %{authorization_url: authorization_url, reference: reference}} ->
+        if paystack_checkout_url?(authorization_url) and reference == row["paystack_reference"] do
+          case store_authorization(row["id"], authorization_url) do
+            {:ok, updated} ->
+              {:ok, checkout_json(updated, authorization_url)}
 
-              {:error, _} ->
-                {:ok,
-                 checkout_json(
-                   Map.put(row, "authorization_url", authorization_url),
-                   authorization_url
-                 )}
-            end
-          else
-            {:error, :payment_not_configured}
+            {:error, _} ->
+              {:ok,
+               checkout_json(
+                 Map.put(row, "authorization_url", authorization_url),
+                 authorization_url
+               )}
           end
-
-        {:error, :payment_not_configured} ->
+        else
           {:error, :payment_not_configured}
+        end
 
-        {:error, reason} ->
-          Logger.warning("payment request checkout failed #{inspect(reason)}")
-          # The provider may have accepted the first request before its HTTP
-          # response was lost. Preserve that reference for late webhooks, then
-          # issue a fresh one for the next public checkout attempt.
-          _ = rotate_reference(row)
-          {:error, :payment_unavailable}
+      {:error, :payment_not_configured} ->
+        {:error, :payment_not_configured}
+
+      {:error, reason} ->
+        Logger.warning("payment request checkout failed #{inspect(reason)}")
+        # The provider may have accepted the first request before its HTTP
+        # response was lost. Preserve that reference for late webhooks, then
+        # issue a fresh one for the next public checkout attempt.
+        _ = rotate_reference(row)
+        {:error, :payment_unavailable}
+    end
+  end
+
+  defp refresh_checkout(row) do
+    if paystack_checkout_url?(row["authorization_url"]) do
+      case rotate_reference(row) do
+        {:ok, reference} -> %{row | "paystack_reference" => reference, "authorization_url" => nil}
+        {:error, _} -> row
       end
+    else
+      row
     end
   end
 
@@ -568,7 +577,7 @@ defmodule Mithril.DirectPaymentRequests do
              """,
              [row["id"], new_reference, row["paystack_reference"]]
            ) do
-      :ok
+      {:ok, new_reference}
     else
       _ -> {:error, :payment_conflict}
     end
@@ -586,14 +595,6 @@ defmodule Mithril.DirectPaymentRequests do
       {:ok, %{rows: [[1]]}} -> true
       _ -> false
     end
-  end
-
-  defp reusable_checkout?(url, reference) do
-    paystack_checkout_url?(url) and
-      case payment_request_secret() do
-        nil -> true
-        _secret -> match?({:ok, _}, verify_payment(reference))
-      end
   end
 
   defp initialize_payment(attrs) do
