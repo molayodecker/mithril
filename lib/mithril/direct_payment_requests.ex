@@ -50,8 +50,12 @@ defmodule Mithril.DirectPaymentRequests do
            Repo.query("#{select_sql()} ORDER BY created_at DESC LIMIT 30", []) do
       {:ok, %{"requests" => Enum.map(result.rows, &admin_json(row_map(&1)))}}
     else
-      :error -> {:error, :invalid_request}
-      {:error, reason} when is_atom(reason) -> {:error, reason}
+      :error ->
+        {:error, :invalid_request}
+
+      {:error, reason} when is_atom(reason) ->
+        {:error, reason}
+
       {:error, error} ->
         database_error(error)
     end
@@ -1057,7 +1061,7 @@ defmodule Mithril.DirectPaymentRequests do
           {:ok, nil} ->
             :ok
 
-          {:ok, updated} ->
+          {:ok, _updated} ->
             :ok
 
           {:error, reason} ->
