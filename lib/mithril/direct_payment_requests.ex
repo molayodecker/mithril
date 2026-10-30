@@ -52,7 +52,8 @@ defmodule Mithril.DirectPaymentRequests do
     else
       :error -> {:error, :invalid_request}
       {:error, reason} when is_atom(reason) -> {:error, reason}
-      {:error, error} -> database_error(error)
+      {:error, error} ->
+        database_error(error)
     end
   end
 
@@ -250,7 +251,8 @@ defmodule Mithril.DirectPaymentRequests do
           {:error, error} -> database_error(error)
         end
 
-      {:error, error} -> database_error(error)
+      {:error, error} ->
+        database_error(error)
     end
   end
 
@@ -1092,20 +1094,20 @@ defmodule Mithril.DirectPaymentRequests do
   defp mark_reminder_sent(id, step, sid) do
     Repo.transaction(fn ->
       case Repo.query(
-           """
-           UPDATE public.direct_payment_requests
-           SET reminders_sent = reminders_sent + 1,
-               reminder_sent_at = now(),
-               reminder_twilio_sid = $3,
-               reminder_sms_fallback_claimed_at = NULL,
-               reminder_claimed_at = NULL,
-               reminder_error = NULL,
-               updated_at = now()
-           WHERE id = $1 AND reminders_sent = $2
-           RETURNING #{Enum.join(@columns, ", ")}
-           """,
-           [id, step, sid]
-         ) do
+             """
+             UPDATE public.direct_payment_requests
+             SET reminders_sent = reminders_sent + 1,
+                 reminder_sent_at = now(),
+                 reminder_twilio_sid = $3,
+                 reminder_sms_fallback_claimed_at = NULL,
+                 reminder_claimed_at = NULL,
+                 reminder_error = NULL,
+                 updated_at = now()
+             WHERE id = $1 AND reminders_sent = $2
+             RETURNING #{Enum.join(@columns, ", ")}
+             """,
+             [id, step, sid]
+           ) do
         {:ok, %{rows: [row]}} ->
           updated = row_map(row)
           next_step = updated["reminders_sent"]
@@ -1113,10 +1115,12 @@ defmodule Mithril.DirectPaymentRequests do
           if updated["remind_if_unpaid"] and is_nil(updated["reminder_paused_at"]) and
                next_step < length(@reminder_offsets) and
                Application.get_env(:mithril, :start_oban, true) do
-            job = PaymentRequestReminder.new(
-              %{"payment_request_id" => uuid_string(id), "step" => next_step},
-              schedule_in: {reminder_delay(updated["sent_at"], next_step, 24 * 60 * 60), :second}
-            )
+            job =
+              PaymentRequestReminder.new(
+                %{"payment_request_id" => uuid_string(id), "step" => next_step},
+                schedule_in:
+                  {reminder_delay(updated["sent_at"], next_step, 24 * 60 * 60), :second}
+              )
 
             case Oban.insert(job) do
               {:ok, _} -> :ok
@@ -1126,8 +1130,11 @@ defmodule Mithril.DirectPaymentRequests do
 
           updated
 
-        {:ok, %{rows: []}} -> nil
-        {:error, error} -> Repo.rollback(error)
+        {:ok, %{rows: []}} ->
+          nil
+
+        {:error, error} ->
+          Repo.rollback(error)
       end
     end)
     |> case do
@@ -1169,18 +1176,30 @@ defmodule Mithril.DirectPaymentRequests do
            """,
            [row["id"], row["reminder_twilio_sid"]]
          ) do
-      {:ok, %{rows: []}} -> {:error, :reminder_in_progress}
+      {:ok, %{rows: []}} ->
+        {:error, :reminder_in_progress}
+
       {:ok, %{rows: [_]}} ->
         case SMS.send_message(row["phone_e164"], reminder_sms_body(row)) do
           :ok ->
-            Repo.query("UPDATE public.direct_payment_requests SET reminder_error = NULL WHERE id = $1", [row["id"]])
+            Repo.query(
+              "UPDATE public.direct_payment_requests SET reminder_error = NULL WHERE id = $1",
+              [row["id"]]
+            )
+
             present_row(row["id"])
 
           {:error, reason} ->
-            Repo.query("UPDATE public.direct_payment_requests SET reminder_error = $2 WHERE id = $1", [row["id"], "sms_fallback_#{reason}"])
+            Repo.query(
+              "UPDATE public.direct_payment_requests SET reminder_error = $2 WHERE id = $1",
+              [row["id"], "sms_fallback_#{reason}"]
+            )
+
             {:error, reason}
         end
-      {:error, error} -> database_error(error)
+
+      {:error, error} ->
+        database_error(error)
     end
   end
 

@@ -290,13 +290,15 @@ defmodule Mithril.DirectPaymentRequestsTest do
              )
 
     assert created["sent"] == false
+
     assert {:error, :reminder_in_progress} =
              DirectPaymentRequests.retry_message(admin_id, created["id"])
 
-    assert [[claimed_at]] = Repo.query!(
-             "SELECT delivery_claimed_at FROM public.direct_payment_requests WHERE id = $1",
-             [Ecto.UUID.dump!(created["id"])]
-           ).rows
+    assert [[claimed_at]] =
+             Repo.query!(
+               "SELECT delivery_claimed_at FROM public.direct_payment_requests WHERE id = $1",
+               [Ecto.UUID.dump!(created["id"])]
+             ).rows
 
     refute is_nil(claimed_at)
   end
