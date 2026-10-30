@@ -297,7 +297,8 @@ defmodule Mithril.DirectPaymentRequestsTest do
       [Ecto.UUID.dump!(created["id"])]
     )
 
-    assert {:error, :already_paid} = DirectPaymentRequests.enable_reminders(admin_id, created["id"])
+    assert {:error, :already_paid} =
+             DirectPaymentRequests.enable_reminders(admin_id, created["id"])
   end
 
   test "does not turn reminders on before the payment link is sent" do
