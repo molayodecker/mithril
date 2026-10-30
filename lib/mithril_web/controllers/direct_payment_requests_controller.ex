@@ -93,6 +93,24 @@ defmodule MithrilWeb.DirectPaymentRequestsController do
     respond(conn, DirectPaymentRequests.retry_message(user_id(conn), id))
   end
 
+  operation(:enable_reminders,
+    operation_id: "direct.enableAdminPaymentRequestReminders",
+    summary: "Turn on unpaid reminders for a payment request that was sent without them",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Payment request id"
+      ]
+    ],
+    responses: [ok: {"Payment request", "application/json", Request}]
+  )
+
+  def enable_reminders(conn, %{"id" => id}) do
+    respond(conn, DirectPaymentRequests.enable_reminders(user_id(conn), id))
+  end
+
   operation(:public_show,
     operation_id: "direct.showPublicPaymentRequest",
     summary: "Read a payment request by its public token",
@@ -172,6 +190,7 @@ defmodule MithrilWeb.DirectPaymentRequestsController do
   defp error_response(:customer_not_found), do: {404, "customer_not_found"}
   defp error_response(:already_paid), do: {409, "already_paid"}
   defp error_response(:not_remindable), do: {409, "not_remindable"}
+  defp error_response(:not_sent), do: {409, "not_sent"}
   defp error_response(:nothing_to_retry), do: {409, "nothing_to_retry"}
   defp error_response(:reminder_in_progress), do: {409, "reminder_in_progress"}
   defp error_response(:amount_mismatch), do: {409, "amount_mismatch"}
