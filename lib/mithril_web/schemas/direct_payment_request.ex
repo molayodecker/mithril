@@ -25,7 +25,13 @@ defmodule MithrilWeb.Schemas.DirectPaymentRequest do
         deliveryError: %Schema{type: :string, nullable: true},
         sentAt: %Schema{type: :string, format: :"date-time", nullable: true},
         paidAt: %Schema{type: :string, format: :"date-time", nullable: true},
-        createdAt: %Schema{type: :string, format: :"date-time", nullable: true}
+        createdAt: %Schema{type: :string, format: :"date-time", nullable: true},
+        remindIfUnpaid: %Schema{type: :boolean},
+        remindersSent: %Schema{type: :integer, minimum: 0},
+        reminderSentAt: %Schema{type: :string, format: :"date-time", nullable: true},
+        reminderPaused: %Schema{type: :boolean},
+        nextReminderAt: %Schema{type: :string, format: :"date-time", nullable: true},
+        reminderError: %Schema{type: :string, nullable: true}
       },
       required: [
         :id,
@@ -37,7 +43,10 @@ defmodule MithrilWeb.Schemas.DirectPaymentRequest do
         :amountMinor,
         :currency,
         :status,
-        :sent
+        :sent,
+        :remindIfUnpaid,
+        :remindersSent,
+        :reminderPaused
       ]
     })
   end
@@ -70,7 +79,13 @@ defmodule MithrilWeb.Schemas.DirectPaymentRequest do
         amountMinor: %Schema{type: :integer, minimum: 100, maximum: 2_147_483_647},
         customerUserId: %Schema{type: :string, format: :uuid, nullable: true},
         email: %Schema{type: :string, maxLength: 200, nullable: true},
-        idempotencyKey: %Schema{type: :string, format: :uuid}
+        idempotencyKey: %Schema{type: :string, format: :uuid},
+        remindIfUnpaid: %Schema{
+          type: :boolean,
+          default: false,
+          description:
+            "Send WhatsApp or text reminders if the request is still unpaid, after 24 hours, 48 hours, 72 hours, 7 days, 30 days, and 14 weeks."
+        }
       },
       required: [:customerName, :phone, :description, :amountMinor, :idempotencyKey]
     })

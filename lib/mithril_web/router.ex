@@ -272,6 +272,9 @@ defmodule MithrilWeb.Router do
     put "/admin/billing/payment-advices/:id", DirectAdminBillingController, :upsert_advice
     get "/admin/billing/payment-requests", DirectPaymentRequestsController, :index
     post "/admin/billing/payment-requests", DirectPaymentRequestsController, :create
+    post "/admin/billing/payment-requests/:id/pause", DirectPaymentRequestsController, :pause
+    post "/admin/billing/payment-requests/:id/resume", DirectPaymentRequestsController, :resume
+    post "/admin/billing/payment-requests/:id/retry", DirectPaymentRequestsController, :retry
     get "/admin/worker-loan-requests", DirectAdminWorkerLoansController, :index
     get "/admin/worker-loan-requests/:id", DirectAdminWorkerLoansController, :show
     post "/admin/worker-loan-requests/:id/review", DirectAdminWorkerLoansController, :review
