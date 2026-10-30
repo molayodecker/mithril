@@ -1061,7 +1061,7 @@ defmodule Mithril.DirectPaymentRequests do
           {:ok, nil} ->
             :ok
 
-          {:ok, updated} ->
+          {:ok, _updated} ->
             :ok
 
           {:error, reason} ->
