@@ -275,6 +275,7 @@ defmodule MithrilWeb.Router do
     post "/admin/billing/payment-requests/:id/pause", DirectPaymentRequestsController, :pause
     post "/admin/billing/payment-requests/:id/resume", DirectPaymentRequestsController, :resume
     post "/admin/billing/payment-requests/:id/retry", DirectPaymentRequestsController, :retry
+    post "/admin/billing/payment-requests/:id/reminders", DirectPaymentRequestsController, :enable_reminders
     get "/admin/worker-loan-requests", DirectAdminWorkerLoansController, :index
     get "/admin/worker-loan-requests/:id", DirectAdminWorkerLoansController, :show
     post "/admin/worker-loan-requests/:id/review", DirectAdminWorkerLoansController, :review

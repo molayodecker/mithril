@@ -422,6 +422,40 @@ defmodule Mithril.DirectPaymentRequests do
     end
   end
 
+  @doc "Turn on the unpaid reminder sequence for a request sent before reminders existed."
+  def enable_reminders(user_id, id) do
+    with {:ok, admin_uid} <- dump_uuid(user_id),
+         :ok <- require_admin(admin_uid),
+         {:ok, uuid} <- dump_uuid(id) do
+      case Repo.query(
+             """
+             UPDATE public.direct_payment_requests
+             SET remind_if_unpaid = true, updated_at = now()
+             WHERE id = $1
+               AND status = 'unpaid'
+               AND sent_at IS NOT NULL
+               AND NOT remind_if_unpaid
+             RETURNING #{Enum.join(@columns, ", ")}
+             """,
+             [uuid]
+           ) do
+        {:ok, %{rows: [row]}} ->
+          mapped = row_map(row)
+          schedule_unpaid_reminder(mapped)
+          {:ok, admin_json(mapped)}
+
+        {:ok, %{rows: []}} ->
+          enable_unchanged(uuid)
+
+        {:error, error} ->
+          database_error(error)
+      end
+    else
+      :error -> {:error, :invalid_request}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   def retry_message(user_id, id) do
     with {:ok, admin_uid} <- dump_uuid(user_id),
          :ok <- require_admin(admin_uid),
@@ -1230,6 +1264,25 @@ defmodule Mithril.DirectPaymentRequests do
 
       other ->
         reminder_action_result(other)
+    end
+  end
+
+  defp enable_unchanged(id) do
+    case fetch_row(id) do
+      {:ok, %{"status" => "paid"}} ->
+        {:error, :already_paid}
+
+      {:ok, %{"sent_at" => nil}} ->
+        {:error, :not_sent}
+
+      {:ok, %{"remind_if_unpaid" => true} = row} ->
+        {:ok, admin_json(row)}
+
+      {:ok, _} ->
+        {:error, :not_remindable}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

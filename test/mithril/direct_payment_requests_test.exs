@@ -259,6 +259,62 @@ defmodule Mithril.DirectPaymentRequestsTest do
     assert length(Application.get_env(:mithril, :test_sms_messages)) == 2
   end
 
+  test "turns reminders on for a request sent before reminders existed" do
+    Application.put_env(:mithril, :twilio_http, {:error, :not_on_whatsapp})
+    admin_id = Fixtures.insert_user!("admin")
+
+    assert {:ok, created} =
+             DirectPaymentRequests.create(
+               admin_id,
+               request(%{"idempotencyKey" => Ecto.UUID.generate()})
+             )
+
+    assert created["remindIfUnpaid"] == false
+    assert created["sent"] == true
+
+    sent_at = DateTime.utc_now() |> DateTime.add(-3600, :second) |> DateTime.truncate(:second)
+
+    Repo.query!(
+      "UPDATE public.direct_payment_requests SET sent_at = $2 WHERE id = $1",
+      [Ecto.UUID.dump!(created["id"]), sent_at]
+    )
+
+    assert {:ok, enabled} = DirectPaymentRequests.enable_reminders(admin_id, created["id"])
+    assert enabled["remindIfUnpaid"] == true
+    assert enabled["reminderPaused"] == false
+    assert enabled["remindersSent"] == 0
+
+    {:ok, next, _} = DateTime.from_iso8601(enabled["nextReminderAt"])
+    expected = DateTime.add(sent_at, 24 * 60 * 60, :second)
+    assert_in_delta DateTime.to_unix(next), DateTime.to_unix(expected), 2
+
+    assert {:ok, again} = DirectPaymentRequests.enable_reminders(admin_id, created["id"])
+    assert again["remindIfUnpaid"] == true
+    assert again["remindersSent"] == 0
+
+    Repo.query!(
+      "UPDATE public.direct_payment_requests SET status = 'paid' WHERE id = $1",
+      [Ecto.UUID.dump!(created["id"])]
+    )
+
+    assert {:error, :already_paid} = DirectPaymentRequests.enable_reminders(admin_id, created["id"])
+  end
+
+  test "does not turn reminders on before the payment link is sent" do
+    Application.put_env(:mithril, :twilio_http, {:error, :not_on_whatsapp})
+    Application.put_env(:mithril, :sms_adapter, Mithril.Auth.SMS.Disabled)
+    admin_id = Fixtures.insert_user!("admin")
+
+    assert {:ok, created} =
+             DirectPaymentRequests.create(
+               admin_id,
+               request(%{"idempotencyKey" => Ecto.UUID.generate()})
+             )
+
+    assert created["sent"] == false
+    assert {:error, :not_sent} = DirectPaymentRequests.enable_reminders(admin_id, created["id"])
+  end
+
   test "retries a payment link that was not sent" do
     Application.put_env(:mithril, :twilio_http, {:error, :not_on_whatsapp})
     Application.put_env(:mithril, :sms_adapter, Mithril.Auth.SMS.Disabled)
