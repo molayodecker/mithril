@@ -260,7 +260,8 @@ defmodule Mithril.DirectPaymentRequestsTest do
   end
 
   test "retries a payment link that was not sent" do
-    Application.put_env(:mithril, :twilio_http, {:error, :twilio_unavailable})
+    Application.put_env(:mithril, :twilio_http, {:error, :not_on_whatsapp})
+    Application.put_env(:mithril, :sms_adapter, Mithril.Auth.SMS.Disabled)
     admin_id = Fixtures.insert_user!("admin")
 
     assert {:ok, created} =
@@ -270,6 +271,7 @@ defmodule Mithril.DirectPaymentRequestsTest do
              )
 
     assert created["sent"] == false
+    Application.put_env(:mithril, :sms_adapter, Mithril.Auth.SMS.Test)
     Application.put_env(:mithril, :twilio_http, {:error, :not_on_whatsapp})
 
     assert {:ok, retried} = DirectPaymentRequests.retry_message(admin_id, created["id"])
