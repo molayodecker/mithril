@@ -25,7 +25,8 @@ defmodule Mithril.DirectPaymentRequests do
     amount_minor currency status channel paystack_reference authorization_url
     delivery_error idempotency_key delivery_claimed_at twilio_message_sid
     sms_fallback_claimed_at sent_at remind_if_unpaid reminders_sent reminder_sent_at
-    reminder_paused_at reminder_error paid_at created_at
+    reminder_paused_at reminder_error reminder_twilio_sid reminder_sms_fallback_claimed_at
+    paid_at created_at
   )
   # Offsets from the original send. 14 weeks is later than 30 days, so it is last.
   @reminder_offsets [
@@ -192,12 +193,64 @@ defmodule Mithril.DirectPaymentRequests do
       sid = params["MessageSid"] || params["SmsSid"]
 
       if status in ["failed", "undelivered"] and is_binary(sid) and sid != "" do
-        send_failed_whatsapp_sms(token, sid)
+        case send_failed_reminder_sms(token, sid) do
+          :not_reminder -> send_failed_whatsapp_sms(token, sid)
+          result -> result
+        end
       else
         :ok
       end
     else
       _ -> {:error, :unauthorized}
+    end
+  end
+
+  # A reminder has its own delivery identity and SMS fallback claim. Never
+  # treat a reminder callback as a failure of the original payment link.
+  defp send_failed_reminder_sms(token, sid) do
+    case Repo.query(
+           """
+           UPDATE public.direct_payment_requests
+           SET reminder_sms_fallback_claimed_at = now(),
+               reminder_error = 'whatsapp_undelivered', updated_at = now()
+           WHERE public_token = $1 AND reminder_twilio_sid = $2
+             AND status = 'unpaid' AND reminder_sms_fallback_claimed_at IS NULL
+           RETURNING #{Enum.join(@columns, ", ")}
+           """,
+           [token, sid]
+         ) do
+      {:ok, %{rows: [row]}} ->
+        request = row_map(row)
+
+        case SMS.send_message(request["phone_e164"], reminder_sms_body(request)) do
+          :ok ->
+            Repo.query(
+              "UPDATE public.direct_payment_requests SET reminder_error = NULL, updated_at = now() WHERE id = $1 AND reminder_twilio_sid = $2",
+              [request["id"], sid]
+            )
+
+            :ok
+
+          {:error, reason} ->
+            Repo.query(
+              "UPDATE public.direct_payment_requests SET reminder_error = $3, updated_at = now() WHERE id = $1 AND reminder_twilio_sid = $2",
+              [request["id"], sid, "sms_fallback_#{reason}"]
+            )
+
+            :ok
+        end
+
+      {:ok, %{rows: []}} ->
+        case Repo.query(
+               "SELECT 1 FROM public.direct_payment_requests WHERE public_token = $1 AND reminder_twilio_sid = $2",
+               [token, sid]
+             ) do
+          {:ok, %{num_rows: 1}} -> :ok
+          {:ok, _} -> :not_reminder
+          {:error, error} -> database_error(error)
+        end
+
+      {:error, error} -> database_error(error)
     end
   end
 
@@ -369,12 +422,20 @@ defmodule Mithril.DirectPaymentRequests do
          {:ok, uuid} <- dump_uuid(id),
          {:ok, row} <- fetch_row(uuid) do
       cond do
-        is_nil(row["sent_at"]) ->
-          _ = release_failed_delivery(uuid)
-          send_fetched(uuid)
-
         row["status"] == "paid" ->
           {:error, :already_paid}
+
+        is_nil(row["sent_at"]) ->
+          # A provider timeout has an unknown outcome; only an explicit
+          # definite non-send may be retried, and the claim is cleared there.
+          if is_nil(row["delivery_claimed_at"]) and is_binary(row["delivery_error"]) do
+            send_fetched(uuid)
+          else
+            {:error, :reminder_in_progress}
+          end
+
+        is_binary(row["reminder_error"]) and is_binary(row["reminder_twilio_sid"]) ->
+          retry_reminder_sms(row)
 
         is_binary(row["reminder_error"]) ->
           step = row["reminders_sent"] || 0
@@ -989,13 +1050,12 @@ defmodule Mithril.DirectPaymentRequests do
 
   defp send_reminder(request, step) do
     case deliver_reminder_message(request) do
-      {:ok, _channel, _sid} ->
-        case mark_reminder_sent(request["id"], step) do
+      {:ok, _channel, sid} ->
+        case mark_reminder_sent(request["id"], step, sid) do
           {:ok, nil} ->
             :ok
 
           {:ok, updated} ->
-            schedule_unpaid_reminder(updated, 24 * 60 * 60)
             :ok
 
           {:error, reason} ->
@@ -1029,22 +1089,49 @@ defmodule Mithril.DirectPaymentRequests do
     end
   end
 
-  defp mark_reminder_sent(id, step) do
-    case Repo.query(
+  defp mark_reminder_sent(id, step, sid) do
+    Repo.transaction(fn ->
+      case Repo.query(
            """
            UPDATE public.direct_payment_requests
            SET reminders_sent = reminders_sent + 1,
                reminder_sent_at = now(),
+               reminder_twilio_sid = $3,
+               reminder_sms_fallback_claimed_at = NULL,
                reminder_claimed_at = NULL,
                reminder_error = NULL,
                updated_at = now()
            WHERE id = $1 AND reminders_sent = $2
            RETURNING #{Enum.join(@columns, ", ")}
            """,
-           [id, step]
+           [id, step, sid]
          ) do
-      {:ok, %{rows: [row]}} -> {:ok, row_map(row)}
-      {:ok, %{rows: []}} -> {:ok, nil}
+        {:ok, %{rows: [row]}} ->
+          updated = row_map(row)
+          next_step = updated["reminders_sent"]
+
+          if updated["remind_if_unpaid"] and is_nil(updated["reminder_paused_at"]) and
+               next_step < length(@reminder_offsets) and
+               Application.get_env(:mithril, :start_oban, true) do
+            job = PaymentRequestReminder.new(
+              %{"payment_request_id" => uuid_string(id), "step" => next_step},
+              schedule_in: {reminder_delay(updated["sent_at"], next_step, 24 * 60 * 60), :second}
+            )
+
+            case Oban.insert(job) do
+              {:ok, _} -> :ok
+              {:error, reason} -> Repo.rollback(reason)
+            end
+          end
+
+          updated
+
+        {:ok, %{rows: []}} -> nil
+        {:error, error} -> Repo.rollback(error)
+      end
+    end)
+    |> case do
+      {:ok, updated} -> {:ok, updated}
       {:error, error} -> database_error(error)
     end
   end
@@ -1071,15 +1158,30 @@ defmodule Mithril.DirectPaymentRequests do
     )
   end
 
-  defp release_failed_delivery(id) do
-    Repo.query(
-      """
-      UPDATE public.direct_payment_requests
-      SET delivery_claimed_at = NULL, delivery_error = NULL, updated_at = now()
-      WHERE id = $1 AND sent_at IS NULL AND twilio_message_sid IS NULL
-      """,
-      [id]
-    )
+  defp retry_reminder_sms(row) do
+    case Repo.query(
+           """
+           UPDATE public.direct_payment_requests
+           SET reminder_error = 'sms_retry_in_progress', updated_at = now()
+           WHERE id = $1 AND reminder_twilio_sid = $2
+             AND reminder_error NOT IN ('sms_retry_in_progress', 'delivery_unknown')
+           RETURNING #{Enum.join(@columns, ", ")}
+           """,
+           [row["id"], row["reminder_twilio_sid"]]
+         ) do
+      {:ok, %{rows: []}} -> {:error, :reminder_in_progress}
+      {:ok, %{rows: [_]}} ->
+        case SMS.send_message(row["phone_e164"], reminder_sms_body(row)) do
+          :ok ->
+            Repo.query("UPDATE public.direct_payment_requests SET reminder_error = NULL WHERE id = $1", [row["id"]])
+            present_row(row["id"])
+
+          {:error, reason} ->
+            Repo.query("UPDATE public.direct_payment_requests SET reminder_error = $2 WHERE id = $1", [row["id"], "sms_fallback_#{reason}"])
+            {:error, reason}
+        end
+      {:error, error} -> database_error(error)
+    end
   end
 
   defp send_fetched(id) do

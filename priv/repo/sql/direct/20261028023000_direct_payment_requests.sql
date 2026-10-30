@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS public.direct_payment_requests (
   reminder_paused_at timestamptz,
   reminder_error text,
   reminder_claimed_at timestamptz,
+  reminder_twilio_sid text,
+  reminder_sms_fallback_claimed_at timestamptz,
   paid_at timestamptz,
   created_by uuid NOT NULL REFERENCES public.users(id),
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -61,6 +63,12 @@ ALTER TABLE public.direct_payment_requests
 
 ALTER TABLE public.direct_payment_requests
   ADD COLUMN IF NOT EXISTS reminder_error text;
+
+ALTER TABLE public.direct_payment_requests
+  ADD COLUMN IF NOT EXISTS reminder_twilio_sid text;
+
+ALTER TABLE public.direct_payment_requests
+  ADD COLUMN IF NOT EXISTS reminder_sms_fallback_claimed_at timestamptz;
 
 CREATE INDEX IF NOT EXISTS direct_payment_requests_created_at_idx
   ON public.direct_payment_requests (created_at DESC);

@@ -279,6 +279,50 @@ defmodule Mithril.DirectPaymentRequestsTest do
     assert body =~ retried["payUrl"]
   end
 
+  test "staff retry cannot release an active or uncertain original delivery claim" do
+    Application.put_env(:mithril, :twilio_http, {:error, :twilio_unavailable})
+    admin_id = Fixtures.insert_user!("admin")
+
+    assert {:ok, created} =
+             DirectPaymentRequests.create(
+               admin_id,
+               request(%{"idempotencyKey" => Ecto.UUID.generate()})
+             )
+
+    assert created["sent"] == false
+    assert {:error, :reminder_in_progress} =
+             DirectPaymentRequests.retry_message(admin_id, created["id"])
+
+    assert [[claimed_at]] = Repo.query!(
+             "SELECT delivery_claimed_at FROM public.direct_payment_requests WHERE id = $1",
+             [Ecto.UUID.dump!(created["id"])]
+           ).rows
+
+    refute is_nil(claimed_at)
+  end
+
+  test "failed WhatsApp reminder callback falls back to SMS exactly once" do
+    admin_id = Fixtures.insert_user!("admin")
+
+    assert {:ok, created} =
+             DirectPaymentRequests.create(
+               admin_id,
+               request(%{"remindIfUnpaid" => true, "idempotencyKey" => Ecto.UUID.generate()})
+             )
+
+    assert :ok = DirectPaymentRequests.deliver_unpaid_reminder(created["id"], 0)
+    token = created["publicToken"]
+    params = %{"MessageSid" => "SMtest-payment-request", "MessageStatus" => "undelivered"}
+    url = "https://api.tryinstaclean.com/webhooks/twilio/payment-status/#{token}"
+    payload = Enum.reduce(Enum.sort(params), url, fn {key, value}, acc -> acc <> key <> value end)
+    signature = :crypto.mac(:hmac, :sha, "test-signing-token", payload) |> Base.encode64()
+
+    assert :ok = DirectPaymentRequests.payment_status_callback(token, params, signature)
+    assert :ok = DirectPaymentRequests.payment_status_callback(token, params, signature)
+    assert [{_phone, body}] = Application.get_env(:mithril, :test_sms_messages)
+    assert body =~ "still unpaid"
+  end
+
   test "retries a reminder after WhatsApp delivery is unknown" do
     admin_id = Fixtures.insert_user!("admin")
 
