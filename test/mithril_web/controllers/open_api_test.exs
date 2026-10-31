@@ -38,6 +38,12 @@ defmodule MithrilWeb.OpenApiTest do
     assert spec["paths"]["/direct/admin/cleaners/{id}/wallet-credit"]["post"]["operationId"] ==
              "direct.creditAdminWorkerWallet"
 
+    assert spec["paths"]["/direct/admin/contracts"]["get"]["operationId"] ==
+             "direct.listAdminContracts"
+
+    assert spec["paths"]["/direct/admin/contracts/{id}/invoices"]["post"]["operationId"] ==
+             "direct.sendAdminContractInvoice"
+
     assert spec["paths"]["/direct/worker-loans"]["get"]["operationId"] ==
              "direct.listWorkerLoanRequests"
 

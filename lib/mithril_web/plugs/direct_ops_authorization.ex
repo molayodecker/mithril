@@ -50,6 +50,7 @@ defmodule MithrilWeb.Plugs.DirectOpsAuthorization do
   defp permission_for(["payouts" | _], _), do: nil
   defp permission_for(["cleaners", _, "wallet-credit"], _), do: nil
   defp permission_for(["cleaners", _, "wallet"], _), do: nil
+  defp permission_for(["contracts" | _], _), do: nil
   defp permission_for(["bookings", _, "cash-payout"], _), do: nil
   defp permission_for(["bookings", _, "invoice" | _], _), do: "billing"
   defp permission_for(["billing" | _], _), do: "billing"

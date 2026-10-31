@@ -68,7 +68,8 @@ defmodule Mithril.Cron.Jobs do
   @spec mithril_only_jobs() :: [{String.t(), module(), keyword()}]
   def mithril_only_jobs do
     [
-      {"0 * * * *", Mithril.Workers.BookingReminderSweep, []}
+      {"0 * * * *", Mithril.Workers.BookingReminderSweep, []},
+      {"0 6 * * *", Mithril.Workers.ContractAdvanceSweep, []}
     ]
   end
 
