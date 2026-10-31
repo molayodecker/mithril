@@ -256,8 +256,14 @@ defmodule MithrilWeb.Router do
     get "/admin/contracts/:id", DirectAdminContractsController, :show
     post "/admin/contracts/:id", DirectAdminContractsController, :update
     post "/admin/contracts/:id/assignments", DirectAdminContractsController, :add_assignment
-    post "/admin/contracts/:id/assignments/:assignment_id", DirectAdminContractsController, :update_assignment
-    post "/admin/contracts/:id/assignments/:assignment_id/end", DirectAdminContractsController, :end_assignment
+    post "/admin/contracts/:id/assignments/:assignment_id",
+         DirectAdminContractsController,
+         :update_assignment
+
+    post "/admin/contracts/:id/assignments/:assignment_id/end",
+         DirectAdminContractsController,
+         :end_assignment
+
     post "/admin/contracts/:id/advances", DirectAdminContractsController, :pay_advance
     post "/admin/contracts/:id/payday", DirectAdminContractsController, :payday
     post "/admin/contracts/:id/invoices", DirectAdminContractsController, :send_invoice
