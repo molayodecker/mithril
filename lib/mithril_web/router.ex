@@ -140,6 +140,7 @@ defmodule MithrilWeb.Router do
     pipe_through [:api]
 
     get "/invoices/:token", DirectAdminInvoicesController, :public_show
+    get "/contract-invoices/:token", DirectAdminContractsController, :public_show
     get "/pay/:token", DirectPaymentRequestsController, :public_show
     post "/pay/:token/checkout", DirectPaymentRequestsController, :checkout
     post "/pay/:token/verify", DirectPaymentRequestsController, :verify
@@ -248,6 +249,25 @@ defmodule MithrilWeb.Router do
     get "/admin/cleaners", DirectOperationsController, :list_admin_cleaners
     get "/admin/cleaners/:id/wallet", DirectAdminWalletsController, :show
     post "/admin/cleaners/:id/wallet-credit", DirectAdminWalletsController, :credit
+    get "/admin/contracts", DirectAdminContractsController, :index
+    post "/admin/contracts", DirectAdminContractsController, :create
+    get "/admin/contracts/workers", DirectAdminContractsController, :workers
+    post "/admin/contracts/advances/pay-due", DirectAdminContractsController, :pay_due
+    get "/admin/contracts/:id", DirectAdminContractsController, :show
+    post "/admin/contracts/:id", DirectAdminContractsController, :update
+    post "/admin/contracts/:id/assignments", DirectAdminContractsController, :add_assignment
+
+    post "/admin/contracts/:id/assignments/:assignment_id",
+         DirectAdminContractsController,
+         :update_assignment
+
+    post "/admin/contracts/:id/assignments/:assignment_id/end",
+         DirectAdminContractsController,
+         :end_assignment
+
+    post "/admin/contracts/:id/advances", DirectAdminContractsController, :pay_advance
+    post "/admin/contracts/:id/payday", DirectAdminContractsController, :payday
+    post "/admin/contracts/:id/invoices", DirectAdminContractsController, :send_invoice
 
     get "/admin/bookings/:id/payment-diagnostics",
         DirectOperationsController,
