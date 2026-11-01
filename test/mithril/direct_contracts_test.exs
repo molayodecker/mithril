@@ -285,17 +285,13 @@ defmodule Mithril.DirectContractsTest do
     client_id = Fixtures.insert_user!()
     set_contact!(client_id, "+233245550142", nil)
 
-    assert {:ok, %{"letters" => client_letters}} = DirectContracts.list_for_customer(client_id)
-    assert client_letters != []
-    assert Enum.all?(client_letters, &(&1["active"] == true))
+    assert {:ok, %{"letters" => []}} = DirectContracts.list_for_customer(client_id)
+    assert {:ok, %{"active" => true}} = DirectContracts.public_letter(token)
 
     assert {:ok, _} = DirectContracts.end_assignment(admin_id, contract_id, cook_assignment_id)
 
-    assert {:ok, %{"letters" => ended_client_letters}} =
-             DirectContracts.list_for_customer(client_id)
-
-    assert ended_client_letters != []
-    assert Enum.all?(ended_client_letters, &(&1["active"] == false))
+    assert {:ok, %{"letters" => []}} = DirectContracts.list_for_customer(client_id)
+    assert {:ok, %{"active" => false}} = DirectContracts.public_letter(token)
   end
 
   test "a contract contact must be a Ghana number and a real email" do
