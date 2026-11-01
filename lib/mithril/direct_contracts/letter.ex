@@ -34,7 +34,7 @@ defmodule Mithril.DirectContracts.Letter do
   end
 
   def worker_letter(contract, worker) do
-    start = start_date(contract.created_at)
+    start = start_date(worker.started_at)
     advance = worker.weekly_advance_minor || 0
 
     %{
