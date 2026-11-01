@@ -354,10 +354,15 @@ defmodule Mithril.DirectContracts do
          {:ok, admin_uid} <- dump_uuid(user_id),
          {:ok, contract_uid} <- dump_uuid(contract_id),
          {:ok, channel} <- one_of(param(params, "channel"), ~w(email whatsapp)) do
-      with {:ok, letter} <- ensure_letter(admin_uid, contract_uid),
-           :ok <- deliver_letter(admin_uid, letter, channel),
-           {:ok, sent} <- mark_letter_sent(letter["id"], channel, letter["publicToken"]) do
-        {:ok, sent}
+      with {:ok, letter} <- ensure_letter(admin_uid, contract_uid) do
+        case deliver_letter(admin_uid, letter, channel) do
+          :ok ->
+            mark_letter_sent(letter["id"], channel, letter["publicToken"])
+
+          {:error, reason} ->
+            release_letter_claim(letter["id"])
+            {:error, reason}
+        end
       end
     end
   end
@@ -1609,8 +1614,23 @@ defmodule Mithril.DirectContracts do
 
           preview = Letter.preview(contract, workers)
           issued = Calendar.today()
+          case fetch!(
+                 "SELECT 1 FROM public.direct_contract_letters WHERE contract_id = $1 AND sending_at IS NOT NULL AND sent_at IS NULL",
+                 [contract_uid]
+               ).rows do
+            [] -> :ok
+            _ -> Repo.rollback(:letter_in_progress)
+          end
+
           letter = write_letter(admin_uid, contract_uid, preview, issued)
           sync_worker_letters(admin_uid, contract_uid, letter["id"], contract, workers, issued)
+
+          {:ok, letter_uid} = dump_uuid(letter["id"])
+          fetch!(
+            "UPDATE public.direct_contract_letters SET sending_at = now() WHERE id = $1 AND sent_at IS NULL AND sending_at IS NULL",
+            [letter_uid]
+          )
+
           letter
       end
     end)
@@ -2020,8 +2040,8 @@ defmodule Mithril.DirectContracts do
                case Repo.query(
                       """
                       UPDATE public.direct_contract_letters
-                      SET channel = $2, sent_at = now()
-                      WHERE id = $1 AND sent_at IS NULL
+                      SET channel = $2, sent_at = now(), sending_at = NULL
+                      WHERE id = $1 AND sent_at IS NULL AND sending_at IS NOT NULL
                       RETURNING letter_no, channel
                       """,
                       [uid, channel]
@@ -2055,6 +2075,15 @@ defmodule Mithril.DirectContracts do
 
       :error ->
         {:error, :invalid_request}
+    end
+  end
+
+  defp release_letter_claim(letter_id) do
+    with {:ok, uid} <- dump_uuid(letter_id) do
+      Repo.query(
+        "UPDATE public.direct_contract_letters SET sending_at = NULL WHERE id = $1 AND sent_at IS NULL",
+        [uid]
+      )
     end
   end
 
