@@ -150,7 +150,7 @@ defmodule Mithril.DirectDispatchTest do
                "neededBy" => needed_by,
                "durationHours" => 6,
                "householdAddress" => "East Legon Hills, Accra",
-               "requirements" => %{"mobilitySupport" => true},
+               "requirements" => %{},
                "notes" => "Non-medical companionship and mobility help"
              })
 
@@ -161,7 +161,21 @@ defmodule Mithril.DirectDispatchTest do
     assert request["id"] == created.id
     assert request["role"] == "elder_caregiver"
     assert request["priority"] == "urgent"
-    assert request["requirements"]["mobilitySupport"] == true
+    assert request["requirements"] == %{}
+  end
+
+  test "urgent help rejects unnamed requirement keys" do
+    customer_id = insert_user!("requirements@example.com", "+233500000096")
+    needed_by = DateTime.utc_now() |> DateTime.add(3_600, :second) |> DateTime.to_iso8601()
+
+    assert {:error, :invalid_request} =
+             DirectDispatch.create_urgent_request(customer_id, %{
+               "role" => "cleaner",
+               "neededBy" => needed_by,
+               "durationHours" => 2,
+               "householdAddress" => "Labone, Accra",
+               "requirements" => %{"mobilitySupport" => true}
+             })
   end
 
   test "urgent-help retries with the same idempotency key return the original request" do
@@ -208,7 +222,7 @@ defmodule Mithril.DirectDispatchTest do
       "neededBy" => needed_by,
       "durationHours" => 2,
       "householdAddress" => "Cantonments, Accra",
-      "requirements" => %{"supplies" => false},
+      "requirements" => %{},
       "notes" => "Retry after a lost response",
       "idempotencyKey" => key
     }
@@ -224,7 +238,7 @@ defmodule Mithril.DirectDispatchTest do
         created_by_user_id, idempotency_key, intent_fingerprint
       ) VALUES (
         $1, $2, 'urgent_help', 'submitted', 'urgent', 'cleaner', $3, 2,
-        'Cantonments, Accra', '{"supplies":false}'::jsonb,
+        'Cantonments, Accra', '{}'::jsonb,
         'Retry after a lost response', $2, $4, $5
       )
       """,

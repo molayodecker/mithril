@@ -7,7 +7,6 @@ defmodule MithrilWeb.DirectOperationsController do
   alias MithrilWeb.Schemas.DirectOperations.{
     CancelBookingRequest,
     CancellationPolicyResponse,
-    CleanerApplicationListResponse,
     CleanerApprovalResponse,
     CleanerListResponse,
     PaymentDiagnosticsResponse,
@@ -95,31 +94,6 @@ defmodule MithrilWeb.DirectOperationsController do
     respond(conn, DirectOperations.list_cleaners(user_id(conn), params), fn cleaners ->
       %{cleaners: cleaners}
     end)
-  end
-
-  operation(:list_admin_cleaner_applications,
-    operation_id: "direct.listAdminCleanerApplications",
-    summary: "List cleaner applications for review and approval",
-    parameters: [
-      q: [in: :query, schema: %Schema{type: :string, maxLength: 120}, required: false],
-      status: [in: :query, schema: %Schema{type: :string}, required: false],
-      limit: [
-        in: :query,
-        schema: %Schema{type: :integer, minimum: 1, maximum: 200},
-        required: false
-      ]
-    ],
-    responses: [ok: {"Cleaner applications", "application/json", CleanerApplicationListResponse}]
-  )
-
-  def list_admin_cleaner_applications(conn, params) do
-    respond(
-      conn,
-      DirectOperations.list_cleaner_applications(user_id(conn), params),
-      fn applications ->
-        %{applications: applications}
-      end
-    )
   end
 
   operation(:approve_cleaner_application,

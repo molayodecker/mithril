@@ -3,6 +3,7 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
 
   defmodule UrgentHelpRequest do
     require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectRequirements
     alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{
@@ -17,7 +18,7 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
         neededBy: %Schema{type: :string, format: :"date-time"},
         durationHours: %Schema{type: :number, minimum: 0.5, maximum: 24},
         householdAddress: %Schema{type: :string, minLength: 3, maxLength: 500},
-        requirements: %Schema{type: :object, additionalProperties: true, default: %{}},
+        requirements: DirectRequirements,
         notes: %Schema{type: :string, maxLength: 4000, nullable: true},
         idempotencyKey: %Schema{
           type: :string,
@@ -33,6 +34,7 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
 
   defmodule ReplacementRequest do
     require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectRequirements
     alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{
@@ -41,7 +43,7 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
       properties: %{
         priority: %Schema{type: :string, enum: ~w(urgent same_day standard), default: "same_day"},
         neededBy: %Schema{type: :string, format: :"date-time", nullable: true},
-        requirements: %Schema{type: :object, additionalProperties: true, default: %{}},
+        requirements: DirectRequirements,
         notes: %Schema{type: :string, maxLength: 4000, nullable: true}
       }
     })
@@ -69,6 +71,7 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
 
   defmodule ServiceRequestItem do
     require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectRequirements
     alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{
@@ -91,7 +94,7 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
         durationHours: %Schema{type: :number, nullable: true},
         householdAddress: %Schema{type: :string},
         relatedBookingId: %Schema{type: :string, format: :uuid, nullable: true},
-        requirements: %Schema{type: :object, additionalProperties: true},
+        requirements: DirectRequirements,
         notes: %Schema{type: :string, nullable: true},
         assignedWorkerUserId: %Schema{type: :string, format: :uuid, nullable: true},
         assignedWorkerName: %Schema{type: :string, nullable: true},
@@ -284,6 +287,7 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
 
   defmodule AdminServiceRequestItem do
     require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectRequirements
     alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{
@@ -310,7 +314,7 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
         householdAddress: %Schema{type: :string},
         relatedBookingId: %Schema{type: :string, format: :uuid, nullable: true},
         relatedServiceId: %Schema{type: :integer, nullable: true},
-        requirements: %Schema{type: :object, additionalProperties: true},
+        requirements: DirectRequirements,
         notes: %Schema{type: :string, nullable: true},
         adminNote: %Schema{type: :string, nullable: true},
         assignedWorkerUserId: %Schema{type: :string, format: :uuid, nullable: true},
