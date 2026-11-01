@@ -13,12 +13,16 @@ defmodule MithrilWeb.DirectAdminContractsController do
     IdResult,
     InvoiceRequest,
     InvoiceResult,
+    LetterList,
+    LetterRequest,
+    LetterResult,
     List,
     PayDueRequest,
     PayDueResult,
     PaydayRequest,
     PaydayResult,
     PublicInvoice,
+    PublicLetter,
     WorkerList,
     WriteClient
   }
@@ -188,6 +192,20 @@ defmodule MithrilWeb.DirectAdminContractsController do
     respond(conn, DirectContracts.send_invoice(user_id(conn), id, params))
   end
 
+  operation(:send_letter,
+    operation_id: "direct.sendAdminContractLetter",
+    summary: "Save and send the client service agreement",
+    parameters: [
+      id: [in: :path, schema: %Schema{type: :string, format: :uuid}, required: true]
+    ],
+    request_body: {"Letter", "application/json", LetterRequest, required: true},
+    responses: [ok: {"Sent", "application/json", LetterResult}]
+  )
+
+  def send_letter(conn, %{"id" => id} = params) do
+    respond(conn, DirectContracts.send_letter(user_id(conn), id, params))
+  end
+
   operation(:public_show,
     operation_id: "direct.showContractInvoice",
     summary: "Read a contract invoice by its public token",
@@ -199,6 +217,43 @@ defmodule MithrilWeb.DirectAdminContractsController do
 
   def public_show(conn, %{"token" => token}) do
     respond(conn, DirectContracts.public_show(token))
+  end
+
+  operation(:my_letters,
+    operation_id: "direct.listMyContractLetters",
+    summary: "List service agreements sent to the signed-in account",
+    tags: ["direct"],
+    responses: [ok: {"Letters", "application/json", LetterList}]
+  )
+
+  def my_letters(conn, _params) do
+    respond(conn, DirectContracts.list_for_customer(user_id(conn)))
+  end
+
+  operation(:public_letter,
+    operation_id: "direct.showContractLetter",
+    summary: "Read a contract letter by its public token",
+    parameters: [
+      token: [in: :path, schema: %Schema{type: :string}, required: true]
+    ],
+    responses: [ok: {"Letter", "application/json", PublicLetter}]
+  )
+
+  def public_letter(conn, %{"token" => token}) do
+    respond(conn, DirectContracts.public_letter(token))
+  end
+
+  operation(:public_worker_letter,
+    operation_id: "direct.showWorkerContractLetter",
+    summary: "Read a worker engagement letter by its public token",
+    parameters: [
+      token: [in: :path, schema: %Schema{type: :string}, required: true]
+    ],
+    responses: [ok: {"Letter", "application/json", PublicLetter}]
+  )
+
+  def public_worker_letter(conn, %{"token" => token}) do
+    respond(conn, DirectContracts.public_worker_letter(token))
   end
 
   defp user_id(conn), do: conn.assigns.instaclean_user_id
@@ -231,6 +286,8 @@ defmodule MithrilWeb.DirectAdminContractsController do
   defp error_response(:assignment_ended), do: {409, "assignment_ended"}
   defp error_response(:payday_already_run), do: {409, "payday_already_run"}
   defp error_response(:invoice_already_sent), do: {409, "invoice_already_sent"}
+  defp error_response(:letter_needs_worker), do: {422, "letter_needs_worker"}
+  defp error_response(:letter_already_sent), do: {409, "letter_already_sent"}
   defp error_response(:client_rates_mismatch), do: {422, "client_rates_mismatch"}
   defp error_response(:worker_already_assigned), do: {409, "worker_already_assigned"}
   defp error_response(:email_not_configured), do: {422, "email_not_configured"}

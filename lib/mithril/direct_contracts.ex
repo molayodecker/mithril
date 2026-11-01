@@ -12,6 +12,7 @@ defmodule Mithril.DirectContracts do
   alias Mithril.DirectAdminActor
   alias Mithril.DirectAdminWhatsApp
   alias Mithril.DirectContracts.Calendar
+  alias Mithril.DirectContracts.Letter
   alias Mithril.Repo
 
   def list(user_id, month_param) do
@@ -348,6 +349,88 @@ defmodule Mithril.DirectContracts do
 
   def public_show(_), do: {:error, :not_found}
 
+  def send_letter(user_id, contract_id, params) when is_map(params) do
+    with :ok <- require_admin(user_id),
+         {:ok, admin_uid} <- dump_uuid(user_id),
+         {:ok, contract_uid} <- dump_uuid(contract_id),
+         {:ok, channel} <- one_of(param(params, "channel"), ~w(email whatsapp)) do
+      with {:ok, letter} <- ensure_letter(admin_uid, contract_uid),
+           :ok <- deliver_letter(admin_uid, letter, channel),
+           {:ok, sent} <- mark_letter_sent(letter["id"], channel, letter["publicToken"]) do
+        {:ok, sent}
+      end
+    end
+  end
+
+  def list_for_customer(user_id) do
+    with {:ok, uid} <- dump_uuid(user_id) do
+      case Repo.query("SELECT email, phone FROM public.users WHERE id = $1", [uid]) do
+        {:ok, %{rows: [[email, phone]]}} ->
+          letters_for_account(uid, email, phone)
+
+        {:ok, %{rows: []}} ->
+          {:error, :not_found}
+
+        {:error, error} ->
+          map_pg(error)
+      end
+    else
+      :error -> {:error, :not_found}
+    end
+  end
+
+  def public_letter(token) when is_binary(token) do
+    if token =~ ~r/\A[0-9a-f]{64}\z/ do
+      case Repo.query(
+             """
+             SELECT l.letter_no, l.issued_on, l.start_on, l.monthly_fee_minor, l.currency, l.client_name,
+                    l.billing_contact, l.phone, l.email, l.preamble, l.workers, l.clauses,
+                    (c.status = 'active' AND EXISTS (
+                      SELECT 1 FROM public.direct_contract_assignments a
+                      WHERE a.contract_id = c.id AND a.status = 'active'
+                    ))
+             FROM public.direct_contract_letters l
+             JOIN public.direct_contracts c ON c.id = l.contract_id
+             WHERE l.public_token = $1
+             """,
+             [token]
+           ) do
+        {:ok, %{rows: [row]}} -> {:ok, public_letter_payload(row)}
+        {:ok, %{rows: []}} -> {:error, :not_found}
+        {:error, error} -> map_pg(error)
+      end
+    else
+      {:error, :not_found}
+    end
+  end
+
+  def public_letter(_), do: {:error, :not_found}
+
+  def public_worker_letter(token) when is_binary(token) do
+    if token =~ ~r/\A[0-9a-f]{64}\z/ do
+      case Repo.query(
+             """
+             SELECT l.letter_no, l.issued_on, l.start_on, l.monthly_pay_minor, l.weekly_advance_minor, l.currency,
+                    l.worker_name, l.role_label, l.client_name, l.phone, l.email, l.preamble, l.clauses,
+                    (c.status = 'active' AND a.status = 'active')
+             FROM public.direct_contract_worker_letters l
+             JOIN public.direct_contract_assignments a ON a.id = l.assignment_id
+             JOIN public.direct_contracts c ON c.id = l.contract_id
+             WHERE l.public_token = $1
+             """,
+             [token]
+           ) do
+        {:ok, %{rows: [row]}} -> {:ok, worker_letter_payload(row)}
+        {:ok, %{rows: []}} -> {:error, :not_found}
+        {:error, error} -> map_pg(error)
+      end
+    else
+      {:error, :not_found}
+    end
+  end
+
+  def public_worker_letter(_), do: {:error, :not_found}
+
   def pay_automatic_advances do
     today = Calendar.today()
     month = Calendar.period_start(today)
@@ -443,6 +526,9 @@ defmodule Mithril.DirectContracts do
     |> Map.put("invoices", history)
     |> Map.put("advances", present_advance_rows(paid))
     |> Map.put("paydayClosed", closed)
+    |> Map.put("letterPreview", Letter.preview(contract, active_letter_workers(contract.id)))
+    |> Map.put("letters", letter_history(contract.id))
+    |> Map.put("workerLetters", worker_letter_history(contract.id))
   end
 
   defp present_summary(contract, workers, advances, invoice, month, today, closed) do
@@ -1409,6 +1495,14 @@ defmodule Mithril.DirectContracts do
   defp deliver(_, _, _), do: {:error, :invalid_request}
 
   defp send_email(invoice) do
+    post_email(
+      invoice["email"],
+      "Instaclean invoice #{invoice["invoiceNo"]}",
+      email_html(invoice)
+    )
+  end
+
+  defp post_email(to, subject, html) do
     api_key = Application.get_env(:mithril, :resend_api_key, "") |> to_string() |> String.trim()
 
     if api_key == "" do
@@ -1421,9 +1515,9 @@ defmodule Mithril.DirectContracts do
             :resend_from,
             "Instaclean <noreply@update.tryinstaclean.com>"
           ),
-        to: [invoice["email"]],
-        subject: "Instaclean invoice #{invoice["invoiceNo"]}",
-        html: email_html(invoice)
+        to: [to],
+        subject: subject,
+        html: html
       }
 
       case Req.post(resend_url(), resend_options(body, api_key)) do
@@ -1489,6 +1583,749 @@ defmodule Mithril.DirectContracts do
   defp next_reference do
     %{rows: [[number]]} = fetch!("SELECT nextval('public.direct_contract_wallet_ref_seq')", [])
     "WLT-#{number}"
+  end
+
+  defp ensure_letter(admin_uid, contract_uid) do
+    transact(fn ->
+      case fetch!(
+             """
+             SELECT c.monthly_fee_minor, c.currency, c.created_at, cl.name, cl.billing_contact, cl.phone, cl.email
+             FROM public.direct_contracts c
+             JOIN public.direct_contract_clients cl ON cl.id = c.client_id
+             WHERE c.id = $1
+             FOR UPDATE OF c
+             """,
+             [contract_uid]
+           ).rows do
+        [] ->
+          Repo.rollback(:contract_not_found)
+
+        [[fee, currency, created_at, name, contact, phone, email]] ->
+          workers = letter_workers!(contract_uid)
+          if workers == [], do: Repo.rollback(:letter_needs_worker)
+
+          contract = %{
+            monthly_fee_minor: fee,
+            currency: currency,
+            created_at: created_at,
+            name: name,
+            billing_contact: contact,
+            phone: phone,
+            email: email
+          }
+
+          preview = Letter.preview(contract, workers)
+          issued = Calendar.today()
+          letter = write_letter(admin_uid, contract_uid, preview, issued)
+          sync_worker_letters(admin_uid, contract_uid, letter["id"], contract, workers, issued)
+          letter
+      end
+    end)
+  end
+
+  defp write_letter(admin_uid, contract_uid, preview, issued) do
+    params = letter_write_params(preview, issued)
+
+    case fetch!(
+           """
+           SELECT id, letter_no, public_token
+           FROM public.direct_contract_letters
+           WHERE contract_id = $1 AND sent_at IS NULL
+           ORDER BY created_at DESC
+           LIMIT 1
+           FOR UPDATE
+           """,
+           [contract_uid]
+         ).rows do
+      [[id, number, token]] ->
+        fetch!(
+          """
+          UPDATE public.direct_contract_letters
+          SET issued_on = $2, start_on = $3, monthly_fee_minor = $4, currency = $5,
+              client_name = $6, billing_contact = $7, phone = $8, email = $9,
+              preamble = $10, workers = $11::jsonb, clauses = $12::jsonb
+          WHERE id = $1
+          """,
+          [id | params]
+        )
+
+        letter_payload(id, number, token, preview)
+
+      [] ->
+        number = next_letter_no(issued.year)
+        token = random_token()
+
+        %{rows: [[id]]} =
+          fetch!(
+            """
+            INSERT INTO public.direct_contract_letters (
+              contract_id, letter_no, public_token, issued_on, start_on, monthly_fee_minor, currency,
+              client_name, billing_contact, phone, email, preamble, workers, clauses, created_by
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15)
+            RETURNING id
+            """,
+            [contract_uid, number, token | params] ++ [admin_uid]
+          )
+
+        letter_payload(id, number, token, preview)
+    end
+  end
+
+  defp letter_write_params(preview, issued) do
+    [
+      issued,
+      Date.from_iso8601!(preview["startOn"]),
+      preview["monthlyFeeMinor"],
+      preview["currency"],
+      preview["clientName"],
+      preview["billingContact"],
+      preview["phone"],
+      preview["email"],
+      preview["preamble"],
+      preview["workers"],
+      preview["clauses"]
+    ]
+  end
+
+  defp letter_payload(id, number, token, preview) do
+    %{
+      "id" => uuid_text(id),
+      "letterNo" => number,
+      "publicToken" => token,
+      "phone" => preview["phone"],
+      "email" => preview["email"],
+      "clientName" => preview["clientName"],
+      "preamble" => preview["preamble"],
+      "monthlyFeeMinor" => preview["monthlyFeeMinor"],
+      "workers" => preview["workers"],
+      "viewUrl" => letter_url(token)
+    }
+  end
+
+  defp letters_for_account(user_uid, email, phone) do
+    email_key = email_key(email)
+    phone_key = phone_key(phone)
+
+    with {:ok, %{"letters" => client_letters}} <- client_letters_for_account(email_key, phone_key),
+         {:ok, %{"letters" => worker_letters}} <- worker_letters_for_account(user_uid) do
+      letters =
+        Enum.sort_by(client_letters ++ worker_letters, & &1["letterNo"], :desc)
+
+      {:ok, %{"letters" => letters}}
+    end
+  end
+
+  defp client_letters_for_account(nil, nil), do: {:ok, %{"letters" => []}}
+
+  defp client_letters_for_account(email_key, phone_key) do
+    customer_letters(email_key, phone_key)
+  end
+
+  defp customer_letters(email_key, phone_key) do
+    case Repo.query(
+           """
+           SELECT l.letter_no, l.issued_on, l.start_on, l.monthly_fee_minor, l.currency, l.client_name,
+                  l.billing_contact, l.phone, l.email, l.preamble, l.workers, l.clauses,
+                  (c.status = 'active' AND EXISTS (
+                    SELECT 1 FROM public.direct_contract_assignments a
+                    WHERE a.contract_id = c.id AND a.status = 'active'
+                  )),
+                  cl.phone, cl.email
+           FROM public.direct_contract_letters l
+           JOIN public.direct_contracts c ON c.id = l.contract_id
+           JOIN public.direct_contract_clients cl ON cl.id = c.client_id
+           WHERE l.sent_at IS NOT NULL
+             AND (
+               ($1::text IS NOT NULL AND lower(btrim(coalesce(cl.email, ''))) = $1)
+               OR ($1::text IS NOT NULL AND lower(btrim(coalesce(l.email, ''))) = $1)
+               OR ($2::text IS NOT NULL AND right(regexp_replace(coalesce(cl.phone, ''), '\\D', '', 'g'), 9) = right($2, 9))
+               OR ($2::text IS NOT NULL AND right(regexp_replace(coalesce(l.phone, ''), '\\D', '', 'g'), 9) = right($2, 9))
+             )
+           ORDER BY l.sent_at DESC, l.letter_no DESC
+           """,
+           [email_key, phone_key]
+         ) do
+      {:ok, %{rows: rows}} ->
+        letters =
+          Enum.flat_map(rows, fn row ->
+            letter = Enum.take(row, 13)
+            [client_phone, client_email] = Enum.take(row, -2)
+
+            [
+              _number,
+              _issued,
+              _start,
+              _fee,
+              _currency,
+              _name,
+              _contact,
+              letter_phone,
+              letter_email | _
+            ] = letter
+
+            if account_owns_letter?(
+                 email_key,
+                 phone_key,
+                 letter_email,
+                 letter_phone,
+                 client_email,
+                 client_phone
+               ) do
+              [public_letter_payload(letter)]
+            else
+              []
+            end
+          end)
+
+        {:ok, %{"letters" => letters}}
+
+      {:error, error} ->
+        map_pg(error)
+    end
+  end
+
+  defp account_owns_letter?(
+         email_key,
+         phone_key,
+         letter_email,
+         letter_phone,
+         client_email,
+         client_phone
+       ) do
+    same_email?(email_key, letter_email) or same_email?(email_key, client_email) or
+      same_phone?(phone_key, letter_phone) or same_phone?(phone_key, client_phone)
+  end
+
+  defp same_email?(nil, _), do: false
+  defp same_email?(_, nil), do: false
+
+  defp same_email?(key, value) when is_binary(value) do
+    downcased = value |> String.trim() |> String.downcase()
+    downcased != "" and downcased == key
+  end
+
+  defp same_email?(_, _), do: false
+
+  defp same_phone?(nil, _), do: false
+  defp same_phone?(_, nil), do: false
+  defp same_phone?(key, value), do: phone_key(value) == key
+
+  defp email_key(value) when is_binary(value) do
+    case String.downcase(String.trim(value)) do
+      "" -> nil
+      email -> email
+    end
+  end
+
+  defp email_key(_), do: nil
+
+  defp phone_key(value) when is_binary(value) do
+    case ghana_phone(value) do
+      {:ok, "+" <> digits} -> digits
+      :error -> canonical_phone_digits(value)
+    end
+  end
+
+  defp phone_key(_), do: nil
+
+  defp canonical_phone_digits(value) do
+    digits = value |> String.trim() |> String.replace(~r/\D/, "")
+
+    cond do
+      digits == "" ->
+        nil
+
+      String.starts_with?(digits, "0") and byte_size(digits) == 10 ->
+        "233" <> binary_part(digits, 1, 9)
+
+      byte_size(digits) == 9 ->
+        "233" <> digits
+
+      byte_size(digits) >= 8 ->
+        digits
+
+      true ->
+        nil
+    end
+  end
+
+  defp public_letter_payload([
+         number,
+         issued,
+         start_on,
+         fee,
+         currency,
+         name,
+         contact,
+         phone,
+         email,
+         preamble,
+         workers,
+         clauses,
+         active
+       ]) do
+    %{
+      "letterNo" => number,
+      "issuedOn" => Date.to_iso8601(issued),
+      "startOn" => Date.to_iso8601(start_on),
+      "monthlyFeeMinor" => fee,
+      "currency" => currency,
+      "clientName" => name,
+      "billingContact" => contact,
+      "phone" => phone,
+      "email" => email,
+      "kind" => "client",
+      "preamble" => preamble,
+      "workers" => json_list(workers),
+      "clauses" => json_list(clauses),
+      "active" => active == true
+    }
+  end
+
+  defp worker_letter_payload([
+         number,
+         issued,
+         start_on,
+         pay,
+         advance,
+         currency,
+         worker_name,
+         role,
+         client_name,
+         phone,
+         email,
+         preamble,
+         clauses,
+         active
+       ]) do
+    %{
+      "kind" => "worker",
+      "letterNo" => number,
+      "issuedOn" => Date.to_iso8601(issued),
+      "startOn" => Date.to_iso8601(start_on),
+      "monthlyFeeMinor" => pay,
+      "monthlyPayMinor" => pay,
+      "weeklyAdvanceMinor" => advance,
+      "currency" => currency,
+      "clientName" => client_name,
+      "workerName" => worker_name,
+      "roleLabel" => role,
+      "billingContact" => nil,
+      "phone" => phone,
+      "email" => email,
+      "preamble" => preamble,
+      "workers" => [],
+      "clauses" => json_list(clauses),
+      "active" => active == true
+    }
+  end
+
+  defp json_list(value) when is_list(value), do: value
+
+  defp json_list(value) when is_binary(value) do
+    case Jason.decode(value) do
+      {:ok, list} when is_list(list) -> list
+      _ -> []
+    end
+  end
+
+  defp json_list(_), do: []
+
+  defp active_letter_workers(contract_id) do
+    case dump_uuid(contract_id) do
+      {:ok, uid} ->
+        case Repo.query(letter_worker_sql(), [uid]) do
+          {:ok, %{rows: rows}} ->
+            letter_worker_rows(rows)
+
+          {:error, error} ->
+            Logger.error("contract letter workers failed: #{inspect(error)}")
+            []
+        end
+
+      :error ->
+        []
+    end
+  end
+
+  defp letter_workers!(contract_uid) do
+    fetch!(letter_worker_sql(), [contract_uid]).rows |> letter_worker_rows()
+  end
+
+  defp letter_worker_sql do
+    """
+    SELECT a.id, a.worker_id, a.role_label,
+           COALESCE(NULLIF(btrim(p.fullname), ''), NULLIF(btrim(u.email), ''), 'Worker'),
+           a.monthly_pay_minor, COALESCE(a.weekly_advance_minor, 0), u.phone, u.email
+    FROM public.direct_contract_assignments a
+    JOIN public.users u ON u.id = a.worker_id
+    LEFT JOIN public.profiles p ON p.id = u.id
+    WHERE a.contract_id = $1 AND a.status = 'active'
+    ORDER BY a.created_at, a.id
+    """
+  end
+
+  defp letter_worker_rows(rows) do
+    Enum.map(rows, fn [assignment_id, worker_id, role, name, pay, advance, phone, email] ->
+      %{
+        assignment_id: uuid_text(assignment_id),
+        worker_id: uuid_text(worker_id),
+        role_label: role,
+        worker_name: name,
+        monthly_pay_minor: pay,
+        weekly_advance_minor: advance || 0,
+        phone: phone,
+        email: email
+      }
+    end)
+  end
+
+  defp letter_history(contract_id) do
+    case dump_uuid(contract_id) do
+      {:ok, uid} ->
+        case Repo.query(
+               """
+               SELECT id::text, letter_no, issued_on, channel, sent_at, public_token
+               FROM public.direct_contract_letters
+               WHERE contract_id = $1
+               ORDER BY letter_no DESC
+               """,
+               [uid]
+             ) do
+          {:ok, %{rows: rows}} ->
+            Enum.map(rows, fn [id, number, issued, channel, sent_at, token] ->
+              %{
+                "id" => id,
+                "letterNo" => number,
+                "issuedOn" => Date.to_iso8601(issued),
+                "status" => letter_status(sent_at, channel),
+                "channel" => channel,
+                "viewUrl" => letter_url(token)
+              }
+            end)
+
+          {:error, error} ->
+            Logger.error("contract letters failed: #{inspect(error)}")
+            []
+        end
+
+      :error ->
+        []
+    end
+  end
+
+  defp letter_status(nil, _), do: "saved"
+  defp letter_status(_sent_at, "whatsapp"), do: "sent_whatsapp"
+  defp letter_status(_sent_at, "email"), do: "sent_email"
+  defp letter_status(_sent_at, _), do: "saved"
+
+  defp mark_letter_sent(letter_id, channel, token) do
+    case dump_uuid(letter_id) do
+      {:ok, uid} ->
+        case Repo.transaction(fn ->
+               case Repo.query(
+                      """
+                      UPDATE public.direct_contract_letters
+                      SET channel = $2, sent_at = now()
+                      WHERE id = $1 AND sent_at IS NULL
+                      RETURNING letter_no, channel
+                      """,
+                      [uid, channel]
+                    ) do
+                 {:ok, %{rows: [[number, saved_channel]]}} ->
+                   :ok = mark_worker_letters_sent(uid, channel)
+                   %{number: number, channel: saved_channel}
+
+                 {:ok, %{rows: []}} ->
+                   Repo.rollback(:letter_already_sent)
+
+                 {:error, error} ->
+                   Repo.rollback(error)
+               end
+             end) do
+          {:ok, %{number: number, channel: saved_channel}} ->
+            {:ok,
+             %{
+               "letterNo" => number,
+               "channel" => saved_channel,
+               "sent" => true,
+               "viewUrl" => letter_url(token)
+             }}
+
+          {:error, reason} when is_atom(reason) ->
+            {:error, reason}
+
+          {:error, error} ->
+            map_pg(error)
+        end
+
+      :error ->
+        {:error, :invalid_request}
+    end
+  end
+
+  defp deliver_letter(admin_uid, letter, "whatsapp") do
+    phone = letter["phone"]
+
+    if is_binary(phone) and String.trim(phone) != "" do
+      case DirectAdminWhatsApp.deliver_as_staff(admin_uid, %{
+             "phoneE164" => phone,
+             "body" => letter_message(letter)
+           }) do
+        {:ok, _} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      {:error, :missing_phone}
+    end
+  end
+
+  defp deliver_letter(_admin_uid, letter, "email") do
+    email = letter["email"]
+
+    if is_binary(email) and email != "" do
+      send_letter_email(letter)
+    else
+      {:error, :missing_email}
+    end
+  end
+
+  defp deliver_letter(_, _, _), do: {:error, :invalid_request}
+
+  defp send_letter_email(letter) do
+    post_email(
+      letter["email"],
+      "Instaclean service agreement #{letter["letterNo"]}",
+      letter_email_html(letter)
+    )
+  end
+
+  defp letter_message(letter) do
+    names =
+      Enum.map_join(letter["workers"], "\n", fn worker ->
+        "#{worker["roleLabel"]} — #{worker["workerName"]}"
+      end)
+
+    """
+    Instaclean service agreement #{letter["letterNo"]}
+    #{letter["clientName"]}
+    Monthly fee #{Calendar.format_ghs(letter["monthlyFeeMinor"])}
+    #{names}
+    #{letter["viewUrl"]}
+    """
+    |> String.trim()
+  end
+
+  defp letter_email_html(letter) do
+    workers =
+      Enum.map_join(letter["workers"], "", fn worker ->
+        "<li>#{html_escape(worker["roleLabel"])} — #{html_escape(worker["workerName"])}</li>"
+      end)
+
+    """
+    <p>#{html_escape(letter["preamble"])}</p>
+    <ul>#{workers}</ul>
+    <p>Monthly fee #{html_escape(Calendar.format_ghs(letter["monthlyFeeMinor"]))}</p>
+    <p><a href="#{html_escape(letter["viewUrl"])}">View the service agreement</a></p>
+    """
+  end
+
+  defp sync_worker_letters(admin_uid, contract_uid, client_letter_id, contract, workers, issued) do
+    {:ok, letter_uid} = dump_uuid(client_letter_id)
+    drop_retired_worker_letters(letter_uid, workers)
+
+    Enum.each(workers, fn worker ->
+      write_worker_letter(admin_uid, contract_uid, letter_uid, contract, worker, issued)
+    end)
+  end
+
+  defp drop_retired_worker_letters(letter_uid, workers) do
+    ids = Enum.map(workers, fn worker -> Ecto.UUID.dump!(worker.assignment_id) end)
+
+    fetch!(
+      """
+      DELETE FROM public.direct_contract_worker_letters
+      WHERE client_letter_id = $1
+        AND sent_at IS NULL
+        AND NOT (assignment_id = ANY($2::uuid[]))
+      """,
+      [letter_uid, ids]
+    )
+  end
+
+  defp write_worker_letter(admin_uid, contract_uid, letter_uid, contract, worker, issued) do
+    {:ok, assignment_uid} = dump_uuid(worker.assignment_id)
+    {:ok, worker_uid} = dump_uuid(worker.worker_id)
+    drafted = Letter.worker_letter(contract, worker)
+
+    case fetch!(
+           """
+           SELECT id, letter_no, public_token
+           FROM public.direct_contract_worker_letters
+           WHERE client_letter_id = $1 AND assignment_id = $2 AND sent_at IS NULL
+           FOR UPDATE
+           """,
+           [letter_uid, assignment_uid]
+         ).rows do
+      [[id, _number, _token]] ->
+        fetch!(
+          """
+          UPDATE public.direct_contract_worker_letters
+          SET issued_on = $2, start_on = $3, monthly_pay_minor = $4, weekly_advance_minor = $5,
+              currency = $6, worker_name = $7, role_label = $8, client_name = $9,
+              phone = $10, email = $11, preamble = $12, clauses = $13::jsonb
+          WHERE id = $1
+          """,
+          [id | worker_letter_params(drafted, issued)]
+        )
+
+      [] ->
+        number = next_letter_no(issued.year)
+        token = random_token()
+
+        fetch!(
+          """
+          INSERT INTO public.direct_contract_worker_letters (
+            contract_id, client_letter_id, assignment_id, worker_id, letter_no, public_token,
+            issued_on, start_on, monthly_pay_minor, weekly_advance_minor, currency,
+            worker_name, role_label, client_name, phone, email, preamble, clauses, created_by
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19
+          )
+          """,
+          [
+            contract_uid,
+            letter_uid,
+            assignment_uid,
+            worker_uid,
+            number,
+            token | worker_letter_params(drafted, issued)
+          ] ++ [admin_uid]
+        )
+    end
+  end
+
+  defp worker_letter_params(drafted, issued) do
+    [
+      issued,
+      Date.from_iso8601!(drafted["startOn"]),
+      drafted["monthlyPayMinor"],
+      drafted["weeklyAdvanceMinor"],
+      drafted["currency"],
+      drafted["workerName"],
+      drafted["roleLabel"],
+      drafted["clientName"],
+      drafted["phone"],
+      drafted["email"],
+      drafted["preamble"],
+      drafted["clauses"]
+    ]
+  end
+
+  defp worker_letters_for_account(user_uid) do
+    case Repo.query(
+           """
+           SELECT l.letter_no, l.issued_on, l.start_on, l.monthly_pay_minor, l.weekly_advance_minor, l.currency,
+                  l.worker_name, l.role_label, l.client_name, l.phone, l.email, l.preamble, l.clauses,
+                  (c.status = 'active' AND a.status = 'active')
+           FROM public.direct_contract_worker_letters l
+           JOIN public.direct_contract_assignments a ON a.id = l.assignment_id
+           JOIN public.direct_contracts c ON c.id = l.contract_id
+           WHERE l.worker_id = $1 AND l.sent_at IS NOT NULL
+           ORDER BY l.sent_at DESC, l.letter_no DESC
+           """,
+           [user_uid]
+         ) do
+      {:ok, %{rows: rows}} ->
+        {:ok, %{"letters" => Enum.map(rows, &worker_letter_payload/1)}}
+
+      {:error, error} ->
+        map_pg(error)
+    end
+  end
+
+  defp worker_letter_history(contract_id) do
+    case dump_uuid(contract_id) do
+      {:ok, uid} ->
+        case Repo.query(
+               """
+               SELECT id::text, letter_no, issued_on, channel, sent_at, public_token, worker_name, role_label
+               FROM public.direct_contract_worker_letters
+               WHERE contract_id = $1
+               ORDER BY letter_no DESC
+               """,
+               [uid]
+             ) do
+          {:ok, %{rows: rows}} ->
+            Enum.map(rows, fn [id, number, issued, channel, sent_at, token, worker_name, role] ->
+              %{
+                "id" => id,
+                "letterNo" => number,
+                "issuedOn" => Date.to_iso8601(issued),
+                "status" => letter_status(sent_at, channel),
+                "channel" => channel,
+                "viewUrl" => worker_letter_url(token),
+                "workerName" => worker_name,
+                "roleLabel" => role
+              }
+            end)
+
+          {:error, error} ->
+            Logger.error("worker contract letters failed: #{inspect(error)}")
+            []
+        end
+
+      :error ->
+        []
+    end
+  end
+
+  defp mark_worker_letters_sent(client_letter_uid, channel) do
+    fetch!(
+      """
+      UPDATE public.direct_contract_worker_letters
+      SET channel = $2, sent_at = now()
+      WHERE client_letter_id = $1 AND sent_at IS NULL
+      """,
+      [client_letter_uid, channel]
+    )
+
+    :ok
+  end
+
+  defp worker_letter_url(token) do
+    base =
+      Application.get_env(:mithril, :direct_public_url, "https://direct.tryinstaclean.com")
+      |> to_string()
+      |> String.trim_trailing("/")
+
+    "#{base}/letters/worker/#{token}"
+  end
+
+  defp next_letter_no(year) do
+    prefix = "LTR-#{year}-"
+
+    %{rows: [[count]]} =
+      fetch!(
+        """
+        SELECT (
+          (SELECT count(*) FROM public.direct_contract_letters WHERE letter_no LIKE $1) +
+          (SELECT count(*) FROM public.direct_contract_worker_letters WHERE letter_no LIKE $1)
+        )::integer
+        """,
+        [prefix <> "%"]
+      )
+
+    prefix <> String.pad_leading(Integer.to_string(count + 1), 3, "0")
+  end
+
+  defp letter_url(token) do
+    base =
+      Application.get_env(:mithril, :direct_public_url, "https://direct.tryinstaclean.com")
+      |> to_string()
+      |> String.trim_trailing("/")
+
+    "#{base}/letters/contract/#{token}"
   end
 
   defp next_invoice_no(year) do
@@ -1624,7 +2461,7 @@ defmodule Mithril.DirectContracts do
     with {:ok, name} <- required_text(param(params, "name"), 120),
          {:ok, kind} <- one_of(param(params, "kind"), ~w(company person)),
          {:ok, contact} <- optional_text(param(params, "billingContact"), 120),
-         {:ok, phone} <- optional_text(param(params, "phone"), 40),
+         {:ok, phone} <- optional_phone(param(params, "phone")),
          {:ok, email} <- optional_email(param(params, "email")) do
       {:ok, %{name: name, kind: kind, billing_contact: contact, phone: phone, email: email}}
     end
@@ -1689,6 +2526,34 @@ defmodule Mithril.DirectContracts do
 
   defp optional_text(_, _), do: {:error, :invalid_request}
 
+  defp optional_phone(nil), do: {:ok, nil}
+  defp optional_phone(""), do: {:ok, nil}
+
+  defp optional_phone(value) when is_binary(value) do
+    case String.trim(value) do
+      "" ->
+        {:ok, nil}
+
+      phone ->
+        case ghana_phone(phone) do
+          {:ok, e164} -> {:ok, e164}
+          :error -> {:error, :invalid_phone}
+        end
+    end
+  end
+
+  defp optional_phone(_), do: {:error, :invalid_phone}
+
+  defp ghana_phone(value) do
+    with {:ok, parsed} <- ExPhoneNumber.parse(value, "GH"),
+         true <- ExPhoneNumber.is_valid_number?(parsed),
+         233 <- parsed.country_code do
+      {:ok, ExPhoneNumber.format(parsed, :e164)}
+    else
+      _ -> :error
+    end
+  end
+
   defp optional_email(nil), do: {:ok, nil}
 
   defp optional_email(value) when is_binary(value) do
@@ -1697,9 +2562,10 @@ defmodule Mithril.DirectContracts do
         {:ok, nil}
 
       email ->
-        if email =~ ~r/^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-          do: {:ok, email},
-          else: {:error, :invalid_email}
+        case ExEmail.validate(email) do
+          :ok -> {:ok, email}
+          {:error, _} -> {:error, :invalid_email}
+        end
     end
   end
 

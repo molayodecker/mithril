@@ -37,7 +37,9 @@ defmodule Mithril.MixProject do
       {:req, "~> 0.5"},
       {:open_api_spex, "~> 3.22.3"},
       {:oban, "~> 2.19"},
-      {:prom_ex, "~> 1.12"}
+      {:prom_ex, "~> 1.12"},
+      {:ex_phone_number, "~> 0.4.12"},
+      {:ex_email, "~> 1.0"}
     ]
   end
 end

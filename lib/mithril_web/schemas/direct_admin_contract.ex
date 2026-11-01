@@ -203,6 +203,111 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
     })
   end
 
+  defmodule LetterWorker do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminContractLetterWorker",
+      type: :object,
+      properties: %{
+        roleLabel: %Schema{type: :string},
+        workerName: %Schema{type: :string}
+      },
+      required: [:roleLabel, :workerName]
+    })
+  end
+
+  defmodule LetterClause do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminContractLetterClause",
+      type: :object,
+      properties: %{
+        number: %Schema{type: :integer},
+        title: %Schema{type: :string},
+        body: %Schema{type: :string}
+      },
+      required: [:number, :title, :body]
+    })
+  end
+
+  defmodule LetterPreview do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminContractLetterPreview",
+      type: :object,
+      properties: %{
+        letterNo: %Schema{type: :string, nullable: true},
+        issuedOn: %Schema{type: :string, format: :date},
+        startOn: %Schema{type: :string, format: :date},
+        monthlyFeeMinor: %Schema{type: :integer},
+        currency: %Schema{type: :string},
+        clientName: %Schema{type: :string},
+        billingContact: %Schema{type: :string, nullable: true},
+        phone: %Schema{type: :string, nullable: true},
+        email: %Schema{type: :string, nullable: true},
+        preamble: %Schema{type: :string},
+        workers: %Schema{type: :array, items: LetterWorker},
+        clauses: %Schema{type: :array, items: LetterClause}
+      },
+      required: [
+        :issuedOn,
+        :startOn,
+        :monthlyFeeMinor,
+        :currency,
+        :clientName,
+        :preamble,
+        :workers,
+        :clauses
+      ]
+    })
+  end
+
+  defmodule LetterRecord do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminContractLetterRecord",
+      type: :object,
+      properties: %{
+        id: %Schema{type: :string, format: :uuid},
+        letterNo: %Schema{type: :string},
+        issuedOn: %Schema{type: :string, format: :date},
+        status: %Schema{type: :string, enum: ["saved", "sent_email", "sent_whatsapp"]},
+        channel: %Schema{type: :string, nullable: true},
+        viewUrl: %Schema{type: :string}
+      },
+      required: [:id, :letterNo, :issuedOn, :status, :viewUrl]
+    })
+  end
+
+  defmodule WorkerLetterRecord do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminContractWorkerLetterRecord",
+      type: :object,
+      properties: %{
+        id: %Schema{type: :string, format: :uuid},
+        letterNo: %Schema{type: :string},
+        issuedOn: %Schema{type: :string, format: :date},
+        status: %Schema{type: :string, enum: ["saved", "sent_email", "sent_whatsapp"]},
+        channel: %Schema{type: :string, nullable: true},
+        viewUrl: %Schema{type: :string},
+        workerName: %Schema{type: :string},
+        roleLabel: %Schema{type: :string}
+      },
+      required: [:id, :letterNo, :issuedOn, :status, :viewUrl, :workerName, :roleLabel]
+    })
+  end
+
   defmodule Detail do
     require OpenApiSpex
     alias OpenApiSpex.Schema
@@ -237,7 +342,10 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
         client: Client,
         placementId: %Schema{type: :string, format: :uuid, nullable: true},
         invoices: %Schema{type: :array, items: InvoiceMonth},
-        advances: %Schema{type: :array, items: Advance}
+        advances: %Schema{type: :array, items: Advance},
+        letterPreview: LetterPreview,
+        letters: %Schema{type: :array, items: LetterRecord},
+        workerLetters: %Schema{type: :array, items: WorkerLetterRecord}
       },
       required: [
         :id,
@@ -247,7 +355,10 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
         :workers,
         :client,
         :invoices,
-        :advances
+        :advances,
+        :letterPreview,
+        :letters,
+        :workerLetters
       ]
     })
   end
@@ -527,6 +638,92 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
         :project,
         :lines
       ]
+    })
+  end
+
+  defmodule LetterRequest do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminContractLetterRequest",
+      type: :object,
+      properties: %{
+        channel: %Schema{type: :string, enum: ["email", "whatsapp"]}
+      },
+      required: [:channel]
+    })
+  end
+
+  defmodule LetterResult do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminContractLetterResult",
+      type: :object,
+      properties: %{
+        letterNo: %Schema{type: :string},
+        channel: %Schema{type: :string},
+        sent: %Schema{type: :boolean},
+        viewUrl: %Schema{type: :string}
+      },
+      required: [:letterNo, :channel, :sent, :viewUrl]
+    })
+  end
+
+  defmodule PublicLetter do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectContractLetter",
+      type: :object,
+      properties: %{
+        letterNo: %Schema{type: :string},
+        issuedOn: %Schema{type: :string, format: :date},
+        startOn: %Schema{type: :string, format: :date},
+        monthlyFeeMinor: %Schema{type: :integer},
+        currency: %Schema{type: :string},
+        clientName: %Schema{type: :string},
+        billingContact: %Schema{type: :string, nullable: true},
+        phone: %Schema{type: :string, nullable: true},
+        email: %Schema{type: :string, nullable: true},
+        kind: %Schema{type: :string, enum: ["client", "worker"], nullable: true},
+        workerName: %Schema{type: :string, nullable: true},
+        roleLabel: %Schema{type: :string, nullable: true},
+        monthlyPayMinor: %Schema{type: :integer, nullable: true},
+        weeklyAdvanceMinor: %Schema{type: :integer, nullable: true},
+        active: %Schema{type: :boolean, nullable: true},
+        preamble: %Schema{type: :string},
+        workers: %Schema{type: :array, items: LetterWorker},
+        clauses: %Schema{type: :array, items: LetterClause}
+      },
+      required: [
+        :letterNo,
+        :issuedOn,
+        :startOn,
+        :monthlyFeeMinor,
+        :currency,
+        :clientName,
+        :preamble,
+        :workers,
+        :clauses
+      ]
+    })
+  end
+
+  defmodule LetterList do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectContractLetterList",
+      type: :object,
+      properties: %{
+        letters: %Schema{type: :array, items: PublicLetter}
+      },
+      required: [:letters]
     })
   end
 
