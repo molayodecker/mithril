@@ -1584,7 +1584,7 @@ defmodule Mithril.Direct do
       not is_binary(address) or byte_size(String.trim(address)) < 3 ->
         {:error, :invalid_address}
 
-      not is_map(requirements) ->
+      not (is_map(requirements) and map_size(requirements) == 0) ->
         {:error, :invalid_requirements}
 
       true ->

@@ -1065,8 +1065,10 @@ defmodule Mithril.DirectDispatch do
 
   defp duration_hours(_), do: :error
 
+  # Keep this aligned with MithrilWeb.Schemas.DirectRequirements. That schema
+  # has no named keys yet, so only an empty object is accepted.
   defp requirements(nil), do: {:ok, %{}}
-  defp requirements(value) when is_map(value), do: {:ok, value}
+  defp requirements(value) when is_map(value) and map_size(value) == 0, do: {:ok, %{}}
   defp requirements(_), do: :error
 
   defp required_text(value, min, max) when is_binary(value) do

@@ -1,8 +1,58 @@
 defmodule MithrilWeb.Schemas.MobileRpc do
   @moduledoc "OpenAPI schemas for allowlisted mobile RPC results."
 
+  defmodule PendingBookingService do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "PendingBookingService",
+      description:
+        "service_types row embedded by get_pending_booking_for_edit via to_jsonb(s.*).",
+      type: :object,
+      additionalProperties: false,
+      properties: %{
+        id: %Schema{type: :integer},
+        category_id: %Schema{type: :integer, nullable: true},
+        name: %Schema{type: :string},
+        price: %Schema{type: :number},
+        duration: %Schema{type: :string},
+        category: %Schema{
+          type: :string,
+          enum:
+            ~w(cleaning washing ironing flooding airbnb quick_tasks caregiving pet_care cooks drivers)
+        },
+        discount: %Schema{type: :number, nullable: true},
+        active: %Schema{type: :boolean, nullable: true},
+        image_url: %Schema{type: :string, nullable: true},
+        features: %Schema{type: :array, items: %Schema{type: :string}, nullable: true},
+        last_updated: %Schema{type: :string, format: :"date-time", nullable: true},
+        specialty_slug: %Schema{type: :string, nullable: true},
+        minimum_duration_hours: %Schema{type: :number},
+        maximum_duration_hours: %Schema{type: :number},
+        duration_increment_hours: %Schema{type: :number},
+        description: %Schema{type: :string, nullable: true},
+        icon_scale: %Schema{type: :number},
+        weight: %Schema{type: :integer}
+      },
+      required: [
+        :id,
+        :name,
+        :price,
+        :duration,
+        :category,
+        :minimum_duration_hours,
+        :maximum_duration_hours,
+        :duration_increment_hours,
+        :icon_scale,
+        :weight
+      ]
+    })
+  end
+
   defmodule PendingBookingForEdit do
     require OpenApiSpex
+    alias MithrilWeb.Schemas.MobileRpc.PendingBookingService
     alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{
@@ -38,7 +88,7 @@ defmodule MithrilWeb.Schemas.MobileRpc do
         promotion_slug: %Schema{type: :string, nullable: true},
         scheduled_date: %Schema{type: :string, format: :date},
         scheduled_time: %Schema{type: :string},
-        service: %Schema{type: :object, additionalProperties: true},
+        service: PendingBookingService,
         service_duration_option_id: %Schema{type: :string, format: :uuid},
         service_id: %Schema{type: :integer},
         special_instructions: %Schema{type: :string},
@@ -101,8 +151,97 @@ defmodule MithrilWeb.Schemas.MobileRpc do
     })
   end
 
+  defmodule BookingPaymentSnapshot do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "BookingPaymentSnapshot",
+      description: "One row returned by get_booking_payment_snapshot.",
+      type: :object,
+      additionalProperties: false,
+      properties: %{
+        booking_id: %Schema{type: :string, format: :uuid},
+        final_amount_minor: %Schema{type: :integer},
+        currency: %Schema{type: :string},
+        payment_status: %Schema{type: :string, nullable: true},
+        status: %Schema{type: :string, description: "booking_status"},
+        booking_cover: %Schema{type: :boolean},
+        booking_cover_amount: %Schema{type: :number, nullable: true},
+        platform_fee: %Schema{type: :number, nullable: true},
+        work_rate_ghs_per_hour: %Schema{type: :number, nullable: true},
+        pricing_version: %Schema{type: :string, nullable: true},
+        promotion_id: %Schema{type: :string, format: :uuid, nullable: true},
+        promotion_slug: %Schema{type: :string, nullable: true},
+        promotion_discount_minor: %Schema{type: :integer},
+        subscription_recurring_amount_minor: %Schema{type: :integer, nullable: true},
+        cleaner_earnings_minor: %Schema{type: :integer, nullable: true}
+      },
+      required: [
+        :booking_id,
+        :final_amount_minor,
+        :currency,
+        :status,
+        :booking_cover,
+        :promotion_discount_minor
+      ]
+    })
+  end
+
+  defmodule BookingPaymentSnapshotRows do
+    require OpenApiSpex
+    alias MithrilWeb.Schemas.MobileRpc.BookingPaymentSnapshot
+
+    OpenApiSpex.schema(%{
+      title: "BookingPaymentSnapshotRows",
+      description: "Rows returned when mobile.rpc calls get_booking_payment_snapshot.",
+      type: :array,
+      items: BookingPaymentSnapshot
+    })
+  end
+
+  defmodule AssignedCleanerForCustomerBooking do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "AssignedCleanerForCustomerBooking",
+      description: "One row returned by get_assigned_cleaner_for_customer_booking.",
+      type: :object,
+      additionalProperties: false,
+      properties: %{
+        cleaner_id: %Schema{type: :string, format: :uuid},
+        fullname: %Schema{type: :string, nullable: true},
+        firstname: %Schema{type: :string, nullable: true},
+        lastname: %Schema{type: :string, nullable: true},
+        avatar_url: %Schema{type: :string, nullable: true},
+        rating: %Schema{type: :number, nullable: true},
+        completed_jobs: %Schema{type: :integer, nullable: true},
+        hourly_rate: %Schema{type: :number, nullable: true},
+        verified: %Schema{type: :boolean, nullable: true},
+        specialties: %Schema{type: :array, items: %Schema{type: :string}, nullable: true}
+      },
+      required: [:cleaner_id]
+    })
+  end
+
+  defmodule AssignedCleanerForCustomerBookingRows do
+    require OpenApiSpex
+    alias MithrilWeb.Schemas.MobileRpc.AssignedCleanerForCustomerBooking
+
+    OpenApiSpex.schema(%{
+      title: "AssignedCleanerForCustomerBookingRows",
+      description:
+        "Rows returned when mobile.rpc calls get_assigned_cleaner_for_customer_booking.",
+      type: :array,
+      items: AssignedCleanerForCustomerBooking
+    })
+  end
+
   defmodule RpcResult do
     require OpenApiSpex
+    alias MithrilWeb.Schemas.MobileRpc.AssignedCleanerForCustomerBookingRows
+    alias MithrilWeb.Schemas.MobileRpc.BookingPaymentSnapshotRows
     alias MithrilWeb.Schemas.MobileRpc.PendingBookingForEditRows
     alias OpenApiSpex.Schema
 
@@ -113,9 +252,11 @@ defmodule MithrilWeb.Schemas.MobileRpc do
         data: %Schema{
           nullable: true,
           description:
-            "Allowlisted function result. get_pending_booking_for_edit returns PendingBookingForEdit rows.",
+            "Allowlisted function result. get_pending_booking_for_edit returns PendingBookingForEdit rows. get_booking_payment_snapshot returns BookingPaymentSnapshot rows. get_assigned_cleaner_for_customer_booking returns AssignedCleanerForCustomerBooking rows. Other allowlisted functions still return a JSON value.",
           oneOf: [
             PendingBookingForEditRows,
+            BookingPaymentSnapshotRows,
+            AssignedCleanerForCustomerBookingRows,
             %Schema{type: :object, additionalProperties: true},
             %Schema{type: :array, items: %Schema{type: :object, additionalProperties: true}},
             %Schema{type: :string},

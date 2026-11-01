@@ -58,6 +58,7 @@ defmodule MithrilWeb.Schemas.Direct do
 
   defmodule CreatePlacementRequest do
     require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectRequirements
     alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{
@@ -79,7 +80,7 @@ defmodule MithrilWeb.Schemas.Direct do
           nullable: true
         },
         householdAddress: %Schema{type: :string, minLength: 3},
-        requirements: %Schema{type: :object, additionalProperties: true, default: %{}},
+        requirements: DirectRequirements,
         notes: %Schema{type: :string, nullable: true},
         idempotencyKey: %Schema{
           type: :string,

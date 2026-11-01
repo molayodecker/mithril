@@ -148,7 +148,29 @@ defmodule MithrilWeb.OpenApiTest do
              "sendNotifications"
            ]
 
+    requirements = spec["components"]["schemas"]["DirectRequirements"]
+    assert requirements["additionalProperties"] == false
+    assert requirements["properties"] == %{}
+
+    for schema <- [
+          "DirectUrgentHelpRequest",
+          "DirectReplacementRequest",
+          "DirectServiceRequestItem",
+          "DirectAdminServiceRequestItem",
+          "DirectCreatePlacementRequest"
+        ] do
+      assert spec["components"]["schemas"][schema]["properties"]["requirements"]["$ref"] ==
+               "#/components/schemas/DirectRequirements"
+    end
+
+    service = spec["components"]["schemas"]["PendingBookingService"]
+    assert service["additionalProperties"] == false
+    assert service["properties"]["name"]["type"] == "string"
+    assert service["properties"]["specialty_slug"]["nullable"] == true
+    assert "drivers" in service["properties"]["category"]["enum"]
+
     pending_edit = spec["components"]["schemas"]["PendingBookingForEdit"]["properties"]
+    assert pending_edit["service"]["$ref"] == "#/components/schemas/PendingBookingService"
     assert pending_edit["booking_source"]["nullable"] == true
     assert pending_edit["direct_assigned_cleaner_id"]["nullable"] == true
     assert pending_edit["final_amount_minor"]["type"] == "integer"
@@ -157,5 +179,15 @@ defmodule MithrilWeb.OpenApiTest do
     assert pending_edit["transportation_minor"]["type"] == "integer"
     assert pending_edit["transportation_quote_id"]["nullable"] == true
     assert spec["components"]["schemas"]["PendingBookingForEditRows"]["items"]["$ref"]
+
+    snapshot = spec["components"]["schemas"]["BookingPaymentSnapshot"]
+    assert snapshot["additionalProperties"] == false
+    assert snapshot["properties"]["booking_id"]["format"] == "uuid"
+    assert snapshot["properties"]["cleaner_earnings_minor"]["nullable"] == true
+
+    cleaner = spec["components"]["schemas"]["AssignedCleanerForCustomerBooking"]
+    assert cleaner["additionalProperties"] == false
+    assert cleaner["required"] == ["cleaner_id"]
+    refute Map.has_key?(cleaner["properties"], "pro")
   end
 end
