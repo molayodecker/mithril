@@ -141,6 +141,8 @@ defmodule MithrilWeb.Router do
 
     get "/invoices/:token", DirectAdminInvoicesController, :public_show
     get "/contract-invoices/:token", DirectAdminContractsController, :public_show
+    get "/contract-letters/:token", DirectAdminContractsController, :public_letter
+    get "/worker-letters/:token", DirectAdminContractsController, :public_worker_letter
     get "/pay/:token", DirectPaymentRequestsController, :public_show
     post "/pay/:token/checkout", DirectPaymentRequestsController, :checkout
     post "/pay/:token/verify", DirectPaymentRequestsController, :verify
@@ -175,6 +177,7 @@ defmodule MithrilWeb.Router do
     get "/placements/:id", DirectController, :show_placement
 
     get "/helpers", DirectController, :list_helpers
+    get "/contract-letters", DirectAdminContractsController, :my_letters
     post "/helpers", DirectController, :create_helper
 
     post "/matches/:id/hire", DirectController, :hire_match
@@ -268,6 +271,7 @@ defmodule MithrilWeb.Router do
     post "/admin/contracts/:id/advances", DirectAdminContractsController, :pay_advance
     post "/admin/contracts/:id/payday", DirectAdminContractsController, :payday
     post "/admin/contracts/:id/invoices", DirectAdminContractsController, :send_invoice
+    post "/admin/contracts/:id/letters", DirectAdminContractsController, :send_letter
 
     get "/admin/bookings/:id/payment-diagnostics",
         DirectOperationsController,

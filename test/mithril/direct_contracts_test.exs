@@ -4,12 +4,31 @@ defmodule Mithril.DirectContractsTest do
   alias Mithril.DirectAdminMoneyFixtures, as: Fixtures
   alias Mithril.DirectContracts
   alias Mithril.DirectContracts.Calendar
+  alias Mithril.DirectContracts.Letter
   alias Mithril.Repo
 
   setup do
     Fixtures.checkout!()
     install_contracts!()
     :ok
+  end
+
+  test "worker letter starts on assignment date, not original contract date" do
+    contract = %{created_at: ~D[2026-01-01], name: "Client", currency: "GHS"}
+
+    worker = %{
+      started_at: ~D[2026-10-15],
+      worker_name: "Ama Owusu",
+      role_label: "Househelp",
+      phone: nil,
+      email: nil,
+      monthly_pay_minor: 120_000,
+      weekly_advance_minor: 0
+    }
+
+    letter = Letter.worker_letter(contract, worker)
+    assert letter["startOn"] == "2026-10-15"
+    assert Enum.any?(letter["clauses"], &String.contains?(&1["body"], "15 Oct 2026"))
   end
 
   test "a weekly advance credits the wallet, payday pays the remainder, and the loan book stays empty" do
@@ -158,6 +177,258 @@ defmodule Mithril.DirectContractsTest do
     assert detail["invoiceStatus"] == "sent_email"
     assert hd(detail["advances"])["reference"] =~ "WLT-"
     assert hd(detail["advances"])["paidByName"] == "Automatic · 06:00"
+    assert detail["letterPreview"]["clientName"] == "Kofi Mensah Holdings"
+    assert length(detail["letterPreview"]["clauses"]) == 12
+    ending = Enum.find(detail["letterPreview"]["clauses"], &(&1["title"] == "Ending"))
+
+    after_end =
+      Enum.find(detail["letterPreview"]["clauses"], &(&1["title"] == "After the letter ends"))
+
+    assert ending["body"] =~ "2 months"
+    assert after_end["body"] =~ "6 months"
+  end
+
+  test "a contract letter names the client, the workers, and the monthly fee" do
+    admin_id = Fixtures.insert_user!("admin")
+    stranger_id = Fixtures.insert_user!("reviewer")
+    today = Date.utc_today()
+    weekday = if Date.day_of_week(today) == 7, do: 0, else: Date.day_of_week(today)
+
+    assert {:ok, %{"id" => empty_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Empty Household",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000
+             })
+
+    assert {:error, :letter_needs_worker} =
+             DirectContracts.send_letter(admin_id, empty_id, %{"channel" => "email"})
+
+    worker_id = named_worker!("Ama Owusu")
+    other_id = named_worker!("Abena Asante")
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Kofi Mensah Holdings",
+               "kind" => "company",
+               "billingContact" => "Esi Mensah",
+               "phone" => "+233245550142",
+               "email" => "accounts@kmholdings.com.gh",
+               "monthlyFeeMinor" => 400_000
+             })
+
+    assert {:error, :forbidden} =
+             DirectContracts.send_letter(stranger_id, contract_id, %{"channel" => "email"})
+
+    assert {:ok, %{"id" => househelp_assignment_id}} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerId" => worker_id,
+               "roleLabel" => "Househelp",
+               "monthlyPayMinor" => 120_000,
+               "clientRateMinor" => 200_000,
+               "weeklyAdvanceMinor" => 20_000,
+               "advanceWeekday" => weekday,
+               "advanceMode" => "manual"
+             })
+
+    assert {:ok, %{"id" => cook_assignment_id}} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerId" => other_id,
+               "roleLabel" => "Cook",
+               "monthlyPayMinor" => 130_000,
+               "clientRateMinor" => 200_000,
+               "advanceMode" => "manual"
+             })
+
+    Application.put_env(:mithril, :resend_api_key, "")
+
+    assert {:error, :email_not_configured} =
+             DirectContracts.send_letter(admin_id, contract_id, %{"channel" => "email"})
+
+    assert {:ok, %{"letters" => []}} = DirectContracts.list_for_customer(worker_id)
+
+    Application.put_env(:mithril, :resend_api_key, "re_test")
+    Application.put_env(:mithril, :resend_req_options, plug: {Req.Test, Mithril.DirectContracts})
+
+    Req.Test.stub(Mithril.DirectContracts, fn conn ->
+      Req.Test.json(conn, %{"id" => "email_letter"})
+    end)
+
+    assert {:ok, %{"letterNo" => first_no, "sent" => true, "viewUrl" => view_url}} =
+             DirectContracts.send_letter(admin_id, contract_id, %{"channel" => "email"})
+
+    assert first_no =~ "LTR-"
+    token = view_url |> String.split("/") |> List.last()
+    assert {:ok, letter} = DirectContracts.public_letter(token)
+    assert letter["clientName"] == "Kofi Mensah Holdings"
+    assert letter["monthlyFeeMinor"] == 400_000
+
+    assert Enum.sort_by(letter["workers"], & &1["workerName"]) == [
+             %{"roleLabel" => "Cook", "workerName" => "Abena Asante"},
+             %{"roleLabel" => "Househelp", "workerName" => "Ama Owusu"}
+           ]
+
+    encoded = Jason.encode!(letter)
+    refute encoded =~ "120000"
+    refute encoded =~ "monthlyPay"
+    refute encoded =~ "weeklyAdvance"
+    assert Enum.any?(letter["clauses"], &String.contains?(&1["body"], "GHS 4000.00"))
+
+    assert {:ok, %{"letters" => [worker_letter]}} = DirectContracts.list_for_customer(worker_id)
+    assert worker_letter["kind"] == "worker"
+    assert worker_letter["workerName"] == "Ama Owusu"
+    assert worker_letter["monthlyPayMinor"] == 120_000
+    assert worker_letter["weeklyAdvanceMinor"] == 20_000
+    assert worker_letter["active"] == true
+    assert Enum.any?(worker_letter["clauses"], &String.contains?(&1["body"], "GHS 1200.00"))
+    refute Enum.any?(worker_letter["clauses"], &String.contains?(&1["body"], "GHS 4000.00"))
+
+    assert {:ok, %{"letterNo" => second_no}} =
+             DirectContracts.send_letter(admin_id, contract_id, %{"channel" => "email"})
+
+    assert second_no != first_no
+
+    assert {:ok, detail} = DirectContracts.show(admin_id, contract_id, nil)
+    assert Enum.map(detail["letters"], & &1["letterNo"]) == [second_no, first_no]
+    assert hd(detail["letters"])["status"] == "sent_email"
+
+    assert {:ok, _} =
+             DirectContracts.end_assignment(admin_id, contract_id, househelp_assignment_id)
+
+    assert {:ok, %{"letters" => ended_worker_letters}} =
+             DirectContracts.list_for_customer(worker_id)
+
+    assert ended_worker_letters != []
+    assert Enum.all?(ended_worker_letters, &(&1["active"] == false))
+
+    client_id = Fixtures.insert_user!()
+    set_contact!(client_id, "+233245550142", nil)
+
+    assert {:ok, %{"letters" => []}} = DirectContracts.list_for_customer(client_id)
+    assert {:ok, %{"active" => true}} = DirectContracts.public_letter(token)
+
+    assert {:ok, _} = DirectContracts.end_assignment(admin_id, contract_id, cook_assignment_id)
+
+    assert {:ok, %{"letters" => []}} = DirectContracts.list_for_customer(client_id)
+    assert {:ok, %{"active" => false}} = DirectContracts.public_letter(token)
+  end
+
+  test "a contract contact must be a Ghana number and a real email" do
+    admin_id = Fixtures.insert_user!("admin")
+
+    assert {:error, :invalid_phone} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Dede",
+               "kind" => "company",
+               "phone" => "+23350000000",
+               "monthlyFeeMinor" => 300_000
+             })
+
+    assert {:error, :invalid_email} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Dede",
+               "kind" => "company",
+               "email" => "not-an-email",
+               "monthlyFeeMinor" => 300_000
+             })
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Dede",
+               "kind" => "company",
+               "phone" => "024 000 0000",
+               "email" => "accounts@example.com",
+               "monthlyFeeMinor" => 300_000
+             })
+
+    [[phone, email]] =
+      Repo.query!(
+        """
+        SELECT cl.phone, cl.email
+        FROM public.direct_contract_clients cl
+        JOIN public.direct_contracts c ON c.client_id = cl.id
+        WHERE c.id = $1
+        """,
+        [Ecto.UUID.dump!(contract_id)]
+      ).rows
+
+    assert phone == "+233240000000"
+    assert email == "accounts@example.com"
+  end
+
+  test "unverified contact matches cannot expose client agreements" do
+    admin_id = Fixtures.insert_user!("admin")
+    customer_id = Fixtures.insert_user!()
+    stranger_id = Fixtures.insert_user!()
+    set_contact!(customer_id, "+233244123456", "someone-else@example.com")
+    set_contact!(stranger_id, "+233201112233", "stranger@example.com")
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Dede",
+               "kind" => "person",
+               "phone" => "0244123456",
+               "email" => "dede@example.com",
+               "monthlyFeeMinor" => 300_000
+             })
+
+    insert_letter!(contract_id, admin_id, %{
+      number: "LTR-2026-901",
+      token: String.duplicate("ab", 32),
+      phone: "+233244123456",
+      email: "dede@example.com",
+      sent: true
+    })
+
+    insert_letter!(contract_id, admin_id, %{
+      number: "LTR-2026-902",
+      token: String.duplicate("cd", 32),
+      phone: "+233244123456",
+      email: "dede@example.com",
+      sent: false
+    })
+
+    assert {:ok, %{"letters" => []}} = DirectContracts.list_for_customer(customer_id)
+
+    email_match_id = Fixtures.insert_user!()
+    set_contact!(email_match_id, nil, "Dede@Example.com")
+
+    assert {:ok, %{"letters" => []}} = DirectContracts.list_for_customer(email_match_id)
+
+    assert {:ok, %{"letters" => []}} = DirectContracts.list_for_customer(stranger_id)
+  end
+
+  defp set_contact!(user_id, phone, email) do
+    Repo.query!("UPDATE public.users SET phone = $2, email = $3 WHERE id = $1", [
+      Ecto.UUID.dump!(user_id),
+      phone,
+      email
+    ])
+  end
+
+  defp insert_letter!(contract_id, admin_id, attrs) do
+    Repo.query!(
+      """
+      INSERT INTO public.direct_contract_letters (
+        contract_id, letter_no, public_token, issued_on, start_on, monthly_fee_minor,
+        client_name, phone, email, preamble, workers, clauses, channel, sent_at, created_by
+      ) VALUES (
+        $1, $2, $3, CURRENT_DATE, CURRENT_DATE, 300000,
+        'Dede', $4, $5, 'Agreement', $6::jsonb, $7::jsonb, 'email', $8, $9
+      )
+      """,
+      [
+        Ecto.UUID.dump!(contract_id),
+        attrs.number,
+        attrs.token,
+        attrs.phone,
+        attrs.email,
+        [%{"roleLabel" => "Househelp", "workerName" => "Ama"}],
+        [%{"number" => 7, "title" => "Ending", "body" => "2 months"}],
+        if(attrs.sent, do: DateTime.utc_now(), else: nil),
+        Ecto.UUID.dump!(admin_id)
+      ]
+    )
   end
 
   defp normalize_automatic(:ok), do: {:ok, %{"paidCount" => 0, "totalMinor" => 0}}
@@ -189,5 +460,19 @@ defmodule Mithril.DirectContractsTest do
     end
 
     Repo.query!(String.trim(function))
+    install_sql!("../../priv/repo/sql/direct/20261101120000_direct_contract_letters.sql")
+    install_sql!("../../priv/repo/sql/direct/20261101130000_direct_contract_worker_letters.sql")
+    install_sql!("../../priv/repo/sql/direct/20261101140000_direct_contract_letter_numbers.sql")
+    install_sql!("../../priv/repo/sql/direct/20261101150000_direct_contract_letter_sending.sql")
+  end
+
+  defp install_sql!(relative) do
+    sql = File.read!(Path.expand(relative, __DIR__))
+
+    for statement <- String.split(sql, ";\n"),
+        statement = String.trim(statement),
+        statement != "" do
+      Repo.query!(statement)
+    end
   end
 end
