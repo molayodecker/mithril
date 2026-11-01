@@ -4,12 +4,31 @@ defmodule Mithril.DirectContractsTest do
   alias Mithril.DirectAdminMoneyFixtures, as: Fixtures
   alias Mithril.DirectContracts
   alias Mithril.DirectContracts.Calendar
+  alias Mithril.DirectContracts.Letter
   alias Mithril.Repo
 
   setup do
     Fixtures.checkout!()
     install_contracts!()
     :ok
+  end
+
+  test "worker letter starts on assignment date, not original contract date" do
+    contract = %{created_at: ~D[2026-01-01], name: "Client", currency: "GHS"}
+
+    worker = %{
+      started_at: ~D[2026-10-15],
+      worker_name: "Ama Owusu",
+      role_label: "Househelp",
+      phone: nil,
+      email: nil,
+      monthly_pay_minor: 120_000,
+      weekly_advance_minor: 0
+    }
+
+    letter = Letter.worker_letter(contract, worker)
+    assert letter["startOn"] == "2026-10-15"
+    assert Enum.any?(letter["clauses"], &String.contains?(&1["body"], "15 Oct 2026"))
   end
 
   test "a weekly advance credits the wallet, payday pays the remainder, and the loan book stays empty" do
