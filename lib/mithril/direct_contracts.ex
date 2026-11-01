@@ -1614,6 +1614,7 @@ defmodule Mithril.DirectContracts do
 
           preview = Letter.preview(contract, workers)
           issued = Calendar.today()
+
           case fetch!(
                  "SELECT 1 FROM public.direct_contract_letters WHERE contract_id = $1 AND sending_at IS NOT NULL AND sent_at IS NULL",
                  [contract_uid]
@@ -1626,6 +1627,7 @@ defmodule Mithril.DirectContracts do
           sync_worker_letters(admin_uid, contract_uid, letter["id"], contract, workers, issued)
 
           {:ok, letter_uid} = dump_uuid(letter["id"])
+
           fetch!(
             "UPDATE public.direct_contract_letters SET sending_at = now() WHERE id = $1 AND sent_at IS NULL AND sending_at IS NULL",
             [letter_uid]
@@ -1832,7 +1834,17 @@ defmodule Mithril.DirectContracts do
   end
 
   defp letter_worker_rows(rows) do
-    Enum.map(rows, fn [assignment_id, worker_id, role, name, pay, advance, phone, email, started_at] ->
+    Enum.map(rows, fn [
+                        assignment_id,
+                        worker_id,
+                        role,
+                        name,
+                        pay,
+                        advance,
+                        phone,
+                        email,
+                        started_at
+                      ] ->
       %{
         assignment_id: uuid_text(assignment_id),
         worker_id: uuid_text(worker_id),
