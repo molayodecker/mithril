@@ -13,6 +13,7 @@ SELECT setval(
       SELECT max((substring(letter_no from '^LTR-[0-9]{4}-([0-9]+)$'))::bigint)
       FROM public.direct_contract_worker_letters
     ), 0),
+    (SELECT last_value FROM public.direct_contract_letter_no_seq),
     1
   ),
   EXISTS (
