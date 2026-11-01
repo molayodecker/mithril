@@ -364,16 +364,9 @@ defmodule Mithril.DirectContracts do
 
   def list_for_customer(user_id) do
     with {:ok, uid} <- dump_uuid(user_id) do
-      case Repo.query("SELECT email, phone FROM public.users WHERE id = $1", [uid]) do
-        {:ok, %{rows: [[email, phone]]}} ->
-          letters_for_account(uid, email, phone)
-
-        {:ok, %{rows: []}} ->
-          {:error, :not_found}
-
-        {:error, error} ->
-          map_pg(error)
-      end
+      # Contact fields are editable and unverified. Only letters explicitly tied
+      # to this user (worker assignments) can be returned here.
+      worker_letters_for_account(uid)
     else
       :error -> {:error, :not_found}
     end
@@ -1956,7 +1949,7 @@ defmodule Mithril.DirectContracts do
     """
     SELECT a.id, a.worker_id, a.role_label,
            COALESCE(NULLIF(btrim(p.fullname), ''), NULLIF(btrim(u.email), ''), 'Worker'),
-           a.monthly_pay_minor, COALESCE(a.weekly_advance_minor, 0), u.phone, u.email
+           a.monthly_pay_minor, COALESCE(a.weekly_advance_minor, 0), u.phone, u.email, a.created_at
     FROM public.direct_contract_assignments a
     JOIN public.users u ON u.id = a.worker_id
     LEFT JOIN public.profiles p ON p.id = u.id
@@ -1966,12 +1959,13 @@ defmodule Mithril.DirectContracts do
   end
 
   defp letter_worker_rows(rows) do
-    Enum.map(rows, fn [assignment_id, worker_id, role, name, pay, advance, phone, email] ->
+    Enum.map(rows, fn [assignment_id, worker_id, role, name, pay, advance, phone, email, started_at] ->
       %{
         assignment_id: uuid_text(assignment_id),
         worker_id: uuid_text(worker_id),
         role_label: role,
         worker_name: name,
+        started_at: started_at,
         monthly_pay_minor: pay,
         weekly_advance_minor: advance || 0,
         phone: phone,
@@ -2303,20 +2297,8 @@ defmodule Mithril.DirectContracts do
   end
 
   defp next_letter_no(year) do
-    prefix = "LTR-#{year}-"
-
-    %{rows: [[count]]} =
-      fetch!(
-        """
-        SELECT (
-          (SELECT count(*) FROM public.direct_contract_letters WHERE letter_no LIKE $1) +
-          (SELECT count(*) FROM public.direct_contract_worker_letters WHERE letter_no LIKE $1)
-        )::integer
-        """,
-        [prefix <> "%"]
-      )
-
-    prefix <> String.pad_leading(Integer.to_string(count + 1), 3, "0")
+    %{rows: [[number]]} = fetch!("SELECT nextval('public.direct_contract_letter_no_seq')", [])
+    "LTR-#{year}-" <> String.pad_leading(Integer.to_string(number), 3, "0")
   end
 
   defp letter_url(token) do
