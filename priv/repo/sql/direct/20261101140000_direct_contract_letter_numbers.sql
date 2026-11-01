@@ -20,5 +20,5 @@ SELECT setval(
     SELECT 1 FROM public.direct_contract_letters
     UNION ALL
     SELECT 1 FROM public.direct_contract_worker_letters
-  )
+  ) OR (SELECT is_called FROM public.direct_contract_letter_no_seq)
 );
