@@ -6,6 +6,7 @@ defmodule Mithril.DirectContractsTest do
   alias Mithril.DirectContracts.Calendar
   alias Mithril.DirectContracts.Letter
   alias Mithril.Repo
+  alias Mithril.WhatsApp.ContractLetterTemplate
 
   setup do
     Fixtures.checkout!()
@@ -29,6 +30,50 @@ defmodule Mithril.DirectContractsTest do
     letter = Letter.worker_letter(contract, worker)
     assert letter["startOn"] == "2026-10-15"
     assert Enum.any?(letter["clauses"], &String.contains?(&1["body"], "15 Oct 2026"))
+  end
+
+  test "the service agreement whatsapp template opens the client letter" do
+    previous = Application.get_env(:mithril, :direct_public_url)
+    Application.put_env(:mithril, :direct_public_url, "https://direct.tryinstaclean.com")
+
+    on_exit(fn ->
+      if previous == nil do
+        Application.delete_env(:mithril, :direct_public_url)
+      else
+        Application.put_env(:mithril, :direct_public_url, previous)
+      end
+    end)
+
+    definition = ContractLetterTemplate.definition()
+    action = hd(definition["types"]["twilio/call-to-action"]["actions"])
+    token = "a1b2c3d4e5f6789012345678abcdef0123456789abcdef0123456789abcdef01"
+    url = "https://direct.tryinstaclean.com/letters/contract/#{token}"
+
+    assert definition["friendly_name"] == "instaclean_service_agreement"
+
+    assert String.ends_with?(
+             definition["types"]["twilio/call-to-action"]["body"],
+             "Tap below to view it."
+           )
+
+    assert action["title"] == "View agreement"
+    assert action["url"] == "https://direct.tryinstaclean.com/{{4}}"
+    assert ContractLetterTemplate.path(url) == "letters/contract/#{token}"
+
+    assert ContractLetterTemplate.path("https://direct.tryinstaclean.com/letters/worker/#{token}") ==
+             nil
+
+    assert ContractLetterTemplate.variables(%{
+             "customerName" => " Esi\nMensah ",
+             "letterNo" => "LTR-2026-001",
+             "amountLabel" => "GHS 4,000.00",
+             "path" => "letters/contract/#{token}"
+           }) == %{
+             "1" => "Esi Mensah",
+             "2" => "LTR-2026-001",
+             "3" => "GHS 4,000.00",
+             "4" => "letters/contract/#{token}"
+           }
   end
 
   test "a weekly advance credits the wallet, payday pays the remainder, and the loan book stays empty" do
