@@ -341,7 +341,7 @@ defmodule Mithril.DirectContractsTest do
     assert email == "accounts@example.com"
   end
 
-  test "a signed-in client sees a sent letter that matches their account" do
+  test "unverified contact matches cannot expose client agreements" do
     admin_id = Fixtures.insert_user!("admin")
     customer_id = Fixtures.insert_user!()
     stranger_id = Fixtures.insert_user!()
@@ -373,16 +373,12 @@ defmodule Mithril.DirectContractsTest do
       sent: false
     })
 
-    assert {:ok, %{"letters" => [letter]}} = DirectContracts.list_for_customer(customer_id)
-    assert letter["letterNo"] == "LTR-2026-901"
-    assert letter["clientName"] == "Dede"
-    refute Map.has_key?(letter, "publicToken")
+    assert {:ok, %{"letters" => []}} = DirectContracts.list_for_customer(customer_id)
 
     email_match_id = Fixtures.insert_user!()
     set_contact!(email_match_id, nil, "Dede@Example.com")
 
-    assert {:ok, %{"letters" => [%{"letterNo" => "LTR-2026-901"}]}} =
-             DirectContracts.list_for_customer(email_match_id)
+    assert {:ok, %{"letters" => []}} = DirectContracts.list_for_customer(email_match_id)
 
     assert {:ok, %{"letters" => []}} = DirectContracts.list_for_customer(stranger_id)
   end
@@ -451,6 +447,8 @@ defmodule Mithril.DirectContractsTest do
     Repo.query!(String.trim(function))
     install_sql!("../../priv/repo/sql/direct/20261101120000_direct_contract_letters.sql")
     install_sql!("../../priv/repo/sql/direct/20261101130000_direct_contract_worker_letters.sql")
+    install_sql!("../../priv/repo/sql/direct/20261101140000_direct_contract_letter_numbers.sql")
+    install_sql!("../../priv/repo/sql/direct/20261101150000_direct_contract_letter_sending.sql")
   end
 
   defp install_sql!(relative) do
