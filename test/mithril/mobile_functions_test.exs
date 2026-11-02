@@ -418,6 +418,32 @@ defmodule Mithril.MobileFunctions.PaystackTest do
              Paystack.create_transfer_recipient(user_id, %{"type" => "card"})
   end
 
+  test "Ghana bank recipients require a valid GhIPSS bank account number" do
+    user_id = Ecto.UUID.generate()
+
+    for type <- ["ghipss", "nuban"] do
+      assert {:error, {:status, 400, %{error: "Bank account number must be 10–16 digits"}}} =
+               Paystack.create_transfer_recipient(user_id, %{
+                 "type" => type,
+                 "name" => "Worker",
+                 "account_number" => "123",
+                 "bank_code" => "190100",
+                 "currency" => "GHS"
+               })
+    end
+  end
+
+  test "Ghana payout recipients reject foreign currencies" do
+    assert {:error, {:status, 400, %{error: "Unsupported currency"}}} =
+             Paystack.create_transfer_recipient(Ecto.UUID.generate(), %{
+               "type" => "ghipss",
+               "name" => "Worker",
+               "account_number" => "1234567890",
+               "bank_code" => "190100",
+               "currency" => "USD"
+             })
+  end
+
   test "initiate_transfer rejects invalid recipient code" do
     user_id = Ecto.UUID.generate()
 
