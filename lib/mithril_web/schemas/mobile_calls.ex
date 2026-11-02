@@ -544,7 +544,7 @@ defmodule MithrilWeb.Schemas.MobileCalls do
       title: "MobileReplaceCleanerWeekdayBlocksResponse",
       type: :object,
       properties: %{
-        data: %Schema{type: :null, nullable: true, description: "RPC returns void; always null."}
+        data: %Schema{type: :string, nullable: true, enum: [nil], description: "RPC returns void; always null."}
       },
       required: [:data]
     })
