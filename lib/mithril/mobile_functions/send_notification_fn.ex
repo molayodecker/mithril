@@ -65,36 +65,49 @@ defmodule Mithril.MobileFunctions.SendNotificationFn do
 
     email = downcase(body["email"])
     phone = present(body["phone"])
-    invite_url = present(variables(body)["inviteUrl"]) || ""
 
     with {:ok, user_uuid} <- dump_user(user_id),
+         true <- not is_nil(email) or not is_nil(phone),
          {:ok, %{rows: rows}} <-
            Repo.query(
              """
-             SELECT token::text
+             SELECT token::text, lower(btrim(coalesce(invitee_email, ''))),
+                    coalesce(invitee_phone_e164, '')
              FROM public.#{table}
              WHERE inviter_user_id = $1::uuid
                AND status = 'pending'
                AND expires_at > now()
                AND (
-                 ($2 <> '' AND lower(coalesce(invitee_email, '')) = $2)
+                 ($2 <> '' AND lower(btrim(coalesce(invitee_email, ''))) = $2)
                  OR ($3 <> '' AND coalesce(invitee_phone_e164, '') = $3)
                )
              ORDER BY created_at DESC
              LIMIT 5
              """,
              [user_uuid, email || "", phone || ""]
-           ) do
-      if Enum.any?(rows, fn [token] ->
-           is_binary(token) and String.contains?(invite_url, token)
-         end) do
-        {:ok, body}
-      else
-        :error
-      end
+           ),
+         [token, _email, _phone] <-
+           Enum.find(rows, fn [token, stored_email, stored_phone] ->
+             is_binary(token) and
+               (is_nil(email) or email == stored_email) and
+               (is_nil(phone) or phone == stored_phone)
+           end) do
+      variables =
+        variables(body)
+        |> Map.put("inviteUrl", trusted_invite_url(template, token))
+
+      {:ok, Map.put(body, "variables", variables)}
     else
       _ -> :error
     end
+  end
+
+  defp trusted_invite_url("co_cleaner_invite", token) do
+    "https://tryinstaclean.com/api/co-cleaner-invite?token=" <> URI.encode_www_form(token)
+  end
+
+  defp trusted_invite_url("preferred_cleaner_invite", token) do
+    "https://tryinstaclean.com/api/preferred-cleaner-invite?token=" <> URI.encode_www_form(token)
   end
 
   defp authorize(user_id, "payout_name_mismatch_report", body) do
