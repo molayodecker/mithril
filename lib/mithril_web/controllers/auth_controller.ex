@@ -79,7 +79,7 @@ defmodule MithrilWeb.AuthController do
       {:ok, conn} ->
         current_password =
           if conn.assigns.auth_purpose == "password_reset" do
-            :recovery
+            {:recovery, UserAuth.bearer_token(conn)}
           else
             Map.get(params, "current_password")
           end
