@@ -60,7 +60,6 @@ defmodule Mithril.WhatsApp.JobOfferTemplate do
     }
   end
 
-
   def display_date(value) when is_binary(value) do
     case Date.from_iso8601(value |> String.trim() |> String.slice(0, 10)) do
       {:ok, date} ->

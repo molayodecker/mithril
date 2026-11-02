@@ -395,9 +395,15 @@ end
 
 config :mithril,
   twilio_job_offer_webhook_url:
-    System.get_env("TWILIO_JOB_OFFER_WEBHOOK_URL", "https://api.tryinstaclean.com/whatsapp/job-offer"),
+    System.get_env(
+      "TWILIO_JOB_OFFER_WEBHOOK_URL",
+      "https://api.tryinstaclean.com/whatsapp/job-offer"
+    ),
   twilio_job_offer_webhook_url_alias:
-    System.get_env("TWILIO_JOB_OFFER_WEBHOOK_URL_ALIAS", "https://api.tryinstaclean.com/functions/v1/job-offer"),
+    System.get_env(
+      "TWILIO_JOB_OFFER_WEBHOOK_URL_ALIAS",
+      "https://api.tryinstaclean.com/functions/v1/job-offer"
+    ),
   twilio_job_offer_autocreate: config_env() != :test
 
 if chef_whatsapp_from = System.get_env("TWILIO_CHEF_WHATSAPP_FROM") do

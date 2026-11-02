@@ -297,7 +297,11 @@ defmodule Mithril.WhatsApp.JobOffer do
 
       {:error, reason} ->
         _ = expire_unsent(offer_id)
-        Logger.warning("whatsapp job offer provider rejected message: #{inspect(safe_reason(reason))}")
+
+        Logger.warning(
+          "whatsapp job offer provider rejected message: #{inspect(safe_reason(reason))}"
+        )
+
         :failed
     end
   end
@@ -701,6 +705,7 @@ defmodule Mithril.WhatsApp.JobOffer do
   end
 
   defp payload_offer_id(:typed_no), do: nil
+
   defp payload_offer_id(payload) do
     case button_action(payload) do
       {_action, uuid} -> uuid
