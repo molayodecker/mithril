@@ -78,7 +78,7 @@ defmodule Mithril.DirectContractsTest do
 
   test "a weekly advance credits the wallet, payday pays the remainder, and the loan book stays empty" do
     admin_id = Fixtures.insert_user!("admin")
-    stranger_id = Fixtures.insert_user!("reviewer")
+    stranger_id = Fixtures.insert_user!()
     today = Date.utc_today()
     weekday = if Date.day_of_week(today) == 7, do: 0, else: Date.day_of_week(today)
     week = today
@@ -235,7 +235,7 @@ defmodule Mithril.DirectContractsTest do
 
   test "a contract letter names the client, the workers, and the monthly fee" do
     admin_id = Fixtures.insert_user!("admin")
-    stranger_id = Fixtures.insert_user!("reviewer")
+    stranger_id = Fixtures.insert_user!()
     today = Date.utc_today()
     weekday = if Date.day_of_week(today) == 7, do: 0, else: Date.day_of_week(today)
 

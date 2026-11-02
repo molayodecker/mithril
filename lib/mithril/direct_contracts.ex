@@ -2321,7 +2321,7 @@ defmodule Mithril.DirectContracts do
   end
 
   defp require_admin(user_id) when is_binary(user_id) do
-    if Auth.admin?(user_id), do: :ok, else: {:error, :forbidden}
+    if Auth.staff?(user_id), do: :ok, else: {:error, :forbidden}
   end
 
   defp require_admin(_), do: {:error, :forbidden}
