@@ -34,19 +34,33 @@ defmodule MithrilWeb.Schemas.DirectAdminTeam do
     })
   end
 
-  defmodule ListResponse do
+  defmodule RoleGuideEntry do
     require OpenApiSpex
-    alias MithrilWeb.Schemas.DirectAdminTeam.Member
     alias OpenApiSpex.Schema
 
-    alias MithrilWeb.Schemas.DirectAdminTeam.PermissionCatalogEntry
+    OpenApiSpex.schema(%{
+      title: "DirectAdminTeamRoleGuideEntry",
+      type: :object,
+      properties: %{
+        role: %Schema{type: :string, enum: ["admin", "reviewer"]},
+        label: %Schema{type: :string},
+        access: %Schema{type: :string}
+      },
+      required: [:role, :label, :access]
+    })
+  end
+
+  defmodule ListResponse do
+    require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectAdminTeam.{Member, PermissionCatalogEntry, RoleGuideEntry}
+    alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{
       title: "DirectAdminTeamListResponse",
       type: :object,
       properties: %{
         members: %Schema{type: :array, items: Member},
-        roleGuide: %Schema{type: :array, items: %Schema{type: :object}},
+        roleGuide: %Schema{type: :array, items: RoleGuideEntry},
         permissionCatalog: %Schema{type: :array, items: PermissionCatalogEntry}
       },
       required: [:members]
