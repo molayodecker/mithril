@@ -100,6 +100,7 @@ defmodule Mithril.MobileFunctions.SendNotificationFnTest do
   test "invitation URLs use trusted origins and encode stored tokens" do
     url =
       SendNotificationFn.trusted_invite_url("co_cleaner_invite", "abc&next=https://evil.example")
+
     assert URI.parse(url).host == "tryinstaclean.com"
     assert URI.parse(url).path == "/api/co-cleaner-invite"
     assert URI.decode_query(URI.parse(url).query)["token"] == "abc&next=https://evil.example"
