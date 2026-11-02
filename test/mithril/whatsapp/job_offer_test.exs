@@ -270,14 +270,17 @@ defmodule Mithril.WhatsApp.JobOfferTest do
 
     assert JobOffer.deliver(offer_context(old_booking, cleaner_id))
     old_payload = offer_payload("accept_job", old_booking)
+
     Repo.query!(
       "UPDATE public.whatsapp_job_offers SET status = 'expired' WHERE booking_id = $1",
       [Ecto.UUID.dump!(old_booking)]
     )
 
     assert JobOffer.deliver(offer_context(new_booking, cleaner_id))
+
     assert {:reply, reply} =
              JobOffer.inbound_reply(inbound(@worker_phone, "Accept", "SMold", old_payload))
+
     assert reply =~ "expired"
     refute_receive {:assignment, _}
 
@@ -285,6 +288,7 @@ defmodule Mithril.WhatsApp.JobOfferTest do
              JobOffer.inbound_reply(
                inbound(@worker_phone, "Accept", "SMnew", offer_payload("accept_job", new_booking))
              )
+
     assert accepted =~ "accepted"
     assert_receive {:assignment, %{action: :accept, booking_id: ^new_booking}}
   end
