@@ -283,9 +283,12 @@ defmodule Mithril.DirectContractsTest do
                "weekOn" => Date.to_iso8601(today)
              })
 
-    assert Repo.query!("SELECT count(*) FROM public.admin_wallet_credits WHERE recorded_by = $1", [
-             Ecto.UUID.dump!(reviewer_id)
-           ]).rows == [[1]]
+    assert Repo.query!(
+             "SELECT count(*) FROM public.admin_wallet_credits WHERE recorded_by = $1",
+             [
+               Ecto.UUID.dump!(reviewer_id)
+             ]
+           ).rows == [[1]]
 
     assert Repo.query!("SELECT public.admin_cash_payout_recorder_is_allowed($1::uuid)", [
              Ecto.UUID.dump!(reviewer_id)

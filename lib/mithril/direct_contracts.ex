@@ -2322,7 +2322,9 @@ defmodule Mithril.DirectContracts do
 
   defp require_admin(user_id) when is_binary(user_id) do
     cond do
-      Auth.admin?(user_id) -> :ok
+      Auth.admin?(user_id) ->
+        :ok
+
       true ->
         case Repo.query(
                "SELECT role_id::text FROM public.user_roles WHERE user_id = $1::uuid AND (role_id = 'reviewer' OR role_id = ANY($2::text[]))",
@@ -2336,7 +2338,8 @@ defmodule Mithril.DirectContracts do
               do: :ok,
               else: {:error, :forbidden}
 
-          _ -> {:error, :forbidden}
+          _ ->
+            {:error, :forbidden}
         end
     end
   end
