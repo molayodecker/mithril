@@ -90,8 +90,7 @@ defmodule MithrilWeb.ApiSpec do
   defp security_for_path(path)
        when path in [
               "/auth/me",
-              "/auth/cleaner-activation-status",
-              "/auth/password"
+              "/auth/cleaner-activation-status"
             ],
        do: [%{"bearerAuth" => []}]
 

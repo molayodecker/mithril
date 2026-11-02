@@ -8,20 +8,33 @@ defmodule MithrilWeb.Plugs.UserAuth do
   def init(opts), do: opts
 
   def call(conn, _opts) do
+    case authenticate(conn) do
+      {:ok, conn} -> conn
+      :error -> reject(conn, 401, "unauthorized")
+    end
+  end
+
+  def authenticate(conn) do
     case bearer_token(conn) do
       nil ->
-        reject(conn, 401, "unauthorized")
+        :error
 
       token ->
         case Token.verify_access(token) do
-          {:ok, %{"sub" => user_id}} when is_binary(user_id) ->
-            assign(conn, :instaclean_user_id, user_id)
+          {:ok, %{"sub" => user_id} = claims} when is_binary(user_id) ->
+            {:ok,
+             conn
+             |> assign(:instaclean_user_id, user_id)
+             |> assign(:auth_purpose, password_reset_purpose(claims))}
 
           _other ->
-            reject(conn, 401, "unauthorized")
+            :error
         end
     end
   end
+
+  defp password_reset_purpose(%{"purpose" => "password_reset"}), do: "password_reset"
+  defp password_reset_purpose(_claims), do: nil
 
   def bearer_token(conn) do
     case get_req_header(conn, "authorization") do

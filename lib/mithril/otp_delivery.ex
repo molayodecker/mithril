@@ -141,36 +141,25 @@ defmodule Mithril.OtpDelivery do
   end
 
   defp send_resend_email(email, otp) do
-    api_key = Application.get_env(:mithril, :resend_api_key, "") |> to_string() |> String.trim()
-
-    if api_key == "" do
-      {:error, "Could not send code via email. Try SMS or WhatsApp."}
-    else
-      from =
-        Application.get_env(
-          :mithril,
-          :resend_from,
-          "Instaclean <noreply@update.tryinstaclean.com>"
-        )
-
-      body = %{
-        from: from,
-        to: [email],
-        subject: "Your Instaclean verification code",
-        html: """
-        <p>Use this code to sign in to Instaclean:</p>
-        <p><strong>#{otp}</strong></p>
-        """
-      }
-
-      case Req.post("https://api.resend.com/emails",
-             json: body,
-             auth: {:bearer, api_key}
-           ) do
-        {:ok, %{status: status}} when status in 200..299 -> :ok
-        _ -> {:error, "Could not send code via email. Try SMS or WhatsApp."}
-      end
+    case Mithril.Notifications.Resend.deliver(%{
+           to: email,
+           subject: "Your Instaclean verification code",
+           text: "Your Instaclean verification code is #{otp}.",
+           html: """
+           <p>Your Instaclean verification code is <strong>#{html_escape(otp)}</strong>.</p>
+           """
+         }) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, "Could not send code via email. Try SMS or WhatsApp."}
     end
+  end
+
+  defp html_escape(value) do
+    value
+    |> to_string()
+    |> String.replace("&", "&amp;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
   end
 
   defp load_active_group_by_phone(phone) do

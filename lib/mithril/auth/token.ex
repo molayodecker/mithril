@@ -17,12 +17,17 @@ defmodule Mithril.Auth.Token do
       %{"sub" => user_id}
       |> maybe_put("email", attrs[:email] || attrs["email"])
       |> maybe_put("phone", attrs[:phone] || attrs["phone"])
+      |> maybe_put("purpose", attrs[:purpose] || attrs["purpose"])
+      |> maybe_put_exp(attrs[:exp] || attrs["exp"])
 
     generate_and_sign(extra, signer())
   end
 
   defp maybe_put(map, _key, value) when value in [nil, ""], do: map
   defp maybe_put(map, key, value) when is_binary(value), do: Map.put(map, key, value)
+
+  defp maybe_put_exp(map, exp) when is_integer(exp), do: Map.put(map, "exp", exp)
+  defp maybe_put_exp(map, _exp), do: map
 
   def verify_access(token) when is_binary(token) do
     verify_and_validate(token, signer())
