@@ -2321,7 +2321,24 @@ defmodule Mithril.DirectContracts do
   end
 
   defp require_admin(user_id) when is_binary(user_id) do
-    if Auth.staff?(user_id), do: :ok, else: {:error, :forbidden}
+    cond do
+      Auth.admin?(user_id) -> :ok
+      true ->
+        case Repo.query(
+               "SELECT role_id::text FROM public.user_roles WHERE user_id = $1::uuid AND (role_id = 'reviewer' OR role_id = ANY($2::text[]))",
+               [Ecto.UUID.dump!(user_id), Mithril.OpsPermissions.ids()]
+             ) do
+          {:ok, %{rows: rows}} ->
+            roles = Enum.map(rows, &hd/1)
+            grants = Enum.filter(roles, &Mithril.OpsPermissions.valid?/1)
+
+            if "contracts" in grants or (grants == [] and "reviewer" in roles),
+              do: :ok,
+              else: {:error, :forbidden}
+
+          _ -> {:error, :forbidden}
+        end
+    end
   end
 
   defp require_admin(_), do: {:error, :forbidden}
