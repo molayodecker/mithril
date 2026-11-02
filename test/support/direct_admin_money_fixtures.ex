@@ -29,6 +29,7 @@ defmodule Mithril.DirectAdminMoneyFixtures do
           "cleaner_data",
           "bookings",
           "user_roles",
+          "roles",
           "profiles",
           "users"
         ] do

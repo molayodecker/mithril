@@ -407,6 +407,8 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
       type: :object,
       properties: %{
         workerId: %Schema{type: :string, format: :uuid},
+        workerPhone: %Schema{type: :string, nullable: true},
+        workerName: %Schema{type: :string, nullable: true},
         roleLabel: %Schema{type: :string},
         monthlyPayMinor: %Schema{type: :integer, minimum: 1},
         clientRateMinor: %Schema{type: :integer, minimum: 0},
@@ -736,7 +738,8 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
       type: :object,
       properties: %{
         id: %Schema{type: :string, format: :uuid},
-        endedOn: %Schema{type: :string, format: :date, nullable: true}
+        endedOn: %Schema{type: :string, format: :date, nullable: true},
+        notified: %Schema{type: :boolean, nullable: true}
       },
       required: [:id]
     })

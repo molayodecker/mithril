@@ -13,6 +13,7 @@ defmodule Mithril.DirectContracts do
   alias Mithril.DirectAdminInvoices
   alias Mithril.DirectContracts.Calendar
   alias Mithril.WhatsApp.ContractLetterTemplate
+  alias Mithril.WhatsApp.WorkerAddedTemplate
   alias Mithril.WhatsApp.InvoiceTemplate
   alias Mithril.DirectContracts.Letter
   alias Mithril.Repo
@@ -172,42 +173,14 @@ defmodule Mithril.DirectContracts do
   def add_assignment(user_id, contract_id, params) when is_map(params) do
     with :ok <- require_admin(user_id),
          {:ok, contract_uid} <- dump_uuid(contract_id),
-         {:ok, attrs} <- assignment_attrs(params),
-         {:ok, worker_uid} <- dump_uuid(attrs.worker_id) do
-      transact(fn ->
-        case fetch!("SELECT 1 FROM public.direct_contracts WHERE id = $1", [contract_uid]).rows do
-          [] -> Repo.rollback(:contract_not_found)
-          _ -> :ok
-        end
+         {:ok, attrs} <- assignment_attrs(params) do
+      case transact(fn -> insert_assignment(contract_uid, attrs) end) do
+        {:ok, %{assignment: assignment, notice: notice}} ->
+          {:ok, Map.put(assignment, "notified", notify_added_worker(user_id, notice))}
 
-        case fetch!("SELECT 1 FROM public.cleaner_data WHERE user_id = $1", [worker_uid]).rows do
-          [] -> Repo.rollback(:worker_not_found)
-          _ -> :ok
-        end
-
-        %{rows: [[id]]} =
-          fetch!(
-            """
-            INSERT INTO public.direct_contract_assignments (
-              contract_id, worker_id, role_label, monthly_pay_minor, client_rate_minor,
-              weekly_advance_minor, advance_weekday, advance_mode
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            RETURNING id::text
-            """,
-            [
-              contract_uid,
-              worker_uid,
-              attrs.role,
-              attrs.pay,
-              attrs.rate,
-              attrs.amount,
-              attrs.weekday,
-              attrs.mode
-            ]
-          )
-
-        %{"id" => id}
-      end)
+        other ->
+          other
+      end
     end
   end
 
@@ -2367,9 +2340,338 @@ defmodule Mithril.DirectContracts do
   end
 
   defp assignment_attrs(params) do
-    with {:ok, worker_id} <- cast_uuid(param(params, "workerId")),
-         {:ok, attrs} <- assignment_update_attrs(params) do
-      {:ok, Map.put(attrs, :worker_id, worker_id)}
+    with {:ok, attrs} <- assignment_update_attrs(params),
+         {:ok, worker} <- worker_target(params) do
+      {:ok, Map.merge(attrs, worker)}
+    end
+  end
+
+  defp worker_target(params) do
+    worker_id = present(param(params, "workerId"))
+    phone = present(param(params, "workerPhone"))
+
+    cond do
+      is_binary(worker_id) ->
+        with {:ok, id} <- cast_uuid(worker_id) do
+          {:ok, %{worker_id: id, worker_phone: nil, worker_name: nil}}
+        end
+
+      is_binary(phone) ->
+        with {:ok, e164} <- required_phone(phone),
+             {:ok, name} <- required_text(param(params, "workerName"), 120) do
+          {:ok, %{worker_id: nil, worker_phone: e164, worker_name: name}}
+        end
+
+      true ->
+        {:error, :invalid_request}
+    end
+  end
+
+  defp insert_assignment(contract_uid, attrs) do
+    case fetch!(
+           "SELECT cl.name FROM public.direct_contracts c JOIN public.direct_contract_clients cl ON cl.id = c.client_id WHERE c.id = $1",
+           [
+             contract_uid
+           ]
+         ).rows do
+      [] -> Repo.rollback(:contract_not_found)
+      [[client_name]] -> insert_assignment(contract_uid, attrs, client_name)
+    end
+  end
+
+  defp insert_assignment(contract_uid, attrs, client_name) do
+    {worker_id, phone, name, created?} = resolve_worker(attrs)
+
+    case dump_uuid(worker_id) do
+      {:ok, worker_uid} ->
+        unless created? do
+          case fetch!("SELECT 1 FROM public.cleaner_data WHERE user_id = $1", [worker_uid]).rows do
+            [] -> Repo.rollback(:worker_not_found)
+            _ -> :ok
+          end
+        end
+
+        %{rows: [[id]]} =
+          fetch!(
+            """
+            INSERT INTO public.direct_contract_assignments (
+              contract_id, worker_id, role_label, monthly_pay_minor, client_rate_minor,
+              weekly_advance_minor, advance_weekday, advance_mode
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING id::text
+            """,
+            [
+              contract_uid,
+              worker_uid,
+              attrs.role,
+              attrs.pay,
+              attrs.rate,
+              attrs.amount,
+              attrs.weekday,
+              attrs.mode
+            ]
+          )
+
+        notice =
+          if is_binary(phone) do
+            %{phone: phone, name: name, role: attrs.role, client: client_name}
+          end
+
+        %{assignment: %{"id" => id}, notice: notice}
+
+      :error ->
+        Repo.rollback(:invalid_request)
+    end
+  end
+
+  defp resolve_worker(%{worker_id: worker_id}) when is_binary(worker_id) do
+    {worker_id, nil, nil, false}
+  end
+
+  defp resolve_worker(%{worker_phone: phone, worker_name: name}) do
+    fetch!("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", ["contract-worker:#{phone}"])
+
+    case find_worker_by_phone(phone) do
+      {worker_id, worker_uid} ->
+        ensure_cleaner_row(worker_uid)
+        ensure_cleaner_role(worker_uid)
+        {worker_id, phone, profile_name(worker_uid, name), true}
+
+      nil ->
+        {worker_id, worker_uid} = create_worker(phone, name)
+        {worker_id, phone, profile_name(worker_uid, name), true}
+    end
+  end
+
+  defp find_worker_by_phone(phone) do
+    digits = String.replace(phone, ~r/\D/, "")
+
+    local =
+      if String.starts_with?(digits, "233"),
+        do: "0" <> String.slice(digits, 3..-1//1),
+        else: digits
+
+    case fetch!(
+           """
+           SELECT id::text
+           FROM public.users
+           WHERE phone = $1
+              OR regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') = ANY($2::text[])
+           ORDER BY CASE WHEN phone = $1 THEN 0 ELSE 1 END
+           LIMIT 1
+           """,
+           [phone, Enum.uniq([digits, local])]
+         ).rows do
+      [[id]] -> {id, Ecto.UUID.dump!(id)}
+      [] -> nil
+    end
+  end
+
+  defp create_worker(phone, name) do
+    worker_id =
+      if login_tables?() do
+        case Auth.ensure_phone_account(phone) do
+          {:ok, %{user_id: id}} ->
+            id
+
+          {:error, :phone_taken} ->
+            case find_worker_by_phone(phone) do
+              {id, _} -> id
+              nil -> Repo.rollback(:phone_taken)
+            end
+
+          {:error, reason} ->
+            Repo.rollback(reason)
+        end
+      else
+        id = Ecto.UUID.generate()
+        insert_columns("users", user_fields(Ecto.UUID.dump!(id), phone))
+        id
+      end
+
+    worker_uid = Ecto.UUID.dump!(worker_id)
+    ensure_cleaner_row(worker_uid)
+    ensure_profile(worker_uid, name)
+    ensure_cleaner_role(worker_uid)
+    {worker_id, worker_uid}
+  end
+
+  defp ensure_cleaner_row(worker_uid) do
+    fetch!(
+      """
+      INSERT INTO public.cleaner_data (user_id)
+      VALUES ($1)
+      ON CONFLICT (user_id) DO NOTHING
+      """,
+      [worker_uid]
+    )
+  end
+
+  defp ensure_profile(worker_uid, name) do
+    {first, last} = split_name(name)
+
+    case fetch!("SELECT 1 FROM public.profiles WHERE id = $1", [worker_uid]).rows do
+      [] ->
+        insert_columns("profiles", profile_fields(worker_uid, name, first, last))
+
+      _ ->
+        if "fullname" in table_columns("profiles") do
+          fetch!(
+            """
+            UPDATE public.profiles
+            SET fullname = $2
+            WHERE id = $1 AND (fullname IS NULL OR btrim(fullname) = '')
+            """,
+            [worker_uid, name]
+          )
+        end
+    end
+  end
+
+  defp ensure_cleaner_role(worker_uid) do
+    if relation?("public.roles") and relation?("public.user_roles") do
+      role_columns = table_columns("roles")
+
+      role_insert =
+        if "description" in role_columns do
+          "INSERT INTO public.roles (id, description) SELECT 'cleaner', 'Cleaner'"
+        else
+          "INSERT INTO public.roles (id) SELECT 'cleaner'"
+        end
+
+      fetch!(
+        role_insert <> " WHERE NOT EXISTS (SELECT 1 FROM public.roles WHERE id = 'cleaner')",
+        []
+      )
+
+      fetch!(
+        """
+        INSERT INTO public.user_roles (user_id, role_id)
+        SELECT $1, 'cleaner'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM public.user_roles WHERE user_id = $1 AND role_id = 'cleaner'
+        )
+        """,
+        [worker_uid]
+      )
+    end
+  end
+
+  defp profile_name(worker_uid, fallback) do
+    if "fullname" in table_columns("profiles") do
+      case fetch!(
+             "SELECT NULLIF(btrim(fullname), '') FROM public.profiles WHERE id = $1",
+             [worker_uid]
+           ).rows do
+        [[name]] when is_binary(name) -> name
+        _ -> fallback
+      end
+    else
+      fallback
+    end
+  end
+
+  defp user_fields(uid, phone) do
+    [
+      {"id", uid},
+      {"phone", phone},
+      {"password_hash", ""},
+      {"status", "active"},
+      {"created_at", DateTime.utc_now()},
+      {"updated_at", DateTime.utc_now()}
+    ]
+  end
+
+  defp profile_fields(uid, name, first, last) do
+    [
+      {"id", uid},
+      {"user_id", uid},
+      {"fullname", name},
+      {"firstname", first},
+      {"lastname", last}
+    ]
+  end
+
+  defp insert_columns(table, fields) do
+    available = table_columns(table)
+    pairs = Enum.filter(fields, fn {column, _} -> column in available end)
+    columns = Enum.map(pairs, &elem(&1, 0))
+    values = Enum.map(pairs, &elem(&1, 1))
+    holders = Enum.map_join(1..length(values), ", ", &"$#{&1}")
+
+    fetch!(
+      "INSERT INTO public.#{table} (#{Enum.join(columns, ", ")}) VALUES (#{holders})",
+      values
+    )
+  end
+
+  defp table_columns(table) do
+    fetch!(
+      """
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = $1
+      """,
+      [table]
+    ).rows
+    |> Enum.map(&hd/1)
+    |> MapSet.new()
+  end
+
+  defp login_tables? do
+    relation?("auth.users") and relation?("public.mithril_auth_accounts") and
+      relation?("public.mithril_auth_identities")
+  end
+
+  defp relation?(name) do
+    fetch!("SELECT to_regclass($1) IS NOT NULL", [name]).rows == [[true]]
+  end
+
+  defp notify_added_worker(_user_id, nil), do: false
+
+  defp notify_added_worker(user_id, notice) do
+    {:ok, admin_uid} = dump_uuid(user_id)
+
+    case WorkerAddedTemplate.deliver(
+           admin_uid,
+           notice.phone,
+           notice.name,
+           notice.role,
+           notice.client
+         ) do
+      :ok ->
+        true
+
+      {:error, reason} ->
+        Logger.warning("contract worker WhatsApp was not delivered: #{inspect(reason)}")
+        false
+    end
+  end
+
+  def worker_added_message(name, role, client) do
+    WorkerAddedTemplate.readable(name, role, client)
+  end
+
+  defp split_name(name) do
+    case String.split(name, ~r/\s+/, parts: 2) do
+      [first, last] -> {first, last}
+      [first] -> {first, ""}
+    end
+  end
+
+  defp present(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp present(_), do: nil
+
+  defp required_phone(value) do
+    case optional_phone(value) do
+      {:ok, nil} -> {:error, :invalid_phone}
+      other -> other
     end
   end
 
