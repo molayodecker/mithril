@@ -48,6 +48,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
         "nuban" -> "ghipss"
         other -> other
       end
+
     name = body |> Map.get("name", "") |> to_string() |> String.trim()
     raw_account = body |> Map.get("account_number", "") |> to_string() |> String.trim()
     bank_code = body |> Map.get("bank_code", "") |> to_string() |> String.trim()
