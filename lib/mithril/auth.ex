@@ -838,6 +838,11 @@ defmodule Mithril.Auth do
     end
   end
 
+  @doc false
+  def ensure_phone_account(phone) when is_binary(phone) do
+    find_or_create_phone_account(phone)
+  end
+
   defp find_or_create_phone_account(phone) do
     case fetch_account_by_phone(phone) do
       {:ok, account} ->
