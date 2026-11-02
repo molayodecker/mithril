@@ -1963,9 +1963,6 @@ defmodule Mithril.Auth do
         UPDATE public.users
         SET phone = $2,
             email = $3,
-            contact_email_verified_at = CASE
-              WHEN lower(btrim(coalesce(email, ''))) IS DISTINCT FROM lower(btrim(coalesce($3::text, '')))
-              THEN NULL ELSE contact_email_verified_at END,
             updated_at = now()
         WHERE id = $1::uuid
         """
