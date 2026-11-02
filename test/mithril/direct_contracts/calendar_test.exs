@@ -6,6 +6,7 @@ defmodule Mithril.DirectContracts.CalendarTest do
   test "October 2026 payday is the last working day, and Fridays are not assumed to be four" do
     october = ~D[2026-10-01]
     assert Calendar.last_working_day(october) == ~D[2026-10-30]
+
     assert Calendar.weekday_dates(october, 5) == [
              ~D[2026-10-02],
              ~D[2026-10-09],
@@ -13,6 +14,7 @@ defmodule Mithril.DirectContracts.CalendarTest do
              ~D[2026-10-23],
              ~D[2026-10-30]
            ]
+
     assert Calendar.net_minor(120_000, 80_000) == 40_000
     assert Calendar.net_minor(120_000, 130_000) == 0
     assert Calendar.format_ghs(400_000) == "GHS 4000.00"

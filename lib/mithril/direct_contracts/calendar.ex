@@ -68,12 +68,12 @@ defmodule Mithril.DirectContracts.Calendar do
     |> Enum.take_while(&(Date.compare(&1, last) != :gt))
   end
 
-@spec week_status(Date.t(), Date.t(), boolean()) :: String.t()
-def week_status(%Date{}, %Date{}, true), do: "paid"
+  @spec week_status(Date.t(), Date.t(), boolean()) :: String.t()
+  def week_status(%Date{}, %Date{}, true), do: "paid"
 
-def week_status(%Date{} = week, %Date{} = today, false) do
-  if Date.compare(week, today) == :gt, do: "upcoming", else: "due"
-end
+  def week_status(%Date{} = week, %Date{} = today, false) do
+    if Date.compare(week, today) == :gt, do: "upcoming", else: "due"
+  end
 
   @spec month_label(Date.t()) :: String.t()
   def month_label(%Date{} = month_start) do
@@ -82,7 +82,8 @@ end
 
   @spec month_key(Date.t()) :: String.t()
   def month_key(%Date{} = month_start) do
-    :io_lib.format("~4..0B-~2..0B", [month_start.year, month_start.month]) |> IO.iodata_to_binary()
+    :io_lib.format("~4..0B-~2..0B", [month_start.year, month_start.month])
+    |> IO.iodata_to_binary()
   end
 
   @spec short_date(Date.t()) :: String.t()
