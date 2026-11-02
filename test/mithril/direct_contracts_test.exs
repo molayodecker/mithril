@@ -7,6 +7,7 @@ defmodule Mithril.DirectContractsTest do
   alias Mithril.DirectContracts.Letter
   alias Mithril.Repo
   alias Mithril.WhatsApp.ContractLetterTemplate
+  alias Mithril.WhatsApp.WorkerAddedTemplate
 
   setup do
     Fixtures.checkout!()
@@ -76,9 +77,31 @@ defmodule Mithril.DirectContractsTest do
            }
   end
 
+  test "the worker added whatsapp template names the worker, role, and client" do
+    definition = WorkerAddedTemplate.definition()
+
+    assert definition["friendly_name"] == "instaclean_worker_added"
+    assert definition["types"]["twilio/text"]["body"] == WorkerAddedTemplate.body()
+
+    assert String.ends_with?(
+             WorkerAddedTemplate.body(),
+             "Open the Instaclean app to see your assignment."
+           )
+
+    assert WorkerAddedTemplate.variables(%{
+             "workerName" => " Ama\nOwusu ",
+             "roleLabel" => "Househelp",
+             "clientName" => "Kofi Mensah Holdings"
+           }) == %{
+             "1" => "Ama Owusu",
+             "2" => "Househelp",
+             "3" => "Kofi Mensah Holdings"
+           }
+  end
+
   test "a weekly advance credits the wallet, payday pays the remainder, and the loan book stays empty" do
     admin_id = Fixtures.insert_user!("admin")
-    stranger_id = Fixtures.insert_user!("reviewer")
+    stranger_id = Fixtures.insert_user!()
     today = Date.utc_today()
     weekday = if Date.day_of_week(today) == 7, do: 0, else: Date.day_of_week(today)
     week = today
@@ -233,9 +256,71 @@ defmodule Mithril.DirectContractsTest do
     assert after_end["body"] =~ "6 months"
   end
 
+  test "contract reviewers can pay advances without gaining unrelated wallet credit rights" do
+    admin_id = Fixtures.insert_user!("admin")
+    reviewer_id = Fixtures.insert_user!("reviewer")
+    restricted_id = Fixtures.insert_user!("reviewer")
+    legacy_id = Fixtures.insert_user!("reviewer")
+    worker_id = named_worker!("Contract worker")
+    today = Date.utc_today()
+    weekday = rem(Date.day_of_week(today), 7)
+
+    for {id, desk} <- [{reviewer_id, "contracts"}, {restricted_id, "billing"}] do
+      Repo.query!("INSERT INTO public.user_roles (user_id, role_id) VALUES ($1, $2)", [
+        Ecto.UUID.dump!(id),
+        desk
+      ])
+    end
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Reviewer payouts client",
+               "kind" => "company",
+               "monthlyFeeMinor" => 100_000
+             })
+
+    assert {:ok, %{"id" => assignment_id}} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerId" => worker_id,
+               "roleLabel" => "Housekeeper",
+               "monthlyPayMinor" => 50_000,
+               "clientRateMinor" => 60_000,
+               "weeklyAdvanceMinor" => 10_000,
+               "advanceWeekday" => weekday,
+               "advanceMode" => "manual"
+             })
+
+    assert {:error, :forbidden} = DirectContracts.show(restricted_id, contract_id, nil)
+    assert {:ok, _} = DirectContracts.show(reviewer_id, contract_id, nil)
+    assert {:ok, _} = DirectContracts.show(legacy_id, contract_id, nil)
+
+    assert {:error, :forbidden} =
+             DirectContracts.pay_advance(restricted_id, contract_id, %{
+               "assignmentId" => assignment_id,
+               "weekOn" => Date.to_iso8601(today)
+             })
+
+    assert {:ok, _} =
+             DirectContracts.pay_advance(reviewer_id, contract_id, %{
+               "assignmentId" => assignment_id,
+               "weekOn" => Date.to_iso8601(today)
+             })
+
+    assert Repo.query!(
+             "SELECT count(*) FROM public.admin_wallet_credits WHERE recorded_by = $1",
+             [
+               Ecto.UUID.dump!(reviewer_id)
+             ]
+           ).rows == [[1]]
+
+    assert Repo.query!("SELECT public.admin_cash_payout_recorder_is_allowed($1::uuid)", [
+             Ecto.UUID.dump!(reviewer_id)
+           ]).rows == [[false]]
+  end
+
   test "a contract letter names the client, the workers, and the monthly fee" do
     admin_id = Fixtures.insert_user!("admin")
-    stranger_id = Fixtures.insert_user!("reviewer")
+    stranger_id = Fixtures.insert_user!()
     today = Date.utc_today()
     weekday = if Date.day_of_week(today) == 7, do: 0, else: Date.day_of_week(today)
 
@@ -474,6 +559,133 @@ defmodule Mithril.DirectContractsTest do
         Ecto.UUID.dump!(admin_id)
       ]
     )
+  end
+
+  test "a phone number creates a worker who is not on the roster" do
+    admin_id = Fixtures.insert_user!("admin")
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Kofi Mensah Holdings",
+               "kind" => "company",
+               "monthlyFeeMinor" => 400_000
+             })
+
+    assert DirectContracts.worker_added_message("Ama\nOwusu", "Househelp", "Kofi Mensah Holdings") ==
+             "Hello Ama Owusu, Instaclean has added you as Househelp for Kofi Mensah Holdings. Open the Instaclean app to see your assignment."
+
+    assert {:ok, %{"id" => assignment_id, "notified" => false}} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerPhone" => "0245550142",
+               "workerName" => "Ama Owusu",
+               "roleLabel" => "Househelp",
+               "monthlyPayMinor" => 120_000,
+               "clientRateMinor" => 200_000
+             })
+
+    [[worker_id, phone, name]] =
+      Repo.query!(
+        """
+        SELECT a.worker_id::text, u.phone, p.fullname
+        FROM public.direct_contract_assignments a
+        JOIN public.users u ON u.id = a.worker_id
+        JOIN public.profiles p ON p.id = a.worker_id
+        JOIN public.cleaner_data cd ON cd.user_id = a.worker_id
+        WHERE a.id = $1::uuid
+        """,
+        [Ecto.UUID.dump!(assignment_id)]
+      ).rows
+
+    assert phone == "+233245550142"
+    assert name == "Ama Owusu"
+
+    assert {:error, :worker_already_assigned} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerPhone" => "+233245550142",
+               "workerName" => "Someone Else",
+               "roleLabel" => "Cook",
+               "monthlyPayMinor" => 100_000,
+               "clientRateMinor" => 100_000
+             })
+
+    assert {:ok, %{"id" => second_contract}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Second Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000
+             })
+
+    assert {:ok, %{"notified" => false}} =
+             DirectContracts.add_assignment(admin_id, second_contract, %{
+               "workerPhone" => "+233245550142",
+               "workerName" => "Someone Else",
+               "roleLabel" => "Cook",
+               "monthlyPayMinor" => 100_000,
+               "clientRateMinor" => 100_000
+             })
+
+    assert Repo.query!("SELECT count(*) FROM public.users WHERE phone = '+233245550142'").rows ==
+             [[1]]
+
+    assert Repo.query!("SELECT fullname FROM public.profiles WHERE id = $1", [
+             Ecto.UUID.dump!(worker_id)
+           ]).rows == [["Ama Owusu"]]
+
+    assert {:error, :invalid_phone} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerPhone" => "not-a-phone",
+               "workerName" => "Ama Owusu",
+               "roleLabel" => "Househelp",
+               "monthlyPayMinor" => 120_000,
+               "clientRateMinor" => 200_000
+             })
+
+    assert {:error, :invalid_request} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerPhone" => "+233245550142",
+               "roleLabel" => "Househelp",
+               "monthlyPayMinor" => 120_000,
+               "clientRateMinor" => 200_000
+             })
+  end
+
+  test "a local-format customer phone reuses the account and grants cleaner payouts" do
+    admin_id = Fixtures.insert_user!("admin")
+    customer_id = Fixtures.insert_user!()
+    Repo.query!("CREATE TABLE IF NOT EXISTS public.roles (id text PRIMARY KEY)")
+
+    Repo.query!("UPDATE public.users SET phone = $2 WHERE id = $1", [
+      Ecto.UUID.dump!(customer_id),
+      "0245550142"
+    ])
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Customer reuse client",
+               "kind" => "company",
+               "monthlyFeeMinor" => 100_000
+             })
+
+    assert {:ok, %{"id" => assignment_id, "notified" => false}} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerPhone" => "+233245550142",
+               "workerName" => "Existing Customer",
+               "roleLabel" => "Housekeeper",
+               "monthlyPayMinor" => 50_000,
+               "clientRateMinor" => 60_000
+             })
+
+    assert Repo.query!(
+             "SELECT worker_id FROM public.direct_contract_assignments WHERE id = $1",
+             [Ecto.UUID.dump!(assignment_id)]
+           ).rows == [[Ecto.UUID.dump!(customer_id)]]
+
+    assert Repo.query!(
+             "SELECT role_id FROM public.user_roles WHERE user_id = $1 AND role_id = 'cleaner'",
+             [Ecto.UUID.dump!(customer_id)]
+           ).rows == [["cleaner"]]
+
+    assert Repo.query!("SELECT count(*) FROM public.users").rows == [[2]]
   end
 
   defp normalize_automatic(:ok), do: {:ok, %{"paidCount" => 0, "totalMinor" => 0}}

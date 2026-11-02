@@ -58,4 +58,7 @@ config :mithril,
   recruitment_upload_secret: "test-recruitment-upload-secret",
   whatsapp_recruitment_store: Mithril.WhatsApp.Recruitment.Leads.Memory,
   twilio_http: :noop,
+  twilio_voice_number: "+233200000099",
+  twilio_voice_webhook_url: "https://api.tryinstaclean.com/voice/booking-call",
+  voice_call_store: Mithril.Voice.BookingCall.Memory,
   ai_match_settings: %{"enabled" => false}

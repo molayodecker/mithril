@@ -98,7 +98,8 @@ defmodule MithrilWeb.DirectAdminContractsController do
 
   operation(:add_assignment,
     operation_id: "direct.addAdminContractAssignment",
-    summary: "Add a worker to a contract",
+    summary:
+      "Add a worker to a contract. A phone number creates the roster record when they are not already there.",
     parameters: [
       id: [in: :path, schema: %Schema{type: :string, format: :uuid}, required: true]
     ],

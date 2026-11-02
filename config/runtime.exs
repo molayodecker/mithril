@@ -143,6 +143,20 @@ if twilio_from = System.get_env("TWILIO_PHONE_NUMBER") || System.get_env("TWILIO
   config :mithril, :twilio_from_number, twilio_from
 end
 
+# Public number clients and workers dial. Voice must be enabled on this number.
+# Falls back to the SMS number only when that value is already an E.164 phone.
+if twilio_voice_number = System.get_env("TWILIO_VOICE_NUMBER") do
+  config :mithril, :twilio_voice_number, twilio_voice_number
+end
+
+if twilio_voice_webhook = System.get_env("TWILIO_VOICE_WEBHOOK_URL") do
+  config :mithril, :twilio_voice_webhook_url, twilio_voice_webhook
+end
+
+if twilio_voice_webhook_alias = System.get_env("TWILIO_VOICE_WEBHOOK_URL_ALIAS") do
+  config :mithril, :twilio_voice_webhook_url_alias, twilio_voice_webhook_alias
+end
+
 if messaging_service = System.get_env("TWILIO_MESSAGING_SERVICE_SID") do
   config :mithril, :twilio_messaging_service_sid, messaging_service
 end
@@ -355,7 +369,8 @@ for {env_key, config_key} <- [
       {"TWILIO_TEMPLATE_PAYMENT_REQUEST", :twilio_template_payment_request},
       {"TWILIO_TEMPLATE_INVOICE", :twilio_template_invoice},
       {"TWILIO_TEMPLATE_CONTRACT_LETTER", :twilio_template_contract_letter},
-      {"TWILIO_TEMPLATE_JOB_OFFER", :twilio_template_job_offer}
+      {"TWILIO_TEMPLATE_JOB_OFFER", :twilio_template_job_offer},
+      {"TWILIO_TEMPLATE_WORKER_ADDED", :twilio_template_worker_added}
     ] do
   if content_sid = System.get_env(env_key) do
     config :mithril, config_key, content_sid
