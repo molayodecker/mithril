@@ -165,6 +165,8 @@ defmodule Mithril.AuthTest do
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id uuid NOT NULL REFERENCES public.users(id),
       token_hash text NOT NULL UNIQUE,
+      access_token_hash text UNIQUE,
+      used_at timestamptz,
       expires_at timestamptz NOT NULL,
       inserted_at timestamptz NOT NULL DEFAULT now()
     )
@@ -776,7 +778,9 @@ defmodule Mithril.AuthTest do
     assert {:ok, %{"purpose" => "password_reset", "sub" => ^user_id}} =
              Token.verify_access(params["access_token"])
 
-    assert :ok = Auth.set_password(user_id, "new-password-1", :recovery)
+    assert :ok = Auth.set_password(user_id, "new-password-1", {:recovery, params["access_token"]})
+    assert {:error, :invalid_credentials} =
+             Auth.set_password(user_id, "another-password", {:recovery, params["access_token"]})
     assert {:error, :invalid_refresh_token} = Auth.refresh(params["refresh_token"])
     assert {:error, :invalid_credentials} = Auth.login(email, "old-password")
     assert {:ok, _session} = Auth.login(email, "new-password-1")
@@ -789,7 +793,7 @@ defmodule Mithril.AuthTest do
     assert Application.get_env(:mithril, :test_resend_messages) == []
   end
 
-  test "password reset refresh stays a recovery session" do
+  test "password reset refresh cannot extend recovery session lifetime" do
     Application.put_env(:mithril, :test_resend_messages, [])
     {_user_id, email} = insert_account("reset-refresh@example.com", "old-password")
     assert :ok = Auth.request_password_reset(email, "instaclean-pro://reset-password")
@@ -803,8 +807,6 @@ defmodule Mithril.AuthTest do
 
     params = URI.decode_query(URI.parse(String.trim(link)).query)
 
-    assert {:ok, rotated} = Auth.refresh(params["refresh_token"])
-    assert {:ok, %{"purpose" => "password_reset"}} = Token.verify_access(rotated.access_token)
     assert {:error, :invalid_refresh_token} = Auth.refresh(params["refresh_token"])
   end
 
