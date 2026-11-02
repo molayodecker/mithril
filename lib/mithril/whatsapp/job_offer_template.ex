@@ -2,8 +2,8 @@ defmodule Mithril.WhatsApp.JobOfferTemplate do
   @moduledoc """
   WhatsApp template for the one worker who was just offered a job.
 
-  The Accept and No buttons return fixed payloads (`accept_job` and
-  `decline_job`). Free-text replies such as "yes" or "yes tomorrow" are not
+  The Accept and No buttons return payloads containing the unique offer ID.
+  Free-text replies such as "yes" or "yes tomorrow" are not
   an acceptance. The body carries the date, time, and area, and keeps words
   after the last variable so WhatsApp can approve it.
   """
@@ -11,14 +11,16 @@ defmodule Mithril.WhatsApp.JobOfferTemplate do
   alias Mithril.Repo
   alias Mithril.WhatsApp.ContentApi
 
-  @name "instaclean_job_offer_accept"
-  @accept_payload "accept_job"
-  @decline_payload "decline_job"
+  @name "instaclean_job_offer_accept_v2"
+  @accept_payload "accept_job:"
+  @decline_payload "decline_job:"
   @months ~w(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec)
 
   def name, do: @name
   def accept_payload, do: @accept_payload
   def decline_payload, do: @decline_payload
+  def accept_payload(offer_id), do: @accept_payload <> offer_id
+  def decline_payload(offer_id), do: @decline_payload <> offer_id
 
   def body do
     "Instaclean offered you a job on {{1}} at {{2}} in {{3}}. Tap Accept to take it before this offer expires."
@@ -31,18 +33,23 @@ defmodule Mithril.WhatsApp.JobOfferTemplate do
       "variables" => %{
         "1" => "4 Nov 2026",
         "2" => "10:00",
-        "3" => "East Legon"
+        "3" => "East Legon",
+        "4" => "00000000-0000-4000-8000-000000000001"
       },
       "types" => %{
         "twilio/quick-reply" => %{
           "body" => body(),
           "actions" => [
-            %{"id" => @accept_payload, "title" => "Accept"},
-            %{"id" => @decline_payload, "title" => "No"}
+            %{"id" => @accept_payload <> "{{4}}", "title" => "Accept"},
+            %{"id" => @decline_payload <> "{{4}}", "title" => "No"}
           ]
         }
       }
     }
+  end
+
+  def variables(%{offer_id: offer_id} = booking) do
+    Map.put(variables(Map.delete(booking, :offer_id)), "4", offer_id)
   end
 
   def variables(%{date: date, time: time, address: address}) do
@@ -52,6 +59,7 @@ defmodule Mithril.WhatsApp.JobOfferTemplate do
       "3" => area_label(address)
     }
   end
+
 
   def display_date(value) when is_binary(value) do
     case Date.from_iso8601(value |> String.trim() |> String.slice(0, 10)) do

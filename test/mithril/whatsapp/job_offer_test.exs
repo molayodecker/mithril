@@ -48,14 +48,14 @@ defmodule Mithril.WhatsApp.JobOfferTest do
     quick_reply = definition["types"]["twilio/quick-reply"]
     [accept_button, decline_button] = quick_reply["actions"]
 
-    assert definition["friendly_name"] == "instaclean_job_offer_accept"
+    assert definition["friendly_name"] == "instaclean_job_offer_accept_v2"
     assert quick_reply["body"] =~ "{{1}}"
     assert quick_reply["body"] =~ "{{2}}"
     assert quick_reply["body"] =~ "{{3}}"
     assert String.ends_with?(quick_reply["body"], "before this offer expires.")
     refute quick_reply["body"] =~ "YES"
-    assert accept_button == %{"id" => "accept_job", "title" => "Accept"}
-    assert decline_button == %{"id" => "decline_job", "title" => "No"}
+    assert accept_button == %{"id" => "accept_job:{{4}}", "title" => "Accept"}
+    assert decline_button == %{"id" => "decline_job:{{4}}", "title" => "No"}
 
     assert JobOfferTemplate.variables(%{
              date: "2026-11-04",
@@ -84,7 +84,9 @@ defmodule Mithril.WhatsApp.JobOfferTest do
     assert first_message.to == "whatsapp:#{@worker_phone}"
     assert first_message.content_sid == "HXjoboffer"
 
-    assert first_message.variables == %{
+    assert Ecto.UUID.cast(first_message.variables["4"]) != :error
+
+    assert Map.drop(first_message.variables, ["4"]) == %{
              "1" => "4 Nov 2026",
              "2" => "10:00",
              "3" => "East Legon"
@@ -148,7 +150,7 @@ defmodule Mithril.WhatsApp.JobOfferTest do
     end
 
     assert {:reply, accepted} =
-             JobOffer.inbound_reply(inbound(@worker_phone, "Accept", "SMaccept", "accept_job"))
+             JobOffer.inbound_reply(inbound(@worker_phone, "Accept", "SMaccept", offer_payload("accept_job", booking_id)))
 
     assert accepted =~ "You accepted this job"
 
@@ -156,7 +158,7 @@ defmodule Mithril.WhatsApp.JobOfferTest do
                     %{action: :accept, cleaner_id: ^cleaner_id, booking_id: ^booking_id}}
 
     assert {:reply, already} =
-             JobOffer.inbound_reply(inbound(@worker_phone, "Accept", "SMaccept", "accept_job"))
+             JobOffer.inbound_reply(inbound(@worker_phone, "Accept", "SMaccept", offer_payload("accept_job", booking_id)))
 
     assert already =~ "You accepted this job"
     refute_receive {:assignment, _}
@@ -170,7 +172,7 @@ defmodule Mithril.WhatsApp.JobOfferTest do
     assert_receive {:whatsapp, _}
 
     assert {:reply, declined} =
-             JobOffer.inbound_reply(inbound(@worker_phone, "No", "SMno", "decline_job"))
+             JobOffer.inbound_reply(inbound(@worker_phone, "No", "SMno", offer_payload("decline_job", booking_id)))
 
     assert declined =~ "You declined this job"
 
@@ -209,7 +211,7 @@ defmodule Mithril.WhatsApp.JobOfferTest do
     assert_receive {:whatsapp, _}
 
     assert {:reply, reply} =
-             JobOffer.inbound_reply(inbound(@other_phone, "Accept", "SMother", "accept_job"))
+             JobOffer.inbound_reply(inbound(@other_phone, "Accept", "SMother", offer_payload("accept_job", booking_id)))
 
     assert reply =~ "no open job offer"
     refute_receive {:assignment, _}
@@ -231,11 +233,33 @@ defmodule Mithril.WhatsApp.JobOfferTest do
     """)
 
     assert {:reply, reply} =
-             JobOffer.inbound_reply(inbound(@worker_phone, "Accept", "SMlate", "accept_job"))
+             JobOffer.inbound_reply(inbound(@worker_phone, "Accept", "SMlate", offer_payload("accept_job", booking_id)))
 
     assert reply =~ "expired"
     refute_receive {:assignment, _}
     assert [["expired"]] = Repo.query!("SELECT status FROM public.whatsapp_job_offers").rows
+  end
+
+  test "an old Accept button cannot accept a newer offer to the same phone" do
+    cleaner_id = Ecto.UUID.generate()
+    old_booking = Ecto.UUID.generate()
+    new_booking = Ecto.UUID.generate()
+    insert_worker!(cleaner_id, @worker_phone)
+    insert_booking!(old_booking, cleaner_id)
+    insert_booking!(new_booking, cleaner_id)
+
+    assert JobOffer.deliver(offer_context(old_booking, cleaner_id))
+    old_payload = offer_payload("accept_job", old_booking)
+    Repo.query!("UPDATE public.whatsapp_job_offers SET status = 'expired' WHERE booking_id = $1", [Ecto.UUID.dump!(old_booking)])
+
+    assert JobOffer.deliver(offer_context(new_booking, cleaner_id))
+    assert {:reply, reply} = JobOffer.inbound_reply(inbound(@worker_phone, "Accept", "SMold", old_payload))
+    assert reply =~ "expired"
+    refute_receive {:assignment, _}
+
+    assert {:reply, accepted} = JobOffer.inbound_reply(inbound(@worker_phone, "Accept", "SMnew", offer_payload("accept_job", new_booking)))
+    assert accepted =~ "accepted"
+    assert_receive {:assignment, %{action: :accept, booking_id: ^new_booking}}
   end
 
   test "the recruitment line answers an open offer instead of starting an application" do
@@ -285,6 +309,15 @@ defmodule Mithril.WhatsApp.JobOfferTest do
     if is_binary(button_payload),
       do: Map.put(params, "ButtonPayload", button_payload),
       else: params
+  end
+
+  defp offer_payload(action, booking_id) do
+    [[offer_id]] = Repo.query!(
+      "SELECT id::text FROM public.whatsapp_job_offers WHERE booking_id = $1",
+      [Ecto.UUID.dump!(booking_id)]
+    ).rows
+
+    "#{action}:#{offer_id}"
   end
 
   defp recruitment_params(body) do

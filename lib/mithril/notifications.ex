@@ -77,7 +77,7 @@ defmodule Mithril.Notifications do
 
     # The Accept button is the only WhatsApp for this offer. SMS still tells
     # the worker to open the app and does not ask them to reply YES.
-    whatsapp_sent = JobOffer.deliver(ctx)
+    whatsapp_sent = if ctx[:skip_job_offer], do: false, else: JobOffer.deliver(ctx)
     sent or whatsapp_sent
   end
 

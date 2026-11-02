@@ -59,11 +59,11 @@ defmodule Mithril.WhatsApp.JobOffer do
     body = Parse.string_param(params, "Body")
 
     cond do
-      payload in [JobOfferTemplate.accept_payload(), JobOfferTemplate.decline_payload()] ->
+      button_action(payload) != :invalid ->
         reply_to_button(phone, payload, message_sid)
 
       exact_no?(body) and is_binary(phone) and peek_open(phone) == :open ->
-        reply_to_button(phone, JobOfferTemplate.decline_payload(), message_sid)
+        reply_to_button(phone, :typed_no, message_sid)
 
       not is_binary(phone) ->
         :pass
@@ -284,6 +284,7 @@ defmodule Mithril.WhatsApp.JobOffer do
   defp send_offer(offer_id, booking, content_sid) do
     variables =
       JobOfferTemplate.variables(%{
+        offer_id: uuid_text(offer_id),
         date: booking.scheduled_date,
         time: display_time_value(booking.scheduled_time),
         address: booking.address
@@ -296,7 +297,8 @@ defmodule Mithril.WhatsApp.JobOffer do
 
       {:error, reason} ->
         _ = expire_unsent(offer_id)
-        Repo.rollback(reason)
+        Logger.warning("whatsapp job offer provider rejected message: #{inspect(safe_reason(reason))}")
+        :failed
     end
   end
 
@@ -370,7 +372,7 @@ defmodule Mithril.WhatsApp.JobOffer do
   end
 
   defp act_on_reply(phone, payload, message_sid) do
-    case preview_offer(phone) do
+    case preview_offer(phone, payload_offer_id(payload)) do
       %{booking_id: booking_id} ->
         with :ok <- lock_key("whatsapp-job-offer-booking:" <> uuid_text(booking_id)),
              :ok <- lock_key("whatsapp-job-offer-phone:" <> phone) do
@@ -396,16 +398,16 @@ defmodule Mithril.WhatsApp.JobOffer do
     end
   end
 
-  defp preview_offer(phone) do
+  defp preview_offer(phone, offer_id) do
     case Repo.query(
            """
            SELECT booking_id
            FROM public.whatsapp_job_offers
-           WHERE phone = $1
+           WHERE phone = $1 AND ($2::uuid IS NULL OR id = $2)
            ORDER BY created_at DESC
            LIMIT 1
            """,
-           [phone]
+           [phone, offer_id]
          ) do
       {:ok, %{rows: [[booking_id]]}} -> %{booking_id: booking_id}
       {:ok, _} -> nil
@@ -414,7 +416,7 @@ defmodule Mithril.WhatsApp.JobOffer do
   end
 
   defp decide(phone, payload) do
-    case lock_latest_offer(phone) do
+    case lock_latest_offer(phone, payload_offer_id(payload)) do
       nil ->
         none_reply()
 
@@ -439,8 +441,8 @@ defmodule Mithril.WhatsApp.JobOffer do
   defp apply_action(offer, payload) do
     action =
       cond do
-        payload == JobOfferTemplate.accept_payload() -> :accept
-        payload == JobOfferTemplate.decline_payload() -> :decline
+        match?({:accept, _}, button_action(payload)) -> :accept
+        payload == :typed_no or match?({:decline, _}, button_action(payload)) -> :decline
         true -> :ignore
       end
 
@@ -516,17 +518,17 @@ defmodule Mithril.WhatsApp.JobOffer do
 
   defp rpc_outcome(_), do: :retry
 
-  defp lock_latest_offer(phone) do
+  defp lock_latest_offer(phone, offer_id) do
     case Repo.query(
            """
            SELECT id, booking_id, cleaner_id, status, (expires_at <= now())
            FROM public.whatsapp_job_offers
-           WHERE phone = $1
+           WHERE phone = $1 AND ($2::uuid IS NULL OR id = $2)
            ORDER BY created_at DESC
            LIMIT 1
            FOR UPDATE
            """,
-           [phone]
+           [phone, offer_id]
          ) do
       {:ok, %{rows: [row]}} -> offer_from_row(row)
       {:ok, %{rows: []}} -> nil
@@ -645,22 +647,18 @@ defmodule Mithril.WhatsApp.JobOffer do
   defp future_hold?(_), do: false
 
   defp resolve_content_sid do
-    case JobOfferTemplate.content_sid() do
-      sid when is_binary(sid) and sid != "" ->
-        sid
-
-      _ ->
-        if autocreate?() do
-          case JobOfferTemplate.ensure() do
-            {:ok, sid} when is_binary(sid) and sid != "" -> sid
-            _ -> nil
-          end
-        end
+    if autocreate?() do
+      case JobOfferTemplate.ensure() do
+        {:ok, sid} when is_binary(sid) and sid != "" -> sid
+        _ -> nil
+      end
+    else
+      JobOfferTemplate.content_sid()
     end
   end
 
   defp autocreate? do
-    Application.get_env(:mithril, :twilio_job_offer_autocreate, Mix.env() != :test)
+    Application.get_env(:mithril, :twilio_job_offer_autocreate, true)
   end
 
   defp worker_id(ctx) do
@@ -683,6 +681,31 @@ defmodule Mithril.WhatsApp.JobOffer do
   defp button_payload(params) do
     payload = Parse.string_param(params, "ButtonPayload")
     if payload == "", do: "", else: payload
+  end
+
+  defp button_action(payload) when is_binary(payload) do
+    case String.split(payload, ":", parts: 2) do
+      ["accept_job", uuid] -> valid_button_uuid(:accept, uuid)
+      ["decline_job", uuid] -> valid_button_uuid(:decline, uuid)
+      _ -> :invalid
+    end
+  end
+
+  defp button_action(_), do: :invalid
+
+  defp valid_button_uuid(action, uuid) do
+    case Ecto.UUID.dump(uuid) do
+      {:ok, binary} -> {action, binary}
+      :error -> :invalid
+    end
+  end
+
+  defp payload_offer_id(:typed_no), do: nil
+  defp payload_offer_id(payload) do
+    case button_action(payload) do
+      {_action, uuid} -> uuid
+      :invalid -> nil
+    end
   end
 
   defp exact_no?(body) do
