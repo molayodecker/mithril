@@ -90,6 +90,7 @@ defmodule Mithril.Auth do
 
     Repo.transaction(fn ->
       with {:ok, user_id, purpose} <- claim_refresh(hash),
+           :ok <- if(purpose == "password_reset", do: {:error, :invalid_refresh_token}, else: :ok),
            {:ok, account} <- fetch_account_by_id(user_id),
            {:ok, tokens} <- issue_session_for_purpose(account, purpose) do
         tokens
@@ -423,14 +424,43 @@ defmodule Mithril.Auth do
     {:error, :weak_password}
   end
 
-  def set_password(user_id, password, :recovery)
-      when is_binary(user_id) and is_binary(password) and password != "" do
+  def set_password(user_id, password, {:recovery, access_token})
+      when is_binary(user_id) and is_binary(password) and is_binary(access_token) do
     with :ok <- validate_password(password),
          {:ok, _account} <- fetch_account_by_id(user_id) do
       password_hash = Bcrypt.hash_pwd_salt(password)
-      update_password_and_revoke_sessions(user_id, password_hash)
+
+      Repo.transaction(fn ->
+        case Repo.query(
+               """
+               UPDATE public.mithril_password_resets
+               SET used_at = now()
+               WHERE user_id = $1::uuid
+                 AND access_token_hash = $2
+                 AND used_at IS NULL
+                 AND expires_at > now()
+               RETURNING id
+               """,
+               [dump_uuid(user_id), hash_refresh(access_token)]
+             ) do
+          {:ok, %{num_rows: 1}} ->
+            case update_password_and_revoke_sessions(user_id, password_hash) do
+              :ok -> :ok
+              {:error, reason} -> Repo.rollback(reason)
+            end
+
+          _ ->
+            Repo.rollback(:invalid_credentials)
+        end
+      end)
+      |> case do
+        {:ok, :ok} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
+
+  def set_password(_user_id, _password, :recovery), do: {:error, :invalid_credentials}
 
   def set_password(user_id, password, current_password)
       when is_binary(user_id) and is_binary(password) do
@@ -464,55 +494,84 @@ defmodule Mithril.Auth do
   def request_password_reset(_email, _redirect_to), do: {:error, :invalid_email}
 
   defp deliver_password_reset(account, redirect_to) do
-    if recent_password_reset?(account.user_id) do
-      :ok
-    else
-      case issue_recovery_session(account) do
-        {:ok, session} ->
+    case reserve_password_reset(account.user_id) do
+      {:ok, :cooldown} ->
+        :ok
+
+      {:ok, reset_id} ->
+        with {:ok, session} <- issue_recovery_session(account),
+             :ok <- activate_password_reset(reset_id, session) do
           case send_password_reset_email(account.email, session, redirect_to) do
             :ok ->
-              _ = record_password_reset(account.user_id, session.refresh_token)
               :ok
 
             {:error, reason} ->
               _ = revoke_refresh(hash_refresh(session.refresh_token))
               {:error, reason}
           end
+        else
+          {:error, reason} -> {:error, reason}
+        end
 
-        {:error, reason} ->
-          {:error, reason}
-      end
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
-  defp recent_password_reset?(user_id) do
-    cutoff = DateTime.add(DateTime.utc_now(), -@password_reset_cooldown_seconds, :second)
+  defp reserve_password_reset(user_id) do
+    Repo.transaction(fn ->
+      with :ok <- lock_transaction_keys(["password-reset:#{user_id}"]) do
+        cutoff = DateTime.add(DateTime.utc_now(), -@password_reset_cooldown_seconds, :second)
 
+        case Repo.query(
+               """
+               INSERT INTO public.mithril_password_resets (user_id, token_hash, expires_at)
+               SELECT $1::uuid, $2, now() + ($3 * interval '1 second')
+               WHERE NOT EXISTS (
+                 SELECT 1 FROM public.mithril_password_resets
+                 WHERE user_id = $1::uuid AND inserted_at > $4
+               )
+               RETURNING id::text
+               """,
+               [
+                 dump_uuid(user_id),
+                 hash_refresh(Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)),
+                 @password_reset_ttl_seconds,
+                 cutoff
+               ]
+             ) do
+          {:ok, %{rows: [[id]]}} -> id
+          {:ok, %{rows: []}} -> :cooldown
+          {:error, error} -> Repo.rollback(error)
+        end
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, result} -> {:ok, result}
+      {:error, reason} when is_atom(reason) -> {:error, reason}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp activate_password_reset(reset_id, session) do
     case Repo.query(
            """
-           SELECT 1
-           FROM public.mithril_password_resets
-           WHERE user_id = $1::uuid
-             AND inserted_at > $2
-           LIMIT 1
+           UPDATE public.mithril_password_resets
+           SET token_hash = $2, access_token_hash = $3
+           WHERE id = $1::uuid AND used_at IS NULL AND expires_at > now()
            """,
-           [dump_uuid(user_id), cutoff]
+           [
+             dump_uuid(reset_id),
+             hash_refresh(session.refresh_token),
+             hash_refresh(session.access_token)
+           ]
          ) do
-      {:ok, %{num_rows: 1}} -> true
-      _ -> false
+      {:ok, %{num_rows: 1}} -> :ok
+      {:error, error} -> database_error(error)
+      _ -> {:error, :invalid_refresh_token}
     end
-  end
-
-  defp record_password_reset(user_id, refresh_token) do
-    expires_at = DateTime.add(DateTime.utc_now(), @password_reset_ttl_seconds, :second)
-
-    Repo.query(
-      """
-      INSERT INTO public.mithril_password_resets (user_id, token_hash, expires_at)
-      VALUES ($1::uuid, $2, $3)
-      """,
-      [dump_uuid(user_id), hash_refresh(refresh_token), expires_at]
-    )
   end
 
   defp send_password_reset_email(email, session, redirect_to) do
@@ -605,7 +664,6 @@ defmodule Mithril.Auth do
     issue_session(account, purpose: "password_reset", ttl: @password_reset_ttl_seconds)
   end
 
-  defp issue_session_for_purpose(account, "password_reset"), do: issue_recovery_session(account)
   defp issue_session_for_purpose(account, _purpose), do: issue_session(account)
 
   defp issue_session(account, opts) do
