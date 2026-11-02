@@ -354,7 +354,8 @@ for {env_key, config_key} <- [
       {"TWILIO_TEMPLATE_PAYMENT_RECEIVED", :twilio_template_payment_received},
       {"TWILIO_TEMPLATE_PAYMENT_REQUEST", :twilio_template_payment_request},
       {"TWILIO_TEMPLATE_INVOICE", :twilio_template_invoice},
-      {"TWILIO_TEMPLATE_CONTRACT_LETTER", :twilio_template_contract_letter}
+      {"TWILIO_TEMPLATE_CONTRACT_LETTER", :twilio_template_contract_letter},
+      {"TWILIO_TEMPLATE_JOB_OFFER", :twilio_template_job_offer}
     ] do
   if content_sid = System.get_env(env_key) do
     config :mithril, config_key, content_sid

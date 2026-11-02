@@ -58,7 +58,8 @@ defmodule Mithril.Notifications.SendNotification do
       worker_variables(ctx),
       ctx[:booking_id] || ctx[:request_id],
       message_type,
-      sms_fallback_to_whatsapp: ctx[:kind] == :booking_reminder
+      sms_fallback_to_whatsapp: ctx[:kind] == :booking_reminder,
+      parallel_whatsapp: ctx[:kind] != :direct_assignment_offer
     )
   end
 
@@ -168,7 +169,8 @@ defmodule Mithril.Notifications.SendNotification do
   # already been accepted, or the assignment retry will send the same text again.
   @doc false
   def parallel_whatsapp?(phone, opts) when is_list(opts) do
-    phone != nil and Keyword.get(opts, :sms_fallback_to_whatsapp, false) == false
+    phone != nil and Keyword.get(opts, :sms_fallback_to_whatsapp, false) == false and
+      Keyword.get(opts, :parallel_whatsapp, true) != false
   end
 
   defp post(body) do

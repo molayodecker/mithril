@@ -13,9 +13,9 @@ defmodule Mithril.Notifications do
   require Logger
 
   alias Mithril.Auth.SMS
-  alias Mithril.Notifications.Outbound
   alias Mithril.Notifications.SendNotification
   alias Mithril.Repo
+  alias Mithril.WhatsApp.JobOffer
 
   def enabled?(params) when is_map(params) do
     case Map.get(params, "sendNotifications", true) do
@@ -68,58 +68,23 @@ defmodule Mithril.Notifications do
   def load_party(_), do: nil
 
   defp deliver(%{kind: :direct_assignment_offer} = ctx) do
-    if SendNotification.configured?() do
-      SendNotification.deliver(ctx)
-    else
-      sms_sent = deliver_sms(ctx)
-      whatsapp_sent = deliver_assignment_whatsapp(ctx)
-      sms_sent or whatsapp_sent
-    end
+    sent =
+      if SendNotification.configured?() do
+        SendNotification.deliver(ctx)
+      else
+        deliver_sms(ctx)
+      end
+
+    # The Accept button is the only WhatsApp for this offer. SMS still tells
+    # the worker to open the app and does not ask them to reply YES.
+    whatsapp_sent = JobOffer.deliver(ctx)
+    sent or whatsapp_sent
   end
 
   defp deliver(ctx) do
     cond do
       SendNotification.configured?() -> SendNotification.deliver(ctx)
       true -> deliver_sms(ctx)
-    end
-  end
-
-  defp deliver_assignment_whatsapp(ctx) do
-    phone = party_phone(ctx[:worker])
-
-    if phone do
-      result =
-        Outbound.deliver(%{
-          "channel" => "whatsapp",
-          "phone" => phone,
-          "template" => "assignment_offer",
-          "variables" => %{
-            "address" => ctx[:address] || "",
-            "service" => ctx[:service_name] || "Instaclean booking",
-            "scheduled_date" => first_listed_date(ctx),
-            "scheduled_time" => ctx[:scheduled_time] || "",
-            "date" => visit_summary(ctx),
-            "customerName" => party_name(ctx[:customer], "a customer"),
-            "recipientType" => "cleaner"
-          }
-        })
-
-      result["whatsappSent"] == true
-    else
-      false
-    end
-  end
-
-  defp party_phone(nil), do: nil
-
-  defp party_phone(party) do
-    present(party[:phone] || party["phone"])
-  end
-
-  defp first_listed_date(ctx) do
-    case List.wrap(ctx[:dates]) do
-      [date | _] when is_binary(date) -> date
-      _ -> ""
     end
   end
 

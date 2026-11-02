@@ -80,6 +80,9 @@ defmodule MithrilWeb.Router do
     post "/whatsapp/chef-intake", WhatsAppChefController, :receive_message
     post "/functions/v1/chef-intake", WhatsAppChefController, :receive_message
 
+    post "/whatsapp/job-offer", WhatsAppJobOfferController, :receive_message
+    post "/functions/v1/job-offer", WhatsAppJobOfferController, :receive_message
+
     get "/whatsapp/join-as-cleaner-bot", WhatsAppRecruitmentController, :serve
     post "/whatsapp/join-as-cleaner-bot", WhatsAppRecruitmentController, :serve
     options "/whatsapp/join-as-cleaner-bot", WhatsAppRecruitmentController, :serve

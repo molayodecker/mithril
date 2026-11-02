@@ -152,7 +152,8 @@ defmodule Mithril.ScheduledJobs.MessageDeliveryFallback do
     end
   end
 
-  defp blocked_recipient?(phone) do
+  @doc false
+  def blocked_recipient?(phone) do
     normalized = String.trim(to_string(phone))
 
     Enum.any?(blocked_recipients(), fn blocked ->
