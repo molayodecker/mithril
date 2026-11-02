@@ -779,8 +779,10 @@ defmodule Mithril.AuthTest do
              Token.verify_access(params["access_token"])
 
     assert :ok = Auth.set_password(user_id, "new-password-1", {:recovery, params["access_token"]})
+
     assert {:error, :invalid_credentials} =
              Auth.set_password(user_id, "another-password", {:recovery, params["access_token"]})
+
     assert {:error, :invalid_refresh_token} = Auth.refresh(params["refresh_token"])
     assert {:error, :invalid_credentials} = Auth.login(email, "old-password")
     assert {:ok, _session} = Auth.login(email, "new-password-1")
