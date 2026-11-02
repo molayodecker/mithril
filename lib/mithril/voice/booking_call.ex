@@ -12,6 +12,7 @@ defmodule Mithril.Voice.BookingCall do
   """
 
   alias Mithril.Auth.Phone
+  alias Mithril.DbUuid
   alias Mithril.MobileGateway
   alias Mithril.Repo
   alias Mithril.WhatsApp.TwilioSignature
@@ -104,7 +105,7 @@ defmodule Mithril.Voice.BookingCall do
   end
 
   defp store_intent(user_id, booking_id, contact_role, caller_phone) do
-    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    now = DateTime.utc_now()
 
     intent = %{
       caller_user_id: user_id,
@@ -181,7 +182,9 @@ defmodule Mithril.Voice.BookingCall do
   end
 
   defp default_caller_phone(user_id) do
-    case Repo.query("SELECT phone FROM public.users WHERE id = $1::uuid LIMIT 1", [user_id]) do
+    case Repo.query("SELECT phone FROM public.users WHERE id = $1::uuid LIMIT 1", [
+           DbUuid.dump!(user_id)
+         ]) do
       {:ok, %{rows: [[phone]]}} when is_binary(phone) -> {:ok, phone}
       _other -> {:error, :caller_phone_missing}
     end
@@ -376,7 +379,10 @@ defmodule Mithril.Voice.BookingCall do
 
     def put_intent(intent) do
       ensure()
-      Agent.update(__MODULE__, fn state -> %{state | intents: [intent | state.intents]} end)
+      Agent.update(__MODULE__, fn state ->
+        remaining = Enum.reject(state.intents, &(&1.caller_phone_e164 == intent.caller_phone_e164))
+        %{state | intents: [intent | remaining]}
+      end)
       :ok
     end
 
@@ -420,6 +426,7 @@ defmodule Mithril.Voice.BookingCall do
     @moduledoc false
 
     alias Mithril.Auth.Phone
+    alias Mithril.DbUuid
     alias Mithril.Repo
 
     def put_intent(intent) do
@@ -441,11 +448,17 @@ defmodule Mithril.Voice.BookingCall do
       INSERT INTO public.voice_call_intents (
         caller_user_id, booking_id, contact_role, caller_phone_e164, expires_at, created_at
       ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6)
+      ON CONFLICT (caller_phone_e164) DO UPDATE SET
+        caller_user_id = EXCLUDED.caller_user_id,
+        booking_id = EXCLUDED.booking_id,
+        contact_role = EXCLUDED.contact_role,
+        expires_at = EXCLUDED.expires_at,
+        created_at = EXCLUDED.created_at
       """
 
       params = [
-        intent.caller_user_id,
-        intent.booking_id,
+        DbUuid.dump!(intent.caller_user_id),
+        DbUuid.dump!(intent.booking_id),
         intent.contact_role,
         intent.caller_phone_e164,
         intent.expires_at,
@@ -547,7 +560,7 @@ defmodule Mithril.Voice.BookingCall do
       LIMIT 2
       """
 
-      case Repo.query(sql, [user_id, Mithril.Voice.BookingCall.active_statuses()]) do
+      case Repo.query(sql, [DbUuid.dump!(user_id), Mithril.Voice.BookingCall.active_statuses()]) do
         {:ok, %{rows: rows}} ->
           {:ok,
            Enum.map(rows, fn [booking_id] ->

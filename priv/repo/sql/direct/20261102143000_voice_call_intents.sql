@@ -17,3 +17,8 @@ CREATE TABLE IF NOT EXISTS public.voice_call_intents (
 
 CREATE INDEX IF NOT EXISTS voice_call_intents_caller_phone_idx
   ON public.voice_call_intents (caller_phone_e164, created_at DESC);
+
+-- One current tap per originating phone. Rapid successive taps replace the
+-- previous destination atomically rather than racing on timestamp precision.
+CREATE UNIQUE INDEX IF NOT EXISTS voice_call_intents_one_per_phone_idx
+  ON public.voice_call_intents (caller_phone_e164);

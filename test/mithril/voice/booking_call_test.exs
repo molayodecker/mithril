@@ -112,6 +112,19 @@ defmodule Mithril.Voice.BookingCallTest do
 
     assert {:ok, _} = BookingCall.arm(@user_id, @booking_id, "customer")
     assert {:ok, _} = BookingCall.arm(@user_id, @other_booking_id, "customer")
+    assert Memory.intent_count() == 1
+
+    assert {:ok, xml} =
+             BookingCall.handle_webhook(call_params(), sign(call_params()), @webhook_url)
+
+    assert xml =~ "<Number>#{@site_phone}</Number>"
+    refute xml =~ "<Number>#{@destination_phone}</Number>"
+  end
+
+  test "rapid changes to the contact role replace the current call intent" do
+    assert {:ok, _} = BookingCall.arm(@user_id, @booking_id, "customer")
+    assert {:ok, _} = BookingCall.arm(@user_id, @booking_id, "site")
+    assert Memory.intent_count() == 1
 
     assert {:ok, xml} =
              BookingCall.handle_webhook(call_params(), sign(call_params()), @webhook_url)
