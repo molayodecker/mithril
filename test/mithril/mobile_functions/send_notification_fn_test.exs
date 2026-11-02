@@ -69,24 +69,37 @@ defmodule Mithril.MobileFunctions.SendNotificationFnTest do
 
   test "a matching email cannot authorize a different phone or vice versa" do
     assert SendNotificationFn.invitation_recipient_matches?(
-             "invited@example.com", nil, "invited@example.com", "+233200000001"
+             "invited@example.com",
+             nil,
+             "invited@example.com",
+             "+233200000001"
            )
 
     refute SendNotificationFn.invitation_recipient_matches?(
-             "invited@example.com", "+233200000999", "invited@example.com", "+233200000001"
+             "invited@example.com",
+             "+233200000999",
+             "invited@example.com",
+             "+233200000001"
            )
 
     refute SendNotificationFn.invitation_recipient_matches?(
-             "other@example.com", "+233200000001", "invited@example.com", "+233200000001"
+             "other@example.com",
+             "+233200000001",
+             "invited@example.com",
+             "+233200000001"
            )
 
     refute SendNotificationFn.invitation_recipient_matches?(
-             nil, nil, "invited@example.com", "+233200000001"
+             nil,
+             nil,
+             "invited@example.com",
+             "+233200000001"
            )
   end
 
   test "invitation URLs use trusted origins and encode stored tokens" do
-    url = SendNotificationFn.trusted_invite_url("co_cleaner_invite", "abc&next=https://evil.example")
+    url =
+      SendNotificationFn.trusted_invite_url("co_cleaner_invite", "abc&next=https://evil.example")
     assert URI.parse(url).host == "tryinstaclean.com"
     assert URI.parse(url).path == "/api/co-cleaner-invite"
     assert URI.decode_query(URI.parse(url).query)["token"] == "abc&next=https://evil.example"
