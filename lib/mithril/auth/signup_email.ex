@@ -26,10 +26,16 @@ defmodule Mithril.Auth.SignupEmail do
   def confirm(token) when is_binary(token) do
     hash = hash_token(String.trim(token))
 
-    with {:ok, %{rows: [[user_id]]}} <- claim_token(hash),
-         {:ok, _} <- mark_email_verified(user_id) do
-      :ok
-    else
+    Repo.transaction(fn ->
+      with {:ok, %{num_rows: 1, rows: [[user_id, email]]}} <- claim_token(hash),
+           {:ok, %{num_rows: 1}} <- mark_email_verified(user_id, email) do
+        :ok
+      else
+        _ -> Repo.rollback(:invalid_token)
+      end
+    end)
+    |> case do
+      {:ok, :ok} -> :ok
       _ -> :error
     end
   end
@@ -68,7 +74,7 @@ defmodule Mithril.Auth.SignupEmail do
   defp send_verification(user_id, email, name) do
     token = Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
 
-    case store_token(user_id, hash_token(token)) do
+    case store_token(user_id, email, hash_token(token)) do
       :ok ->
         Outbound.deliver(%{
           "template" => "signup_verification",
@@ -82,13 +88,13 @@ defmodule Mithril.Auth.SignupEmail do
     end
   end
 
-  defp store_token(user_id, hash) do
+  defp store_token(user_id, email, hash) do
     case Repo.query(
            """
-           INSERT INTO public.mithril_email_verifications (user_id, token_hash, expires_at)
-           VALUES ($1::uuid, $2, now() + ($3 * interval '1 second'))
+           INSERT INTO public.mithril_email_verifications (user_id, email, token_hash, expires_at)
+           VALUES ($1::uuid, $2, $3, now() + ($4 * interval '1 second'))
            """,
-           [Ecto.UUID.dump!(user_id), hash, @ttl_seconds]
+           [Ecto.UUID.dump!(user_id), String.downcase(email), hash, @ttl_seconds]
          ) do
       {:ok, _} ->
         :ok
@@ -109,20 +115,20 @@ defmodule Mithril.Auth.SignupEmail do
       UPDATE public.mithril_email_verifications
       SET used_at = now()
       WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()
-      RETURNING user_id::text
+      RETURNING user_id::text, email
       """,
       [hash]
     )
   end
 
-  defp mark_email_verified(user_id) do
+  defp mark_email_verified(user_id, email) do
     Repo.query(
       """
       UPDATE public.users
       SET contact_email_verified_at = now(), updated_at = now()
-      WHERE id = $1::uuid
+      WHERE id = $1::uuid AND lower(btrim(coalesce(email, ''))) = $2
       """,
-      [Ecto.UUID.dump!(user_id)]
+      [Ecto.UUID.dump!(user_id), email]
     )
   end
 
