@@ -6,8 +6,8 @@ defmodule Mithril.DirectAdminInvoices do
   alias Mithril.Auth
   alias Mithril.Auth.Phone
   alias Mithril.DirectAdminActor
-  alias Mithril.DirectAdminWhatsApp
   alias Mithril.Repo
+  alias Mithril.WhatsApp.InvoiceTemplate
 
   @max_minor 2_147_483_647
   @min_minor -2_147_483_648
@@ -220,15 +220,13 @@ defmodule Mithril.DirectAdminInvoices do
     phone = invoice["billToPhone"]
 
     if is_binary(phone) and phone != "" do
-      body = whatsapp_message(invoice, invoice["viewUrl"])
-
-      case DirectAdminWhatsApp.deliver_as_staff(admin_uid, %{
-             "phoneE164" => phone,
-             "body" => body
-           }) do
-        {:ok, _} -> :ok
-        {:error, reason} -> {:error, reason}
-      end
+      InvoiceTemplate.deliver(
+        admin_uid,
+        invoice,
+        phone,
+        whatsapp_message(invoice, invoice["viewUrl"]),
+        money(invoice["totalMinor"])
+      )
     else
       {:error, :missing_phone}
     end

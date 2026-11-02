@@ -6,6 +6,7 @@ defmodule Mithril.DirectAdminInvoicesTest do
   alias Mithril.DirectAdminInvoices
   alias Mithril.DirectAdminMoneyFixtures, as: Fixtures
   alias Mithril.Repo
+  alias Mithril.WhatsApp.InvoiceTemplate
 
   @endpoint MithrilWeb.Endpoint
   @admin_from "+233559100642"
@@ -26,6 +27,49 @@ defmodule Mithril.DirectAdminInvoicesTest do
     assert DirectAdminInvoices.line_total_minor(nil, nil, 30_000) == {:ok, 30_000}
     assert DirectAdminInvoices.line_total_minor(2, nil, 10_000) == :error
     assert DirectAdminInvoices.line_total_minor(10_000, 10_000, 2_147_483_647) == :error
+  end
+
+  test "the invoice whatsapp template button opens the public invoice" do
+    Application.put_env(:mithril, :direct_public_url, "https://direct.tryinstaclean.com")
+    definition = InvoiceTemplate.definition()
+    action = hd(definition["types"]["twilio/call-to-action"]["actions"])
+    token = "a1b2c3d4e5f6789012345678abcdef0123456789abcdef0123456789abcdef01"
+
+    assert definition["friendly_name"] == "instaclean_invoice"
+
+    assert String.ends_with?(
+             definition["types"]["twilio/call-to-action"]["body"],
+             "Tap below to view it."
+           )
+
+    refute String.ends_with?(definition["types"]["twilio/call-to-action"]["body"], "{{5}}.")
+    assert action["title"] == "View invoice"
+    assert action["url"] == "https://direct.tryinstaclean.com/{{6}}"
+
+    assert InvoiceTemplate.path(invoice_url(token)) == "invoices/#{token}"
+
+    assert InvoiceTemplate.path("https://direct.tryinstaclean.com/invoices/contract/#{token}") ==
+             "invoices/contract/#{token}"
+
+    assert InvoiceTemplate.path("https://example.com/invoices/#{token}") == nil
+    assert InvoiceTemplate.due_label("2026-11-30") == "30 Nov 2026"
+    assert InvoiceTemplate.due_label(nil) == "on receipt"
+
+    assert InvoiceTemplate.variables(%{
+             "customerName" => " Ama\nMensah ",
+             "invoiceNo" => "INV-2026-001",
+             "description" => "November {2026}",
+             "amountLabel" => "GHS 4,000.00",
+             "dueLabel" => "30 Nov 2026",
+             "path" => "invoices/contract/#{token}"
+           }) == %{
+             "1" => "Ama Mensah",
+             "2" => "INV-2026-001",
+             "3" => "November 2026",
+             "4" => "GHS 4,000.00",
+             "5" => "30 Nov 2026",
+             "6" => "invoices/contract/#{token}"
+           }
   end
 
   test "whatsapp message carries the total due and the invoice link" do
@@ -266,6 +310,26 @@ defmodule Mithril.DirectAdminInvoicesTest do
     assert body =~ shown["viewUrl"]
   end
 
+  test "a configured invoice template still records the readable invoice message" do
+    Application.put_env(:mithril, :twilio_whatsapp_admin_from, @admin_from)
+    Application.put_env(:mithril, :twilio_http, :noop)
+    Application.put_env(:mithril, :twilio_template_invoice, "HXinvoice")
+    Application.put_env(:mithril, :direct_public_url, "https://direct.tryinstaclean.com")
+    admin_id = Fixtures.insert_user!("admin")
+    booking_id = Fixtures.insert_booking!(Fixtures.insert_user!())
+    assert {:ok, saved} = DirectAdminInvoices.upsert(admin_id, booking_id, sample_invoice())
+    assert InvoiceTemplate.path(saved["viewUrl"]) =~ ~r/\Ainvoices\/[0-9a-f]{64}\z/
+
+    assert {:ok, %{"ok" => true, "channel" => "whatsapp", "sent" => true}} =
+             DirectAdminInvoices.send(admin_id, booking_id, %{"channel" => "whatsapp"})
+
+    [[body]] =
+      Repo.query!("SELECT body FROM public.whatsapp_inbox_messages WHERE direction = 'outbound'").rows
+
+    assert body =~ "Total due: GHS 4,800.00"
+    assert body =~ saved["viewUrl"]
+  end
+
   test "whatsapp send reports a missing number, a missing line, and a failed delivery" do
     admin_id = Fixtures.insert_user!("admin")
     booking_id = Fixtures.insert_booking!(Fixtures.insert_user!())
@@ -447,7 +511,9 @@ defmodule Mithril.DirectAdminInvoicesTest do
       from: Application.get_env(:mithril, :twilio_whatsapp_admin_from),
       http: Application.get_env(:mithril, :twilio_http),
       key: Application.get_env(:mithril, :resend_api_key),
-      req: Application.get_env(:mithril, :resend_req_options)
+      req: Application.get_env(:mithril, :resend_req_options),
+      invoice_template: Application.get_env(:mithril, :twilio_template_invoice),
+      public_url: Application.get_env(:mithril, :direct_public_url)
     }
   end
 
@@ -456,6 +522,8 @@ defmodule Mithril.DirectAdminInvoicesTest do
     put_or_delete(:twilio_http, previous.http)
     put_or_delete(:resend_api_key, previous.key)
     put_or_delete(:resend_req_options, previous.req)
+    put_or_delete(:twilio_template_invoice, previous.invoice_template)
+    put_or_delete(:direct_public_url, previous.public_url)
   end
 
   defp put_or_delete(key, nil), do: Application.delete_env(:mithril, key)

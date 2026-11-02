@@ -124,23 +124,27 @@ defmodule Mithril.DirectAdminWhatsApp do
              params["businessPhoneE164"] || params[:businessPhoneE164] || last_business(e164)
            ),
          :ok <- deliver_whatsapp(e164, from, body) do
-      # The provider has accepted the message. Local inbox bookkeeping must not
-      # turn that successful external side effect into a retryable send failure.
-      case resolve_user_id(e164) do
-        {:ok, thread_user} ->
-          case insert_outbound(e164, body, thread_user, admin_uid, from) do
-            {:ok, result} ->
-              {:ok, result}
+      audit_outbound(e164, body, admin_uid, from)
+    else
+      :error -> {:error, :invalid_request}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
-            {:error, reason} ->
-              Logger.error("WhatsApp delivered but inbox audit failed: #{inspect(reason)}")
-              {:ok, %{"ok" => true, "auditRecorded" => false}}
-          end
-
-        {:error, reason} ->
-          Logger.error("WhatsApp delivered but recipient lookup failed: #{inspect(reason)}")
-          {:ok, %{"ok" => true, "auditRecorded" => false}}
-      end
+  @doc """
+  Sends an approved WhatsApp content template and keeps the readable text in the inbox.
+  """
+  def deliver_content_as_staff(admin_uid, params, content_sid, variables)
+      when is_map(params) and is_binary(admin_uid) and is_binary(content_sid) and
+             is_map(variables) do
+    with {:ok, e164} <- normalize_phone(params["phoneE164"] || params[:phoneE164]),
+         {:ok, body} <- required_body(params["body"] || params[:body]),
+         {:ok, from} <-
+           admin_from(
+             params["businessPhoneE164"] || params[:businessPhoneE164] || last_business(e164)
+           ),
+         :ok <- deliver_content(e164, from, content_sid, variables) do
+      audit_outbound(e164, body, admin_uid, from)
     else
       :error -> {:error, :invalid_request}
       {:error, reason} -> {:error, reason}
@@ -171,6 +175,38 @@ defmodule Mithril.DirectAdminWhatsApp do
       :ok -> :ok
       {:error, :twilio_not_configured} -> {:error, :twilio_not_configured}
       {:error, _} -> {:error, :sms_delivery_failed}
+    end
+  end
+
+  defp deliver_content(e164, from, content_sid, variables) do
+    to = whatsapp_address(e164)
+    from_addr = whatsapp_address(from)
+
+    case Outbound.send_content(to, from_addr, content_sid, variables) do
+      {:ok, _sid} -> :ok
+      {:error, :twilio_not_configured} -> {:error, :twilio_not_configured}
+      {:error, :not_on_whatsapp} -> {:error, :sms_delivery_failed}
+      {:error, _} -> {:error, :template_rejected}
+    end
+  end
+
+  defp audit_outbound(e164, body, admin_uid, from) do
+    # The provider has accepted the message. Local inbox bookkeeping must not
+    # turn that successful external side effect into a retryable send failure.
+    case resolve_user_id(e164) do
+      {:ok, thread_user} ->
+        case insert_outbound(e164, body, thread_user, admin_uid, from) do
+          {:ok, result} ->
+            {:ok, result}
+
+          {:error, reason} ->
+            Logger.error("WhatsApp delivered but inbox audit failed: #{inspect(reason)}")
+            {:ok, %{"ok" => true, "auditRecorded" => false}}
+        end
+
+      {:error, reason} ->
+        Logger.error("WhatsApp delivered but recipient lookup failed: #{inspect(reason)}")
+        {:ok, %{"ok" => true, "auditRecorded" => false}}
     end
   end
 

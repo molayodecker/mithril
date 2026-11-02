@@ -10,8 +10,10 @@ defmodule Mithril.DirectContracts do
 
   alias Mithril.Auth
   alias Mithril.DirectAdminActor
-  alias Mithril.DirectAdminWhatsApp
+  alias Mithril.DirectAdminInvoices
   alias Mithril.DirectContracts.Calendar
+  alias Mithril.WhatsApp.ContractLetterTemplate
+  alias Mithril.WhatsApp.InvoiceTemplate
   alias Mithril.DirectContracts.Letter
   alias Mithril.Repo
 
@@ -1468,13 +1470,13 @@ defmodule Mithril.DirectContracts do
     phone = invoice["phone"]
 
     if is_binary(phone) and String.trim(phone) != "" do
-      case DirectAdminWhatsApp.deliver_as_staff(admin_uid, %{
-             "phoneE164" => phone,
-             "body" => invoice_message(invoice)
-           }) do
-        {:ok, _} -> :ok
-        {:error, reason} -> {:error, reason}
-      end
+      InvoiceTemplate.deliver(
+        admin_uid,
+        invoice,
+        phone,
+        invoice_message(invoice),
+        DirectAdminInvoices.money(invoice["totalMinor"])
+      )
     else
       {:error, :missing_phone}
     end
@@ -1710,6 +1712,7 @@ defmodule Mithril.DirectContracts do
       "phone" => preview["phone"],
       "email" => preview["email"],
       "clientName" => preview["clientName"],
+      "billingContact" => preview["billingContact"],
       "preamble" => preview["preamble"],
       "monthlyFeeMinor" => preview["monthlyFeeMinor"],
       "workers" => preview["workers"],
@@ -1956,13 +1959,13 @@ defmodule Mithril.DirectContracts do
     phone = letter["phone"]
 
     if is_binary(phone) and String.trim(phone) != "" do
-      case DirectAdminWhatsApp.deliver_as_staff(admin_uid, %{
-             "phoneE164" => phone,
-             "body" => letter_message(letter)
-           }) do
-        {:ok, _} -> :ok
-        {:error, reason} -> {:error, reason}
-      end
+      ContractLetterTemplate.deliver(
+        admin_uid,
+        letter,
+        phone,
+        letter_message(letter),
+        DirectAdminInvoices.money(letter["monthlyFeeMinor"])
+      )
     else
       {:error, :missing_phone}
     end
