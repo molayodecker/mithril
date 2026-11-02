@@ -301,6 +301,7 @@ defmodule MithrilWeb.DirectAdminContractsController do
   defp error_response(:assignment_ended), do: {409, "assignment_ended"}
   defp error_response(:assignment_has_payments), do: {409, "assignment_has_payments"}
   defp error_response(:assignment_has_letter), do: {409, "assignment_has_letter"}
+  defp error_response(:assignment_has_invoice), do: {409, "assignment_has_invoice"}
   defp error_response(:payday_already_run), do: {409, "payday_already_run"}
   defp error_response(:invoice_already_sent), do: {409, "invoice_already_sent"}
   defp error_response(:letter_needs_worker), do: {422, "letter_needs_worker"}

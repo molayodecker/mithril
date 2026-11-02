@@ -751,6 +751,57 @@ defmodule Mithril.DirectContractsTest do
              DirectContracts.remove_assignment(admin_id, contract_id, again_id)
   end
 
+  test "a draft invoice line prevents removal with an actionable conflict" do
+    admin_id = Fixtures.insert_user!("admin")
+    worker_id = named_worker!("Draft Invoice Worker")
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Draft Invoice Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000
+             })
+
+    assert {:ok, %{"id" => assignment_id}} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerId" => worker_id,
+               "roleLabel" => "Househelp",
+               "monthlyPayMinor" => 50_000,
+               "clientRateMinor" => 50_000
+             })
+
+    invoice_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.direct_contract_invoices
+        (id, contract_id, period_month, invoice_no, public_token, issued_on,
+         due_on, style, total_minor, created_by)
+      VALUES ($1, $2, CURRENT_DATE, $3, $4, CURRENT_DATE, CURRENT_DATE,
+              'per_worker', 50000, $5)
+      """,
+      [Ecto.UUID.dump!(invoice_id), Ecto.UUID.dump!(contract_id),
+       "INV-DRAFT-#{invoice_id}", "token-#{invoice_id}", Ecto.UUID.dump!(admin_id)]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.direct_contract_invoice_lines
+        (invoice_id, position, description, amount_minor, assignment_id)
+      VALUES ($1, 0, 'Draft worker line', 50000, $2)
+      """,
+      [Ecto.UUID.dump!(invoice_id), Ecto.UUID.dump!(assignment_id)]
+    )
+
+    assert {:error, :assignment_has_invoice} =
+             DirectContracts.remove_assignment(admin_id, contract_id, assignment_id)
+
+    assert Repo.query!(
+             "SELECT count(*) FROM public.direct_contract_assignments WHERE id = $1",
+             [Ecto.UUID.dump!(assignment_id)]
+           ).rows == [[1]]
+  end
+
   defp normalize_automatic(:ok), do: {:ok, %{"paidCount" => 0, "totalMinor" => 0}}
   defp normalize_automatic(other), do: other
 

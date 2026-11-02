@@ -287,6 +287,17 @@ defmodule Mithril.DirectContracts do
           Repo.rollback(:assignment_has_letter)
         end
 
+        # Even an unsent invoice may already have a persisted per-worker line.
+        # Preserve the invoice audit trail and report a useful conflict rather
+        # than allowing a foreign-key failure to surface as a database outage.
+        if relation?("public.direct_contract_invoice_lines") and
+             assignment_count(
+               "SELECT COUNT(*) FROM public.direct_contract_invoice_lines WHERE assignment_id = $1",
+               [assignment_uid]
+             ) > 0 do
+          Repo.rollback(:assignment_has_invoice)
+        end
+
         %{rows: [[id]]} =
           fetch!(
             """
