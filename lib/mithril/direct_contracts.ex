@@ -2434,6 +2434,7 @@ defmodule Mithril.DirectContracts do
     case find_worker_by_phone(phone) do
       {worker_id, worker_uid} ->
         ensure_cleaner_row(worker_uid)
+        ensure_cleaner_role(worker_uid)
         {worker_id, phone, profile_name(worker_uid, name), true}
 
       nil ->
@@ -2444,17 +2445,21 @@ defmodule Mithril.DirectContracts do
 
   defp find_worker_by_phone(phone) do
     digits = String.replace(phone, ~r/\D/, "")
+    local =
+      if String.starts_with?(digits, "233"),
+        do: "0" <> String.slice(digits, 3..-1//1),
+        else: digits
 
     case fetch!(
            """
            SELECT id::text
            FROM public.users
            WHERE phone = $1
-              OR regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') = $2
+              OR regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') = ANY($2::text[])
            ORDER BY CASE WHEN phone = $1 THEN 0 ELSE 1 END
            LIMIT 1
            """,
-           [phone, digits]
+           [phone, Enum.uniq([digits, local])]
          ).rows do
       [[id]] -> {id, Ecto.UUID.dump!(id)}
       [] -> nil
@@ -2624,8 +2629,10 @@ defmodule Mithril.DirectContracts do
   defp notify_added_worker(_user_id, nil), do: false
 
   defp notify_added_worker(user_id, notice) do
+    {:ok, admin_uid} = dump_uuid(user_id)
+
     case WorkerAddedTemplate.deliver(
-           user_id,
+           admin_uid,
            notice.phone,
            notice.name,
            notice.role,

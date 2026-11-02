@@ -649,6 +649,45 @@ defmodule Mithril.DirectContractsTest do
              })
   end
 
+  test "a local-format customer phone reuses the account and grants cleaner payouts" do
+    admin_id = Fixtures.insert_user!("admin")
+    customer_id = Fixtures.insert_user!()
+    Repo.query!("CREATE TABLE IF NOT EXISTS public.roles (id text PRIMARY KEY)")
+
+    Repo.query!("UPDATE public.users SET phone = $2 WHERE id = $1", [
+      Ecto.UUID.dump!(customer_id),
+      "0245550142"
+    ])
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Customer reuse client",
+               "kind" => "company",
+               "monthlyFeeMinor" => 100_000
+             })
+
+    assert {:ok, %{"id" => assignment_id, "notified" => false}} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerPhone" => "+233245550142",
+               "workerName" => "Existing Customer",
+               "roleLabel" => "Housekeeper",
+               "monthlyPayMinor" => 50_000,
+               "clientRateMinor" => 60_000
+             })
+
+    assert Repo.query!(
+             "SELECT worker_id FROM public.direct_contract_assignments WHERE id = $1",
+             [Ecto.UUID.dump!(assignment_id)]
+           ).rows == [[Ecto.UUID.dump!(customer_id)]]
+
+    assert Repo.query!(
+             "SELECT role_id FROM public.user_roles WHERE user_id = $1 AND role_id = 'cleaner'",
+             [Ecto.UUID.dump!(customer_id)]
+           ).rows == [["cleaner"]]
+
+    assert Repo.query!("SELECT count(*) FROM public.users").rows == [[2]]
+  end
+
   defp normalize_automatic(:ok), do: {:ok, %{"paidCount" => 0, "totalMinor" => 0}}
   defp normalize_automatic(other), do: other
 
