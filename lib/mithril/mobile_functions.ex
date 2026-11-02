@@ -17,6 +17,7 @@ defmodule Mithril.MobileFunctions do
   alias Mithril.MobileFunctions.ReplaceCleanerWeeklyAvailability
   alias Mithril.MobileFunctions.RequestDataExport
   alias Mithril.MobileFunctions.SendAppNotification
+  alias Mithril.MobileFunctions.SendNotificationFn
   alias Mithril.MobileFunctions.SumsubToken
   alias Mithril.MobileFunctions.SyncSumsubReview
   alias Mithril.MobileFunctions.Timezone
@@ -25,9 +26,12 @@ defmodule Mithril.MobileFunctions do
 
   @spec invoke(String.t(), String.t(), map()) :: {:ok, map()} | {:error, term()}
   def invoke(_user_id, name, _body)
-      when name in ["fetch-otp-delivery-token", "resend-otp-via-channel", "send-notification"] do
+      when name in ["fetch-otp-delivery-token", "resend-otp-via-channel"] do
     {:error, :forbidden}
   end
+
+  def invoke(user_id, "send-notification", body) when is_map(body),
+    do: SendNotificationFn.call(user_id, body)
 
   def invoke(_user_id, "timezone", body) when is_map(body), do: Timezone.call(body)
 

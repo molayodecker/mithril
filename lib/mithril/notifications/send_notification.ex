@@ -4,6 +4,7 @@ defmodule Mithril.Notifications.SendNotification do
   require Logger
 
   alias Mithril.Notifications
+  alias Mithril.Notifications.Outbound
 
   def configured? do
     present?(url()) and present?(token())
@@ -11,13 +12,9 @@ defmodule Mithril.Notifications.SendNotification do
 
   @spec invoke_mobile(map()) :: {:ok, map()} | {:error, term()}
   def invoke_mobile(body) when is_map(body) do
-    if configured?() do
-      case deliver_raw(body) do
-        {:ok, response} -> {:ok, response}
-        {:error, status, response} -> {:error, {:status, status, response}}
-      end
-    else
-      {:error, {:status, 500, %{error: "Server misconfigured"}}}
+    case deliver_raw(body) do
+      {:ok, response} -> {:ok, response}
+      {:error, status, response} -> {:error, {:status, status, response}}
     end
   end
 
@@ -180,6 +177,14 @@ defmodule Mithril.Notifications.SendNotification do
 
   @doc false
   def deliver_raw(body) when is_map(body) do
+    if configured?() do
+      post_remote(body)
+    else
+      {:ok, Outbound.deliver(body)}
+    end
+  end
+
+  defp post_remote(body) do
     payload =
       body
       |> Enum.reject(fn {_key, value} -> is_nil(value) or value == "" end)

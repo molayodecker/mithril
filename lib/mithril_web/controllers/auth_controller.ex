@@ -80,6 +80,19 @@ defmodule MithrilWeb.AuthController do
     respond(conn, Auth.register(Map.get(params, "email"), Map.get(params, "password")))
   end
 
+  def confirm_email(conn, params) do
+    page =
+      if Auth.SignupEmail.confirm(params["token"]) == :ok do
+        Auth.SignupEmail.confirmed_page()
+      else
+        Auth.SignupEmail.invalid_page()
+      end
+
+    conn
+    |> put_resp_content_type("text/html")
+    |> send_resp(200, page)
+  end
+
   def availability(conn, params) do
     respond(conn, Auth.check_availability(params, optional_user_id(conn)))
   end

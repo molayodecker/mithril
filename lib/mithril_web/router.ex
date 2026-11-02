@@ -87,6 +87,8 @@ defmodule MithrilWeb.Router do
     get "/functions/v1/join-as-cleaner-bot", WhatsAppRecruitmentController, :serve
     post "/functions/v1/join-as-cleaner-bot", WhatsAppRecruitmentController, :serve
     options "/functions/v1/join-as-cleaner-bot", WhatsAppRecruitmentController, :serve
+
+    get "/auth/confirm-email", AuthController, :confirm_email
   end
 
   scope "/" do
