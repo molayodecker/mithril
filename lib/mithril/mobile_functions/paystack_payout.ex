@@ -41,7 +41,14 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
   end
 
   defp parse_create_body(body) do
-    type = Map.get(body, "type")
+    # Older Ghana clients used Paystack's Nigerian `nuban` type for bank payouts.
+    # Normalize it before either validation or the outbound provider request.
+    type =
+      case Map.get(body, "type") do
+        "nuban" -> "ghipss"
+        other -> other
+      end
+
     name = body |> Map.get("name", "") |> to_string() |> String.trim()
     raw_account = body |> Map.get("account_number", "") |> to_string() |> String.trim()
     bank_code = body |> Map.get("bank_code", "") |> to_string() |> String.trim()
@@ -53,7 +60,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     purpose = if raw_purpose == "refund", do: :refund, else: :payout
 
     cond do
-      type not in ["nuban", "mobile_money"] ->
+      type not in ["ghipss", "mobile_money"] ->
         {:error, {:status, 400, %{ok: false, error: "Invalid recipient type"}}}
 
       name == "" or String.length(name) > 200 ->
@@ -61,7 +68,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
 
       bank_code == "" ->
         message =
-          if type == "nuban" do
+          if type == "ghipss" do
             "Bank code is required for bank accounts"
           else
             "Bank code is required for mobile money recipients"
@@ -72,11 +79,8 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
       not Regex.match?(~r/^[A-Z0-9_-]{1,32}$/i, bank_code) ->
         {:error, {:status, 400, %{ok: false, error: "Invalid bank code"}}}
 
-      currency not in ["GHS", "USD"] ->
+      currency != "GHS" ->
         {:error, {:status, 400, %{ok: false, error: "Unsupported currency"}}}
-
-      type == "mobile_money" and currency != "GHS" ->
-        {:error, {:status, 400, %{ok: false, error: "Mobile money payout currency must be GHS"}}}
 
       true ->
         with {:ok, account_number} <- normalize_account_number(type, raw_account) do
@@ -110,7 +114,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     end
   end
 
-  defp normalize_account_number("nuban", raw) do
+  defp normalize_account_number("ghipss", raw) do
     digits = raw |> String.replace(~r/\D/, "")
 
     if Regex.match?(~r/^\d{10,16}$/, digits) do
@@ -154,7 +158,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
       end
 
     cond do
-      currency not in ["GHS", "USD"] ->
+      currency != "GHS" ->
         {:error, {:status, 400, %{ok: false, error: "Unsupported currency"}}}
 
       not is_integer(amount) or amount <= 0 ->
