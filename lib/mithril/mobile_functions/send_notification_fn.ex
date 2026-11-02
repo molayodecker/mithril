@@ -89,8 +89,7 @@ defmodule Mithril.MobileFunctions.SendNotificationFn do
          [token, _email, _phone] <-
            Enum.find(rows, fn [token, stored_email, stored_phone] ->
              is_binary(token) and
-               (is_nil(email) or email == stored_email) and
-               (is_nil(phone) or phone == stored_phone)
+               invitation_recipient_matches?(email, phone, stored_email, stored_phone)
            end) do
       variables =
         variables(body)
@@ -102,11 +101,19 @@ defmodule Mithril.MobileFunctions.SendNotificationFn do
     end
   end
 
-  defp trusted_invite_url("co_cleaner_invite", token) do
+  @doc false
+  def invitation_recipient_matches?(email, phone, stored_email, stored_phone) do
+    (not is_nil(email) or not is_nil(phone)) and
+      (is_nil(email) or email == stored_email) and
+      (is_nil(phone) or phone == stored_phone)
+  end
+
+  @doc false
+  def trusted_invite_url("co_cleaner_invite", token) do
     "https://tryinstaclean.com/api/co-cleaner-invite?token=" <> URI.encode_www_form(token)
   end
 
-  defp trusted_invite_url("preferred_cleaner_invite", token) do
+  def trusted_invite_url("preferred_cleaner_invite", token) do
     "https://tryinstaclean.com/api/preferred-cleaner-invite?token=" <> URI.encode_www_form(token)
   end
 
