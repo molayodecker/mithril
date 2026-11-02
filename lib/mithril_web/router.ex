@@ -76,6 +76,7 @@ defmodule MithrilWeb.Router do
     pipe_through :whatsapp
 
     post "/webhooks/twilio/payment-status/:token", DirectPaymentStatusController, :update
+    post "/voice/booking-call", VoiceBookingCallWebhookController, :inbound
 
     post "/whatsapp/chef-intake", WhatsAppChefController, :receive_message
     post "/functions/v1/chef-intake", WhatsAppChefController, :receive_message
@@ -333,6 +334,7 @@ defmodule MithrilWeb.Router do
   scope "/mobile", MithrilWeb do
     pipe_through [:api, :user_auth]
 
+    post "/voice/booking-calls", MobileVoiceBookingCallController, :create
     post "/rpc/:name", MobileGatewayController, :rpc
     post "/query", MobileGatewayController, :query
     post "/functions/*name", MobileGatewayController, :function
