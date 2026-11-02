@@ -16,6 +16,7 @@ defmodule Mithril.AuthTest do
     end
 
     for table <- [
+          "mithril_password_resets",
           "mithril_refresh_tokens",
           "mithril_auth_otps",
           "mithril_auth_identities",
@@ -154,6 +155,19 @@ defmodule Mithril.AuthTest do
       token_hash text NOT NULL UNIQUE,
       expires_at timestamptz NOT NULL,
       revoked_at timestamptz,
+      purpose text,
+      inserted_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.mithril_password_resets (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id uuid NOT NULL REFERENCES public.users(id),
+      token_hash text NOT NULL UNIQUE,
+      access_token_hash text UNIQUE,
+      used_at timestamptz,
+      expires_at timestamptz NOT NULL,
       inserted_at timestamptz NOT NULL DEFAULT now()
     )
     """)
@@ -736,6 +750,66 @@ defmodule Mithril.AuthTest do
     ])
 
     assert {:error, :invalid_refresh_token} = Auth.refresh(session.refresh_token)
+  end
+
+  test "password reset emails a recovery link and can replace the password" do
+    Application.put_env(:mithril, :test_resend_messages, [])
+    {user_id, email} = insert_account("reset@example.com", "old-password")
+
+    assert :ok =
+             Auth.request_password_reset(email, "https://evil.example/reset-password")
+
+    assert [message] = Application.get_env(:mithril, :test_resend_messages)
+    assert message.to == email
+    assert message.subject == "Reset your Instaclean password"
+    assert message.text =~ "instaclean-pro://reset-password?access_token="
+    assert message.text =~ "type=recovery"
+    refute message.text =~ "evil.example"
+
+    link =
+      message.text
+      |> String.split("\n", trim: true)
+      |> Enum.find(&String.contains?(&1, "access_token="))
+
+    uri = URI.parse(String.trim(link))
+    params = URI.decode_query(uri.query)
+    assert params["type"] == "recovery"
+
+    assert {:ok, %{"purpose" => "password_reset", "sub" => ^user_id}} =
+             Token.verify_access(params["access_token"])
+
+    assert :ok = Auth.set_password(user_id, "new-password-1", {:recovery, params["access_token"]})
+
+    assert {:error, :invalid_credentials} =
+             Auth.set_password(user_id, "another-password", {:recovery, params["access_token"]})
+
+    assert {:error, :invalid_refresh_token} = Auth.refresh(params["refresh_token"])
+    assert {:error, :invalid_credentials} = Auth.login(email, "old-password")
+    assert {:ok, _session} = Auth.login(email, "new-password-1")
+  end
+
+  test "password reset does not send mail for an unknown address" do
+    Application.put_env(:mithril, :test_resend_messages, [])
+
+    assert :ok = Auth.request_password_reset("missing@example.com", nil)
+    assert Application.get_env(:mithril, :test_resend_messages) == []
+  end
+
+  test "password reset refresh cannot extend recovery session lifetime" do
+    Application.put_env(:mithril, :test_resend_messages, [])
+    {_user_id, email} = insert_account("reset-refresh@example.com", "old-password")
+    assert :ok = Auth.request_password_reset(email, "instaclean-pro://reset-password")
+
+    [message] = Application.get_env(:mithril, :test_resend_messages)
+
+    link =
+      message.text
+      |> String.split("\n", trim: true)
+      |> Enum.find(&String.contains?(&1, "access_token="))
+
+    params = URI.decode_query(URI.parse(String.trim(link)).query)
+
+    assert {:error, :invalid_refresh_token} = Auth.refresh(params["refresh_token"])
   end
 
   test "password change syncs legacy hashes and revokes refresh sessions" do

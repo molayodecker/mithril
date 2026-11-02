@@ -26,5 +26,21 @@ defmodule MithrilWeb.Plugs.UserAuthTest do
 
     refute conn.halted
     assert conn.assigns.instaclean_user_id == user_id
+    assert conn.assigns.auth_purpose == nil
+  end
+
+  test "marks a password reset access token" do
+    user_id = Ecto.UUID.generate()
+
+    {:ok, access_token, _claims} =
+      Token.issue(user_id, %{email: "reset@example.com", purpose: "password_reset"})
+
+    conn =
+      build_conn()
+      |> put_req_header("authorization", "Bearer #{access_token}")
+      |> UserAuth.call([])
+
+    refute conn.halted
+    assert conn.assigns.auth_purpose == "password_reset"
   end
 end

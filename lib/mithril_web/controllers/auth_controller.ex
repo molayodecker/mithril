@@ -65,15 +65,50 @@ defmodule MithrilWeb.AuthController do
     end)
   end
 
-  def set_password(conn, params) do
-    result =
-      Auth.set_password(
-        conn.assigns.instaclean_user_id,
-        Map.get(params, "password"),
-        Map.get(params, "current_password")
-      )
+  def password(conn, %{"action" => action} = params) when action in ["reset", "request_reset"] do
+    request_password_reset(conn, params)
+  end
 
-    respond(conn, result, fn _ok -> %{ok: true} end)
+  def password(conn, %{"email" => email, "password" => password} = params)
+      when is_binary(email) and password in [nil, ""] do
+    request_password_reset(conn, params)
+  end
+
+  def password(conn, params) do
+    case UserAuth.authenticate(conn) do
+      {:ok, conn} ->
+        current_password =
+          if conn.assigns.auth_purpose == "password_reset" do
+            {:recovery, UserAuth.bearer_token(conn)}
+          else
+            Map.get(params, "current_password")
+          end
+
+        result =
+          Auth.set_password(
+            conn.assigns.instaclean_user_id,
+            Map.get(params, "password"),
+            current_password
+          )
+
+        respond(conn, result, fn _ok -> %{ok: true} end)
+
+      :error ->
+        unauthorized(conn)
+    end
+  end
+
+  defp request_password_reset(conn, params) do
+    result =
+      Auth.request_password_reset(Map.get(params, "email"), Map.get(params, "redirect_to"))
+
+    respond(conn, result, fn :ok -> %{ok: true} end)
+  end
+
+  defp unauthorized(conn) do
+    conn
+    |> put_status(401)
+    |> json(%{error: "unauthorized"})
   end
 
   def register(conn, params) do
@@ -143,6 +178,13 @@ defmodule MithrilWeb.AuthController do
   defp error_response(:invalid_email), do: {422, "invalid_email"}
   defp error_response(:invalid_phone), do: {422, "invalid_phone"}
   defp error_response(:weak_password), do: {422, "weak_password"}
+
+  defp error_response(:email_delivery_failed),
+    do: {503, "We could not send the reset email. Please try again."}
+
+  defp error_response(:email_not_configured),
+    do: {503, "We could not send the reset email. Please try again."}
+
   defp error_response(:invalid_otp), do: {401, "invalid_otp"}
   defp error_response(:otp_expired), do: {401, "otp_expired"}
   defp error_response(:otp_rate_limited), do: {429, "otp_rate_limited"}

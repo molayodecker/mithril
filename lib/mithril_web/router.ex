@@ -107,6 +107,7 @@ defmodule MithrilWeb.Router do
     post "/refresh", AuthController, :refresh
     post "/logout", AuthController, :logout
     post "/register", AuthController, :register
+    post "/password", AuthController, :password
     get "/availability", AuthController, :availability
   end
 
@@ -116,7 +117,6 @@ defmodule MithrilWeb.Router do
     get "/me", AuthController, :me
     get "/cleaner-activation-status", AuthController, :cleaner_activation_status
     patch "/me", AuthController, :update_me
-    post "/password", AuthController, :set_password
   end
 
   scope "/bookings", MithrilWeb do
