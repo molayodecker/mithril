@@ -379,10 +379,14 @@ defmodule Mithril.Voice.BookingCall do
 
     def put_intent(intent) do
       ensure()
+
       Agent.update(__MODULE__, fn state ->
-        remaining = Enum.reject(state.intents, &(&1.caller_phone_e164 == intent.caller_phone_e164))
+        remaining =
+          Enum.reject(state.intents, &(&1.caller_phone_e164 == intent.caller_phone_e164))
+
         %{state | intents: [intent | remaining]}
       end)
+
       :ok
     end
 
