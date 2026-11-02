@@ -208,6 +208,16 @@ defmodule Mithril.DirectTest do
              )
   end
 
+  test "placement creation rejects unnamed requirement keys" do
+    customer_id = Ecto.UUID.generate()
+
+    assert {:error, :invalid_requirements} =
+             Direct.create_placement(
+               customer_id,
+               Map.put(valid_placement_params(), "requirements", %{"children" => 2})
+             )
+  end
+
   test "placement creation rejects an invalid desired start date before SQL casting" do
     customer_id = Ecto.UUID.generate()
     params = Map.put(valid_placement_params(), "desiredStartDate", "2026-02-30")
@@ -412,7 +422,7 @@ defmodule Mithril.DirectTest do
       "salaryMaxPesewas" => 300_000,
       "salaryFrequency" => "monthly",
       "householdAddress" => "Airport Residential, Accra",
-      "requirements" => %{"children" => 2},
+      "requirements" => %{},
       "notes" => "Weekdays"
     }
   end
