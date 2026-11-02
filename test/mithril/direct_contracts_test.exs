@@ -780,8 +780,13 @@ defmodule Mithril.DirectContractsTest do
       VALUES ($1, $2, CURRENT_DATE, $3, $4, CURRENT_DATE, CURRENT_DATE,
               'per_worker', 50000, $5)
       """,
-      [Ecto.UUID.dump!(invoice_id), Ecto.UUID.dump!(contract_id),
-       "INV-DRAFT-#{invoice_id}", "token-#{invoice_id}", Ecto.UUID.dump!(admin_id)]
+      [
+        Ecto.UUID.dump!(invoice_id),
+        Ecto.UUID.dump!(contract_id),
+        "INV-DRAFT-#{invoice_id}",
+        "token-#{invoice_id}",
+        Ecto.UUID.dump!(admin_id)
+      ]
     )
 
     Repo.query!(
