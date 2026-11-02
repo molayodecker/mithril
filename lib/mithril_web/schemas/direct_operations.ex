@@ -231,6 +231,7 @@ defmodule MithrilWeb.Schemas.DirectOperations do
 
   defmodule PaymentDiagnosticsResponse do
     require OpenApiSpex
+
     alias MithrilWeb.Schemas.DirectOperations.{
       PaymentAttemptDiagnostics,
       PaymentProviderDiagnostics
