@@ -101,22 +101,6 @@ defmodule Mithril.MobileFunctions.SendNotificationFn do
     end
   end
 
-  @doc false
-  def invitation_recipient_matches?(email, phone, stored_email, stored_phone) do
-    (not is_nil(email) or not is_nil(phone)) and
-      (is_nil(email) or email == stored_email) and
-      (is_nil(phone) or phone == stored_phone)
-  end
-
-  @doc false
-  def trusted_invite_url("co_cleaner_invite", token) do
-    "https://tryinstaclean.com/api/co-cleaner-invite?token=" <> URI.encode_www_form(token)
-  end
-
-  def trusted_invite_url("preferred_cleaner_invite", token) do
-    "https://tryinstaclean.com/api/preferred-cleaner-invite?token=" <> URI.encode_www_form(token)
-  end
-
   defp authorize(user_id, "payout_name_mismatch_report", body) do
     case own_contact(user_id) do
       {:ok, _contact} ->
@@ -139,6 +123,22 @@ defmodule Mithril.MobileFunctions.SendNotificationFn do
   end
 
   defp authorize(_user_id, _template, _body), do: :error
+
+  @doc false
+  def invitation_recipient_matches?(email, phone, stored_email, stored_phone) do
+    (not is_nil(email) or not is_nil(phone)) and
+      (is_nil(email) or email == stored_email) and
+      (is_nil(phone) or phone == stored_phone)
+  end
+
+  @doc false
+  def trusted_invite_url("co_cleaner_invite", token) do
+    "https://tryinstaclean.com/api/co-cleaner-invite?token=" <> URI.encode_www_form(token)
+  end
+
+  def trusted_invite_url("preferred_cleaner_invite", token) do
+    "https://tryinstaclean.com/api/preferred-cleaner-invite?token=" <> URI.encode_www_form(token)
+  end
 
   defp recipient_matches?(body, contact) do
     email = downcase(body["email"])
