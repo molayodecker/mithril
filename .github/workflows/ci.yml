@@ -37,6 +37,8 @@ jobs:
         run: bash -n scripts/*.sh
       - name: Exercise production shadow sync workflow
         run: bash scripts/test_db_sync.sh
+      - name: Exercise insert-only missing-row merge
+        run: bash scripts/test_db_sync_merge_missing.sh
       - name: Exercise Direct worker schedule reservations
         run: bash scripts/test_direct_schedule_reservations.sh
 
