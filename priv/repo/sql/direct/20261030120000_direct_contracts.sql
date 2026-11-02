@@ -170,7 +170,29 @@ BEGIN
       RAISE EXCEPTION 'recorded_by_not_found';
     END IF;
 
-    IF NOT public.admin_cash_payout_recorder_is_allowed(p_recorded_by) THEN
+    -- Contract credits have their own desk authorization. Keep the shared
+    -- admin wallet-credit recorder policy unchanged for other money flows.
+    IF NOT (
+      public.admin_cash_payout_recorder_is_allowed(p_recorded_by)
+      OR EXISTS (
+        SELECT 1 FROM public.user_roles r
+        WHERE r.user_id = p_recorded_by AND r.role_id = 'contracts'
+      )
+      OR (
+        EXISTS (SELECT 1 FROM public.user_roles r WHERE r.user_id = p_recorded_by AND r.role_id = 'reviewer')
+        AND NOT EXISTS (
+          SELECT 1 FROM public.user_roles r
+          WHERE r.user_id = p_recorded_by AND r.role_id = ANY(ARRAY[
+            'overview', 'users', 'bookings', 'dispatch', 'dispatch_map', 'live',
+            'whatsapp_inbox', 'notifications', 'placements', 'cleaners_roster',
+            'cleaner_applications', 'cleaner_verifications', 'customer_trust',
+            'cleaner_health', 'services', 'extra_tasks', 'platform_fees',
+            'billing', 'contracts', 'finance_loans', 'analytics', 'reports',
+            'system_health', 'settings'
+          ])
+        )
+      )
+    ) THEN
       RAISE EXCEPTION 'recorded_by_not_authorized';
     END IF;
   END IF;

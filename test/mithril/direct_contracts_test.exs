@@ -78,7 +78,7 @@ defmodule Mithril.DirectContractsTest do
 
   test "a weekly advance credits the wallet, payday pays the remainder, and the loan book stays empty" do
     admin_id = Fixtures.insert_user!("admin")
-    stranger_id = Fixtures.insert_user!("reviewer")
+    stranger_id = Fixtures.insert_user!()
     today = Date.utc_today()
     weekday = if Date.day_of_week(today) == 7, do: 0, else: Date.day_of_week(today)
     week = today
@@ -233,9 +233,71 @@ defmodule Mithril.DirectContractsTest do
     assert after_end["body"] =~ "6 months"
   end
 
+  test "contract reviewers can pay advances without gaining unrelated wallet credit rights" do
+    admin_id = Fixtures.insert_user!("admin")
+    reviewer_id = Fixtures.insert_user!("reviewer")
+    restricted_id = Fixtures.insert_user!("reviewer")
+    legacy_id = Fixtures.insert_user!("reviewer")
+    worker_id = named_worker!("Contract worker")
+    today = Date.utc_today()
+    weekday = rem(Date.day_of_week(today), 7)
+
+    for {id, desk} <- [{reviewer_id, "contracts"}, {restricted_id, "billing"}] do
+      Repo.query!("INSERT INTO public.user_roles (user_id, role_id) VALUES ($1, $2)", [
+        Ecto.UUID.dump!(id),
+        desk
+      ])
+    end
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Reviewer payouts client",
+               "kind" => "company",
+               "monthlyFeeMinor" => 100_000
+             })
+
+    assert {:ok, %{"id" => assignment_id}} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerId" => worker_id,
+               "roleLabel" => "Housekeeper",
+               "monthlyPayMinor" => 50_000,
+               "clientRateMinor" => 60_000,
+               "weeklyAdvanceMinor" => 10_000,
+               "advanceWeekday" => weekday,
+               "advanceMode" => "manual"
+             })
+
+    assert {:error, :forbidden} = DirectContracts.show(restricted_id, contract_id, nil)
+    assert {:ok, _} = DirectContracts.show(reviewer_id, contract_id, nil)
+    assert {:ok, _} = DirectContracts.show(legacy_id, contract_id, nil)
+
+    assert {:error, :forbidden} =
+             DirectContracts.pay_advance(restricted_id, contract_id, %{
+               "assignmentId" => assignment_id,
+               "weekOn" => Date.to_iso8601(today)
+             })
+
+    assert {:ok, _} =
+             DirectContracts.pay_advance(reviewer_id, contract_id, %{
+               "assignmentId" => assignment_id,
+               "weekOn" => Date.to_iso8601(today)
+             })
+
+    assert Repo.query!(
+             "SELECT count(*) FROM public.admin_wallet_credits WHERE recorded_by = $1",
+             [
+               Ecto.UUID.dump!(reviewer_id)
+             ]
+           ).rows == [[1]]
+
+    assert Repo.query!("SELECT public.admin_cash_payout_recorder_is_allowed($1::uuid)", [
+             Ecto.UUID.dump!(reviewer_id)
+           ]).rows == [[false]]
+  end
+
   test "a contract letter names the client, the workers, and the monthly fee" do
     admin_id = Fixtures.insert_user!("admin")
-    stranger_id = Fixtures.insert_user!("reviewer")
+    stranger_id = Fixtures.insert_user!()
     today = Date.utc_today()
     weekday = if Date.day_of_week(today) == 7, do: 0, else: Date.day_of_week(today)
 

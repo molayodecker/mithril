@@ -25,6 +25,7 @@ defmodule Mithril.OpsPermissions do
     %{id: "extra_tasks", label: "Extra tasks"},
     %{id: "platform_fees", label: "Platform fees"},
     %{id: "billing", label: "Billing & invoices"},
+    %{id: "contracts", label: "Contracts"},
     %{id: "finance_loans", label: "Worker finance & loans"},
     %{id: "analytics", label: "Analytics"},
     %{id: "reports", label: "Reports"},
