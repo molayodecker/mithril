@@ -140,6 +140,20 @@ defmodule MithrilWeb.DirectAdminContractsController do
     respond(conn, DirectContracts.end_assignment(user_id(conn), id, assignment_id))
   end
 
+  operation(:remove_assignment,
+    operation_id: "direct.removeAdminContractAssignment",
+    summary: "Remove a worker added by mistake when no payment or letter exists",
+    parameters: [
+      id: [in: :path, schema: %Schema{type: :string, format: :uuid}, required: true],
+      assignment_id: [in: :path, schema: %Schema{type: :string, format: :uuid}, required: true]
+    ],
+    responses: [ok: {"Removed", "application/json", IdResult}]
+  )
+
+  def remove_assignment(conn, %{"id" => id, "assignment_id" => assignment_id}) do
+    respond(conn, DirectContracts.remove_assignment(user_id(conn), id, assignment_id))
+  end
+
   operation(:pay_advance,
     operation_id: "direct.payAdminContractAdvance",
     summary: "Credit one weekly advance to a worker wallet",
@@ -285,6 +299,8 @@ defmodule MithrilWeb.DirectAdminContractsController do
   defp error_response(:advance_not_due), do: {409, "advance_not_due"}
   defp error_response(:advance_already_paid), do: {409, "advance_already_paid"}
   defp error_response(:assignment_ended), do: {409, "assignment_ended"}
+  defp error_response(:assignment_has_payments), do: {409, "assignment_has_payments"}
+  defp error_response(:assignment_has_letter), do: {409, "assignment_has_letter"}
   defp error_response(:payday_already_run), do: {409, "payday_already_run"}
   defp error_response(:invoice_already_sent), do: {409, "invoice_already_sent"}
   defp error_response(:letter_needs_worker), do: {422, "letter_needs_worker"}
