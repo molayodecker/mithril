@@ -2445,6 +2445,7 @@ defmodule Mithril.DirectContracts do
 
   defp find_worker_by_phone(phone) do
     digits = String.replace(phone, ~r/\D/, "")
+
     local =
       if String.starts_with?(digits, "233"),
         do: "0" <> String.slice(digits, 3..-1//1),
