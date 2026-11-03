@@ -367,6 +367,7 @@ defmodule MithrilWeb.DirectAdminContractsController do
   defp error_response(:letter_already_sent), do: {409, "letter_already_sent"}
   defp error_response(:letter_already_signed), do: {409, "letter_already_signed"}
   defp error_response(:letter_not_active), do: {409, "letter_not_active"}
+  defp error_response(:letter_not_sent), do: {409, "letter_not_sent"}
   defp error_response(:client_rates_mismatch), do: {422, "client_rates_mismatch"}
   defp error_response(:worker_already_assigned), do: {409, "worker_already_assigned"}
   defp error_response(:email_not_configured), do: {422, "email_not_configured"}
