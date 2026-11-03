@@ -163,7 +163,7 @@ defmodule Mithril.Notifications.Outbound do
   end
 
   def content_variables(template, variables)
-       when template in ["co_cleaner_invite", "preferred_cleaner_invite"] do
+      when template in ["co_cleaner_invite", "preferred_cleaner_invite"] do
     %{
       "1" => present(variables["inviterName"]) || "Instaclean member",
       "2" => present(variables["inviteUrl"]) || "",
