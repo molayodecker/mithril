@@ -19,7 +19,7 @@ ALTER TABLE public.mithril_email_verifications
 CREATE OR REPLACE FUNCTION public.mithril_invalidate_contact_email_verification()
 RETURNS trigger
 LANGUAGE plpgsql
-AS $
+AS $$
 BEGIN
   IF lower(btrim(coalesce(OLD.email, ''))) IS DISTINCT FROM
      lower(btrim(coalesce(NEW.email, ''))) THEN
@@ -27,7 +27,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$;
+$$;
 
 DROP TRIGGER IF EXISTS mithril_contact_email_changed ON public.users;
 CREATE TRIGGER mithril_contact_email_changed
