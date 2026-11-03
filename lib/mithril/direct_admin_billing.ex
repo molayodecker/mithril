@@ -587,6 +587,7 @@ defmodule Mithril.DirectAdminBilling do
       String.contains?(message, "invalid_form_type") -> {:error, :invalid_form_type}
       String.contains?(message, "invalid_lines") -> {:error, :invalid_lines}
       String.contains?(message, "invalid_email") -> {:error, :invalid_email}
+      String.contains?(message, "approved_invoice_immutable") -> {:error, :already_approved}
       String.contains?(message, "invalid_invoice") -> {:error, :invalid_invoice}
       String.contains?(message, "amount_too_large") -> {:error, :amount_too_large}
       String.contains?(message, "out of range") -> {:error, :amount_too_large}
