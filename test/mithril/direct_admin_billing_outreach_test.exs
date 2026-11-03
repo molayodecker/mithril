@@ -41,6 +41,13 @@ defmodule Mithril.DirectAdminBillingOutreachTest do
     assert approved["approvalNote"] == nil
 
     assert {:error, :already_approved} =
+             DirectAdminBilling.upsert_invoice(
+               admin_id,
+               invoice_id,
+               Map.put(invoice(), "project", "Different service")
+             )
+
+    assert {:error, :already_approved} =
              DirectAdminBillingOutreach.decide(saved["publicToken"], %{"decision" => "approve"})
 
     assert {:error, :location_not_requested} =
@@ -59,7 +66,7 @@ defmodule Mithril.DirectAdminBillingOutreachTest do
              })
 
     assert located["serviceAddress"] == "14 Jungle Road, East Legon"
-    assert located["billToAddress"] == "14 Jungle Road, East Legon"
+    assert located["billToAddress"] == nil
   end
 
   test "the proposed team is saved and can be sent only after approval" do
