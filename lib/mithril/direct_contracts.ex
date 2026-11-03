@@ -633,6 +633,10 @@ defmodule Mithril.DirectContracts do
   end
 
   defp stamp_role_signature(table, name_column, at_column, image_column, token, attrs, reader) do
+    # Hold the contract and assignment locks until the signature transaction commits.
+    # This serializes signing with assignment termination and contract closure.
+    lock_signable_letter!(table, token)
+
     case reader.(token) do
       {:error, reason} ->
         Repo.rollback(reason)
@@ -664,6 +668,52 @@ defmodule Mithril.DirectContracts do
           _ ->
             Repo.rollback(:letter_already_signed)
         end
+    end
+  end
+
+  defp lock_signable_letter!(table, token) do
+    case fetch!(
+           "SELECT contract_id, sent_at FROM #{table} WHERE public_token = $1",
+           [token]
+         ).rows do
+      [] ->
+        Repo.rollback(:not_found)
+
+      [[contract_uid, sent_at]] ->
+        case fetch!(
+               "SELECT status FROM public.direct_contracts WHERE id = $1 FOR UPDATE",
+               [contract_uid]
+             ).rows do
+          [["active"]] -> :ok
+          _ -> Repo.rollback(:letter_not_active)
+        end
+
+        # Lock all assignments for the client letter, or the particular worker
+        # assignment for the worker letter. end_assignment updates these rows.
+        assignment_filter =
+          if table == "public.direct_contract_worker_letters" do
+            "a.id = (SELECT assignment_id FROM #{table} WHERE public_token = $2)"
+          else
+            "a.contract_id = $1"
+          end
+
+        fetch!(
+          """
+          SELECT a.id
+          FROM public.direct_contract_assignments a
+          WHERE #{assignment_filter}
+          ORDER BY a.id
+          FOR UPDATE
+          """,
+          if(table == "public.direct_contract_worker_letters",
+            do: [contract_uid, token],
+            else: [contract_uid]
+          )
+        )
+
+        # Unsent documents can be regenerated with different terms on retry.
+        # Sign only successfully delivered, immutable letters.
+        if is_nil(sent_at), do: Repo.rollback(:letter_not_sent)
     end
   end
 
