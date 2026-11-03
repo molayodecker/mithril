@@ -15,6 +15,129 @@ defmodule Mithril.DirectContractsTest do
     :ok
   end
 
+  test "the service agreement uses the chosen start date" do
+    contract = %{
+      created_at: ~U[2026-01-02 08:00:00Z],
+      start_on: ~D[2026-03-15],
+      name: "Client",
+      monthly_fee_minor: 400_000,
+      currency: "GHS",
+      billing_contact: nil,
+      phone: nil,
+      email: nil
+    }
+
+    preview = Letter.preview(contract, [])
+    assert preview["startOn"] == "2026-03-15"
+    assert Enum.any?(preview["clauses"], &String.contains?(&1["body"], "15 Mar 2026"))
+  end
+
+  test "removing an earlier invoice does not reuse an existing invoice number" do
+    admin_id = Fixtures.insert_user!("admin")
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Numbered Invoice Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000
+             })
+
+    for {month, number} <- [{~D[2026-01-01], "INV-2026-001"}, {~D[2026-02-01], "INV-2026-002"}] do
+      Repo.query!(
+        """
+        INSERT INTO public.direct_contract_invoices
+          (contract_id, period_month, invoice_no, public_token, issued_on, due_on, style, total_minor, created_by)
+        VALUES ($1, $2, $3, $4, CURRENT_DATE, CURRENT_DATE, 'one_line', 100000, $5)
+        """,
+        [
+          Ecto.UUID.dump!(contract_id),
+          month,
+          number,
+          Ecto.UUID.generate(),
+          Ecto.UUID.dump!(admin_id)
+        ]
+      )
+    end
+
+    # Simulate the migration initializing the counter from pre-existing invoices.
+    Repo.query!("SELECT setval('public.direct_contract_invoice_no_seq', 2)")
+
+    %{rows: [[old_id]]} =
+      Repo.query!(
+        "SELECT id::text FROM public.direct_contract_invoices WHERE invoice_no = 'INV-2026-001'"
+      )
+
+    assert {:ok, _} = DirectContracts.remove_invoice(admin_id, contract_id, old_id)
+
+    # This exercises the allocator without depending on a configured outbound provider.
+    assert {:error, :missing_email} =
+             DirectContracts.send_invoice(admin_id, contract_id, %{
+               "month" => "2026-01",
+               "style" => "one_line",
+               "channel" => "email"
+             })
+
+    %{rows: [[new_number]]} =
+      Repo.query!(
+        "SELECT invoice_no FROM public.direct_contract_invoices WHERE contract_id = $1 AND period_month = '2026-01-01'",
+        [Ecto.UUID.dump!(contract_id)]
+      )
+
+    refute new_number in ["INV-2026-001", "INV-2026-002"]
+  end
+
+  test "an invoice cannot be removed while delivery is claimed" do
+    admin_id = Fixtures.insert_user!("admin")
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Delivery Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000
+             })
+
+    invoice_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.direct_contract_invoices
+        (id, contract_id, period_month, invoice_no, public_token, issued_on, due_on, style, total_minor, created_by, sending_at)
+      VALUES ($1, $2, CURRENT_DATE, $3, $4, CURRENT_DATE, CURRENT_DATE, 'one_line', 100000, $5, now())
+      """,
+      [
+        Ecto.UUID.dump!(invoice_id),
+        Ecto.UUID.dump!(contract_id),
+        "INV-CLAIM-#{invoice_id}",
+        Ecto.UUID.generate(),
+        Ecto.UUID.dump!(admin_id)
+      ]
+    )
+
+    assert {:error, :invoice_delivery_in_progress} =
+             DirectContracts.remove_invoice(admin_id, contract_id, invoice_id)
+
+    assert Repo.query!("SELECT count(*) FROM public.direct_contract_invoices WHERE id = $1", [
+             Ecto.UUID.dump!(invoice_id)
+           ]).rows == [[1]]
+  end
+
+  test "the service agreement starts on the day the contract was created when no start date is set" do
+    contract = %{
+      created_at: ~U[2026-01-02 08:00:00Z],
+      start_on: nil,
+      name: "Client",
+      monthly_fee_minor: 400_000,
+      currency: "GHS",
+      billing_contact: nil,
+      phone: nil,
+      email: nil
+    }
+
+    preview = Letter.preview(contract, [])
+    assert preview["startOn"] == "2026-01-02"
+    assert Enum.any?(preview["clauses"], &String.contains?(&1["body"], "2 Jan 2026"))
+  end
+
   test "worker letter starts on assignment date, not original contract date" do
     contract = %{created_at: ~D[2026-01-01], name: "Client", currency: "GHS"}
 
@@ -805,6 +928,35 @@ defmodule Mithril.DirectContractsTest do
              "SELECT count(*) FROM public.direct_contract_assignments WHERE id = $1",
              [Ecto.UUID.dump!(assignment_id)]
            ).rows == [[1]]
+
+    assert {:ok, %{"id" => other_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Other Invoice Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000
+             })
+
+    assert {:error, :contract_invoice_not_found} =
+             DirectContracts.remove_invoice(admin_id, other_id, invoice_id)
+
+    assert {:ok, %{"id" => ^invoice_id}} =
+             DirectContracts.remove_invoice(admin_id, contract_id, invoice_id)
+
+    assert Repo.query!(
+             "SELECT count(*) FROM public.direct_contract_invoices WHERE id = $1",
+             [Ecto.UUID.dump!(invoice_id)]
+           ).rows == [[0]]
+
+    assert Repo.query!(
+             "SELECT count(*) FROM public.direct_contract_invoice_lines WHERE invoice_id = $1",
+             [Ecto.UUID.dump!(invoice_id)]
+           ).rows == [[0]]
+
+    assert {:error, :contract_invoice_not_found} =
+             DirectContracts.remove_invoice(admin_id, contract_id, invoice_id)
+
+    assert {:ok, %{"id" => ^assignment_id}} =
+             DirectContracts.remove_assignment(admin_id, contract_id, assignment_id)
   end
 
   defp normalize_automatic(:ok), do: {:ok, %{"paidCount" => 0, "totalMinor" => 0}}
@@ -840,6 +992,8 @@ defmodule Mithril.DirectContractsTest do
     install_sql!("../../priv/repo/sql/direct/20261101130000_direct_contract_worker_letters.sql")
     install_sql!("../../priv/repo/sql/direct/20261101140000_direct_contract_letter_numbers.sql")
     install_sql!("../../priv/repo/sql/direct/20261101150000_direct_contract_letter_sending.sql")
+    install_sql!("../../priv/repo/sql/direct/20261103150000_direct_contract_start_on.sql")
+    install_sql!("../../priv/repo/sql/direct/20261103160000_direct_contract_invoice_delivery.sql")
   end
 
   defp install_sql!(relative) do

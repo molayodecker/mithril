@@ -377,7 +377,8 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
         phone: %Schema{type: :string, nullable: true},
         email: %Schema{type: :string, nullable: true},
         monthlyFeeMinor: %Schema{type: :integer, minimum: 1},
-        placementId: %Schema{type: :string, format: :uuid, nullable: true}
+        placementId: %Schema{type: :string, format: :uuid, nullable: true},
+        startOn: %Schema{type: :string, format: :date, nullable: true}
       },
       required: [:name, :kind, :monthlyFeeMinor]
     })

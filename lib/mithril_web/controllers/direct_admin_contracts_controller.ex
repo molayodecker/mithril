@@ -207,6 +207,20 @@ defmodule MithrilWeb.DirectAdminContractsController do
     respond(conn, DirectContracts.send_invoice(user_id(conn), id, params))
   end
 
+  operation(:remove_invoice,
+    operation_id: "direct.removeAdminContractInvoice",
+    summary: "Remove a saved or sent invoice so the month can be invoiced again",
+    parameters: [
+      id: [in: :path, schema: %Schema{type: :string, format: :uuid}, required: true],
+      invoice_id: [in: :path, schema: %Schema{type: :string, format: :uuid}, required: true]
+    ],
+    responses: [ok: {"Removed", "application/json", IdResult}]
+  )
+
+  def remove_invoice(conn, %{"id" => id, "invoice_id" => invoice_id}) do
+    respond(conn, DirectContracts.remove_invoice(user_id(conn), id, invoice_id))
+  end
+
   operation(:send_letter,
     operation_id: "direct.sendAdminContractLetter",
     summary: "Save and send the client service agreement",
@@ -304,6 +318,8 @@ defmodule MithrilWeb.DirectAdminContractsController do
   defp error_response(:assignment_has_invoice), do: {409, "assignment_has_invoice"}
   defp error_response(:payday_already_run), do: {409, "payday_already_run"}
   defp error_response(:invoice_already_sent), do: {409, "invoice_already_sent"}
+  defp error_response(:invoice_delivery_in_progress), do: {409, "invoice_delivery_in_progress"}
+  defp error_response(:contract_invoice_not_found), do: {404, "contract_invoice_not_found"}
   defp error_response(:letter_needs_worker), do: {422, "letter_needs_worker"}
   defp error_response(:letter_already_sent), do: {409, "letter_already_sent"}
   defp error_response(:client_rates_mismatch), do: {422, "client_rates_mismatch"}
