@@ -753,7 +753,7 @@ defmodule Mithril.Auth do
                OR a.phone = $1
                OR a.phone = $2
                OR lower(btrim(coalesce(u.phone, ''))) = $1
-               OR lower(btrim(coalesce(u.phone, ''))) = coalesce($2, '')
+               OR ($2 IS NOT NULL AND lower(btrim(coalesce(u.phone, ''))) = $2)
              )
            """,
            [identifier, phone]
