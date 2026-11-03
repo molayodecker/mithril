@@ -372,13 +372,20 @@ defmodule Mithril.DirectContracts do
         case fetch!(
                """
                DELETE FROM public.direct_contract_invoices
-               WHERE id = $2 AND contract_id = $1
+               WHERE id = $2 AND contract_id = $1 AND sending_at IS NULL
                RETURNING id::text
                """,
                [contract_uid, invoice_uid]
              ).rows do
           [[id]] -> %{"id" => id}
-          [] -> Repo.rollback(:contract_invoice_not_found)
+          [] ->
+            case fetch!(
+                   "SELECT sending_at IS NOT NULL FROM public.direct_contract_invoices WHERE id = $1 AND contract_id = $2",
+                   [invoice_uid, contract_uid]
+                 ).rows do
+              [[true]] -> Repo.rollback(:invoice_delivery_in_progress)
+              _ -> Repo.rollback(:contract_invoice_not_found)
+            end
         end
       end)
     end
@@ -392,7 +399,8 @@ defmodule Mithril.DirectContracts do
          {:ok, style} <- one_of(param(params, "style"), ~w(one_line per_worker)),
          {:ok, channel} <- one_of(param(params, "channel"), ~w(email whatsapp)) do
       with {:ok, invoice} <- ensure_invoice(admin_uid, contract_uid, month, style),
-           :ok <- deliver(admin_uid, invoice, channel),
+           :ok <- claim_invoice_delivery(invoice["id"]),
+           :ok <- deliver_claimed_invoice(admin_uid, invoice, channel),
            {:ok, sent} <- mark_sent(invoice["id"], channel) do
         {:ok, sent}
       end
@@ -1513,8 +1521,8 @@ defmodule Mithril.DirectContracts do
         case Repo.query(
                """
                UPDATE public.direct_contract_invoices
-               SET channel = $2, sent_at = now()
-               WHERE id = $1 AND sent_at IS NULL
+               SET channel = $2, sent_at = now(), sending_at = NULL
+               WHERE id = $1 AND sent_at IS NULL AND sending_at IS NOT NULL
                RETURNING invoice_no, total_minor, channel
                """,
                [uid, channel]
@@ -1537,6 +1545,41 @@ defmodule Mithril.DirectContracts do
 
       :error ->
         {:error, :invalid_request}
+    end
+  end
+
+  defp claim_invoice_delivery(invoice_id) do
+    with {:ok, uid} <- dump_uuid(invoice_id) do
+      case Repo.query(
+             """
+             UPDATE public.direct_contract_invoices
+             SET sending_at = now()
+             WHERE id = $1 AND sent_at IS NULL AND sending_at IS NULL
+             RETURNING id
+             """,
+             [uid]
+           ) do
+        {:ok, %{rows: [[_]]}} -> :ok
+        {:ok, %{rows: []}} -> {:error, :invoice_delivery_in_progress}
+        {:error, error} -> map_pg(error)
+      end
+    end
+  end
+
+  defp deliver_claimed_invoice(admin_uid, invoice, channel) do
+    case deliver(admin_uid, invoice, channel) do
+      :ok ->
+        :ok
+
+      {:error, _} = error ->
+        # A failed provider call must not permanently block an invoice from retrying.
+        {:ok, uid} = dump_uuid(invoice["id"])
+        Repo.query!(
+          "UPDATE public.direct_contract_invoices SET sending_at = NULL WHERE id = $1 AND sent_at IS NULL",
+          [uid]
+        )
+
+        error
     end
   end
 
@@ -2283,15 +2326,8 @@ defmodule Mithril.DirectContracts do
   end
 
   defp next_invoice_no(year) do
-    prefix = "INV-#{year}-"
-
-    %{rows: [[count]]} =
-      fetch!(
-        "SELECT count(*)::integer FROM public.direct_contract_invoices WHERE invoice_no LIKE $1",
-        [prefix <> "%"]
-      )
-
-    prefix <> String.pad_leading(Integer.to_string(count + 1), 3, "0")
+    %{rows: [[number]]} = fetch!("SELECT nextval('public.direct_contract_invoice_no_seq')", [])
+    "INV-#{year}-" <> String.pad_leading(Integer.to_string(number), 3, "0")
   end
 
   defp payday_closed?(contract_uid, month) do

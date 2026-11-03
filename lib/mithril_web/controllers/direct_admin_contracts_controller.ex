@@ -318,6 +318,7 @@ defmodule MithrilWeb.DirectAdminContractsController do
   defp error_response(:assignment_has_invoice), do: {409, "assignment_has_invoice"}
   defp error_response(:payday_already_run), do: {409, "payday_already_run"}
   defp error_response(:invoice_already_sent), do: {409, "invoice_already_sent"}
+  defp error_response(:invoice_delivery_in_progress), do: {409, "invoice_delivery_in_progress"}
   defp error_response(:contract_invoice_not_found), do: {404, "contract_invoice_not_found"}
   defp error_response(:letter_needs_worker), do: {422, "letter_needs_worker"}
   defp error_response(:letter_already_sent), do: {409, "letter_already_sent"}
