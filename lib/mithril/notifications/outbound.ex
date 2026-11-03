@@ -3,8 +3,8 @@ defmodule Mithril.Notifications.Outbound do
 
   alias Mithril.Auth.Phone
   alias Mithril.Auth.SMS
-  alias Mithril.WhatsApp.ContentSids
   alias Mithril.Notifications.Templates
+  alias Mithril.WhatsApp.ContentSids
 
   def deliver(body) when is_map(body) do
     channel = present(body["channel"]) || ""
@@ -115,11 +115,14 @@ defmodule Mithril.Notifications.Outbound do
     ContentSids.template(template) || template_content_sid_from_env(template)
   end
 
-  defp template_content_sid_from_env("booking_reminder"), do: env(:twilio_template_booking_reminder)
+  defp template_content_sid_from_env("booking_reminder"),
+    do: env(:twilio_template_booking_reminder)
   defp template_content_sid_from_env("review_request"), do: env(:twilio_template_review_request)
-  defp template_content_sid_from_env("cleaner_en_route"), do: env(:twilio_template_cleaner_en_route)
+  defp template_content_sid_from_env("cleaner_en_route"),
+    do: env(:twilio_template_cleaner_en_route)
   defp template_content_sid_from_env("cleaner_arrived"), do: env(:twilio_template_cleaner_arrived)
-  defp template_content_sid_from_env("cleaner_assigned"), do: env(:twilio_template_cleaner_assigned)
+  defp template_content_sid_from_env("cleaner_assigned"),
+    do: env(:twilio_template_cleaner_assigned)
   defp template_content_sid_from_env("new_booking"), do: env(:twilio_template_new_booking)
   defp template_content_sid_from_env("assignment_offer"), do: env(:twilio_template_new_booking)
   defp template_content_sid_from_env("payment_received"),
@@ -149,6 +152,15 @@ defmodule Mithril.Notifications.Outbound do
       "2" => present(variables["rating"]) || "Not rated yet",
       "3" => present(variables["scheduled_date"]) || present(variables["date"]) || "—",
       "4" => present(variables["scheduled_time"]) || "—"
+    }
+  end
+
+  defp content_variables(template, variables)
+       when template in ["co_cleaner_invite", "preferred_cleaner_invite"] do
+    %{
+      "1" => present(variables["inviterName"]) || "Instaclean member",
+      "2" => present(variables["inviteUrl"]) || "",
+      "3" => present(variables["expiresAt"]) || "30 days"
     }
   end
 
