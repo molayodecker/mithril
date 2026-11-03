@@ -15,6 +15,26 @@ defmodule Mithril.DirectContractsTest do
     :ok
   end
 
+  test "the service agreement can leave out invoices" do
+    contract = %{
+      created_at: ~U[2026-01-02 08:00:00Z],
+      include_invoices: false,
+      name: "Client",
+      monthly_fee_minor: 400_000,
+      currency: "GHS",
+      billing_contact: nil,
+      phone: nil,
+      email: nil
+    }
+
+    preview = Letter.preview(contract, [])
+    refute Enum.any?(preview["clauses"], &(&1["title"] == "Invoices"))
+    assert length(preview["clauses"]) == 11
+
+    whole = Enum.find(preview["clauses"], &(&1["title"] == "The whole agreement"))
+    refute whole["body"] =~ "invoices issued"
+  end
+
   test "the service agreement uses the chosen start date" do
     contract = %{
       created_at: ~U[2026-01-02 08:00:00Z],
@@ -993,6 +1013,7 @@ defmodule Mithril.DirectContractsTest do
     install_sql!("../../priv/repo/sql/direct/20261101140000_direct_contract_letter_numbers.sql")
     install_sql!("../../priv/repo/sql/direct/20261101150000_direct_contract_letter_sending.sql")
     install_sql!("../../priv/repo/sql/direct/20261103150000_direct_contract_start_on.sql")
+    install_sql!("../../priv/repo/sql/direct/20261103170000_direct_contract_include_invoices.sql")
     install_sql!("../../priv/repo/sql/direct/20261103160000_direct_contract_invoice_delivery.sql")
   end
 
