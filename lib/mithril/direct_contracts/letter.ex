@@ -29,7 +29,7 @@ defmodule Mithril.DirectContracts.Letter do
         Enum.map(workers, fn worker ->
           %{"roleLabel" => worker.role_label, "workerName" => worker.worker_name}
         end),
-      "clauses" => clauses(long_date(start), fee)
+      "clauses" => clauses(long_date(start), fee, include_invoices?(contract))
     }
   end
 
@@ -63,70 +63,54 @@ defmodule Mithril.DirectContracts.Letter do
     "This letter is between InstacleanPro Limited (\"Instaclean\"), of 148 West Legon Road, Gulf Estate, Accra, and #{client_name} (\"the Client\")."
   end
 
-  def clauses(start_label, fee_label) do
+  def clauses(start_label, fee_label, include_invoices \\ true) do
     [
-      clause(
-        1,
-        "Service",
-        "Instaclean provides the workers named in this letter, in the roles stated, for service at the Client's premises. The engagement starts on #{start_label}."
-      ),
-      clause(
-        2,
-        "Workers",
-        "The workers named in this letter attend under it. Instaclean may replace a worker after telling the Client. A worker stops attending on the end date Instaclean records. The monthly fee in clause 3 continues at the agreed amount until both parties change it in writing."
-      ),
-      clause(
-        3,
-        "Fee",
-        "The Client pays Instaclean a monthly service fee of #{fee_label}. That amount is the full fee for the service in this letter for each month the letter is in force."
-      ),
-      clause(
-        4,
-        "Invoices",
-        "Instaclean invoices each month. Payment is due within 7 days of the invoice date, in Ghana cedis, to the account stated on the invoice. The invoice may show one line for the service, or one line for each worker. Worker lines are shares of the same monthly fee and add up to it."
-      ),
-      clause(
-        5,
-        "Worker pay",
-        "Instaclean pays the workers. Any advance Instaclean gives a worker is a matter between Instaclean and that worker. It leaves the Client's fee unchanged, and the Client does not repay it."
-      ),
-      clause(
-        6,
-        "A month already started",
-        "The fee for a month is payable in full. Instaclean does not divide it by the days a worker attended. A different fee applies only from a month both parties have agreed in writing."
-      ),
-      clause(
-        7,
-        "Ending",
-        "Either party may end this letter by written notice of 2 months. Service and the monthly fee continue through that notice. Instaclean confirms the end date in writing."
-      ),
-      clause(
-        8,
-        "After the letter ends",
-        "For 6 months after the end date, the Client will not engage, hire, or pay a worker named in this letter, directly or through another person."
-      ),
-      clause(
-        9,
-        "The Client's premises",
-        "The Client provides a safe place of work and tells the workers the rules of the premises. The workers follow those rules where they agree with this letter."
-      ),
-      clause(
-        10,
-        "Care and loss",
-        "Instaclean selects and supplies the workers with reasonable care. Instaclean's liability for any loss or damage is limited to one month's fees paid by the Client. This limit does not apply to death or personal injury caused by negligence, or to fraud."
-      ),
-      clause(
-        11,
-        "Law",
-        "The laws of the Republic of Ghana govern this letter. The courts of Accra have jurisdiction."
-      ),
-      clause(
-        12,
-        "The whole agreement",
-        "This letter and the invoices issued under it are the whole agreement for this service. A change takes effect when Instaclean records it and sends the Client an updated letter, or the next invoice that shows the change."
-      )
+      {"Service",
+       "Instaclean provides the workers named in this letter, in the roles stated, for service at the Client's premises. The engagement starts on #{start_label}."},
+      {"Workers",
+       "The workers named in this letter attend under it. Instaclean may replace a worker after telling the Client. A worker stops attending on the end date Instaclean records. The monthly fee in clause 3 continues at the agreed amount until both parties change it in writing."},
+      {"Fee",
+       "The Client pays Instaclean a monthly service fee of #{fee_label}. That amount is the full fee for the service in this letter for each month the letter is in force."}
     ]
+    |> then(fn items ->
+      if include_invoices, do: items ++ [invoice_item()], else: items
+    end)
+    |> Kernel.++([
+      {"Worker pay",
+       "Instaclean pays the workers. Any advance Instaclean gives a worker is a matter between Instaclean and that worker. It leaves the Client's fee unchanged, and the Client does not repay it."},
+      {"A month already started",
+       "The fee for a month is payable in full. Instaclean does not divide it by the days a worker attended. A different fee applies only from a month both parties have agreed in writing."},
+      {"Ending",
+       "Either party may end this letter by written notice of 2 months. Service and the monthly fee continue through that notice. Instaclean confirms the end date in writing."},
+      {"After the letter ends",
+       "For 6 months after the end date, the Client will not engage, hire, or pay a worker named in this letter, directly or through another person."},
+      {"The Client's premises",
+       "The Client provides a safe place of work and tells the workers the rules of the premises. The workers follow those rules where they agree with this letter."},
+      {"Care and loss",
+       "Instaclean selects and supplies the workers with reasonable care. Instaclean's liability for any loss or damage is limited to one month's fees paid by the Client. This limit does not apply to death or personal injury caused by negligence, or to fraud."},
+      {"Law",
+       "The laws of the Republic of Ghana govern this letter. The courts of Accra have jurisdiction."},
+      {"The whole agreement", whole_agreement(include_invoices)}
+    ])
+    |> Enum.with_index(1)
+    |> Enum.map(fn {{title, body}, number} -> clause(number, title, body) end)
   end
+
+  defp invoice_item do
+    {"Invoices",
+     "Instaclean invoices each month. Payment is due within 7 days of the invoice date, in Ghana cedis, to the account stated on the invoice. The invoice may show one line for the service, or one line for each worker. Worker lines are shares of the same monthly fee and add up to it."}
+  end
+
+  defp whole_agreement(true) do
+    "This letter and the invoices issued under it are the whole agreement for this service. A change takes effect when Instaclean records it and sends the Client an updated letter, or the next invoice that shows the change."
+  end
+
+  defp whole_agreement(false) do
+    "This letter is the whole agreement for this service. A change takes effect when Instaclean records it and sends the Client an updated letter."
+  end
+
+  defp include_invoices?(%{include_invoices: false}), do: false
+  defp include_invoices?(_), do: true
 
   def worker_preamble(worker_name) do
     "This letter is between InstacleanPro Limited (\"Instaclean\"), of 148 West Legon Road, Gulf Estate, Accra, and #{worker_name} (\"the Worker\")."
