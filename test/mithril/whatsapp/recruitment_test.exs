@@ -48,6 +48,17 @@ defmodule Mithril.WhatsApp.RecruitmentTest do
   end
 
   test "skips in-flight Ghana Card steps and continues at terms" do
+    previous_twilio_http = Application.get_env(:mithril, :twilio_http)
+    Application.put_env(:mithril, :twilio_http, {:error, :unavailable})
+
+    on_exit(fn ->
+      if previous_twilio_http == nil do
+        Application.delete_env(:mithril, :twilio_http)
+      else
+        Application.put_env(:mithril, :twilio_http, previous_twilio_http)
+      end
+    end)
+
     {:ok, lead} = Leads.get_or_create("+233555000111")
 
     :ok =
