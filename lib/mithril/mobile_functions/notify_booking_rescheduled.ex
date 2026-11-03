@@ -192,34 +192,34 @@ defmodule Mithril.MobileFunctions.NotifyBookingRescheduled do
          old_label,
          preferred_phone \\ nil
        ) do
-    if SendNotification.configured?() do
-      {email, account_phone} = recipient_contact(user_id)
-      phone = preferred_phone || account_phone
+    {email, account_phone} = recipient_contact(user_id)
+    phone = preferred_phone || account_phone
 
-      channel =
-        cond do
-          email && phone -> "both"
-          email -> "email"
-          phone -> "sms"
-          true -> nil
-        end
-
-      if channel do
-        SendNotification.invoke_mobile(%{
-          "template" => "booking_rescheduled",
-          "channel" => channel,
-          "email" => email,
-          "phone" => phone,
-          "userId" => user_id,
-          "bookingId" => booking_id,
-          "variables" => %{
-            "message" => message,
-            "newDate" => new_label,
-            "oldDate" => old_label,
-            "bookingId" => booking_id
-          }
-        })
+    channel =
+      cond do
+        email && phone -> "both"
+        email -> "email"
+        phone -> "sms"
+        true -> nil
       end
+
+    if channel do
+      SendNotification.invoke_mobile(%{
+        "template" => "booking_rescheduled",
+        "channel" => channel,
+        "email" => email,
+        "phone" => phone,
+        "userId" => user_id,
+        "bookingId" => booking_id,
+        "variables" => %{
+          "name" => "there",
+          "message" => message,
+          "date" => new_label,
+          "newDate" => new_label,
+          "oldDate" => old_label,
+          "bookingId" => booking_id
+        }
+      })
     end
 
     :ok

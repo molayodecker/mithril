@@ -651,6 +651,7 @@ defmodule Mithril.Auth do
              insert_user_and_account(%{email: email, password_hash: password_hash}),
            {:ok, account} <- fetch_account_by_id(user_id),
            {:ok, tokens} <- issue_session(account) do
+        Mithril.Auth.SignupEmail.deliver(account)
         {:ok, tokens}
       end
     end

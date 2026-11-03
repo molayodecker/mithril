@@ -28,6 +28,7 @@ defmodule Mithril.MobileGateway do
     rank-cleaners-with-ai
     replace-cleaner-weekly-availability
     request-data-export
+    send-notification
     send-app-notification
     sumsub-config/token
     sync-sumsub-review

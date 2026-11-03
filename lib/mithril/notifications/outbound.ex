@@ -3,6 +3,7 @@ defmodule Mithril.Notifications.Outbound do
 
   alias Mithril.Auth.Phone
   alias Mithril.Auth.SMS
+  alias Mithril.Notifications.Templates
 
   def deliver(body) when is_map(body) do
     channel = present(body["channel"]) || ""
@@ -223,8 +224,9 @@ defmodule Mithril.Notifications.Outbound do
     "How was your clean? Rate #{cleaner}.#{tail}"
   end
 
-  defp message_body(_template, variables) do
-    present(variables["message"]) || "Instaclean notification"
+  defp message_body(template, variables) do
+    Templates.body(template, variables) || present(variables["message"]) ||
+      "Instaclean notification"
   end
 
   defp subject("booking_reminder"), do: "Reminder – upcoming Instaclean booking"
@@ -236,7 +238,7 @@ defmodule Mithril.Notifications.Outbound do
   defp subject("cleaner_arrived"), do: "Your Instaclean professional has arrived"
   defp subject("cleaner_milestone_support"), do: "Instaclean booking status update"
   defp subject("review_request"), do: "How was your clean?"
-  defp subject(_), do: "Instaclean"
+  defp subject(template), do: Templates.subject(template) || "Instaclean"
 
   defp env(key) do
     case Application.get_env(:mithril, key) do
