@@ -113,7 +113,7 @@ defmodule Mithril.DirectContracts.Letter do
       clause(
         10,
         "Care and loss",
-        "Instaclean selects and supplies the workers with reasonable care. Instaclean's liability for any one month is limited to the fee the Client paid for that month. This limit does not apply to death or personal injury caused by negligence, or to fraud."
+        "Instaclean selects and supplies the workers with reasonable care. Instaclean's liability for any loss or damage is limited to one month's fees paid by the Client. This limit does not apply to death or personal injury caused by negligence, or to fraud."
       ),
       clause(
         11,
