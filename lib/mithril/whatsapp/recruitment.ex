@@ -8,8 +8,10 @@ defmodule Mithril.WhatsApp.Recruitment do
 
   alias Mithril.DirectAdminWhatsApp
   alias Mithril.WhatsApp.ChefWebhook
+  alias Mithril.WhatsApp.JobOffer
   alias Mithril.WhatsApp.Recruitment.Conversation
   alias Mithril.WhatsApp.Recruitment.GhanaCard
+  alias Mithril.WhatsApp.Recruitment.Twiml
   alias Mithril.WhatsApp.TwilioSignature
 
   def configured? do
@@ -28,12 +30,19 @@ defmodule Mithril.WhatsApp.Recruitment do
 
       true ->
         _ = maybe_record_admin_inbound(params)
-        body = params |> Map.get("Body", "") |> to_string() |> String.trim()
 
-        if String.upcase(body) == "CHEF" do
-          {:ok, ChefWebhook.recruitment_redirect_twiml()}
-        else
-          {:ok, Conversation.handle(params)}
+        case JobOffer.inbound_reply(params) do
+          {:reply, text} ->
+            {:ok, Twiml.xml({:plain, text})}
+
+          :pass ->
+            body = params |> Map.get("Body", "") |> to_string() |> String.trim()
+
+            if String.upcase(body) == "CHEF" do
+              {:ok, ChefWebhook.recruitment_redirect_twiml()}
+            else
+              {:ok, Conversation.handle(params)}
+            end
         end
     end
   end

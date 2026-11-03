@@ -11,6 +11,7 @@ defmodule Mithril.DirectAssignmentNotify do
 
   alias Mithril.Notifications
   alias Mithril.Repo
+  alias Mithril.WhatsApp.JobOffer
   alias Mithril.Workers.DirectAssignmentDelivery
 
   @offer_title "You were selected for a job"
@@ -65,9 +66,9 @@ defmodule Mithril.DirectAssignmentNotify do
             {:send, notification_id} ->
               context = offer_context(offer, booking_id)
 
-              if Notifications.notify(context) do
+              if Notifications.notify(Map.put(context, :skip_job_offer, true)) do
                 mark_outbound_sent(notification_id)
-                :sent
+                {:sent, context}
               else
                 Repo.rollback(:delivery_failed)
               end
@@ -81,6 +82,10 @@ defmodule Mithril.DirectAssignmentNotify do
       end
     end)
     |> case do
+      {:ok, {:sent, context}} ->
+        _ = JobOffer.deliver(context)
+        :sent
+
       {:ok, result} ->
         result
 

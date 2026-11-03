@@ -15,9 +15,8 @@ defmodule Mithril.WhatsApp.PaymentTemplate do
   request is delivered by SMS instead.
   """
 
-  require Logger
-
   alias Mithril.Repo
+  alias Mithril.WhatsApp.ContentApi
 
   @name "instaclean_tap_to_pay"
   @button "Tap Here to Pay"
@@ -123,65 +122,9 @@ defmodule Mithril.WhatsApp.PaymentTemplate do
     end
   end
 
-  defp request_create(payload) do
-    case Application.get_env(:mithril, :twilio_content_http, :http) do
-      fun when is_function(fun, 2) ->
-        fun.(:create, payload)
+  defp request_create(payload), do: ContentApi.create(payload)
 
-      _ ->
-        post_content("https://content.twilio.com/v1/Content", payload)
-    end
-  end
-
-  defp request_approval(sid) do
-    body = %{"name" => @name, "category" => "UTILITY"}
-
-    case Application.get_env(:mithril, :twilio_content_http, :http) do
-      fun when is_function(fun, 2) ->
-        fun.(:approve, body)
-
-      _ ->
-        post_content(
-          "https://content.twilio.com/v1/Content/#{sid}/ApprovalRequests/whatsapp",
-          body
-        )
-    end
-  end
-
-  defp post_content(url, payload) do
-    with {:ok, env} <- twilio_env() do
-      case Req.post(url, json: payload, auth: {:basic, "#{env.sid}:#{env.token}"}) do
-        {:ok, %{status: status, body: %{"sid" => sid}}}
-        when status in 200..299 and is_binary(sid) ->
-          {:ok, sid}
-
-        {:ok, %{status: status}} when status in 200..299 ->
-          :ok
-
-        {:ok, %{status: status, body: body}} ->
-          Logger.warning(
-            "whatsapp payment template request failed status=#{status} body=#{inspect(body)}"
-          )
-
-          {:error, :template_not_created}
-
-        {:error, error} ->
-          Logger.warning("whatsapp payment template request failed #{inspect(error)}")
-          {:error, :template_not_created}
-      end
-    end
-  end
-
-  defp twilio_env do
-    sid = Application.get_env(:mithril, :twilio_account_sid)
-    token = Application.get_env(:mithril, :twilio_auth_token)
-
-    if is_binary(sid) and sid != "" and is_binary(token) and token != "" do
-      {:ok, %{sid: sid, token: token}}
-    else
-      {:error, :twilio_not_configured}
-    end
-  end
+  defp request_approval(sid), do: ContentApi.submit_approval(sid, @name)
 
   defp env_sid do
     case Application.get_env(:mithril, :twilio_template_payment_request) do

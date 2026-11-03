@@ -32,6 +32,12 @@ defmodule Mithril.Notifications.SendNotificationTest do
     refute SendNotification.parallel_whatsapp?("+233200000001", sms_fallback_to_whatsapp: true)
     refute SendNotification.parallel_whatsapp?(nil, [])
 
+    refute SendNotification.parallel_whatsapp?(
+             "+233200000001",
+             parallel_whatsapp: false,
+             sms_fallback_to_whatsapp: false
+           )
+
     previous_url = Application.get_env(:mithril, :send_notification_url)
     previous_token = Application.get_env(:mithril, :send_notification_token)
     Application.put_env(:mithril, :send_notification_url, "http://127.0.0.1:9")
