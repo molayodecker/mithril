@@ -117,17 +117,14 @@ defmodule Mithril.Notifications.Outbound do
 
   defp template_content_sid_from_env("booking_reminder"),
     do: env(:twilio_template_booking_reminder)
-  defp template_content_sid_from_env("review_request"),
-    do: env(:twilio_template_review_request)
+  defp template_content_sid_from_env("review_request"), do: env(:twilio_template_review_request)
   defp template_content_sid_from_env("cleaner_en_route"),
     do: env(:twilio_template_cleaner_en_route)
-  defp template_content_sid_from_env("cleaner_arrived"),
-    do: env(:twilio_template_cleaner_arrived)
+  defp template_content_sid_from_env("cleaner_arrived"), do: env(:twilio_template_cleaner_arrived)
   defp template_content_sid_from_env("cleaner_assigned"),
     do: env(:twilio_template_cleaner_assigned)
   defp template_content_sid_from_env("new_booking"), do: env(:twilio_template_new_booking)
-  defp template_content_sid_from_env("assignment_offer"),
-    do: env(:twilio_template_new_booking)
+  defp template_content_sid_from_env("assignment_offer"), do: env(:twilio_template_new_booking)
   defp template_content_sid_from_env("payment_received"),
     do: env(:twilio_template_payment_received)
 
