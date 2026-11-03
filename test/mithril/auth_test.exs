@@ -732,6 +732,20 @@ defmodule Mithril.AuthTest do
     assert {:error, :invalid_credentials} = Auth.login(email, "nope")
   end
 
+  test "email login succeeds when other active accounts have no phone" do
+    insert_account("blank-phone@example.com", "other-password")
+    {_user_id, email} = insert_account("email-login@example.com", "correct-horse")
+
+    assert {:ok, session} = Auth.login(email, "correct-horse")
+    assert session.user.email == email
+  end
+
+  test "phone login still finds the matching account" do
+    insert_account("phone-login@example.com", "correct-horse", phone: "+233200000099")
+
+    assert {:ok, _session} = Auth.login("+233200000099", "correct-horse")
+  end
+
   test "refresh rotates the refresh token" do
     {_user_id, email} = insert_account("refresh@example.com", "correct-horse")
     {:ok, session} = Auth.login(email, "correct-horse")
