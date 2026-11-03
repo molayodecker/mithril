@@ -43,42 +43,49 @@ defmodule Mithril.DirectContracts do
   def search_workers(user_id, query) do
     with :ok <- require_admin(user_id),
          {:ok, term} <- search_term(query) do
-      case Repo.query(
-             """
-             SELECT u.id::text,
-                    COALESCE(NULLIF(btrim(p.fullname), ''), NULLIF(btrim(u.email), ''), 'Worker'),
-                    u.phone,
-                    w.balance_subunit
-             FROM public.cleaner_data cd
-             JOIN public.users u ON u.id = cd.user_id
-             LEFT JOIN public.profiles p ON p.id = u.id
-             LEFT JOIN public.wallets w ON w.user_id = u.id
-             WHERE $1 = ''
-                OR COALESCE(p.fullname, '') ILIKE $2
-                OR COALESCE(u.phone, '') ILIKE $2
-                OR COALESCE(u.email, '') ILIKE $2
-             ORDER BY 2
-             LIMIT 20
-             """,
-             [term, like_pattern(term)]
-           ) do
-        {:ok, %{rows: rows}} ->
-          {:ok,
-           %{
-             "workers" =>
-               Enum.map(rows, fn [id, name, phone, balance] ->
-                 %{
-                   "userId" => id,
-                   "name" => name,
-                   "phone" => phone,
-                   "walletBalanceMinor" => balance
-                 }
-               end)
-           }}
-
-        {:error, error} ->
-          map_pg(error)
+      if term == "" do
+        {:ok, %{"workers" => []}}
+      else
+        search_worker_rows(term)
       end
+    end
+  end
+
+  defp search_worker_rows(term) do
+    case Repo.query(
+           """
+           SELECT u.id::text,
+                  COALESCE(NULLIF(btrim(p.fullname), ''), NULLIF(btrim(u.email), ''), 'Worker'),
+                  u.phone,
+                  w.balance_subunit
+           FROM public.cleaner_data cd
+           JOIN public.users u ON u.id = cd.user_id
+           LEFT JOIN public.profiles p ON p.id = u.id
+           LEFT JOIN public.wallets w ON w.user_id = u.id
+           WHERE COALESCE(p.fullname, '') ILIKE $1
+              OR COALESCE(u.phone, '') ILIKE $1
+              OR COALESCE(u.email, '') ILIKE $1
+           ORDER BY 2
+           LIMIT 20
+           """,
+           [like_pattern(term)]
+         ) do
+      {:ok, %{rows: rows}} ->
+        {:ok,
+         %{
+           "workers" =>
+             Enum.map(rows, fn [id, name, phone, balance] ->
+               %{
+                 "userId" => id,
+                 "name" => name,
+                 "phone" => phone,
+                 "walletBalanceMinor" => balance
+               }
+             end)
+         }}
+
+      {:error, error} ->
+        map_pg(error)
     end
   end
 
