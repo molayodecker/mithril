@@ -130,14 +130,15 @@ defmodule Mithril.Notifications.Outbound do
 
   defp template_content_sid_from_env(_), do: nil
 
-  defp content_variables("review_request", variables) do
+  @doc false
+  def content_variables("review_request", variables) do
     %{
       "1" => present(variables["cleanerName"]) || "your cleaner",
       "2" => present(variables["reviewUrl"]) || ""
     }
   end
 
-  defp content_variables(template, variables)
+  def content_variables(template, variables)
        when template in ["cleaner_en_route", "cleaner_arrived"] do
     %{
       "1" => present(variables["cleanerName"]) || "Your cleaner",
@@ -146,7 +147,7 @@ defmodule Mithril.Notifications.Outbound do
     }
   end
 
-  defp content_variables("cleaner_assigned", variables) do
+  def content_variables("cleaner_assigned", variables) do
     %{
       "1" => present(variables["cleanerName"]) || "Your Worker",
       "2" => present(variables["rating"]) || "Not rated yet",
@@ -155,7 +156,7 @@ defmodule Mithril.Notifications.Outbound do
     }
   end
 
-  defp content_variables(template, variables)
+  def content_variables(template, variables)
        when template in ["co_cleaner_invite", "preferred_cleaner_invite"] do
     %{
       "1" => present(variables["inviterName"]) || "Instaclean member",
@@ -164,11 +165,11 @@ defmodule Mithril.Notifications.Outbound do
     }
   end
 
-  defp content_variables("phone_otp", variables) do
+  def content_variables("phone_otp", variables) do
     %{"1" => present(variables["otp"]) || ""}
   end
 
-  defp content_variables(_template, variables) do
+  def content_variables(_template, variables) do
     %{
       "1" => present(variables["address"]) || "—",
       "2" => present(variables["service"]) || "Instaclean booking",
