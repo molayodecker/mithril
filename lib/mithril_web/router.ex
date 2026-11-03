@@ -146,6 +146,9 @@ defmodule MithrilWeb.Router do
     pipe_through [:api]
 
     get "/invoices/:token", DirectAdminInvoicesController, :public_show
+    get "/billing-invoices/:token", DirectAdminBillingController, :public_show
+    post "/billing-invoices/:token/decision", DirectAdminBillingController, :decide
+    post "/billing-invoices/:token/location", DirectAdminBillingController, :share_location
     get "/contract-invoices/:token", DirectAdminContractsController, :public_show
     get "/contract-letters/:token", DirectAdminContractsController, :public_letter
     get "/worker-letters/:token", DirectAdminContractsController, :public_worker_letter
@@ -307,6 +310,8 @@ defmodule MithrilWeb.Router do
     post "/admin/bookings/:id/invoice/send", DirectAdminInvoicesController, :send
     get "/admin/billing/invoices", DirectAdminBillingController, :index_invoices
     put "/admin/billing/invoices/:id", DirectAdminBillingController, :upsert_invoice
+    post "/admin/billing/invoices/:id/messages", DirectAdminBillingController, :send_message
+    put "/admin/billing/invoices/:id/team", DirectAdminBillingController, :set_team
     get "/admin/billing/payment-advices", DirectAdminBillingController, :index_advices
     put "/admin/billing/payment-advices/:id", DirectAdminBillingController, :upsert_advice
     get "/admin/billing/payment-requests", DirectPaymentRequestsController, :index

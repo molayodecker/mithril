@@ -17,14 +17,11 @@ defmodule Mithril.DirectAdminBilling do
          {:ok, offset} <- page_offset(page) do
       query_rows(
         """
-        SELECT id, form_type, invoice_no, issued_on::text, bill_to_name, bill_to_address,
-               bill_to_phone, bill_to_email, project, lines, adjustment_minor, subtotal_minor,
-               total_minor, currency, notes, signatory_role, updated_at
-        FROM public.admin_billing_invoices
+        #{invoice_select()}
         ORDER BY updated_at DESC, id DESC
         LIMIT 50 OFFSET $1
         """,
-        &present_invoice/1,
+        &with_token/1,
         [offset]
       )
     else
@@ -38,7 +35,9 @@ defmodule Mithril.DirectAdminBilling do
          {:ok, id} <- dump_uuid(invoice_id),
          :ok <- require_admin(admin_uid),
          {:ok, payload} <- invoice_payload(params) do
-      call_upsert("upsert_admin_billing_invoice", [id, admin_uid, payload])
+      with {:ok, _document} <- call_upsert("upsert_admin_billing_invoice", [id, admin_uid, payload]) do
+        fetch_invoice(invoice_id)
+      end
     else
       :error -> {:error, :invalid_request}
       {:error, reason} -> {:error, reason}
@@ -279,7 +278,32 @@ defmodule Mithril.DirectAdminBilling do
     end
   end
 
-  defp present_invoice(row) do
+  def invoice_select do
+    """
+    SELECT id, form_type, invoice_no, issued_on::text, bill_to_name, bill_to_address,
+           bill_to_phone, bill_to_email, project, lines, adjustment_minor, subtotal_minor,
+           total_minor, currency, notes, signatory_role, updated_at,
+           public_token, approval_status, approval_note, approved_at, booking_id,
+           service_address, proposed_workers, invoice_sent_at, invoice_sent_channel,
+           approval_requested_at, approval_requested_channel, location_requested_at,
+           location_requested_channel, team_sent_at, team_sent_channel
+    FROM public.admin_billing_invoices
+    """
+  end
+
+  def fetch_invoice(invoice_id) do
+    with {:ok, id} <- dump_uuid(invoice_id) do
+      case Repo.query("#{invoice_select()} WHERE id = $1::uuid LIMIT 1", [id]) do
+        {:ok, %{rows: [row]}} -> ensure_token(present_invoice(row))
+        {:ok, %{rows: []}} -> {:error, :invoice_not_found}
+        {:error, error} -> map_rpc_error(error)
+      end
+    else
+      :error -> {:error, :invalid_request}
+    end
+  end
+
+  def present_invoice(row) do
     [
       id,
       form,
@@ -297,7 +321,22 @@ defmodule Mithril.DirectAdminBilling do
       currency,
       notes,
       signatory,
-      updated
+      updated,
+      public_token,
+      approval_status,
+      approval_note,
+      approved_at,
+      booking_id,
+      service_address,
+      proposed_workers,
+      invoice_sent_at,
+      invoice_sent_channel,
+      approval_requested_at,
+      approval_requested_channel,
+      location_requested_at,
+      location_requested_channel,
+      team_sent_at,
+      team_sent_channel
     ] = row
 
     %{
@@ -317,9 +356,70 @@ defmodule Mithril.DirectAdminBilling do
       "currency" => currency || "GHS",
       "notes" => notes,
       "signatoryRole" => signatory,
-      "updatedAt" => timestamp(updated)
+      "updatedAt" => timestamp(updated),
+      "publicToken" => public_token,
+      "viewUrl" => view_url(public_token),
+      "approvalStatus" => approval_status || "draft",
+      "approvalNote" => approval_note,
+      "approvedAt" => timestamp(approved_at),
+      "bookingId" => uuid_string_or_nil(booking_id),
+      "serviceAddress" => service_address,
+      "proposedWorkers" => proposed_workers || [],
+      "invoiceSentAt" => timestamp(invoice_sent_at),
+      "invoiceSentChannel" => invoice_sent_channel,
+      "approvalRequestedAt" => timestamp(approval_requested_at),
+      "approvalRequestedChannel" => approval_requested_channel,
+      "locationRequestedAt" => timestamp(location_requested_at),
+      "locationRequestedChannel" => location_requested_channel,
+      "teamSentAt" => timestamp(team_sent_at),
+      "teamSentChannel" => team_sent_channel
     }
   end
+
+  defp with_token(row) do
+    case ensure_token(present_invoice(row)) do
+      {:ok, invoice} -> invoice
+      _ -> present_invoice(row)
+    end
+  end
+
+  defp ensure_token(%{"publicToken" => token} = invoice) when is_binary(token) and token != "" do
+    {:ok, invoice}
+  end
+
+  defp ensure_token(invoice) do
+    token = Base.encode16(:crypto.strong_rand_bytes(32), case: :lower)
+
+    case Repo.query(
+           """
+           UPDATE public.admin_billing_invoices
+           SET public_token = $2
+           WHERE id = $1::uuid AND public_token IS NULL
+           RETURNING public_token
+           """,
+           [dump_uuid!(invoice["id"]), token]
+         ) do
+      {:ok, %{rows: [[stored]]}} ->
+        {:ok, Map.merge(invoice, %{"publicToken" => stored, "viewUrl" => view_url(stored)})}
+
+      {:ok, %{rows: []}} ->
+        fetch_invoice(invoice["id"])
+
+      {:error, error} ->
+        map_rpc_error(error)
+    end
+  end
+
+  defp view_url(token) when is_binary(token) and token != "" do
+    base =
+      Application.get_env(:mithril, :direct_public_url, "https://direct.tryinstaclean.com")
+      |> to_string()
+      |> String.trim_trailing("/")
+
+    "#{base}/invoices/#{token}"
+  end
+
+  defp view_url(_), do: nil
 
   defp present_advice(row) do
     [
@@ -390,12 +490,22 @@ defmodule Mithril.DirectAdminBilling do
   defp dump_uuid(value) when is_binary(value), do: Ecto.UUID.dump(value)
   defp dump_uuid(_), do: :error
 
+  defp dump_uuid!(value) do
+    {:ok, dumped} = dump_uuid(value)
+    dumped
+  end
+
+  defp uuid_string(nil), do: nil
+
   defp uuid_string(value) when is_binary(value) do
     case Ecto.UUID.cast(value) do
       {:ok, uuid} -> uuid
       :error -> Ecto.UUID.load!(value)
     end
   end
+
+  defp uuid_string_or_nil(nil), do: nil
+  defp uuid_string_or_nil(value), do: uuid_string(value)
 
   defp timestamp(nil), do: nil
   defp timestamp(%DateTime{} = value), do: DateTime.to_iso8601(value)

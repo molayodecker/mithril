@@ -96,6 +96,12 @@ defmodule MithrilWeb.OpenApiTest do
     assert spec["paths"]["/direct/admin/billing/invoices/{id}"]["put"]["operationId"] ==
              "direct.upsertAdminBillingInvoice"
 
+    assert spec["paths"]["/direct/admin/billing/invoices/{id}/messages"]["post"]["operationId"] ==
+             "direct.sendAdminBillingInvoiceMessage"
+
+    assert spec["paths"]["/direct/billing-invoices/{token}"]["get"]["operationId"] ==
+             "direct.showPublicBillingInvoice"
+
     assert spec["paths"]["/direct/admin/billing/payment-advices"]["get"]["operationId"] ==
              "direct.listAdminPaymentAdvices"
 

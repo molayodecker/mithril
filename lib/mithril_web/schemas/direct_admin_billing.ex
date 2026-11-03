@@ -33,7 +33,52 @@ defmodule MithrilWeb.Schemas.DirectAdminBilling do
         currency: %Schema{type: :string},
         notes: %Schema{type: :string, nullable: true},
         signatoryRole: %Schema{type: :string, nullable: true},
-        updatedAt: %Schema{type: :string, format: :"date-time", nullable: true}
+        updatedAt: %Schema{type: :string, format: :"date-time", nullable: true},
+        publicToken: %Schema{type: :string},
+        viewUrl: %Schema{type: :string, nullable: true},
+        approvalStatus: %Schema{
+          type: :string,
+          enum: ["draft", "awaiting_approval", "approved", "changes_requested"]
+        },
+        approvalNote: %Schema{type: :string, nullable: true},
+        approvedAt: %Schema{type: :string, format: :"date-time", nullable: true},
+        bookingId: %Schema{type: :string, format: :uuid, nullable: true},
+        serviceAddress: %Schema{type: :string, nullable: true},
+        proposedWorkers: %Schema{
+          type: :array,
+          items: %Schema{
+            type: :object,
+            properties: %{
+              name: %Schema{type: :string},
+              role: %Schema{type: :string}
+            },
+            required: [:name, :role]
+          }
+        },
+        invoiceSentAt: %Schema{type: :string, format: :"date-time", nullable: true},
+        invoiceSentChannel: %Schema{
+          type: :string,
+          enum: ["whatsapp", "sms", "email"],
+          nullable: true
+        },
+        approvalRequestedAt: %Schema{type: :string, format: :"date-time", nullable: true},
+        approvalRequestedChannel: %Schema{
+          type: :string,
+          enum: ["whatsapp", "sms", "email"],
+          nullable: true
+        },
+        locationRequestedAt: %Schema{type: :string, format: :"date-time", nullable: true},
+        locationRequestedChannel: %Schema{
+          type: :string,
+          enum: ["whatsapp", "sms", "email"],
+          nullable: true
+        },
+        teamSentAt: %Schema{type: :string, format: :"date-time", nullable: true},
+        teamSentChannel: %Schema{
+          type: :string,
+          enum: ["whatsapp", "sms", "email"],
+          nullable: true
+        }
       },
       required: [
         :id,
@@ -45,8 +90,26 @@ defmodule MithrilWeb.Schemas.DirectAdminBilling do
         :adjustmentMinor,
         :subtotalMinor,
         :totalMinor,
-        :currency
+        :currency,
+        :publicToken,
+        :approvalStatus,
+        :proposedWorkers
       ]
+    })
+  end
+
+  defmodule Worker do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminBillingInvoiceWorker",
+      type: :object,
+      properties: %{
+        name: %Schema{type: :string},
+        role: %Schema{type: :string}
+      },
+      required: [:name, :role]
     })
   end
 
@@ -106,6 +169,152 @@ defmodule MithrilWeb.Schemas.DirectAdminBilling do
         signatoryRole: %Schema{type: :string, maxLength: 80, nullable: true}
       },
       required: [:issuedOn, :billToName, :project, :lines, :adjustmentMinor]
+    })
+  end
+
+  defmodule MessageRequest do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminBillingInvoiceMessageRequest",
+      type: :object,
+      properties: %{
+        channel: %Schema{type: :string, enum: ["whatsapp", "sms", "email"]},
+        purpose: %Schema{type: :string, enum: ["invoice", "approval", "location", "team"]}
+      },
+      required: [:channel, :purpose]
+    })
+  end
+
+  defmodule MessageResponse do
+    require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectAdminBilling.Invoice
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminBillingInvoiceMessageResponse",
+      type: :object,
+      properties:
+        Map.merge(Invoice.schema().properties, %{
+          sent: %Schema{type: :boolean},
+          channel: %Schema{type: :string, enum: ["whatsapp", "sms", "email"]},
+          purpose: %Schema{type: :string, enum: ["invoice", "approval", "location", "team"]}
+        }),
+      required: [
+        :id,
+        :invoiceNo,
+        :issuedOn,
+        :billToName,
+        :project,
+        :lines,
+        :adjustmentMinor,
+        :subtotalMinor,
+        :totalMinor,
+        :currency,
+        :publicToken,
+        :approvalStatus,
+        :proposedWorkers,
+        :sent,
+        :channel,
+        :purpose
+      ]
+    })
+  end
+
+  defmodule TeamRequest do
+    require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectAdminBilling.Worker
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminBillingInvoiceTeamRequest",
+      type: :object,
+      properties: %{
+        workers: %Schema{type: :array, maxItems: 8, items: Worker}
+      },
+      required: [:workers]
+    })
+  end
+
+  defmodule PublicInvoice do
+    require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectAdminInvoice.Line
+    alias MithrilWeb.Schemas.DirectAdminBilling.Worker
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectPublicBillingInvoice",
+      type: :object,
+      properties: %{
+        invoiceNo: %Schema{type: :string},
+        issuedOn: %Schema{type: :string, format: :date},
+        billToName: %Schema{type: :string},
+        billToAddress: %Schema{type: :string, nullable: true},
+        project: %Schema{type: :string},
+        lines: %Schema{type: :array, items: Line},
+        adjustmentMinor: %Schema{type: :integer},
+        subtotalMinor: %Schema{type: :integer},
+        totalMinor: %Schema{type: :integer},
+        currency: %Schema{type: :string},
+        notes: %Schema{type: :string, nullable: true},
+        signatoryRole: %Schema{type: :string, nullable: true},
+        approvalStatus: %Schema{
+          type: :string,
+          enum: ["draft", "awaiting_approval", "approved", "changes_requested"]
+        },
+        approvalNote: %Schema{type: :string, nullable: true},
+        serviceAddress: %Schema{type: :string, nullable: true},
+        proposedWorkers: %Schema{type: :array, items: Worker},
+        invoiceSent: %Schema{type: :boolean},
+        locationRequested: %Schema{type: :boolean},
+        teamSent: %Schema{type: :boolean}
+      },
+      required: [
+        :invoiceNo,
+        :issuedOn,
+        :billToName,
+        :project,
+        :lines,
+        :adjustmentMinor,
+        :subtotalMinor,
+        :totalMinor,
+        :currency,
+        :approvalStatus,
+        :proposedWorkers,
+        :invoiceSent,
+        :locationRequested,
+        :teamSent
+      ]
+    })
+  end
+
+  defmodule DecisionRequest do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectPublicBillingInvoiceDecisionRequest",
+      type: :object,
+      properties: %{
+        decision: %Schema{type: :string, enum: ["approve", "changes"]},
+        note: %Schema{type: :string, maxLength: 500, nullable: true}
+      },
+      required: [:decision]
+    })
+  end
+
+  defmodule LocationRequest do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectPublicBillingInvoiceLocationRequest",
+      type: :object,
+      properties: %{
+        address: %Schema{type: :string, minLength: 3, maxLength: 500}
+      },
+      required: [:address]
     })
   end
 
