@@ -35,7 +35,8 @@ defmodule Mithril.DirectAdminBilling do
          {:ok, id} <- dump_uuid(invoice_id),
          :ok <- require_admin(admin_uid),
          {:ok, payload} <- invoice_payload(params) do
-      with {:ok, _document} <- call_upsert("upsert_admin_billing_invoice", [id, admin_uid, payload]) do
+      with {:ok, _document} <-
+             call_upsert("upsert_admin_billing_invoice", [id, admin_uid, payload]) do
         fetch_invoice(invoice_id)
       end
     else
