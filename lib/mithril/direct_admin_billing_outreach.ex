@@ -15,7 +15,7 @@ defmodule Mithril.DirectAdminBillingOutreach do
   alias Mithril.DirectAdminBilling
   alias Mithril.DirectAdminInvoices
   alias Mithril.Repo
-  alias Mithril.WhatsApp.InvoiceTemplate
+  alias Mithril.WhatsApp.BillingInvoiceTemplate
 
   @channels ~w(whatsapp sms email)
   @purposes ~w(invoice approval location team)
@@ -230,23 +230,13 @@ defmodule Mithril.DirectAdminBillingOutreach do
   defp deliver(admin_id, invoice, "whatsapp", purpose) do
     case Phone.normalize(invoice["billToPhone"] || "") do
       {:ok, phone} ->
-        if purpose == "invoice" do
-          InvoiceTemplate.deliver(
-            admin_id,
-            invoice,
-            phone,
-            message(invoice, purpose),
-            DirectAdminInvoices.money(invoice["totalMinor"])
-          )
-        else
-          case Mithril.DirectAdminWhatsApp.deliver_as_staff(admin_id, %{
-                 "phoneE164" => phone,
-                 "body" => message(invoice, purpose)
-               }) do
-            {:ok, _} -> :ok
-            {:error, reason} -> {:error, reason}
-          end
-        end
+        BillingInvoiceTemplate.deliver(
+          admin_id,
+          invoice,
+          phone,
+          purpose,
+          message(invoice, purpose)
+        )
 
       :error ->
         {:error, :missing_phone}

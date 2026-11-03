@@ -368,6 +368,10 @@ for {env_key, config_key} <- [
       {"TWILIO_TEMPLATE_PAYMENT_RECEIVED", :twilio_template_payment_received},
       {"TWILIO_TEMPLATE_PAYMENT_REQUEST", :twilio_template_payment_request},
       {"TWILIO_TEMPLATE_INVOICE", :twilio_template_invoice},
+      {"TWILIO_TEMPLATE_BILLING_INVOICE", :twilio_template_billing_invoice},
+      {"TWILIO_TEMPLATE_BILLING_INVOICE_APPROVAL", :twilio_template_billing_invoice_approval},
+      {"TWILIO_TEMPLATE_BILLING_INVOICE_LOCATION", :twilio_template_billing_invoice_location},
+      {"TWILIO_TEMPLATE_BILLING_INVOICE_TEAM", :twilio_template_billing_invoice_team},
       {"TWILIO_TEMPLATE_CONTRACT_LETTER", :twilio_template_contract_letter},
       {"TWILIO_TEMPLATE_JOB_OFFER", :twilio_template_job_offer},
       {"TWILIO_TEMPLATE_WORKER_ADDED", :twilio_template_worker_added}
