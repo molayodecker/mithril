@@ -1,6 +1,7 @@
 defmodule Mithril.OtpDelivery do
   @moduledoc false
 
+  alias Mithril.Notifications.Outbound
   alias Mithril.Repo
   alias Mithril.SecretCrypto
 
@@ -127,16 +128,19 @@ defmodule Mithril.OtpDelivery do
   defp send_whatsapp_resend(group, otp) do
     phone = Map.get(group, "to_phone")
 
-    case Mithril.Auth.SMS.send_message(
-           phone,
-           "Your Instaclean verification code is #{otp}. Do not share this code."
-         ) do
-      :ok ->
-        {:ok, %{ok: true}}
+    sent =
+      Outbound.deliver(%{
+        "template" => "phone_otp",
+        "channel" => "whatsapp",
+        "phone" => phone,
+        "variables" => %{"otp" => otp}
+      })["whatsappSent"]
 
-      {:error, _} ->
-        {:error,
-         {:status, 400, %{error: "Could not send code via WhatsApp. Try SMS or email instead."}}}
+    if sent do
+      {:ok, %{ok: true}}
+    else
+      {:error,
+       {:status, 400, %{error: "Could not send code via WhatsApp. Try SMS or email instead."}}}
     end
   end
 

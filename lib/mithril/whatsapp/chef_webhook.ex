@@ -41,7 +41,7 @@ defmodule Mithril.WhatsApp.ChefWebhook do
   def recruitment_redirect_text do
     case display_line(chef_from()) do
       nil ->
-        "This WhatsApp line is for cleaner applications. Reply APPLY to start. Chef enquiries use a separate Instaclean WhatsApp bot."
+        "This WhatsApp line is for Worker applications. Reply APPLY to start. Chef enquiries use a separate Instaclean WhatsApp bot."
 
       {display, link} ->
         "Chef enquiries have their own WhatsApp bot. Message #{display} or open #{link}."
@@ -222,10 +222,10 @@ defmodule Mithril.WhatsApp.ChefWebhook do
   defp cleaner_redirect_text do
     case display_line(Application.get_env(:mithril, :twilio_whatsapp_from)) do
       nil ->
-        "This WhatsApp line is for chef enquiries. To apply as a cleaner, visit tryinstaclean.com/join-as-cleaner."
+        "This WhatsApp line is for chef enquiries. To apply as a Worker, visit tryinstaclean.com/join-as-cleaner."
 
       {display, link} ->
-        "This WhatsApp line is for chef enquiries. To apply as a cleaner, message #{display} or open #{link}."
+        "This WhatsApp line is for chef enquiries. To apply as a Worker, message #{display} or open #{link}."
     end
   end
 

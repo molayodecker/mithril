@@ -5,6 +5,7 @@ defmodule Mithril.Notifications.SendNotification do
 
   alias Mithril.Notifications
   alias Mithril.Notifications.Outbound
+  alias Mithril.WhatsApp.ContentSids
 
   def configured? do
     present?(url()) and present?(token())
@@ -130,12 +131,15 @@ defmodule Mithril.Notifications.SendNotification do
       true ->
         channel = notify_channel(email, phone)
 
+        switched = ContentSids.template(template)
+
         transport =
           post(%{
             "template" => template,
             "channel" => channel,
             "messageType" => message_type,
             "smsFallbackToWhatsapp" => Keyword.get(opts, :sms_fallback_to_whatsapp, false),
+            "parallelWhatsApp" => if(switched, do: false),
             "variables" => variables,
             "bookingId" => booking_id,
             "userId" => user_id,
@@ -144,18 +148,29 @@ defmodule Mithril.Notifications.SendNotification do
           })
 
         whatsapp =
-          if parallel_whatsapp?(phone, opts) do
-            post(%{
-              "template" => template,
-              "channel" => "whatsapp",
-              "messageType" => message_type <> "_whatsapp",
-              "variables" => variables,
-              "bookingId" => booking_id,
-              "userId" => user_id,
-              "phone" => phone
-            })
-          else
-            false
+          cond do
+            not parallel_whatsapp?(phone, opts) ->
+              false
+
+            switched ->
+              Outbound.deliver(%{
+                "template" => template,
+                "channel" => "whatsapp",
+                "phone" => phone,
+                "variables" => variables,
+                "whatsappContentSid" => switched
+              })["whatsappSent"]
+
+            true ->
+              post(%{
+                "template" => template,
+                "channel" => "whatsapp",
+                "messageType" => message_type <> "_whatsapp",
+                "variables" => variables,
+                "bookingId" => booking_id,
+                "userId" => user_id,
+                "phone" => phone
+              })
           end
 
         transport or whatsapp
