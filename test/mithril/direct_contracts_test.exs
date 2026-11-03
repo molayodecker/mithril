@@ -34,9 +34,12 @@ defmodule Mithril.DirectContractsTest do
 
   test "removing an earlier invoice does not reuse an existing invoice number" do
     admin_id = Fixtures.insert_user!("admin")
+
     assert {:ok, %{"id" => contract_id}} =
              DirectContracts.create(admin_id, %{
-               "name" => "Numbered Invoice Client", "kind" => "person", "monthlyFeeMinor" => 100_000
+               "name" => "Numbered Invoice Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000
              })
 
     for {month, number} <- [{~D[2026-01-01], "INV-2026-001"}, {~D[2026-02-01], "INV-2026-002"}] do
@@ -46,49 +49,76 @@ defmodule Mithril.DirectContractsTest do
           (contract_id, period_month, invoice_no, public_token, issued_on, due_on, style, total_minor, created_by)
         VALUES ($1, $2, $3, $4, CURRENT_DATE, CURRENT_DATE, 'one_line', 100000, $5)
         """,
-        [Ecto.UUID.dump!(contract_id), month, number, Ecto.UUID.generate(), Ecto.UUID.dump!(admin_id)]
+        [
+          Ecto.UUID.dump!(contract_id),
+          month,
+          number,
+          Ecto.UUID.generate(),
+          Ecto.UUID.dump!(admin_id)
+        ]
       )
     end
 
     # Simulate the migration initializing the counter from pre-existing invoices.
     Repo.query!("SELECT setval('public.direct_contract_invoice_no_seq', 2)")
 
-    %{rows: [[old_id]]} = Repo.query!(
-      "SELECT id::text FROM public.direct_contract_invoices WHERE invoice_no = 'INV-2026-001'"
-    )
+    %{rows: [[old_id]]} =
+      Repo.query!(
+        "SELECT id::text FROM public.direct_contract_invoices WHERE invoice_no = 'INV-2026-001'"
+      )
+
     assert {:ok, _} = DirectContracts.remove_invoice(admin_id, contract_id, old_id)
 
     # This exercises the allocator without depending on a configured outbound provider.
-    assert {:error, :missing_email} = DirectContracts.send_invoice(admin_id, contract_id, %{
-      "month" => "2026-03", "style" => "one_line", "channel" => "email"
-    })
+    assert {:error, :missing_email} =
+             DirectContracts.send_invoice(admin_id, contract_id, %{
+               "month" => "2026-01",
+               "style" => "one_line",
+               "channel" => "email"
+             })
 
-    %{rows: [[new_number]]} = Repo.query!(
-      "SELECT invoice_no FROM public.direct_contract_invoices WHERE contract_id = $1 AND period_month = '2026-03-01'",
-      [Ecto.UUID.dump!(contract_id)]
-    )
+    %{rows: [[new_number]]} =
+      Repo.query!(
+        "SELECT invoice_no FROM public.direct_contract_invoices WHERE contract_id = $1 AND period_month = '2026-01-01'",
+        [Ecto.UUID.dump!(contract_id)]
+      )
+
     refute new_number in ["INV-2026-001", "INV-2026-002"]
   end
 
   test "an invoice cannot be removed while delivery is claimed" do
     admin_id = Fixtures.insert_user!("admin")
-    assert {:ok, %{"id" => contract_id}} = DirectContracts.create(admin_id, %{
-      "name" => "Delivery Client", "kind" => "person", "monthlyFeeMinor" => 100_000
-    })
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Delivery Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000
+             })
+
     invoice_id = Ecto.UUID.generate()
+
     Repo.query!(
       """
       INSERT INTO public.direct_contract_invoices
         (id, contract_id, period_month, invoice_no, public_token, issued_on, due_on, style, total_minor, created_by, sending_at)
       VALUES ($1, $2, CURRENT_DATE, $3, $4, CURRENT_DATE, CURRENT_DATE, 'one_line', 100000, $5, now())
       """,
-      [Ecto.UUID.dump!(invoice_id), Ecto.UUID.dump!(contract_id), "INV-CLAIM-#{invoice_id}",
-       Ecto.UUID.generate(), Ecto.UUID.dump!(admin_id)]
+      [
+        Ecto.UUID.dump!(invoice_id),
+        Ecto.UUID.dump!(contract_id),
+        "INV-CLAIM-#{invoice_id}",
+        Ecto.UUID.generate(),
+        Ecto.UUID.dump!(admin_id)
+      ]
     )
 
     assert {:error, :invoice_delivery_in_progress} =
              DirectContracts.remove_invoice(admin_id, contract_id, invoice_id)
-    assert Repo.query!("SELECT count(*) FROM public.direct_contract_invoices WHERE id = $1", [Ecto.UUID.dump!(invoice_id)]).rows == [[1]]
+
+    assert Repo.query!("SELECT count(*) FROM public.direct_contract_invoices WHERE id = $1", [
+             Ecto.UUID.dump!(invoice_id)
+           ]).rows == [[1]]
   end
 
   test "the service agreement starts on the day the contract was created when no start date is set" do

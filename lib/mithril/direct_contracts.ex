@@ -377,7 +377,9 @@ defmodule Mithril.DirectContracts do
                """,
                [contract_uid, invoice_uid]
              ).rows do
-          [[id]] -> %{"id" => id}
+          [[id]] ->
+            %{"id" => id}
+
           [] ->
             case fetch!(
                    "SELECT sending_at IS NOT NULL FROM public.direct_contract_invoices WHERE id = $1 AND contract_id = $2",
@@ -1574,6 +1576,7 @@ defmodule Mithril.DirectContracts do
       {:error, _} = error ->
         # A failed provider call must not permanently block an invoice from retrying.
         {:ok, uid} = dump_uuid(invoice["id"])
+
         Repo.query!(
           "UPDATE public.direct_contract_invoices SET sending_at = NULL WHERE id = $1 AND sent_at IS NULL",
           [uid]
