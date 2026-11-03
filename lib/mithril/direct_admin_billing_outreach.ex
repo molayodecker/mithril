@@ -30,9 +30,18 @@ defmodule Mithril.DirectAdminBillingOutreach do
          true <- channel in @channels and purpose in @purposes,
          {:ok, invoice} <- DirectAdminBilling.fetch_invoice(invoice_id),
          :ok <- ready?(invoice, purpose),
-         :ok <- deliver(user_id, invoice, channel, purpose),
-         {:ok, updated} <- mark_sent(invoice["id"], channel, purpose) do
-      {:ok, Map.merge(updated, %{"sent" => true, "channel" => channel, "purpose" => purpose})}
+         {:ok, claimed} <- claim_delivery(invoice, purpose) do
+      result =
+        with :ok <- deliver(user_id, claimed, channel, purpose),
+             {:ok, updated} <- mark_sent(claimed["id"], channel, purpose) do
+          {:ok, Map.merge(updated, %{"sent" => true, "channel" => channel, "purpose" => purpose})}
+        end
+
+      if match?({:error, _}, result) and purpose == "team" do
+        release_team_claim(claimed["id"])
+      end
+
+      result
     else
       false -> {:error, :invalid_request}
       :error -> {:error, :invalid_request}
@@ -46,12 +55,12 @@ defmodule Mithril.DirectAdminBillingOutreach do
          {:ok, workers} <- workers(params["workers"] || params[:workers]),
          {:ok, invoice} <- DirectAdminBilling.fetch_invoice(invoice_id),
          :ok <- team_editable?(invoice),
-         {:ok, _} <-
+         {:ok, %{num_rows: 1}} <-
            Repo.query(
              """
              UPDATE public.admin_billing_invoices
              SET proposed_workers = $2::jsonb, updated_at = now()
-             WHERE id = $1::uuid
+             WHERE id = $1::uuid AND team_sent_at IS NULL AND team_sending_at IS NULL
              """,
              [dump!(invoice_id), workers]
            ) do
@@ -59,6 +68,7 @@ defmodule Mithril.DirectAdminBillingOutreach do
     else
       :error -> {:error, :invalid_request}
       {:error, reason} when is_atom(reason) -> {:error, reason}
+      {:ok, %{num_rows: 0}} -> {:error, :team_already_sent}
       {:error, error} -> database_error(error)
     end
   end
@@ -190,16 +200,53 @@ defmodule Mithril.DirectAdminBillingOutreach do
     end
   end
 
+  defp claim_delivery(invoice, "team") do
+    case Repo.query(
+           """
+           UPDATE public.admin_billing_invoices
+           SET team_sending_at = now()
+           WHERE id = $1::uuid AND approval_status = 'approved'
+             AND team_sent_at IS NULL AND team_sending_at IS NULL
+             AND jsonb_array_length(proposed_workers) > 0
+           RETURNING id
+           """,
+           [dump!(invoice["id"])]
+         ) do
+      {:ok, %{num_rows: 1}} -> DirectAdminBilling.fetch_invoice(invoice["id"])
+      {:ok, _} -> {:error, :team_already_sent}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp claim_delivery(invoice, _purpose), do: {:ok, invoice}
+
+  defp release_team_claim(invoice_id) do
+    Repo.query(
+      "UPDATE public.admin_billing_invoices SET team_sending_at = NULL WHERE id = $1::uuid AND team_sent_at IS NULL",
+      [dump!(invoice_id)]
+    )
+  end
+
   defp deliver(admin_id, invoice, "whatsapp", purpose) do
     case Phone.normalize(invoice["billToPhone"] || "") do
       {:ok, phone} ->
-        InvoiceTemplate.deliver(
-          admin_id,
-          invoice,
-          phone,
-          message(invoice, purpose),
-          DirectAdminInvoices.money(invoice["totalMinor"])
-        )
+        if purpose == "invoice" do
+          InvoiceTemplate.deliver(
+            admin_id,
+            invoice,
+            phone,
+            message(invoice, purpose),
+            DirectAdminInvoices.money(invoice["totalMinor"])
+          )
+        else
+          case Mithril.DirectAdminWhatsApp.deliver_as_staff(admin_id, %{
+                 "phoneE164" => phone,
+                 "body" => message(invoice, purpose)
+               }) do
+            {:ok, _} -> :ok
+            {:error, reason} -> {:error, reason}
+          end
+        end
 
       :error ->
         {:error, :missing_phone}
@@ -251,10 +298,12 @@ defmodule Mithril.DirectAdminBillingOutreach do
         ""
       end
 
+    team_sql = if purpose == "team", do: ", team_sending_at = NULL", else: ""
+
     case Repo.query(
            """
            UPDATE public.admin_billing_invoices
-           SET #{at_column} = now(), #{channel_column} = $2#{status_sql}, updated_at = now()
+           SET #{at_column} = now(), #{channel_column} = $2#{status_sql}#{team_sql}, updated_at = now()
            WHERE id = $1::uuid
            """,
            [dump!(invoice_id), channel]
@@ -323,7 +372,7 @@ defmodule Mithril.DirectAdminBillingOutreach do
     Repo.query(
       """
       UPDATE public.admin_billing_invoices
-      SET service_address = $2, bill_to_address = $2, updated_at = now()
+      SET service_address = $2, updated_at = now()
       WHERE id = $1::uuid
       """,
       [dump!(invoice_id), address]
@@ -352,7 +401,7 @@ defmodule Mithril.DirectAdminBillingOutreach do
       "invoiceNo" => invoice["invoiceNo"],
       "issuedOn" => invoice["issuedOn"],
       "billToName" => invoice["billToName"],
-      "billToAddress" => invoice["serviceAddress"] || invoice["billToAddress"],
+      "billToAddress" => invoice["billToAddress"],
       "project" => invoice["project"],
       "lines" => invoice["lines"] || [],
       "adjustmentMinor" => invoice["adjustmentMinor"],
@@ -364,7 +413,8 @@ defmodule Mithril.DirectAdminBillingOutreach do
       "approvalStatus" => invoice["approvalStatus"],
       "approvalNote" => invoice["approvalNote"],
       "serviceAddress" => invoice["serviceAddress"],
-      "proposedWorkers" => if(invoice["teamSentAt"], do: invoice["proposedWorkers"] || [], else: []),
+      "proposedWorkers" =>
+        if(invoice["teamSentAt"], do: invoice["proposedWorkers"] || [], else: []),
       "invoiceSent" => not is_nil(invoice["invoiceSentAt"]),
       "locationRequested" => not is_nil(invoice["locationRequestedAt"]),
       "teamSent" => not is_nil(invoice["teamSentAt"])
@@ -446,7 +496,7 @@ defmodule Mithril.DirectAdminBillingOutreach do
     text =
       message(invoice, purpose)
       |> String.split("\n")
-      |> Enum.map(&("<p>#{escape(&1)}</p>"))
+      |> Enum.map(&"<p>#{escape(&1)}</p>")
       |> Enum.join()
 
     "<div style=\"font-family: sans-serif; color: #171e38;\">#{text}</div>"
