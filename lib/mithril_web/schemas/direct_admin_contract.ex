@@ -234,6 +234,37 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
     })
   end
 
+  defmodule LetterSignature do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectContractLetterSignature",
+      type: :object,
+      properties: %{
+        signerName: %Schema{type: :string},
+        signedAt: %Schema{type: :string, format: :"date-time"},
+        signature: %Schema{type: :string, description: "PNG data URL drawn by the signer"}
+      },
+      required: [:signerName, :signedAt, :signature]
+    })
+  end
+
+  defmodule LetterSignRequest do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectContractLetterSignRequest",
+      type: :object,
+      properties: %{
+        signerName: %Schema{type: :string},
+        signature: %Schema{type: :string, description: "PNG data URL drawn by the signer"}
+      },
+      required: [:signerName, :signature]
+    })
+  end
+
   defmodule LetterPreview do
     require OpenApiSpex
     alias OpenApiSpex.Schema
@@ -253,7 +284,9 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
         email: %Schema{type: :string, nullable: true},
         preamble: %Schema{type: :string},
         workers: %Schema{type: :array, items: LetterWorker},
-        clauses: %Schema{type: :array, items: LetterClause}
+        clauses: %Schema{type: :array, items: LetterClause},
+        providerSignature: %Schema{oneOf: [LetterSignature], nullable: true},
+        counterpartySignature: %Schema{oneOf: [LetterSignature], nullable: true}
       },
       required: [
         :issuedOn,
@@ -701,7 +734,9 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
         active: %Schema{type: :boolean, nullable: true},
         preamble: %Schema{type: :string},
         workers: %Schema{type: :array, items: LetterWorker},
-        clauses: %Schema{type: :array, items: LetterClause}
+        clauses: %Schema{type: :array, items: LetterClause},
+        providerSignature: %Schema{oneOf: [LetterSignature], nullable: true},
+        counterpartySignature: %Schema{oneOf: [LetterSignature], nullable: true}
       },
       required: [
         :letterNo,

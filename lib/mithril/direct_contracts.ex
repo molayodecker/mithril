@@ -467,6 +467,25 @@ defmodule Mithril.DirectContracts do
     end
   end
 
+  def sign_provider(user_id, contract_id, params) when is_map(params) do
+    with :ok <- require_admin(user_id),
+         {:ok, contract_uid} <- dump_uuid(contract_id),
+         {:ok, attrs} <- signature_attrs(params) do
+      case transact(fn -> stamp_provider_signature(contract_uid, attrs) end) do
+        {:ok, _} -> {:ok, %{"id" => contract_id}}
+        {:error, reason} -> unwrap(reason)
+      end
+    end
+  end
+
+  def sign_public_letter(token, params) when is_map(params) do
+    sign_public(token, params, :client)
+  end
+
+  def sign_public_worker_letter(token, params) when is_map(params) do
+    sign_public(token, params, :worker)
+  end
+
   def public_letter(token) when is_binary(token) do
     if token =~ ~r/\A[0-9a-f]{64}\z/ do
       case Repo.query(
@@ -476,7 +495,9 @@ defmodule Mithril.DirectContracts do
                     (c.status = 'active' AND EXISTS (
                       SELECT 1 FROM public.direct_contract_assignments a
                       WHERE a.contract_id = c.id AND a.status = 'active'
-                    ))
+                    )),
+                    l.provider_signer_name, l.provider_signed_at, l.provider_signature,
+                    l.client_signer_name, l.client_signed_at, l.client_signature
              FROM public.direct_contract_letters l
              JOIN public.direct_contracts c ON c.id = l.contract_id
              WHERE l.public_token = $1
@@ -500,7 +521,9 @@ defmodule Mithril.DirectContracts do
              """
              SELECT l.letter_no, l.issued_on, l.start_on, l.monthly_pay_minor, l.weekly_advance_minor, l.currency,
                     l.worker_name, l.role_label, l.client_name, l.phone, l.email, l.preamble, l.clauses,
-                    (c.status = 'active' AND a.status = 'active')
+                    (c.status = 'active' AND a.status = 'active'),
+                    l.provider_signer_name, l.provider_signed_at, l.provider_signature,
+                    l.worker_signer_name, l.worker_signed_at, l.worker_signature
              FROM public.direct_contract_worker_letters l
              JOIN public.direct_contract_assignments a ON a.id = l.assignment_id
              JOIN public.direct_contracts c ON c.id = l.contract_id
@@ -518,6 +541,202 @@ defmodule Mithril.DirectContracts do
   end
 
   def public_worker_letter(_), do: {:error, :not_found}
+
+  defp sign_public(token, params, role) when is_binary(token) do
+    with {:ok, attrs} <- signature_attrs(params),
+         true <- token =~ ~r/\A[0-9a-f]{64}\z/ do
+      case transact(fn -> stamp_counterparty_signature(token, attrs, role) end) do
+        {:ok, payload} -> {:ok, payload}
+        {:error, reason} -> unwrap(reason)
+      end
+    else
+      false -> {:error, :not_found}
+      other -> other
+    end
+  end
+
+  defp sign_public(_, _, _), do: {:error, :not_found}
+
+  defp stamp_provider_signature(contract_uid, attrs) do
+    case fetch!(
+           """
+           UPDATE public.direct_contracts
+           SET provider_signer_name = $2, provider_signed_at = now(), provider_signature = $3, updated_at = now()
+           WHERE id = $1 AND provider_signed_at IS NULL
+           RETURNING provider_signer_name, provider_signed_at, provider_signature
+           """,
+           [contract_uid, attrs.name, attrs.image]
+         ).rows do
+      [[name, signed_at, image]] ->
+        copy_provider_signature(
+          "public.direct_contract_letters",
+          contract_uid,
+          name,
+          signed_at,
+          image
+        )
+
+        copy_provider_signature(
+          "public.direct_contract_worker_letters",
+          contract_uid,
+          name,
+          signed_at,
+          image
+        )
+
+        :ok
+
+      [] ->
+        case fetch!("SELECT provider_signed_at FROM public.direct_contracts WHERE id = $1", [
+               contract_uid
+             ]).rows do
+          [] -> Repo.rollback(:contract_not_found)
+          [[nil]] -> Repo.rollback(:invalid_request)
+          _ -> Repo.rollback(:letter_already_signed)
+        end
+    end
+  end
+
+  defp copy_provider_signature(table, contract_uid, name, signed_at, image) do
+    fetch!(
+      """
+      UPDATE #{table}
+      SET provider_signer_name = $2, provider_signed_at = $3, provider_signature = $4
+      WHERE contract_id = $1 AND provider_signed_at IS NULL
+      """,
+      [contract_uid, name, signed_at, image]
+    )
+  end
+
+  defp stamp_counterparty_signature(token, attrs, :client) do
+    stamp_role_signature(
+      "public.direct_contract_letters",
+      "client_signer_name",
+      "client_signed_at",
+      "client_signature",
+      token,
+      attrs,
+      &public_letter/1
+    )
+  end
+
+  defp stamp_counterparty_signature(token, attrs, :worker) do
+    stamp_role_signature(
+      "public.direct_contract_worker_letters",
+      "worker_signer_name",
+      "worker_signed_at",
+      "worker_signature",
+      token,
+      attrs,
+      &public_worker_letter/1
+    )
+  end
+
+  defp stamp_role_signature(table, name_column, at_column, image_column, token, attrs, reader) do
+    case reader.(token) do
+      {:error, reason} ->
+        Repo.rollback(reason)
+
+      {:ok, %{"active" => false}} ->
+        Repo.rollback(:letter_not_active)
+
+      {:ok, %{"counterpartySignature" => signature}} when not is_nil(signature) ->
+        Repo.rollback(:letter_already_signed)
+
+      {:ok, _} ->
+        %{num_rows: rows} =
+          fetch!(
+            """
+            UPDATE #{table}
+            SET #{name_column} = $2, #{at_column} = now(), #{image_column} = $3
+            WHERE public_token = $1 AND #{at_column} IS NULL
+            """,
+            [token, attrs.name, attrs.image]
+          )
+
+        case rows do
+          1 ->
+            case reader.(token) do
+              {:ok, payload} -> payload
+              {:error, reason} -> Repo.rollback(reason)
+            end
+
+          _ ->
+            Repo.rollback(:letter_already_signed)
+        end
+    end
+  end
+
+  defp current_provider_signature(contract_uid) do
+    case fetch!(
+           """
+           SELECT provider_signer_name, provider_signed_at, provider_signature
+           FROM public.direct_contracts
+           WHERE id = $1
+           """,
+           [contract_uid]
+         ).rows do
+      [[name, signed_at, image]] -> [name, signed_at, image]
+      _ -> [nil, nil, nil]
+    end
+  end
+
+  defp letter_preview(contract) do
+    contract
+    |> Letter.preview(active_letter_workers(contract.id))
+    |> Map.put(
+      "providerSignature",
+      signature_map(
+        contract.provider_signer_name,
+        contract.provider_signed_at,
+        contract.provider_signature
+      )
+    )
+    |> Map.put("counterpartySignature", nil)
+  end
+
+  defp signature_attrs(params) do
+    name = params |> param("signerName") |> signature_name()
+    image = param(params, "signature")
+
+    cond do
+      name == :error -> {:error, :invalid_request}
+      not valid_signature?(image) -> {:error, :invalid_request}
+      true -> {:ok, %{name: name, image: image}}
+    end
+  end
+
+  defp signature_name(value) when is_binary(value) do
+    name = String.trim(value)
+    if name != "" and String.length(name) <= 120, do: name, else: :error
+  end
+
+  defp signature_name(_), do: :error
+
+  defp valid_signature?(value) when is_binary(value) do
+    byte_size(value) in 50..80_000 and
+      Regex.match?(~r{\Adata:image/png;base64,[A-Za-z0-9+/=]+\z}, value)
+  end
+
+  defp valid_signature?(_), do: false
+
+  defp signature_map(nil, _, _), do: nil
+  defp signature_map(_, nil, _), do: nil
+  defp signature_map(_, _, nil), do: nil
+
+  defp signature_map(name, signed_at, image) do
+    %{
+      "signerName" => name,
+      "signedAt" => signature_timestamp(signed_at),
+      "signature" => image
+    }
+  end
+
+  defp signature_timestamp(%DateTime{} = value), do: DateTime.to_iso8601(value)
+
+  defp signature_timestamp(%NaiveDateTime{} = value) do
+    value |> DateTime.from_naive!("Etc/UTC") |> DateTime.to_iso8601()
+  end
 
   def pay_automatic_advances do
     today = Calendar.today()
@@ -614,7 +833,7 @@ defmodule Mithril.DirectContracts do
     |> Map.put("invoices", history)
     |> Map.put("advances", present_advance_rows(paid))
     |> Map.put("paydayClosed", closed)
-    |> Map.put("letterPreview", Letter.preview(contract, active_letter_workers(contract.id)))
+    |> Map.put("letterPreview", letter_preview(contract))
     |> Map.put("letters", letter_history(contract.id))
     |> Map.put("workerLetters", worker_letter_history(contract.id))
   end
@@ -802,7 +1021,8 @@ defmodule Mithril.DirectContracts do
   defp contract_sql(where) do
     """
     SELECT c.id::text, c.monthly_fee_minor, c.currency, c.status, c.placement_id::text, c.created_at, c.start_on,
-           c.include_invoices, cl.name, cl.kind, cl.billing_contact, cl.phone, cl.email
+           c.include_invoices, cl.name, cl.kind, cl.billing_contact, cl.phone, cl.email,
+           c.provider_signer_name, c.provider_signed_at, c.provider_signature
     FROM public.direct_contracts c
     JOIN public.direct_contract_clients cl ON cl.id = c.client_id
     #{where}
@@ -822,7 +1042,10 @@ defmodule Mithril.DirectContracts do
          kind,
          contact,
          phone,
-         email
+         email,
+         provider_signer_name,
+         provider_signed_at,
+         provider_signature
        ]) do
     %{
       id: id,
@@ -837,7 +1060,10 @@ defmodule Mithril.DirectContracts do
       kind: kind,
       billing_contact: contact,
       phone: phone,
-      email: email
+      email: email,
+      provider_signer_name: provider_signer_name,
+      provider_signed_at: provider_signed_at,
+      provider_signature: provider_signature
     }
   end
 
@@ -1791,10 +2017,13 @@ defmodule Mithril.DirectContracts do
           UPDATE public.direct_contract_letters
           SET issued_on = $2, start_on = $3, monthly_fee_minor = $4, currency = $5,
               client_name = $6, billing_contact = $7, phone = $8, email = $9,
-              preamble = $10, workers = $11::jsonb, clauses = $12::jsonb
+              preamble = $10, workers = $11::jsonb, clauses = $12::jsonb,
+              provider_signer_name = COALESCE(provider_signer_name, $13),
+              provider_signed_at = COALESCE(provider_signed_at, $14),
+              provider_signature = COALESCE(provider_signature, $15)
           WHERE id = $1
           """,
-          [id | params]
+          [id | params] ++ current_provider_signature(contract_uid)
         )
 
         letter_payload(id, number, token, preview)
@@ -1808,11 +2037,15 @@ defmodule Mithril.DirectContracts do
             """
             INSERT INTO public.direct_contract_letters (
               contract_id, letter_no, public_token, issued_on, start_on, monthly_fee_minor, currency,
-              client_name, billing_contact, phone, email, preamble, workers, clauses, created_by
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15)
+              client_name, billing_contact, phone, email, preamble, workers, clauses, created_by,
+              provider_signer_name, provider_signed_at, provider_signature
+            ) VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16, $17, $18
+            )
             RETURNING id
             """,
-            [contract_uid, number, token | params] ++ [admin_uid]
+            [contract_uid, number, token | params] ++
+              [admin_uid | current_provider_signature(contract_uid)]
           )
 
         letter_payload(id, number, token, preview)
@@ -1864,7 +2097,13 @@ defmodule Mithril.DirectContracts do
          preamble,
          workers,
          clauses,
-         active
+         active,
+         provider_name,
+         provider_signed_at,
+         provider_signature,
+         client_name_signed,
+         client_signed_at,
+         client_signature
        ]) do
     %{
       "letterNo" => number,
@@ -1880,7 +2119,10 @@ defmodule Mithril.DirectContracts do
       "preamble" => preamble,
       "workers" => json_list(workers),
       "clauses" => json_list(clauses),
-      "active" => active == true
+      "active" => active == true,
+      "providerSignature" => signature_map(provider_name, provider_signed_at, provider_signature),
+      "counterpartySignature" =>
+        signature_map(client_name_signed, client_signed_at, client_signature)
     }
   end
 
@@ -1898,7 +2140,13 @@ defmodule Mithril.DirectContracts do
          email,
          preamble,
          clauses,
-         active
+         active,
+         provider_name,
+         provider_signed_at,
+         provider_signature,
+         worker_signed_name,
+         worker_signed_at,
+         worker_signature
        ]) do
     %{
       "kind" => "worker",
@@ -1918,7 +2166,10 @@ defmodule Mithril.DirectContracts do
       "preamble" => preamble,
       "workers" => [],
       "clauses" => json_list(clauses),
-      "active" => active == true
+      "active" => active == true,
+      "providerSignature" => signature_map(provider_name, provider_signed_at, provider_signature),
+      "counterpartySignature" =>
+        signature_map(worker_signed_name, worker_signed_at, worker_signature)
     }
   end
 
@@ -2195,10 +2446,13 @@ defmodule Mithril.DirectContracts do
           UPDATE public.direct_contract_worker_letters
           SET issued_on = $2, start_on = $3, monthly_pay_minor = $4, weekly_advance_minor = $5,
               currency = $6, worker_name = $7, role_label = $8, client_name = $9,
-              phone = $10, email = $11, preamble = $12, clauses = $13::jsonb
+              phone = $10, email = $11, preamble = $12, clauses = $13::jsonb,
+              provider_signer_name = COALESCE(provider_signer_name, $14),
+              provider_signed_at = COALESCE(provider_signed_at, $15),
+              provider_signature = COALESCE(provider_signature, $16)
           WHERE id = $1
           """,
-          [id | worker_letter_params(drafted, issued)]
+          [id | worker_letter_params(drafted, issued)] ++ current_provider_signature(contract_uid)
         )
 
       [] ->
@@ -2210,9 +2464,11 @@ defmodule Mithril.DirectContracts do
           INSERT INTO public.direct_contract_worker_letters (
             contract_id, client_letter_id, assignment_id, worker_id, letter_no, public_token,
             issued_on, start_on, monthly_pay_minor, weekly_advance_minor, currency,
-            worker_name, role_label, client_name, phone, email, preamble, clauses, created_by
+            worker_name, role_label, client_name, phone, email, preamble, clauses, created_by,
+            provider_signer_name, provider_signed_at, provider_signature
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19,
+            $20, $21, $22
           )
           """,
           [
@@ -2222,7 +2478,7 @@ defmodule Mithril.DirectContracts do
             worker_uid,
             number,
             token | worker_letter_params(drafted, issued)
-          ] ++ [admin_uid]
+          ] ++ [admin_uid | current_provider_signature(contract_uid)]
         )
     end
   end
@@ -2249,7 +2505,9 @@ defmodule Mithril.DirectContracts do
            """
            SELECT l.letter_no, l.issued_on, l.start_on, l.monthly_pay_minor, l.weekly_advance_minor, l.currency,
                   l.worker_name, l.role_label, l.client_name, l.phone, l.email, l.preamble, l.clauses,
-                  (c.status = 'active' AND a.status = 'active')
+                  (c.status = 'active' AND a.status = 'active'),
+                  l.provider_signer_name, l.provider_signed_at, l.provider_signature,
+                  l.worker_signer_name, l.worker_signed_at, l.worker_signature
            FROM public.direct_contract_worker_letters l
            JOIN public.direct_contract_assignments a ON a.id = l.assignment_id
            JOIN public.direct_contracts c ON c.id = l.contract_id
