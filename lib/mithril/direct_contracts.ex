@@ -93,7 +93,8 @@ defmodule Mithril.DirectContracts do
     with :ok <- require_admin(user_id),
          {:ok, client} <- client_attrs(params),
          {:ok, fee} <- positive_int(param(params, "monthlyFeeMinor")),
-         {:ok, placement_id} <- optional_uuid(param(params, "placementId")) do
+         {:ok, placement_id} <- optional_uuid(param(params, "placementId")),
+         {:ok, start_on} <- optional_date(param(params, "startOn")) do
       case Repo.transaction(fn ->
              %{rows: [[client_uid]]} =
                fetch!(
@@ -114,11 +115,16 @@ defmodule Mithril.DirectContracts do
              %{rows: [[contract_uid]]} =
                fetch!(
                  """
-                 INSERT INTO public.direct_contracts (client_id, monthly_fee_minor, placement_id)
-                 VALUES ($1, $2, $3)
+                 INSERT INTO public.direct_contracts (client_id, monthly_fee_minor, placement_id, start_on)
+                 VALUES ($1, $2, $3, $4)
                  RETURNING id
                  """,
-                 [client_uid, fee, placement_id && elem(Ecto.UUID.dump(placement_id), 1)]
+                 [
+                   client_uid,
+                   fee,
+                   placement_id && elem(Ecto.UUID.dump(placement_id), 1),
+                   start_on
+                 ]
                )
 
              %{"id" => uuid_text(contract_uid), "clientId" => uuid_text(client_uid)}
@@ -133,7 +139,8 @@ defmodule Mithril.DirectContracts do
     with :ok <- require_admin(user_id),
          {:ok, contract_uid} <- dump_uuid(contract_id),
          {:ok, client} <- client_attrs(params),
-         {:ok, fee} <- positive_int(param(params, "monthlyFeeMinor")) do
+         {:ok, fee} <- positive_int(param(params, "monthlyFeeMinor")),
+         {:ok, start_on} <- optional_date(param(params, "startOn")) do
       case Repo.transaction(fn ->
              result =
                fetch!(
@@ -159,10 +166,12 @@ defmodule Mithril.DirectContracts do
                  fetch!(
                    """
                    UPDATE public.direct_contracts
-                   SET monthly_fee_minor = $2, updated_at = now()
+                   SET monthly_fee_minor = $2,
+                       start_on = COALESCE($3::date, start_on),
+                       updated_at = now()
                    WHERE id = $1
                    """,
-                   [contract_uid, fee]
+                   [contract_uid, fee, start_on]
                  )
 
                  %{"id" => id}
@@ -351,6 +360,26 @@ defmodule Mithril.DirectContracts do
          {:ok, month} <- month_or_current(param(params, "month")) do
       with_admin(admin_uid, fn ->
         close_payday(admin_uid, contract_uid, month)
+      end)
+    end
+  end
+
+  def remove_invoice(user_id, contract_id, invoice_id) do
+    with :ok <- require_admin(user_id),
+         {:ok, contract_uid} <- dump_uuid(contract_id),
+         {:ok, invoice_uid} <- dump_uuid(invoice_id) do
+      transact(fn ->
+        case fetch!(
+               """
+               DELETE FROM public.direct_contract_invoices
+               WHERE id = $2 AND contract_id = $1
+               RETURNING id::text
+               """,
+               [contract_uid, invoice_uid]
+             ).rows do
+          [[id]] -> %{"id" => id}
+          [] -> Repo.rollback(:contract_invoice_not_found)
+        end
       end)
     end
   end
@@ -756,7 +785,7 @@ defmodule Mithril.DirectContracts do
 
   defp contract_sql(where) do
     """
-    SELECT c.id::text, c.monthly_fee_minor, c.currency, c.status, c.placement_id::text, c.created_at,
+    SELECT c.id::text, c.monthly_fee_minor, c.currency, c.status, c.placement_id::text, c.created_at, c.start_on,
            cl.name, cl.kind, cl.billing_contact, cl.phone, cl.email
     FROM public.direct_contracts c
     JOIN public.direct_contract_clients cl ON cl.id = c.client_id
@@ -771,6 +800,7 @@ defmodule Mithril.DirectContracts do
          status,
          placement_id,
          created_at,
+         start_on,
          name,
          kind,
          contact,
@@ -784,6 +814,7 @@ defmodule Mithril.DirectContracts do
       status: status,
       placement_id: placement_id,
       created_at: created_at,
+      start_on: start_on,
       name: name,
       kind: kind,
       billing_contact: contact,
@@ -1632,7 +1663,7 @@ defmodule Mithril.DirectContracts do
     transact(fn ->
       case fetch!(
              """
-             SELECT c.monthly_fee_minor, c.currency, c.created_at, cl.name, cl.billing_contact, cl.phone, cl.email
+             SELECT c.monthly_fee_minor, c.currency, c.created_at, c.start_on, cl.name, cl.billing_contact, cl.phone, cl.email
              FROM public.direct_contracts c
              JOIN public.direct_contract_clients cl ON cl.id = c.client_id
              WHERE c.id = $1
@@ -1643,7 +1674,7 @@ defmodule Mithril.DirectContracts do
         [] ->
           Repo.rollback(:contract_not_found)
 
-        [[fee, currency, created_at, name, contact, phone, email]] ->
+        [[fee, currency, created_at, start_on, name, contact, phone, email]] ->
           workers = letter_workers!(contract_uid)
           if workers == [], do: Repo.rollback(:letter_needs_worker)
 
@@ -1651,6 +1682,7 @@ defmodule Mithril.DirectContracts do
             monthly_fee_minor: fee,
             currency: currency,
             created_at: created_at,
+            start_on: start_on,
             name: name,
             billing_contact: contact,
             phone: phone,
@@ -2786,6 +2818,19 @@ defmodule Mithril.DirectContracts do
   end
 
   defp required_text(_, _), do: {:error, :invalid_request}
+
+  defp optional_date(nil), do: {:ok, nil}
+  defp optional_date(""), do: {:ok, nil}
+
+  defp optional_date(value) when is_binary(value) do
+    case Date.from_iso8601(String.trim(value)) do
+      {:ok, date} -> {:ok, date}
+      _ -> {:error, :invalid_request}
+    end
+  end
+
+  defp optional_date(%Date{} = date), do: {:ok, date}
+  defp optional_date(_), do: {:error, :invalid_request}
 
   defp optional_text(nil, _), do: {:ok, nil}
 

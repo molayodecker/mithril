@@ -15,6 +15,40 @@ defmodule Mithril.DirectContractsTest do
     :ok
   end
 
+  test "the service agreement uses the chosen start date" do
+    contract = %{
+      created_at: ~U[2026-01-02 08:00:00Z],
+      start_on: ~D[2026-03-15],
+      name: "Client",
+      monthly_fee_minor: 400_000,
+      currency: "GHS",
+      billing_contact: nil,
+      phone: nil,
+      email: nil
+    }
+
+    preview = Letter.preview(contract, [])
+    assert preview["startOn"] == "2026-03-15"
+    assert Enum.any?(preview["clauses"], &String.contains?(&1["body"], "15 Mar 2026"))
+  end
+
+  test "the service agreement starts on the day the contract was created when no start date is set" do
+    contract = %{
+      created_at: ~U[2026-01-02 08:00:00Z],
+      start_on: nil,
+      name: "Client",
+      monthly_fee_minor: 400_000,
+      currency: "GHS",
+      billing_contact: nil,
+      phone: nil,
+      email: nil
+    }
+
+    preview = Letter.preview(contract, [])
+    assert preview["startOn"] == "2026-01-02"
+    assert Enum.any?(preview["clauses"], &String.contains?(&1["body"], "2 Jan 2026"))
+  end
+
   test "worker letter starts on assignment date, not original contract date" do
     contract = %{created_at: ~D[2026-01-01], name: "Client", currency: "GHS"}
 
@@ -805,6 +839,35 @@ defmodule Mithril.DirectContractsTest do
              "SELECT count(*) FROM public.direct_contract_assignments WHERE id = $1",
              [Ecto.UUID.dump!(assignment_id)]
            ).rows == [[1]]
+
+    assert {:ok, %{"id" => other_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Other Invoice Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000
+             })
+
+    assert {:error, :contract_invoice_not_found} =
+             DirectContracts.remove_invoice(admin_id, other_id, invoice_id)
+
+    assert {:ok, %{"id" => ^invoice_id}} =
+             DirectContracts.remove_invoice(admin_id, contract_id, invoice_id)
+
+    assert Repo.query!(
+             "SELECT count(*) FROM public.direct_contract_invoices WHERE id = $1",
+             [Ecto.UUID.dump!(invoice_id)]
+           ).rows == [[0]]
+
+    assert Repo.query!(
+             "SELECT count(*) FROM public.direct_contract_invoice_lines WHERE invoice_id = $1",
+             [Ecto.UUID.dump!(invoice_id)]
+           ).rows == [[0]]
+
+    assert {:error, :contract_invoice_not_found} =
+             DirectContracts.remove_invoice(admin_id, contract_id, invoice_id)
+
+    assert {:ok, %{"id" => ^assignment_id}} =
+             DirectContracts.remove_assignment(admin_id, contract_id, assignment_id)
   end
 
   defp normalize_automatic(:ok), do: {:ok, %{"paidCount" => 0, "totalMinor" => 0}}
@@ -840,6 +903,7 @@ defmodule Mithril.DirectContractsTest do
     install_sql!("../../priv/repo/sql/direct/20261101130000_direct_contract_worker_letters.sql")
     install_sql!("../../priv/repo/sql/direct/20261101140000_direct_contract_letter_numbers.sql")
     install_sql!("../../priv/repo/sql/direct/20261101150000_direct_contract_letter_sending.sql")
+    install_sql!("../../priv/repo/sql/direct/20261103150000_direct_contract_start_on.sql")
   end
 
   defp install_sql!(relative) do

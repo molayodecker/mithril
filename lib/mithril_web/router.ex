@@ -281,6 +281,11 @@ defmodule MithrilWeb.Router do
     post "/admin/contracts/:id/advances", DirectAdminContractsController, :pay_advance
     post "/admin/contracts/:id/payday", DirectAdminContractsController, :payday
     post "/admin/contracts/:id/invoices", DirectAdminContractsController, :send_invoice
+
+    post "/admin/contracts/:id/invoices/:invoice_id/remove",
+         DirectAdminContractsController,
+         :remove_invoice
+
     post "/admin/contracts/:id/letters", DirectAdminContractsController, :send_letter
 
     get "/admin/bookings/:id/payment-diagnostics",

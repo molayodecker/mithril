@@ -11,7 +11,7 @@ defmodule Mithril.DirectContracts.Letter do
   @months ~w(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec)
 
   def preview(contract, workers) do
-    start = start_date(contract.created_at)
+    start = engagement_date(contract)
     fee = Calendar.format_ghs(contract.monthly_fee_minor)
 
     %{
@@ -181,6 +181,9 @@ defmodule Mithril.DirectContracts.Letter do
   defp clause(number, title, body) do
     %{"number" => number, "title" => title, "body" => body}
   end
+
+  defp engagement_date(%{start_on: %Date{} = date}), do: date
+  defp engagement_date(%{created_at: created}), do: start_date(created)
 
   defp start_date(%DateTime{} = value), do: DateTime.to_date(value)
   defp start_date(%NaiveDateTime{} = value), do: NaiveDateTime.to_date(value)
