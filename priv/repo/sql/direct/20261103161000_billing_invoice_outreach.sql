@@ -32,3 +32,31 @@ END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS admin_billing_invoices_public_token_idx
   ON public.admin_billing_invoices (public_token);
+
+-- Preserve the exact commercial terms the client approved. Address and delivery
+-- metadata remain editable without altering the approved consideration.
+CREATE OR REPLACE FUNCTION public.prevent_approved_billing_invoice_terms_change()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.approval_status = 'approved'
+     AND (OLD.issued_on, OLD.bill_to_name, OLD.project, OLD.lines,
+          OLD.adjustment_minor, OLD.subtotal_minor, OLD.total_minor,
+          OLD.currency, OLD.notes, OLD.signatory_role)
+         IS DISTINCT FROM
+         (NEW.issued_on, NEW.bill_to_name, NEW.project, NEW.lines,
+          NEW.adjustment_minor, NEW.subtotal_minor, NEW.total_minor,
+          NEW.currency, NEW.notes, NEW.signatory_role) THEN
+    RAISE EXCEPTION 'approved_invoice_immutable';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS protect_approved_billing_invoice_terms
+  ON public.admin_billing_invoices;
+CREATE TRIGGER protect_approved_billing_invoice_terms
+BEFORE UPDATE ON public.admin_billing_invoices
+FOR EACH ROW EXECUTE FUNCTION public.prevent_approved_billing_invoice_terms_change();
+
+ALTER TABLE public.admin_billing_invoices
+  ADD COLUMN IF NOT EXISTS team_sending_at timestamptz;
