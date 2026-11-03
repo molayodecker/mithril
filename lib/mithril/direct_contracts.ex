@@ -697,6 +697,11 @@ defmodule Mithril.DirectContracts do
             "a.contract_id = $1"
           end
 
+        params =
+          if table == "public.direct_contract_worker_letters",
+            do: [contract_uid, token],
+            else: [contract_uid]
+
         fetch!(
           """
           SELECT a.id
@@ -705,10 +710,7 @@ defmodule Mithril.DirectContracts do
           ORDER BY a.id
           FOR UPDATE
           """,
-          if(table == "public.direct_contract_worker_letters",
-            do: [contract_uid, token],
-            else: [contract_uid]
-          )
+          params
         )
 
         # Unsent documents can be regenerated with different terms on retry.
