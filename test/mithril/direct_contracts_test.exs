@@ -688,6 +688,125 @@ defmodule Mithril.DirectContractsTest do
     assert Repo.query!("SELECT count(*) FROM public.users").rows == [[2]]
   end
 
+  test "a mistaken assignment can be removed until a payment exists" do
+    admin_id = Fixtures.insert_user!("admin")
+    worker_id = named_worker!("Emilia Agyei")
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Maame Dede Buckman",
+               "kind" => "person",
+               "monthlyFeeMinor" => 350_000
+             })
+
+    assert {:ok, %{"id" => assignment_id}} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerId" => worker_id,
+               "roleLabel" => "Househelp",
+               "monthlyPayMinor" => 160_000,
+               "clientRateMinor" => 160_000
+             })
+
+    assert {:ok, _} = DirectContracts.end_assignment(admin_id, contract_id, assignment_id)
+
+    assert {:ok, stuck} = DirectContracts.show(admin_id, contract_id, nil)
+    assert Enum.map(stuck["workers"], & &1["workerName"]) == ["Emilia Agyei"]
+    assert stuck["netDueMinor"] == 160_000
+
+    assert {:ok, %{"id" => ^assignment_id}} =
+             DirectContracts.remove_assignment(admin_id, contract_id, assignment_id)
+
+    assert {:ok, cleared} = DirectContracts.show(admin_id, contract_id, nil)
+    assert cleared["workers"] == []
+    assert cleared["netDueMinor"] == 0
+
+    assert {:ok, %{"id" => again_id}} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerId" => worker_id,
+               "roleLabel" => "Househelp",
+               "monthlyPayMinor" => 160_000,
+               "clientRateMinor" => 160_000
+             })
+
+    %{rows: [[payday_id]]} =
+      Repo.query!(
+        """
+        INSERT INTO public.direct_contract_paydays (contract_id, period_month, paid_by, total_net_minor)
+        VALUES ($1, date_trunc('month', CURRENT_DATE)::date, $2, 0)
+        RETURNING id
+        """,
+        [Ecto.UUID.dump!(contract_id), Ecto.UUID.dump!(admin_id)]
+      )
+
+    Repo.query!(
+      """
+      INSERT INTO public.direct_contract_payday_lines (
+        payday_id, assignment_id, gross_minor, advances_minor, net_minor
+      ) VALUES ($1, $2, 0, 0, 0)
+      """,
+      [payday_id, Ecto.UUID.dump!(again_id)]
+    )
+
+    assert {:error, :assignment_has_payments} =
+             DirectContracts.remove_assignment(admin_id, contract_id, again_id)
+  end
+
+  test "a draft invoice line prevents removal with an actionable conflict" do
+    admin_id = Fixtures.insert_user!("admin")
+    worker_id = named_worker!("Draft Invoice Worker")
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Draft Invoice Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000
+             })
+
+    assert {:ok, %{"id" => assignment_id}} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerId" => worker_id,
+               "roleLabel" => "Househelp",
+               "monthlyPayMinor" => 50_000,
+               "clientRateMinor" => 50_000
+             })
+
+    invoice_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.direct_contract_invoices
+        (id, contract_id, period_month, invoice_no, public_token, issued_on,
+         due_on, style, total_minor, created_by)
+      VALUES ($1, $2, CURRENT_DATE, $3, $4, CURRENT_DATE, CURRENT_DATE,
+              'per_worker', 50000, $5)
+      """,
+      [
+        Ecto.UUID.dump!(invoice_id),
+        Ecto.UUID.dump!(contract_id),
+        "INV-DRAFT-#{invoice_id}",
+        "token-#{invoice_id}",
+        Ecto.UUID.dump!(admin_id)
+      ]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.direct_contract_invoice_lines
+        (invoice_id, position, description, amount_minor, assignment_id)
+      VALUES ($1, 0, 'Draft worker line', 50000, $2)
+      """,
+      [Ecto.UUID.dump!(invoice_id), Ecto.UUID.dump!(assignment_id)]
+    )
+
+    assert {:error, :assignment_has_invoice} =
+             DirectContracts.remove_assignment(admin_id, contract_id, assignment_id)
+
+    assert Repo.query!(
+             "SELECT count(*) FROM public.direct_contract_assignments WHERE id = $1",
+             [Ecto.UUID.dump!(assignment_id)]
+           ).rows == [[1]]
+  end
+
   defp normalize_automatic(:ok), do: {:ok, %{"paidCount" => 0, "totalMinor" => 0}}
   defp normalize_automatic(other), do: other
 

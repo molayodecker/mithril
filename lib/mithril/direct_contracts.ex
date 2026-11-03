@@ -250,6 +250,69 @@ defmodule Mithril.DirectContracts do
     end
   end
 
+  def remove_assignment(user_id, contract_id, assignment_id) do
+    with :ok <- require_admin(user_id),
+         {:ok, contract_uid} <- dump_uuid(contract_id),
+         {:ok, assignment_uid} <- dump_uuid(assignment_id) do
+      transact(fn ->
+        case fetch!(
+               """
+               SELECT id
+               FROM public.direct_contract_assignments
+               WHERE id = $2 AND contract_id = $1
+               FOR UPDATE
+               """,
+               [contract_uid, assignment_uid]
+             ).rows do
+          [] -> Repo.rollback(:assignment_not_found)
+          [_] -> :ok
+        end
+
+        if assignment_count(
+             "SELECT COUNT(*) FROM public.direct_contract_advances WHERE assignment_id = $1",
+             [assignment_uid]
+           ) > 0 or
+             assignment_count(
+               "SELECT COUNT(*) FROM public.direct_contract_payday_lines WHERE assignment_id = $1",
+               [assignment_uid]
+             ) > 0 do
+          Repo.rollback(:assignment_has_payments)
+        end
+
+        if relation?("public.direct_contract_worker_letters") and
+             assignment_count(
+               "SELECT COUNT(*) FROM public.direct_contract_worker_letters WHERE assignment_id = $1",
+               [assignment_uid]
+             ) > 0 do
+          Repo.rollback(:assignment_has_letter)
+        end
+
+        # Even an unsent invoice may already have a persisted per-worker line.
+        # Preserve the invoice audit trail and report a useful conflict rather
+        # than allowing a foreign-key failure to surface as a database outage.
+        if relation?("public.direct_contract_invoice_lines") and
+             assignment_count(
+               "SELECT COUNT(*) FROM public.direct_contract_invoice_lines WHERE assignment_id = $1",
+               [assignment_uid]
+             ) > 0 do
+          Repo.rollback(:assignment_has_invoice)
+        end
+
+        %{rows: [[id]]} =
+          fetch!(
+            """
+            DELETE FROM public.direct_contract_assignments
+            WHERE id = $2 AND contract_id = $1
+            RETURNING id::text
+            """,
+            [contract_uid, assignment_uid]
+          )
+
+        %{"id" => id}
+      end)
+    end
+  end
+
   def pay_advance(user_id, contract_id, params) when is_map(params) do
     with :ok <- require_admin(user_id),
          {:ok, admin_uid} <- dump_uuid(user_id),
@@ -2625,6 +2688,10 @@ defmodule Mithril.DirectContracts do
 
   defp relation?(name) do
     fetch!("SELECT to_regclass($1) IS NOT NULL", [name]).rows == [[true]]
+  end
+
+  defp assignment_count(sql, params) do
+    fetch!(sql, params).rows |> hd() |> hd() |> int()
   end
 
   defp notify_added_worker(_user_id, nil), do: false
