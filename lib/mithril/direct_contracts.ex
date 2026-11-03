@@ -692,7 +692,7 @@ defmodule Mithril.DirectContracts do
         # assignment for the worker letter. end_assignment updates these rows.
         assignment_filter =
           if table == "public.direct_contract_worker_letters" do
-            "a.id = (SELECT assignment_id FROM #{table} WHERE public_token = $2)"
+            "a.contract_id = $1 AND a.id = (SELECT assignment_id FROM #{table} WHERE public_token = $2)"
           else
             "a.contract_id = $1"
           end
