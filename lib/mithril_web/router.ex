@@ -148,7 +148,9 @@ defmodule MithrilWeb.Router do
     get "/invoices/:token", DirectAdminInvoicesController, :public_show
     get "/contract-invoices/:token", DirectAdminContractsController, :public_show
     get "/contract-letters/:token", DirectAdminContractsController, :public_letter
+    post "/contract-letters/:token/sign", DirectAdminContractsController, :sign_public_letter
     get "/worker-letters/:token", DirectAdminContractsController, :public_worker_letter
+    post "/worker-letters/:token/sign", DirectAdminContractsController, :sign_public_worker_letter
     get "/pay/:token", DirectPaymentRequestsController, :public_show
     post "/pay/:token/checkout", DirectPaymentRequestsController, :checkout
     post "/pay/:token/verify", DirectPaymentRequestsController, :verify
@@ -287,6 +289,7 @@ defmodule MithrilWeb.Router do
          :remove_invoice
 
     post "/admin/contracts/:id/letters", DirectAdminContractsController, :send_letter
+    post "/admin/contracts/:id/sign", DirectAdminContractsController, :sign
 
     get "/admin/bookings/:id/payment-diagnostics",
         DirectOperationsController,

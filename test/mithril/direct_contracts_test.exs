@@ -461,6 +461,110 @@ defmodule Mithril.DirectContractsTest do
            ]).rows == [[false]]
   end
 
+  @signature "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+
+  test "Instaclean and the client can sign the service agreement" do
+    admin_id = Fixtures.insert_user!("admin")
+    stranger_id = Fixtures.insert_user!()
+    worker_id = named_worker!("Ama Owusu")
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Signed Household",
+               "kind" => "person",
+               "phone" => "+233245550142",
+               "email" => "signed@example.com",
+               "monthlyFeeMinor" => 200_000
+             })
+
+    assert {:error, :invalid_request} =
+             DirectContracts.sign_provider(admin_id, contract_id, %{
+               "signerName" => "Abena Quaye",
+               "signature" => "not-a-signature"
+             })
+
+    assert {:error, :forbidden} =
+             DirectContracts.sign_provider(stranger_id, contract_id, %{
+               "signerName" => "Abena Quaye",
+               "signature" => @signature
+             })
+
+    assert {:ok, _} =
+             DirectContracts.sign_provider(admin_id, contract_id, %{
+               "signerName" => "Abena Quaye",
+               "signature" => @signature
+             })
+
+    assert {:error, :letter_already_signed} =
+             DirectContracts.sign_provider(admin_id, contract_id, %{
+               "signerName" => "Someone Else",
+               "signature" => @signature
+             })
+
+    assert {:ok, detail} = DirectContracts.show(admin_id, contract_id, nil)
+    assert detail["letterPreview"]["providerSignature"]["signerName"] == "Abena Quaye"
+    assert detail["letterPreview"]["providerSignature"]["signature"] == @signature
+    assert detail["letterPreview"]["counterpartySignature"] == nil
+
+    assert {:ok, _} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerId" => worker_id,
+               "roleLabel" => "Househelp",
+               "monthlyPayMinor" => 80_000,
+               "clientRateMinor" => 200_000,
+               "advanceMode" => "manual"
+             })
+
+    Application.put_env(:mithril, :resend_api_key, "re_test")
+    Application.put_env(:mithril, :resend_req_options, plug: {Req.Test, Mithril.DirectContracts})
+
+    Req.Test.stub(Mithril.DirectContracts, fn conn ->
+      Req.Test.json(conn, %{"id" => "email_signed_letter"})
+    end)
+
+    assert {:ok, %{"viewUrl" => view_url}} =
+             DirectContracts.send_letter(admin_id, contract_id, %{"channel" => "email"})
+
+    token = view_url |> String.split("/") |> List.last()
+    assert {:ok, letter} = DirectContracts.public_letter(token)
+    assert letter["providerSignature"]["signerName"] == "Abena Quaye"
+    assert letter["counterpartySignature"] == nil
+
+    assert {:ok, signed} =
+             DirectContracts.sign_public_letter(token, %{
+               "signerName" => "Signed Household",
+               "signature" => @signature
+             })
+
+    assert signed["counterpartySignature"]["signerName"] == "Signed Household"
+
+    assert {:error, :letter_already_signed} =
+             DirectContracts.sign_public_letter(token, %{
+               "signerName" => "Signed Household",
+               "signature" => @signature
+             })
+
+    [[worker_token]] =
+      Repo.query!(
+        """
+        SELECT public_token FROM public.direct_contract_worker_letters
+        WHERE contract_id = $1
+        """,
+        [Ecto.UUID.dump!(contract_id)]
+      ).rows
+
+    assert {:ok, worker_letter} = DirectContracts.public_worker_letter(worker_token)
+    assert worker_letter["providerSignature"]["signerName"] == "Abena Quaye"
+
+    assert {:ok, signed_worker} =
+             DirectContracts.sign_public_worker_letter(worker_token, %{
+               "signerName" => "Ama Owusu",
+               "signature" => @signature
+             })
+
+    assert signed_worker["counterpartySignature"]["signerName"] == "Ama Owusu"
+  end
+
   test "a contract letter names the client, the workers, and the monthly fee" do
     admin_id = Fixtures.insert_user!("admin")
     stranger_id = Fixtures.insert_user!()
@@ -1014,6 +1118,7 @@ defmodule Mithril.DirectContractsTest do
     install_sql!("../../priv/repo/sql/direct/20261101150000_direct_contract_letter_sending.sql")
     install_sql!("../../priv/repo/sql/direct/20261103150000_direct_contract_start_on.sql")
     install_sql!("../../priv/repo/sql/direct/20261103170000_direct_contract_include_invoices.sql")
+    install_sql!("../../priv/repo/sql/direct/20261103180000_direct_contract_signatures.sql")
     install_sql!("../../priv/repo/sql/direct/20261103160000_direct_contract_invoice_delivery.sql")
   end
 

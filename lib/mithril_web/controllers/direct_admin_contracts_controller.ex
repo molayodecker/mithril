@@ -16,6 +16,7 @@ defmodule MithrilWeb.DirectAdminContractsController do
     LetterList,
     LetterRequest,
     LetterResult,
+    LetterSignRequest,
     List,
     PayDueRequest,
     PayDueResult,
@@ -235,6 +236,48 @@ defmodule MithrilWeb.DirectAdminContractsController do
     respond(conn, DirectContracts.send_letter(user_id(conn), id, params))
   end
 
+  operation(:sign,
+    operation_id: "direct.signAdminContractLetter",
+    summary: "Sign a service agreement for Instaclean",
+    parameters: [
+      id: [in: :path, schema: %Schema{type: :string, format: :uuid}, required: true]
+    ],
+    request_body: {"Signature", "application/json", LetterSignRequest, required: true},
+    responses: [ok: {"Signed", "application/json", IdResult}]
+  )
+
+  def sign(conn, %{"id" => id} = params) do
+    respond(conn, DirectContracts.sign_provider(user_id(conn), id, params))
+  end
+
+  operation(:sign_public_letter,
+    operation_id: "direct.signContractLetter",
+    summary: "Sign a service agreement as the client",
+    parameters: [
+      token: [in: :path, schema: %Schema{type: :string}, required: true]
+    ],
+    request_body: {"Signature", "application/json", LetterSignRequest, required: true},
+    responses: [ok: {"Letter", "application/json", PublicLetter}]
+  )
+
+  def sign_public_letter(conn, %{"token" => token} = params) do
+    respond(conn, DirectContracts.sign_public_letter(token, params))
+  end
+
+  operation(:sign_public_worker_letter,
+    operation_id: "direct.signWorkerContractLetter",
+    summary: "Sign a worker engagement as the worker",
+    parameters: [
+      token: [in: :path, schema: %Schema{type: :string}, required: true]
+    ],
+    request_body: {"Signature", "application/json", LetterSignRequest, required: true},
+    responses: [ok: {"Letter", "application/json", PublicLetter}]
+  )
+
+  def sign_public_worker_letter(conn, %{"token" => token} = params) do
+    respond(conn, DirectContracts.sign_public_worker_letter(token, params))
+  end
+
   operation(:public_show,
     operation_id: "direct.showContractInvoice",
     summary: "Read a contract invoice by its public token",
@@ -322,6 +365,9 @@ defmodule MithrilWeb.DirectAdminContractsController do
   defp error_response(:contract_invoice_not_found), do: {404, "contract_invoice_not_found"}
   defp error_response(:letter_needs_worker), do: {422, "letter_needs_worker"}
   defp error_response(:letter_already_sent), do: {409, "letter_already_sent"}
+  defp error_response(:letter_already_signed), do: {409, "letter_already_signed"}
+  defp error_response(:letter_not_active), do: {409, "letter_not_active"}
+  defp error_response(:letter_not_sent), do: {409, "letter_not_sent"}
   defp error_response(:client_rates_mismatch), do: {422, "client_rates_mismatch"}
   defp error_response(:worker_already_assigned), do: {409, "worker_already_assigned"}
   defp error_response(:email_not_configured), do: {422, "email_not_configured"}
