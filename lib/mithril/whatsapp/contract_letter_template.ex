@@ -86,7 +86,7 @@ defmodule Mithril.WhatsApp.ContractLetterTemplate do
          path when is_binary(path) <- path(letter["viewUrl"]),
          variables <-
            variables(%{
-             "customerName" => greeting(letter),
+             "customerName" => customer_name(letter),
              "letterNo" => letter["letterNo"],
              "amountLabel" => amount_label,
              "path" => path
@@ -117,20 +117,14 @@ defmodule Mithril.WhatsApp.ContractLetterTemplate do
 
   def public_base, do: PaymentTemplate.public_base()
 
+  def customer_name(letter) when is_map(letter) do
+    letter["clientName"]
+  end
+
   defp session(admin_uid, params) do
     case DirectAdminWhatsApp.deliver_as_staff(admin_uid, params) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp greeting(letter) do
-    contact = letter["billingContact"]
-
-    if is_binary(contact) and String.trim(contact) != "" do
-      contact
-    else
-      letter["clientName"]
     end
   end
 
