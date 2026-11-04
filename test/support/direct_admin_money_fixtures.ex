@@ -249,11 +249,49 @@ defmodule Mithril.DirectAdminMoneyFixtures do
       currency varchar(3) NOT NULL DEFAULT 'GHS' CHECK (currency = 'GHS'),
       notes text,
       signatory_role text,
+      public_token text UNIQUE,
+      approval_status text NOT NULL DEFAULT 'draft'
+        CHECK (approval_status IN ('draft', 'awaiting_approval', 'approved', 'changes_requested')),
+      approval_note text,
+      approved_at timestamptz,
+      booking_id uuid,
+      service_address text,
+      proposed_workers jsonb NOT NULL DEFAULT '[]'::jsonb,
+      invoice_sent_at timestamptz,
+      invoice_sent_channel text
+        CHECK (invoice_sent_channel IS NULL OR invoice_sent_channel IN ('whatsapp', 'sms', 'email')),
+      approval_requested_at timestamptz,
+      approval_requested_channel text
+        CHECK (approval_requested_channel IS NULL OR approval_requested_channel IN ('whatsapp', 'sms', 'email')),
+      location_requested_at timestamptz,
+      location_requested_channel text
+        CHECK (location_requested_channel IS NULL OR location_requested_channel IN ('whatsapp', 'sms', 'email')),
+      team_sent_at timestamptz,
+      team_sending_at timestamptz,
+      team_sent_channel text
+        CHECK (team_sent_channel IS NULL OR team_sent_channel IN ('whatsapp', 'sms', 'email')),
       created_by uuid NOT NULL REFERENCES public.users(id),
       updated_by uuid REFERENCES public.users(id),
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     )
+    """)
+
+    # Install the same approval-protection trigger used by the production schema.
+    migration = File.read!(Path.join(@schema_root, "20261103161000_billing_invoice_outreach.sql"))
+
+    [approval_guard] =
+      Regex.run(
+        ~r/CREATE OR REPLACE FUNCTION public\.prevent_approved_billing_invoice_terms_change\(\).*?\$\$;/s,
+        migration
+      )
+
+    Repo.query!(approval_guard)
+
+    Repo.query!("""
+    CREATE TRIGGER protect_approved_billing_invoice_terms
+    BEFORE UPDATE ON public.admin_billing_invoices
+    FOR EACH ROW EXECUTE FUNCTION public.prevent_approved_billing_invoice_terms_change()
     """)
 
     Repo.query!("""

@@ -3,14 +3,21 @@ defmodule MithrilWeb.DirectAdminBillingController do
   use OpenApiSpex.ControllerSpecs
 
   alias Mithril.DirectAdminBilling
+  alias Mithril.DirectAdminBillingOutreach
 
   alias MithrilWeb.Schemas.DirectAdminBilling.{
     Advice,
     AdviceList,
     AdviceUpsertRequest,
+    DecisionRequest,
     Invoice,
     InvoiceList,
-    InvoiceUpsertRequest
+    InvoiceUpsertRequest,
+    LocationRequest,
+    MessageRequest,
+    MessageResponse,
+    PublicInvoice,
+    TeamRequest
   }
 
   alias OpenApiSpex.Schema
@@ -47,6 +54,100 @@ defmodule MithrilWeb.DirectAdminBillingController do
 
   def upsert_invoice(conn, %{"id" => id} = params) do
     respond(conn, DirectAdminBilling.upsert_invoice(user_id(conn), id, params))
+  end
+
+  operation(:send_message,
+    operation_id: "direct.sendAdminBillingInvoiceMessage",
+    summary: "Send an invoice, approval request, location request, or team introduction",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Invoice ID"
+      ]
+    ],
+    request_body: {"Invoice message", "application/json", MessageRequest, required: true},
+    responses: [ok: {"Message sent", "application/json", MessageResponse}]
+  )
+
+  def send_message(conn, %{"id" => id} = params) do
+    respond(conn, DirectAdminBillingOutreach.send(user_id(conn), id, params))
+  end
+
+  operation(:set_team,
+    operation_id: "direct.setAdminBillingInvoiceTeam",
+    summary: "Save the proposed team on a custom invoice",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Invoice ID"
+      ]
+    ],
+    request_body: {"Proposed team", "application/json", TeamRequest, required: true},
+    responses: [ok: {"Saved invoice", "application/json", Invoice}]
+  )
+
+  def set_team(conn, %{"id" => id} = params) do
+    respond(conn, DirectAdminBillingOutreach.set_team(user_id(conn), id, params))
+  end
+
+  operation(:public_show,
+    operation_id: "direct.showPublicBillingInvoice",
+    summary: "Read a custom invoice by its public token",
+    parameters: [
+      token: [
+        in: :path,
+        schema: %Schema{type: :string},
+        required: true,
+        description: "Public invoice token"
+      ]
+    ],
+    responses: [ok: {"Public invoice", "application/json", PublicInvoice}]
+  )
+
+  def public_show(conn, %{"token" => token}) do
+    respond(conn, DirectAdminBillingOutreach.public_show(token))
+  end
+
+  operation(:decide,
+    operation_id: "direct.decidePublicBillingInvoice",
+    summary: "Approve a custom invoice or request a change",
+    parameters: [
+      token: [
+        in: :path,
+        schema: %Schema{type: :string},
+        required: true,
+        description: "Public invoice token"
+      ]
+    ],
+    request_body: {"Invoice decision", "application/json", DecisionRequest, required: true},
+    responses: [ok: {"Updated invoice", "application/json", PublicInvoice}]
+  )
+
+  def decide(conn, %{"token" => token} = params) do
+    respond(conn, DirectAdminBillingOutreach.decide(token, params))
+  end
+
+  operation(:share_location,
+    operation_id: "direct.sharePublicBillingInvoiceLocation",
+    summary: "Share the service address for a custom invoice",
+    parameters: [
+      token: [
+        in: :path,
+        schema: %Schema{type: :string},
+        required: true,
+        description: "Public invoice token"
+      ]
+    ],
+    request_body: {"Service address", "application/json", LocationRequest, required: true},
+    responses: [ok: {"Updated invoice", "application/json", PublicInvoice}]
+  )
+
+  def share_location(conn, %{"token" => token} = params) do
+    respond(conn, DirectAdminBillingOutreach.share_location(token, params))
   end
 
   operation(:index_advices,
@@ -96,7 +197,22 @@ defmodule MithrilWeb.DirectAdminBillingController do
 
   defp error_response(:invalid_user), do: {401, "invalid_user"}
   defp error_response(:forbidden), do: {403, "forbidden"}
+  defp error_response(:invoice_not_found), do: {404, "invoice_not_found"}
   defp error_response(:invalid_request), do: {422, "invalid_request"}
+  defp error_response(:invoice_not_sent), do: {422, "invoice_not_sent"}
+  defp error_response(:already_approved), do: {422, "already_approved"}
+  defp error_response(:location_not_requested), do: {422, "location_not_requested"}
+  defp error_response(:team_not_ready), do: {422, "team_not_ready"}
+  defp error_response(:team_empty), do: {422, "team_empty"}
+  defp error_response(:team_already_sent), do: {422, "team_already_sent"}
+  defp error_response(:invalid_workers), do: {422, "invalid_workers"}
+  defp error_response(:missing_phone), do: {422, "missing_phone"}
+  defp error_response(:missing_email), do: {422, "missing_email"}
+  defp error_response(:twilio_not_configured), do: {503, "twilio_not_configured"}
+  defp error_response(:sms_not_configured), do: {503, "sms_not_configured"}
+  defp error_response(:sms_delivery_failed), do: {502, "sms_delivery_failed"}
+  defp error_response(:email_not_configured), do: {503, "email_not_configured"}
+  defp error_response(:email_delivery_failed), do: {502, "email_delivery_failed"}
   defp error_response(:invalid_invoice), do: {422, "invalid_invoice"}
   defp error_response(:invalid_lines), do: {422, "invalid_lines"}
   defp error_response(:invalid_email), do: {422, "invalid_email"}

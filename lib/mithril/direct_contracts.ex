@@ -198,7 +198,7 @@ defmodule Mithril.DirectContracts do
          {:ok, attrs} <- assignment_attrs(params) do
       case transact(fn -> insert_assignment(contract_uid, attrs) end) do
         {:ok, %{assignment: assignment, notice: notice}} ->
-          {:ok, Map.put(assignment, "notified", notify_added_worker(user_id, notice))}
+          {:ok, assignment_with_notice(assignment, notify_added_worker(user_id, notice))}
 
         other ->
           other
@@ -3092,7 +3092,19 @@ defmodule Mithril.DirectContracts do
     fetch!(sql, params).rows |> hd() |> hd() |> int()
   end
 
-  defp notify_added_worker(_user_id, nil), do: false
+  defp assignment_with_notice(assignment, :skipped), do: Map.put(assignment, "notified", false)
+
+  defp assignment_with_notice(assignment, :ok), do: Map.put(assignment, "notified", true)
+
+  defp assignment_with_notice(assignment, {:error, :not_on_whatsapp}) do
+    assignment
+    |> Map.put("notified", false)
+    |> Map.put("notificationError", "not_on_whatsapp")
+  end
+
+  defp assignment_with_notice(assignment, {:error, _}), do: Map.put(assignment, "notified", false)
+
+  defp notify_added_worker(_user_id, nil), do: :skipped
 
   defp notify_added_worker(user_id, notice) do
     {:ok, admin_uid} = dump_uuid(user_id)
@@ -3105,11 +3117,14 @@ defmodule Mithril.DirectContracts do
            notice.client
          ) do
       :ok ->
-        true
+        :ok
 
-      {:error, reason} ->
+      {:error, :not_on_whatsapp} = error ->
+        error
+
+      {:error, reason} = error ->
         Logger.warning("contract worker WhatsApp was not delivered: #{inspect(reason)}")
-        false
+        error
     end
   end
 
