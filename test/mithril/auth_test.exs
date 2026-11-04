@@ -984,6 +984,12 @@ defmodule Mithril.AuthTest do
     end)
 
     assert Auth.methods().phone
+    Application.delete_env(:mithril, :test_last_whatsapp_otp)
+
+    assert {:ok, %{ok: true, whatsapp_sent: false}} =
+             Auth.request_otp("0555000000", %{"also_whatsapp" => true})
+
+    assert Application.get_env(:mithril, :test_last_whatsapp_otp) == nil
     assert {:ok, %{ok: true}} = Auth.request_otp("0555000000")
     assert {:error, :invalid_otp} = Auth.verify_otp("0555000000", "000000")
     assert {:ok, session} = Auth.verify_otp("0555000000", "424242")
