@@ -26,7 +26,7 @@ defmodule Mithril.WhatsApp.ContentTemplateTest do
              ContentTemplate.ensure(@name, @env_key, %{"friendly_name" => @name})
   end
 
-  test "ensure creates, stores, and submits a template when unset" do
+  test "ensure rejects template creation when its SID cannot be stored" do
     parent = self()
 
     Application.put_env(:mithril, :twilio_content_http, fn
@@ -39,15 +39,12 @@ defmodule Mithril.WhatsApp.ContentTemplateTest do
         :ok
     end)
 
-    assert {:ok, "HXcreated00000000000000000000001"} =
+    assert {:error, :template_storage_unavailable} =
              ContentTemplate.ensure(@name, @env_key, %{"friendly_name" => @name})
 
     assert_receive {:create, %{"friendly_name" => @name}}
-    assert_receive {:approve, %{"name" => @name, "category" => "UTILITY"}}
-
-    # Stored SID lookup needs public.whatsapp_content_templates; env still wins when set.
-    Application.put_env(:mithril, @env_key, "HXcreated00000000000000000000001")
-    assert ContentTemplate.content_sid(@name, @env_key) == "HXcreated00000000000000000000001"
+    refute_receive {:approve, _}
+    assert ContentTemplate.content_sid(@name, @env_key) == nil
   end
 
   defp restore_env(key, nil), do: Application.delete_env(:mithril, key)
