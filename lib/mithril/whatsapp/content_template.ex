@@ -101,15 +101,15 @@ defmodule Mithril.WhatsApp.ContentTemplate do
   defp store_sid(name, sid) do
     if table?("public.whatsapp_content_templates") do
       case Repo.query(
-        """
-        INSERT INTO public.whatsapp_content_templates (name, content_sid, approval_status)
-        VALUES ($1, $2, 'created')
-        ON CONFLICT (name) DO UPDATE
-          SET content_sid = EXCLUDED.content_sid,
-              approval_status = 'created', updated_at = now()
-        """,
-        [name, sid]
-      ) do
+             """
+             INSERT INTO public.whatsapp_content_templates (name, content_sid, approval_status)
+             VALUES ($1, $2, 'created')
+             ON CONFLICT (name) DO UPDATE
+               SET content_sid = EXCLUDED.content_sid,
+                   approval_status = 'created', updated_at = now()
+             """,
+             [name, sid]
+           ) do
         {:ok, %{num_rows: 1}} -> :ok
         _ -> {:error, :template_not_persisted}
       end
