@@ -31,7 +31,7 @@ defmodule Mithril.ScheduledJobs.PaymentFailureOpsRetry do
   end
 
   defp load_due_rows do
-    now = DateTime.utc_now() |> DateTime.to_iso8601()
+    now = DateTime.utc_now()
 
     Repo.query(
       """
