@@ -4,6 +4,7 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
   require Logger
 
   alias Mithril.WhatsApp.Recruitment.Twiml
+  alias Mithril.WhatsApp.Unreachable
 
   def send_reply(reply, ctx) do
     case reply do
@@ -13,7 +14,8 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
   end
 
   def send_plain_text(to, from, body) do
-    with {:ok, env} <- twilio_env() do
+    with :ok <- guard_reachable(to),
+         {:ok, env} <- twilio_env() do
       fields =
         [{"To", to}, {"Body", body}]
         |> maybe_from(env, from)
@@ -26,11 +28,13 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
   Sends an approved WhatsApp content template.
 
   A non-2xx response whose Twilio code means the number is not on WhatsApp
-  returns `{:error, :not_on_whatsapp}` so the caller can send SMS instead.
+  is stored and returns `{:error, :not_on_whatsapp}`. A later send to that
+  number returns the same error without calling Twilio again.
   """
   def send_content(to, from, content_sid, variables, status_callback_url \\ nil)
       when is_map(variables) do
-    with {:ok, env} <- twilio_env() do
+    with :ok <- guard_reachable(to),
+         {:ok, env} <- twilio_env() do
       fields =
         [
           {"To", to},
@@ -136,9 +140,8 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
       {:ok, %{status: status}} when status in 200..299 ->
         :ok
 
-      {:ok, %{status: status}} ->
-        Logger.warning("whatsapp recruitment twilio send failed status=#{status}")
-        {:error, :twilio_failed}
+      {:ok, %{status: status, body: body}} ->
+        classify_rejection(fields, body, status, :twilio_failed)
 
       {:error, error} ->
         Logger.warning("whatsapp recruitment twilio send failed #{inspect(error)}")
@@ -158,12 +161,7 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
         {:error, :twilio_unavailable}
 
       {:ok, %{status: status, body: body}} ->
-        if not_on_whatsapp?(body) do
-          {:error, :not_on_whatsapp}
-        else
-          Logger.warning("whatsapp template send failed status=#{status} body=#{inspect(body)}")
-          {:error, :twilio_rejected}
-        end
+        classify_rejection(fields, body, status, :twilio_rejected)
 
       {:error, error} ->
         Logger.warning("whatsapp template send unavailable #{inspect(error)}")
@@ -171,6 +169,31 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
     end
   end
 
-  defp not_on_whatsapp?(%{"code" => code}) when code in [63003, 63024, "63003", "63024"], do: true
-  defp not_on_whatsapp?(_), do: false
+  defp guard_reachable(to) do
+    case Unreachable.phone(to) do
+      {:ok, phone} ->
+        if Unreachable.unreachable?(phone), do: {:error, :not_on_whatsapp}, else: :ok
+
+      :error ->
+        :ok
+    end
+  end
+
+  defp classify_rejection(fields, body, status, fallback) do
+    case Unreachable.remember(to_address(fields), body) do
+      :recorded ->
+        {:error, :not_on_whatsapp}
+
+      :ignored ->
+        Logger.warning("whatsapp twilio send failed status=#{status} body=#{inspect(body)}")
+        {:error, fallback}
+    end
+  end
+
+  defp to_address(fields) do
+    Enum.find_value(fields, fn
+      {"To", value} -> value
+      _ -> nil
+    end)
+  end
 end

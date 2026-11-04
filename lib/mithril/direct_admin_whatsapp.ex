@@ -174,6 +174,7 @@ defmodule Mithril.DirectAdminWhatsApp do
     case Outbound.send_plain_text(to, from_addr, body) do
       :ok -> :ok
       {:error, :twilio_not_configured} -> {:error, :twilio_not_configured}
+      {:error, :not_on_whatsapp} -> {:error, :not_on_whatsapp}
       {:error, _} -> {:error, :sms_delivery_failed}
     end
   end
@@ -185,7 +186,7 @@ defmodule Mithril.DirectAdminWhatsApp do
     case Outbound.send_content(to, from_addr, content_sid, variables) do
       {:ok, _sid} -> :ok
       {:error, :twilio_not_configured} -> {:error, :twilio_not_configured}
-      {:error, :not_on_whatsapp} -> {:error, :sms_delivery_failed}
+      {:error, :not_on_whatsapp} -> {:error, :not_on_whatsapp}
       {:error, _} -> {:error, :template_rejected}
     end
   end

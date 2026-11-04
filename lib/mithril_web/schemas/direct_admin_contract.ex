@@ -741,7 +741,13 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
       properties: %{
         id: %Schema{type: :string, format: :uuid},
         endedOn: %Schema{type: :string, format: :date, nullable: true},
-        notified: %Schema{type: :boolean, nullable: true}
+        notified: %Schema{type: :boolean, nullable: true},
+        notificationError: %Schema{
+          type: :string,
+          nullable: true,
+          enum: ["not_on_whatsapp"],
+          description: "Set when the worker was added but their number is not on WhatsApp."
+        }
       },
       required: [:id]
     })
