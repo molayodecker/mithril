@@ -3,7 +3,6 @@ defmodule Mithril.Paystack.Webhook do
 
   require Logger
 
-  alias Mithril.DbUuid
   alias Mithril.DirectAssignmentNotify
   alias Mithril.DirectCancellation
   alias Mithril.DirectPaymentRequests
@@ -408,11 +407,11 @@ defmodule Mithril.Paystack.Webhook do
                SELECT id, user_id, reference::text, amount, currency, status::text,
                       paystack_transfer_code
                FROM public.cleaner_payouts
-               WHERE reference = $1::uuid
+               WHERE reference::text = $1::text
                LIMIT 1
                FOR UPDATE
                """,
-               [DbUuid.dump!(uuid)]
+               [uuid]
              ) do
           {:ok, %{rows: [[id, user_id, reference, amount, currency, status, transfer_code]]}} ->
             %{

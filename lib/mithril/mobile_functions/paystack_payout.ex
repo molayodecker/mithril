@@ -464,11 +464,11 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     SELECT status, paystack_transfer_code, paystack_transfer_id, error_message,
            recipient_code, amount, upper(coalesce(currency, 'GHS')), metadata
     FROM public.cleaner_payouts
-    WHERE user_id = $1::uuid AND reference = $2::uuid
+    WHERE user_id = $1::uuid AND reference::text = $2::text
     LIMIT 1
     """
 
-    case Repo.query(sql, [DbUuid.dump!(user_id), DbUuid.dump!(reference)]) do
+    case Repo.query(sql, [DbUuid.dump!(user_id), reference]) do
       {:ok,
        %{
          rows: [
@@ -853,11 +853,11 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
                  paystack_transfer_id = COALESCE($5::bigint, paystack_transfer_id),
                  error_message = NULL,
                  updated_at = NOW()
-             WHERE user_id = $1::uuid AND reference = $2::uuid
+             WHERE user_id = $1::uuid AND reference::text = $2::text
              """,
              [
                DbUuid.dump!(user_id),
-               DbUuid.dump!(fields.reference),
+               fields.reference,
                our_status,
                transfer_code,
                transfer_id
@@ -895,10 +895,10 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
            SET status = 'processing',
                error_message = $2::text,
                updated_at = NOW()
-           WHERE reference = $1::uuid
+           WHERE reference::text = $1::text
              AND status IN ('pending', 'processing')
            """,
-           [DbUuid.dump!(reference), message]
+           [reference, message]
          ) do
       {:ok, _} -> :ok
       {:error, _} -> {:error, :payout_status_persist_failed}
