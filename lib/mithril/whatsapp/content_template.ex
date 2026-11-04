@@ -31,8 +31,9 @@ defmodule Mithril.WhatsApp.ContentTemplate do
   defp create(name, definition) do
     case ContentApi.create(definition) do
       {:ok, sid} ->
-        _ = store_sid(name, sid)
-        approve_and_mark(name, sid)
+        with :ok <- store_sid(name, sid) do
+          approve_and_mark(name, sid)
+        end
 
       other ->
         other
@@ -57,11 +58,11 @@ defmodule Mithril.WhatsApp.ContentTemplate do
              """,
              [name, sid]
            ) do
-        {:ok, _} -> {:ok, sid}
-        {:error, _} -> {:error, :template_not_created}
+        {:ok, %{num_rows: 1}} -> {:ok, sid}
+        _ -> {:error, :template_not_persisted}
       end
     else
-      {:ok, sid}
+      {:error, :template_storage_unavailable}
     end
   end
 
@@ -99,7 +100,7 @@ defmodule Mithril.WhatsApp.ContentTemplate do
 
   defp store_sid(name, sid) do
     if table?("public.whatsapp_content_templates") do
-      Repo.query(
+      case Repo.query(
         """
         INSERT INTO public.whatsapp_content_templates (name, content_sid, approval_status)
         VALUES ($1, $2, 'created')
@@ -108,9 +109,12 @@ defmodule Mithril.WhatsApp.ContentTemplate do
               approval_status = 'created', updated_at = now()
         """,
         [name, sid]
-      )
+      ) do
+        {:ok, %{num_rows: 1}} -> :ok
+        _ -> {:error, :template_not_persisted}
+      end
     else
-      :ok
+      {:error, :template_storage_unavailable}
     end
   end
 
