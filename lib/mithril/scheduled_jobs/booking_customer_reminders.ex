@@ -118,7 +118,7 @@ defmodule Mithril.ScheduledJobs.BookingCustomerReminders do
       ORDER BY scheduled_date ASC, scheduled_time ASC
       LIMIT $3
       """,
-      [min_date, max_date, batch_limit * 3]
+      [sql_date(min_date), sql_date(max_date), batch_limit * 3]
     )
   end
 
@@ -138,7 +138,7 @@ defmodule Mithril.ScheduledJobs.BookingCustomerReminders do
              ORDER BY scheduled_date ASC, scheduled_time ASC
              LIMIT $3
              """,
-             [min_date, max_date, batch_limit * 3]
+             [sql_date(min_date), sql_date(max_date), batch_limit * 3]
            ),
          {:ok, subscription_rows} <-
            fetch_bookings(
@@ -155,7 +155,7 @@ defmodule Mithril.ScheduledJobs.BookingCustomerReminders do
              ORDER BY scheduled_date ASC, scheduled_time ASC
              LIMIT $3
              """,
-             [min_date, max_date, batch_limit * 3]
+             [sql_date(min_date), sql_date(max_date), batch_limit * 3]
            ) do
       {:ok, schedule_rows ++ subscription_rows}
     end
@@ -339,4 +339,13 @@ defmodule Mithril.ScheduledJobs.BookingCustomerReminders do
 
   defp row_to_map(row), do: Map.new(Enum.zip(@booking_columns, row))
   defp column_sql, do: Enum.join(@booking_columns, ", ")
+
+  defp sql_date(%Date{} = date), do: date
+
+  defp sql_date(value) when is_binary(value) do
+    case Date.from_iso8601(String.slice(value, 0, 10)) do
+      {:ok, date} -> date
+      _ -> value
+    end
+  end
 end
