@@ -1,5 +1,5 @@
 defmodule Mithril.StorageCleanup.QuickTaskTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Mithril.ObjectStorage.TestDouble
   alias Mithril.StorageCleanup.QuickTask
