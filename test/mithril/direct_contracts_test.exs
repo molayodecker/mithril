@@ -218,6 +218,11 @@ defmodule Mithril.DirectContractsTest do
              "3" => "GHS 4,000.00",
              "4" => "letters/contract/#{token}"
            }
+
+    assert ContractLetterTemplate.customer_name(%{
+             "clientName" => "Ama Mensah",
+             "billingContact" => "0243558645"
+           }) == "Ama Mensah"
   end
 
   test "the worker added whatsapp template names the worker, role, and client" do
