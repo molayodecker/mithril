@@ -469,6 +469,10 @@ if equipment_sid = System.get_env("TWILIO_WHATSAPP_EQUIPMENT_CONTENT_SID") do
   config :mithril, :twilio_whatsapp_equipment_content_sid, equipment_sid
 end
 
+if otp_sid = System.get_env("TWILIO_WHATSAPP_OTP_CONTENT_SID") do
+  config :mithril, :twilio_whatsapp_otp_content_sid, otp_sid
+end
+
 if config_env() != :prod and truthy_env?.("DISABLE_TWILIO_SIGNATURE_VALIDATION") do
   config :mithril, :disable_twilio_signature_validation, true
 end

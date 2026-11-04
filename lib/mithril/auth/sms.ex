@@ -73,7 +73,7 @@ defmodule Mithril.Auth.SMS.Twilio do
 
   @impl true
   def send_otp(phone, code) do
-    send_message(phone, "Your Instaclean code is #{code}. It expires in 5 minutes.")
+    send_message(phone, "Your Instaclean code is #{code}. It expires in 10 minutes.")
   end
 
   @impl true

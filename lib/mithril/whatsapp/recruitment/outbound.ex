@@ -32,7 +32,7 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
   is stored and returns `{:error, :not_on_whatsapp}`. A later send to that
   number returns the same error without calling Twilio again.
   """
-  def send_content(to, from, content_sid, variables, status_callback_url \\ nil)
+  def send_content(to, from, content_sid, variables, status_callback_url \\ nil, opts \\ [])
       when is_map(variables) do
     with :ok <- guard_reachable(to),
          {:ok, env} <- twilio_env() do
@@ -42,7 +42,7 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
           {"ContentSid", content_sid},
           {"ContentVariables", Jason.encode!(variables)}
         ]
-        |> maybe_from(env, from)
+        |> maybe_content_sender(env, from, opts)
         |> maybe_status_callback(status_callback_url)
 
       post_content(env, fields)
@@ -108,6 +108,11 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
       {:error, :twilio_not_configured}
     end
   end
+
+  defp maybe_content_sender(fields, _env, from, force_from: true),
+    do: [{"From", from} | fields]
+
+  defp maybe_content_sender(fields, env, from, _opts), do: maybe_from(fields, env, from)
 
   defp maybe_from(fields, env, from) do
     if is_binary(env.messaging_service) and env.messaging_service != "" do
