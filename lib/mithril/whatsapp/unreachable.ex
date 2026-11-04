@@ -14,8 +14,12 @@ defmodule Mithril.WhatsApp.Unreachable do
            "SELECT 1 FROM public.whatsapp_unreachable_numbers WHERE phone_e164 = $1",
            [phone]
          ) do
-      {:ok, %{num_rows: count}} when count > 0 -> true
-      {:ok, _} -> false
+      {:ok, %{num_rows: count}} when count > 0 ->
+        true
+
+      {:ok, _} ->
+        false
+
       {:error, error} ->
         Logger.warning("whatsapp unreachable lookup failed: #{Exception.message(error)}")
         false
@@ -60,7 +64,9 @@ defmodule Mithril.WhatsApp.Unreachable do
            """,
            [phone, twilio_code]
          ) do
-      {:ok, _} -> :ok
+      {:ok, _} ->
+        :ok
+
       {:error, error} ->
         Logger.warning("whatsapp unreachable record failed: #{Exception.message(error)}")
         :error
