@@ -3,6 +3,7 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
 
   require Logger
 
+  alias Mithril.WhatsApp.ContentSids
   alias Mithril.WhatsApp.Recruitment.Twiml
 
   def send_reply(reply, ctx) do
@@ -67,22 +68,26 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
     end
   end
 
-  defp content_sid(:welcome),
+  defp content_sid(kind) do
+    ContentSids.quick_reply(kind) || content_sid_from_env(kind)
+  end
+
+  defp content_sid_from_env(:welcome),
     do: Application.get_env(:mithril, :twilio_whatsapp_welcome_content_sid)
 
-  defp content_sid(:yes_no),
+  defp content_sid_from_env(:yes_no),
     do: Application.get_env(:mithril, :twilio_whatsapp_yes_no_content_sid)
 
-  defp content_sid(:accept),
+  defp content_sid_from_env(:accept),
     do: Application.get_env(:mithril, :twilio_whatsapp_accept_content_sid)
 
-  defp content_sid(:submit),
+  defp content_sid_from_env(:submit),
     do: Application.get_env(:mithril, :twilio_whatsapp_submit_content_sid)
 
-  defp content_sid(:equipment),
+  defp content_sid_from_env(:equipment),
     do: Application.get_env(:mithril, :twilio_whatsapp_equipment_content_sid)
 
-  defp content_sid(_), do: nil
+  defp content_sid_from_env(_), do: nil
 
   defp twilio_env do
     sid = Application.get_env(:mithril, :twilio_account_sid)

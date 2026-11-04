@@ -4,6 +4,7 @@ defmodule Mithril.Notifications.Outbound do
   alias Mithril.Auth.Phone
   alias Mithril.Auth.SMS
   alias Mithril.Notifications.Templates
+  alias Mithril.WhatsApp.ContentSids
 
   def deliver(body) when is_map(body) do
     channel = present(body["channel"]) || ""
@@ -110,25 +111,41 @@ defmodule Mithril.Notifications.Outbound do
     end
   end
 
-  defp template_content_sid("booking_reminder"), do: env(:twilio_template_booking_reminder)
-  defp template_content_sid("review_request"), do: env(:twilio_template_review_request)
-  defp template_content_sid("cleaner_en_route"), do: env(:twilio_template_cleaner_en_route)
-  defp template_content_sid("cleaner_arrived"), do: env(:twilio_template_cleaner_arrived)
-  defp template_content_sid("cleaner_assigned"), do: env(:twilio_template_cleaner_assigned)
-  defp template_content_sid("new_booking"), do: env(:twilio_template_new_booking)
-  defp template_content_sid("assignment_offer"), do: env(:twilio_template_new_booking)
-  defp template_content_sid("payment_received"), do: env(:twilio_template_payment_received)
-  defp template_content_sid(_), do: nil
+  defp template_content_sid(template) do
+    ContentSids.template(template) || template_content_sid_from_env(template)
+  end
 
-  defp content_variables("review_request", variables) do
+  defp template_content_sid_from_env("booking_reminder"),
+    do: env(:twilio_template_booking_reminder)
+
+  defp template_content_sid_from_env("review_request"), do: env(:twilio_template_review_request)
+
+  defp template_content_sid_from_env("cleaner_en_route"),
+    do: env(:twilio_template_cleaner_en_route)
+
+  defp template_content_sid_from_env("cleaner_arrived"), do: env(:twilio_template_cleaner_arrived)
+
+  defp template_content_sid_from_env("cleaner_assigned"),
+    do: env(:twilio_template_cleaner_assigned)
+
+  defp template_content_sid_from_env("new_booking"), do: env(:twilio_template_new_booking)
+  defp template_content_sid_from_env("assignment_offer"), do: env(:twilio_template_new_booking)
+
+  defp template_content_sid_from_env("payment_received"),
+    do: env(:twilio_template_payment_received)
+
+  defp template_content_sid_from_env(_), do: nil
+
+  @doc false
+  def content_variables("review_request", variables) do
     %{
       "1" => present(variables["cleanerName"]) || "your cleaner",
       "2" => present(variables["reviewUrl"]) || ""
     }
   end
 
-  defp content_variables(template, variables)
-       when template in ["cleaner_en_route", "cleaner_arrived"] do
+  def content_variables(template, variables)
+      when template in ["cleaner_en_route", "cleaner_arrived"] do
     %{
       "1" => present(variables["cleanerName"]) || "Your cleaner",
       "2" => present(variables["bookingId"]) || "",
@@ -136,7 +153,29 @@ defmodule Mithril.Notifications.Outbound do
     }
   end
 
-  defp content_variables(_template, variables) do
+  def content_variables("cleaner_assigned", variables) do
+    %{
+      "1" => present(variables["cleanerName"]) || "Your Worker",
+      "2" => present(variables["rating"]) || "Not rated yet",
+      "3" => present(variables["scheduled_date"]) || present(variables["date"]) || "—",
+      "4" => present(variables["scheduled_time"]) || "—"
+    }
+  end
+
+  def content_variables(template, variables)
+      when template in ["co_cleaner_invite", "preferred_cleaner_invite"] do
+    %{
+      "1" => present(variables["inviterName"]) || "Instaclean member",
+      "2" => present(variables["inviteUrl"]) || "",
+      "3" => present(variables["expiresAt"]) || "30 days"
+    }
+  end
+
+  def content_variables("phone_otp", variables) do
+    %{"1" => present(variables["otp"]) || ""}
+  end
+
+  def content_variables(_template, variables) do
     %{
       "1" => present(variables["address"]) || "—",
       "2" => present(variables["service"]) || "Instaclean booking",

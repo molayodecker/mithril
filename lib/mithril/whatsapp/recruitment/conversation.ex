@@ -10,7 +10,7 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
   alias Mithril.WhatsApp.Recruitment.Payload
   alias Mithril.WhatsApp.Recruitment.Rosie
 
-  @q_prior "Have you worked as a cleaner before?"
+  @q_prior "Have you worked as a Worker before?"
   @q_ref2 "Add a second reference?"
   @q_ref3 "Add a third reference?"
   @q_office "Have you cleaned offices before?"
@@ -35,7 +35,7 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
       business != "" and DirectAdminWhatsApp.admin_destination?(business) ->
         reply(
           {:text,
-           "This WhatsApp line is for customer support. Visit tryinstaclean.com/join-as-cleaner to apply as a cleaner."},
+           "This WhatsApp line is for customer support. Visit tryinstaclean.com/join-as-cleaner to apply as a Worker."},
           ctx
         )
 
@@ -1261,7 +1261,7 @@ defmodule Mithril.WhatsApp.Recruitment.Conversation do
       {:ok, %{display: display}} ->
         reply(
           {:plain,
-           "Your web continue code:\n\n#{display}\n\nPaste it on Join as Cleaner when you're asked for your WhatsApp code.\n\nOr open this link (your code is included):\n#{join_url}?apply=1&continue=#{URI.encode_www_form(display)}\n\nOne-time use: it stops working after the site loads your answers. If you never use it, it expires after 7 days. Reply CODE or WEB for a new one."},
+           "Your web continue code:\n\n#{display}\n\nPaste it on Join as Worker when you're asked for your WhatsApp code.\n\nOr open this link (your code is included):\n#{join_url}?apply=1&continue=#{URI.encode_www_form(display)}\n\nOne-time use: it stops working after the site loads your answers. If you never use it, it expires after 7 days. Reply CODE or WEB for a new one."},
           ctx
         )
 

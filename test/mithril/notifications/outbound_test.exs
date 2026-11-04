@@ -105,6 +105,22 @@ defmodule Mithril.Notifications.OutboundTest do
     end
   end
 
+  test "invitation templates pass the server-authorized link to Twilio variables" do
+    for template <- ["co_cleaner_invite", "preferred_cleaner_invite"] do
+      url = Mithril.MobileFunctions.SendNotificationFn.trusted_invite_url(template, "token+123")
+
+      assert Outbound.content_variables(template, %{
+               "inviterName" => "Ama",
+               "inviteUrl" => url,
+               "expiresAt" => "2026-11-10"
+             }) == %{
+               "1" => "Ama",
+               "2" => url,
+               "3" => "2026-11-10"
+             }
+    end
+  end
+
   defp restore_env(key, nil), do: Application.delete_env(:mithril, key)
   defp restore_env(key, value), do: Application.put_env(:mithril, key, value)
 end

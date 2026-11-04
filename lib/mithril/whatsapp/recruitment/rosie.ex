@@ -20,13 +20,13 @@ defmodule Mithril.WhatsApp.Recruitment.Rosie do
 
   def help do
     "My name is #{@name} and I'm here to assist you.\n\n" <>
-      "Do you want to apply as a cleaner? Reply APPLY.\n\n" <>
+      "Do you want to apply as a Worker? Reply APPLY.\n\n" <>
       "You can also ask me about:\n" <>
       "- Instaclean services\n" <>
       "- Promotions\n" <>
       "- App download links\n" <>
       "- How to book a cleaner\n" <>
-      "- Cleaner applications\n" <>
+      "- Worker applications\n" <>
       "- Website and support"
   end
 
@@ -63,7 +63,7 @@ defmodule Mithril.WhatsApp.Recruitment.Rosie do
         text,
         ~w(apply application job work join recruitment) ++ ["cleaner job", "become a cleaner"]
       ) ->
-        "You can apply to become an Instaclean cleaner right here on WhatsApp.\n\n" <>
+        "You can apply to become an Instaclean Worker right here on WhatsApp.\n\n" <>
           "Reply APPLY to start.\n\n" <>
           "You can also apply on the website:\n#{app_url}/join-as-cleaner"
 
@@ -89,12 +89,12 @@ defmodule Mithril.WhatsApp.Recruitment.Rosie do
         "Instaclean helps customers book trusted home services in Ghana, including cleaning and related household services.\n\n" <>
           "You can book through the app or website:\n\n" <>
           "#{app_url}\n#{@linktree}\n\n" <>
-          "If you want to apply as a cleaner, reply APPLY."
+          "If you want to apply as a Worker, reply APPLY."
 
       true ->
         "My name is #{@name} and I'm here to assist you with Instaclean.\n\n" <>
-          "You can ask me about app downloads, promotions, services, booking, or cleaner applications.\n\n" <>
-          "To apply as a cleaner, reply APPLY.\n\n" <>
+          "You can ask me about app downloads, promotions, services, booking, or Worker applications.\n\n" <>
+          "To apply as a Worker, reply APPLY.\n\n" <>
           "Website:\n#{app_url}\n\n" <>
           "All links:\n#{@linktree}"
     end
