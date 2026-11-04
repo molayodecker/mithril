@@ -13,9 +13,11 @@ defmodule Mithril.WhatsApp.InvoiceTemplate do
 
   alias Mithril.DirectAdminWhatsApp
   alias Mithril.DirectContracts.Calendar
+  alias Mithril.WhatsApp.ContentTemplate
   alias Mithril.WhatsApp.PaymentTemplate
 
   @name "instaclean_invoice"
+  @env_key :twilio_template_invoice
   @button "View invoice"
   @sample_token "a1b2c3d4e5f6789012345678abcdef0123456789abcdef0123456789abcdef01"
 
@@ -71,14 +73,11 @@ defmodule Mithril.WhatsApp.InvoiceTemplate do
   end
 
   def content_sid do
-    case Application.get_env(:mithril, :twilio_template_invoice) do
-      sid when is_binary(sid) ->
-        sid = String.trim(sid)
-        if sid == "", do: nil, else: sid
+    ContentTemplate.content_sid(@name, @env_key)
+  end
 
-      _ ->
-        nil
-    end
+  def ensure do
+    ContentTemplate.ensure(@name, @env_key, definition())
   end
 
   @doc """
