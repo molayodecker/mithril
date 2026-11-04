@@ -61,7 +61,7 @@ defmodule Mithril.Application do
 
   defp oban_child do
     if Application.get_env(:mithril, :start_oban, true) do
-      [{Oban, Application.fetch_env!(:mithril, Oban)}]
+      [Mithril.ObanRuntime]
     else
       []
     end
