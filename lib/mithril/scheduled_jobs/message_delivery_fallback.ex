@@ -10,7 +10,7 @@ defmodule Mithril.ScheduledJobs.MessageDeliveryFallback do
 
   @spec run() :: :ok | {:error, term()}
   def run do
-    now = DateTime.utc_now() |> DateTime.to_iso8601()
+    now = DateTime.utc_now()
 
     case Repo.query(
            """

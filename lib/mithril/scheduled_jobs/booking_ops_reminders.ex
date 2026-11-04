@@ -62,7 +62,6 @@ defmodule Mithril.ScheduledJobs.BookingOpsReminders do
     cutoff =
       DateTime.utc_now()
       |> DateTime.add(-@confirmed_hours * 3600, :second)
-      |> DateTime.to_iso8601()
 
     case fetch_bookings(
            """

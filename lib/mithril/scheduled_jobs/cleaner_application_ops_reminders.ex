@@ -11,8 +11,8 @@ defmodule Mithril.ScheduledJobs.CleanerApplicationOpsReminders do
   @spec run() :: :ok | {:error, term()}
   def run do
     now = DateTime.utc_now()
-    pending_cutoff = DateTime.add(now, -@pending_hours * 3600, :second) |> DateTime.to_iso8601()
-    draft_cutoff = DateTime.add(now, -@draft_hours * 3600, :second) |> DateTime.to_iso8601()
+    pending_cutoff = DateTime.add(now, -@pending_hours * 3600, :second)
+    draft_cutoff = DateTime.add(now, -@draft_hours * 3600, :second)
     admin_url = admin_cleaners_url()
 
     with :ok <- remind_pending(pending_cutoff, admin_url),
