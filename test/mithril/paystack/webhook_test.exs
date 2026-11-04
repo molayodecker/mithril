@@ -237,6 +237,19 @@ defmodule Mithril.Paystack.WebhookTest do
     assert replay.transfer_status == "success"
   end
 
+  test "settles a transfer with an uppercase UUID reference" do
+    {reference, _user_id} = insert_payout!("pending", 12_500)
+
+    raw = transfer_event("transfer.success", String.upcase(reference), 12_500, "GHS", "TRF_upper")
+    assert {:ok, %{settled: true}} = Webhook.handle(raw, sign(raw))
+
+    assert [["success"]] =
+             Repo.query!(
+               "SELECT status::text FROM public.cleaner_payouts WHERE reference = $1",
+               [reference]
+             ).rows
+  end
+
   test "rejects transfer.success when amount or currency does not match" do
     {reference, _user_id} = insert_payout!("pending", 12_500)
 
