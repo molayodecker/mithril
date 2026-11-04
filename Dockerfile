@@ -17,6 +17,7 @@ RUN mix deps.compile
 
 COPY config config
 COPY lib lib
+COPY priv/repo/sql priv/repo/sql
 
 RUN mix compile
 RUN mix release

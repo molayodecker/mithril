@@ -12,6 +12,7 @@ defmodule Mithril.Application do
         metrics_server_child() ++
         [
           Mithril.Repo,
+          Mithril.Schema.Check,
           Mithril.RateLimiter,
           {Phoenix.PubSub, name: Mithril.PubSub},
           MithrilWeb.Endpoint
@@ -61,7 +62,7 @@ defmodule Mithril.Application do
 
   defp oban_child do
     if Application.get_env(:mithril, :start_oban, true) do
-      [Mithril.ObanRuntime]
+      [{Oban, Application.fetch_env!(:mithril, Oban)}]
     else
       []
     end
