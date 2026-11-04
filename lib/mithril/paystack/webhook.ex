@@ -411,7 +411,7 @@ defmodule Mithril.Paystack.Webhook do
                LIMIT 1
                FOR UPDATE
                """,
-               [uuid]
+               [String.downcase(uuid)]
              ) do
           {:ok, %{rows: [[id, user_id, reference, amount, currency, status, transfer_code]]}} ->
             %{
