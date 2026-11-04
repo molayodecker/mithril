@@ -222,6 +222,19 @@ defmodule MithrilWeb.DirectAdminContractsController do
     respond(conn, DirectContracts.remove_invoice(user_id(conn), id, invoice_id))
   end
 
+  operation(:save_letter,
+    operation_id: "direct.saveAdminContractLetter",
+    summary: "Save the client service agreement without sending it",
+    parameters: [
+      id: [in: :path, schema: %Schema{type: :string, format: :uuid}, required: true]
+    ],
+    responses: [ok: {"Saved", "application/json", LetterResult}]
+  )
+
+  def save_letter(conn, %{"id" => id}) do
+    respond(conn, DirectContracts.save_letter(user_id(conn), id))
+  end
+
   operation(:send_letter,
     operation_id: "direct.sendAdminContractLetter",
     summary: "Save and send the client service agreement",
