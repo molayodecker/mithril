@@ -227,14 +227,27 @@ defmodule Mithril.Paystack.WebhookTest do
                """
                SELECT status::text, paystack_transfer_code, error_message
                FROM public.cleaner_payouts
-               WHERE reference = $1::uuid
+               WHERE reference = $1
                """,
-               [Ecto.UUID.dump!(reference)]
+               [reference]
              ).rows
 
     assert {:ok, replay} = Webhook.handle(raw, sign(raw))
     assert replay.already_settled
     assert replay.transfer_status == "success"
+  end
+
+  test "settles a transfer with an uppercase UUID reference" do
+    {reference, _user_id} = insert_payout!("pending", 12_500)
+
+    raw = transfer_event("transfer.success", String.upcase(reference), 12_500, "GHS", "TRF_upper")
+    assert {:ok, %{settled: true}} = Webhook.handle(raw, sign(raw))
+
+    assert [["success"]] =
+             Repo.query!(
+               "SELECT status::text FROM public.cleaner_payouts WHERE reference = $1",
+               [reference]
+             ).rows
   end
 
   test "rejects transfer.success when amount or currency does not match" do
@@ -248,8 +261,8 @@ defmodule Mithril.Paystack.WebhookTest do
 
     assert [["pending"]] =
              Repo.query!(
-               "SELECT status::text FROM public.cleaner_payouts WHERE reference = $1::uuid",
-               [Ecto.UUID.dump!(reference)]
+               "SELECT status::text FROM public.cleaner_payouts WHERE reference = $1",
+               [reference]
              ).rows
   end
 
@@ -275,9 +288,9 @@ defmodule Mithril.Paystack.WebhookTest do
                """
                SELECT status::text, paystack_transfer_code, error_message
                FROM public.cleaner_payouts
-               WHERE reference = $1::uuid
+               WHERE reference = $1
                """,
-               [Ecto.UUID.dump!(reference)]
+               [reference]
              ).rows
   end
 
@@ -303,9 +316,9 @@ defmodule Mithril.Paystack.WebhookTest do
                """
                SELECT status::text, error_message
                FROM public.cleaner_payouts
-               WHERE reference = $1::uuid
+               WHERE reference = $1
                """,
-               [Ecto.UUID.dump!(reference)]
+               [reference]
              ).rows
   end
 
@@ -324,8 +337,8 @@ defmodule Mithril.Paystack.WebhookTest do
 
     assert [["success"]] =
              Repo.query!(
-               "SELECT status::text FROM public.cleaner_payouts WHERE reference = $1::uuid",
-               [Ecto.UUID.dump!(reference)]
+               "SELECT status::text FROM public.cleaner_payouts WHERE reference = $1",
+               [reference]
              ).rows
   end
 
@@ -650,7 +663,7 @@ defmodule Mithril.Paystack.WebhookTest do
       recipient_code text NOT NULL,
       amount integer NOT NULL,
       currency text NOT NULL DEFAULT 'GHS',
-      reference uuid NOT NULL UNIQUE,
+      reference text NOT NULL UNIQUE,
       status public.withdrawal_status NOT NULL DEFAULT 'pending',
       paystack_transfer_code text,
       paystack_transfer_id bigint,
@@ -676,7 +689,7 @@ defmodule Mithril.Paystack.WebhookTest do
           error_message = p_error_msg,
           paystack_transfer_code = COALESCE(p_paystack_transfer_code, paystack_transfer_code),
           updated_at = now()
-      WHERE reference = p_transfer_reference::uuid;
+      WHERE reference = p_transfer_reference;
     END;
     $finalize$;
     """)
