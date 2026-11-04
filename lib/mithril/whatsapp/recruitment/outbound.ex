@@ -3,6 +3,7 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
 
   require Logger
 
+  alias Mithril.Auth.Phone
   alias Mithril.WhatsApp.ContentSids
   alias Mithril.WhatsApp.Recruitment.Twiml
   alias Mithril.WhatsApp.Unreachable
@@ -19,7 +20,7 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
          {:ok, env} <- twilio_env() do
       fields =
         [{"To", to}, {"Body", body}]
-        |> maybe_from(env, from)
+        |> maybe_from(from)
 
       post_message(env, fields)
     end
@@ -32,7 +33,7 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
   is stored and returns `{:error, :not_on_whatsapp}`. A later send to that
   number returns the same error without calling Twilio again.
   """
-  def send_content(to, from, content_sid, variables, status_callback_url \\ nil, opts \\ [])
+  def send_content(to, from, content_sid, variables, status_callback_url \\ nil)
       when is_map(variables) do
     with :ok <- guard_reachable(to),
          {:ok, env} <- twilio_env() do
@@ -42,7 +43,7 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
           {"ContentSid", content_sid},
           {"ContentVariables", Jason.encode!(variables)}
         ]
-        |> maybe_content_sender(env, from, opts)
+        |> maybe_from(from)
         |> maybe_status_callback(status_callback_url)
 
       post_content(env, fields)
@@ -60,7 +61,7 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
       with {:ok, env} <- twilio_env() do
         fields =
           [{"To", ctx.to}, {"ContentSid", sid}, {"ContentVariables", vars}]
-          |> maybe_from(env, ctx.from)
+          |> maybe_from(ctx.from)
 
         case post_message(env, fields) do
           :ok -> {:xml, Twiml.xml(:empty)}
@@ -98,27 +99,67 @@ defmodule Mithril.WhatsApp.Recruitment.Outbound do
     token = Application.get_env(:mithril, :twilio_auth_token)
 
     if is_binary(sid) and sid != "" and is_binary(token) and token != "" do
-      {:ok,
-       %{
-         sid: sid,
-         token: token,
-         messaging_service: Application.get_env(:mithril, :twilio_messaging_service_sid)
-       }}
+      {:ok, %{sid: sid, token: token}}
     else
       {:error, :twilio_not_configured}
     end
   end
 
-  defp maybe_content_sender(fields, _env, from, force_from: true),
-    do: [{"From", from} | fields]
+  @doc false
+  def sender_fields(from) do
+    []
+    |> put_sender("From", from)
+    |> put_sender("MessagingServiceSid", messaging_service_for(from))
+  end
 
-  defp maybe_content_sender(fields, env, from, _opts), do: maybe_from(fields, env, from)
+  defp maybe_from(fields, from) do
+    sender_fields(from) ++ fields
+  end
 
-  defp maybe_from(fields, env, from) do
-    if is_binary(env.messaging_service) and env.messaging_service != "" do
-      [{"MessagingServiceSid", env.messaging_service} | fields]
-    else
-      [{"From", from} | fields]
+  defp put_sender(fields, _key, value) when value in [nil, ""], do: fields
+  defp put_sender(fields, key, value) when is_binary(value), do: fields ++ [{key, value}]
+
+  # The admin line and the main WhatsApp line live in different Messaging
+  # Services. A number listed as both stays on the main service.
+  defp messaging_service_for(from) do
+    cond do
+      listed_sender?(from, :twilio_whatsapp_admin_from) and
+          not listed_sender?(from, :twilio_whatsapp_from) ->
+        configured(:twilio_whatsapp_admin_messaging_service_sid)
+
+      listed_sender?(from, :twilio_whatsapp_from) ->
+        configured(:twilio_whatsapp_messaging_service_sid)
+
+      true ->
+        nil
+    end
+  end
+
+  defp listed_sender?(from, key) do
+    case canonical(from) do
+      {:ok, e164} ->
+        Application.get_env(:mithril, key, "")
+        |> to_string()
+        |> String.split(",")
+        |> Enum.any?(fn candidate -> canonical(candidate) == {:ok, e164} end)
+
+      :error ->
+        false
+    end
+  end
+
+  defp canonical(value) when is_binary(value) do
+    value
+    |> String.replace(~r/^whatsapp:/i, "")
+    |> Phone.normalize()
+  end
+
+  defp canonical(_), do: :error
+
+  defp configured(key) do
+    case Application.get_env(:mithril, key) do
+      sid when is_binary(sid) and sid != "" -> sid
+      _ -> nil
     end
   end
 

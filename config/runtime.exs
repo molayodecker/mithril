@@ -161,6 +161,16 @@ if messaging_service = System.get_env("TWILIO_MESSAGING_SERVICE_SID") do
   config :mithril, :twilio_messaging_service_sid, messaging_service
 end
 
+# Messaging Service that contains TWILIO_WHATSAPP_FROM.
+if whatsapp_messaging_service = System.get_env("TWILIO_WHATSAPP_MESSAGING_SERVICE_SID") do
+  config :mithril, :twilio_whatsapp_messaging_service_sid, whatsapp_messaging_service
+end
+
+# Messaging Service that contains TWILIO_WHATSAPP_ADMIN_FROM.
+if admin_messaging_service = System.get_env("TWILIO_WHATSAPP_ADMIN_MESSAGING_SERVICE_SID") do
+  config :mithril, :twilio_whatsapp_admin_messaging_service_sid, admin_messaging_service
+end
+
 if System.get_env("TWILIO_ACCOUNT_SID") && System.get_env("TWILIO_AUTH_TOKEN") &&
      (System.get_env("TWILIO_MESSAGING_SERVICE_SID") || System.get_env("TWILIO_PHONE_NUMBER") ||
         System.get_env("TWILIO_FROM_NUMBER")) do

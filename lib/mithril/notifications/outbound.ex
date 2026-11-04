@@ -5,6 +5,7 @@ defmodule Mithril.Notifications.Outbound do
   alias Mithril.Auth.SMS
   alias Mithril.Notifications.Templates
   alias Mithril.WhatsApp.ContentSids
+  alias Mithril.WhatsApp.Recruitment.Outbound, as: WhatsAppOutbound
 
   def deliver(body) when is_map(body) do
     channel = present(body["channel"]) || ""
@@ -85,12 +86,13 @@ defmodule Mithril.Notifications.Outbound do
       url = "https://api.twilio.com/2010-04-01/Accounts/#{sid}/Messages.json"
       to = whatsapp_address(phone)
 
-      fields = [
-        To: to,
-        From: from,
-        ContentSid: content_sid,
-        ContentVariables: Jason.encode!(content_variables(template, variables))
-      ]
+      fields =
+        WhatsAppOutbound.sender_fields(from) ++
+          [
+            {"To", to},
+            {"ContentSid", content_sid},
+            {"ContentVariables", Jason.encode!(content_variables(template, variables))}
+          ]
 
       case Req.post(url, form: fields, auth: {:basic, "#{sid}:#{token}"}) do
         {:ok, %{status: status}} when status in 200..299 -> true
