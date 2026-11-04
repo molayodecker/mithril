@@ -8,6 +8,7 @@ kill_timeout = 30
 
 [env]
   PHX_HOST = "dev.tryinstaclean.com"
+  SENTRY_ENVIRONMENT = "staging"
   OPEN_API_DOCS_HOST = "openapi-stage.tryinstaclean.com"
   PORT = "4000"
   POOL_SIZE = "5"

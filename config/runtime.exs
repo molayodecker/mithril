@@ -487,6 +487,44 @@ if config_env() != :prod and truthy_env?.("DISABLE_TWILIO_SIGNATURE_VALIDATION")
   config :mithril, :disable_twilio_signature_validation, true
 end
 
+if config_env() != :test do
+  sentry_environment =
+    case System.get_env("SENTRY_ENVIRONMENT") do
+      value when is_binary(value) ->
+        case String.trim(value) do
+          "" -> Atom.to_string(config_env())
+          trimmed -> trimmed
+        end
+
+      _ ->
+        Atom.to_string(config_env())
+    end
+
+  config :sentry, environment_name: sentry_environment
+
+  sentry_dsn =
+    case System.get_env("SENTRY_DSN") do
+      value when is_binary(value) ->
+        case String.trim(value) do
+          "" -> nil
+          trimmed -> trimmed
+        end
+
+      _ ->
+        nil
+    end
+
+  if sentry_dsn do
+    config :sentry, dsn: sentry_dsn
+
+    config :opentelemetry,
+      traces_exporter: :none,
+      span_processor: {Sentry.OpenTelemetry.SpanProcessor, []},
+      sampler: {Sentry.OpenTelemetry.Sampler, []},
+      text_map_propagators: [:trace_context, :baggage, Sentry.OpenTelemetry.Propagator]
+  end
+end
+
 if config_env() == :prod do
   {database_backend, database_url} = Mithril.DatabaseBackend.resolve!()
   secret_key_base = System.fetch_env!("SECRET_KEY_BASE")

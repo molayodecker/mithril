@@ -5,6 +5,8 @@ defmodule Mithril.Application do
 
   @impl true
   def start(_type, _args) do
+    setup_error_tracking()
+
     children =
       [Mithril.PromEx] ++
         metrics_server_child() ++
@@ -16,6 +18,20 @@ defmodule Mithril.Application do
         ] ++ oban_child() ++ outbox_child() ++ recruitment_store_child()
 
     Supervisor.start_link(children, strategy: :one_for_one, name: Mithril.Supervisor)
+  end
+
+  defp setup_error_tracking do
+    if Sentry.Config.dsn() do
+      # SQL text stays off. The database URL from Repo config includes the
+      # password, so the span attribute is replaced before it can be exported.
+      OpentelemetryBandit.setup()
+      OpentelemetryPhoenix.setup(adapter: :bandit)
+
+      OpentelemetryEcto.setup([:mithril, :repo],
+        db_statement: :disabled,
+        additional_attributes: %{"db.url" => "redacted"}
+      )
+    end
   end
 
   defp metrics_server_child do

@@ -138,6 +138,13 @@ Set it on Fly:
 fly secrets set SECRET_KEY_BASE='<generated-secret>' -a instaclean-mithril
 ```
 
+Sentry reporting stays off until `SENTRY_DSN` is set. `SENTRY_ENVIRONMENT` is already in each Fly config, and deploys tag events with `SENTRY_RELEASE` set to the git SHA. Set the DSN on each app that should report:
+
+```bash
+fly secrets set SENTRY_DSN='<dsn>' -a instaclean-mithril
+fly secrets set SENTRY_DSN='<dsn>' -a instaclean-mithril-staging
+```
+
 Keep the current Supabase URL as a rollback secret, and attach Fly MPG to a separate variable so the original `DATABASE_URL` stays intact:
 
 ```bash

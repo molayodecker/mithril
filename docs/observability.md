@@ -1,6 +1,8 @@
 # Mithril observability
 
-Mithril uses PromEx for application metrics. Fly.io scrapes those metrics into managed Prometheus. Grafana reads Fly Prometheus; Mithril does not push dashboards or talk to Grafana itself.
+Mithril uses PromEx for application metrics and Sentry for errors and traces. Fly.io scrapes those metrics into managed Prometheus. Grafana reads Fly Prometheus; Mithril does not push dashboards or talk to Grafana itself.
+
+Sentry stays disabled until `SENTRY_DSN` is set. Crashes, final Oban failures, and Phoenix/Bandit/Ecto traces are sent. Health, readiness, and metrics probes are not traced. Request bodies scrub phone, email, OTP, and card fields. Webhook signatures and the database URL are not sent.
 
 Keep PromEx Grafana disabled in Mithril:
 

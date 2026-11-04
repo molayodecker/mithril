@@ -21,6 +21,16 @@ config :mithril, Mithril.PromEx,
 config :mithril, :metrics_server, :disabled
 
 config :logger, level: :warning
+
+config :sentry,
+  dsn: nil,
+  environment_name: :test,
+  test_mode: true,
+  traces_sample_rate: nil,
+  traces_sampler: nil,
+  logs: nil
+
+config :opentelemetry, traces_exporter: :none
 config :phoenix, :plug_init_mode, :runtime
 
 config :bcrypt_elixir, log_rounds: 4

@@ -48,4 +48,39 @@ config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
   metadata: [:request_id]
 
+# The DSN, environment, and release come from the runtime environment.
+# `logs` without a level attaches crash reporting and leaves Sentry Logs off.
+config :sentry,
+  enable_source_code_context: true,
+  root_source_code_paths: [File.cwd!()],
+  source_code_path_pattern: "lib/**/*.ex",
+  in_app_otp_apps: [:mithril],
+  traces_sample_rate: 1.0,
+  traces_sampler: {Mithril.Sentry, :traces_sampler},
+  before_send: {Mithril.Sentry, :before_send},
+  logs: [capture_metadata: [:request_id]],
+  integrations: [
+    oban: [
+      capture_errors: true,
+      should_report_error_callback: &Mithril.Sentry.report_oban_error?/2
+    ]
+  ],
+  scrubber: [
+    param_keys: [
+      "phone",
+      "email",
+      "otp",
+      "cvv",
+      "cvc",
+      "card",
+      "pan",
+      "account_number",
+      "iban",
+      "ghana_card"
+    ]
+  ]
+
+# Keep the OpenTelemetry exporter quiet unless a DSN turns on Sentry's processor.
+config :opentelemetry, traces_exporter: :none
+
 import_config "#{config_env()}.exs"

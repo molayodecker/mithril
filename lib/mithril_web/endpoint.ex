@@ -13,6 +13,8 @@ defmodule MithrilWeb.Endpoint do
     body_reader: {MithrilWeb.CacheBodyReader, :read_body, []},
     length: 8_000_000
 
+  plug Sentry.PlugContext, header_scrubber: {Mithril.Sentry, :scrub_headers}
+
   plug Plug.MethodOverride
   plug Plug.Head
 
