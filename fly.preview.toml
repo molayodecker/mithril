@@ -8,6 +8,7 @@ kill_timeout = 30
 
 [env]
   PHX_HOST = "instaclean-mithril-preview.fly.dev"
+  SENTRY_ENVIRONMENT = "preview"
   PORT = "4000"
   POOL_SIZE = "5"
   DATABASE_BACKEND = "fly"

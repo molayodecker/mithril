@@ -209,7 +209,7 @@ jobs:
           fi
 
       - name: Deploy Mithril to Fly
-        run: flyctl deploy --remote-only --wait-timeout 180 --app "$FLY_APP" --config "${{ inputs.fly_config }}"
+        run: flyctl deploy --remote-only --wait-timeout 180 --app "$FLY_APP" --config "${{ inputs.fly_config }}" --env "SENTRY_RELEASE=${DEPLOY_SHA}"
 
       - name: Verify readiness
         env:

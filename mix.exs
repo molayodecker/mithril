@@ -38,6 +38,15 @@ defmodule Mithril.MixProject do
       {:open_api_spex, "~> 3.22.3"},
       {:oban, "~> 2.19"},
       {:prom_ex, "~> 1.12"},
+      {:sentry, "~> 14.0"},
+      {:finch, "~> 0.21"},
+      {:opentelemetry, "~> 1.7"},
+      {:opentelemetry_api, "~> 1.5"},
+      {:opentelemetry_exporter, "~> 1.10"},
+      {:opentelemetry_semantic_conventions, "~> 1.27"},
+      {:opentelemetry_phoenix, "~> 2.0"},
+      {:opentelemetry_bandit, "~> 0.3"},
+      {:opentelemetry_ecto, "~> 1.2"},
       {:ex_phone_number, "~> 0.4.12"},
       {:ex_email, "~> 1.0"}
     ]
