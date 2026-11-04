@@ -204,7 +204,8 @@ defmodule Mithril.Notifications.Reminders do
                'Africa/Accra'
              ) AS tz
            ) tz
-           WHERE b.status <> ALL($3::text[])
+           -- status is the booking_status enum. Comparing it to text[] is 42883.
+           WHERE b.status::text <> ALL($3::text[])
              AND b.scheduled_date BETWEEN $1::date AND $2::date
            ORDER BY b.scheduled_date, b.scheduled_time
            LIMIT 500

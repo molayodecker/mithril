@@ -5,7 +5,8 @@ defmodule Mithril.StorageCleanup.QuickTaskTest do
   alias Mithril.StorageCleanup.QuickTask
 
   setup do
-    {:ok, _pid} = TestDouble.start_link()
+    result = TestDouble.start_link()
+    if match?({:error, {:already_started, _pid}}, result), do: TestDouble.reset!()
     Application.put_env(:mithril, :object_storage_backend, TestDouble)
     on_exit(fn -> Application.delete_env(:mithril, :object_storage_backend) end)
     :ok

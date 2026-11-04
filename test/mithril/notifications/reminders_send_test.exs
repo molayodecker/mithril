@@ -50,7 +50,21 @@ defmodule Mithril.Notifications.RemindersSendTest do
     assert :discard = BookingReminder.perform(job)
   end
 
-  defp insert_concierge_booking!(hours_from_now: hours) do
+  test "due sweep reads booking_status and skips terminal visits" do
+    pending = insert_concierge_booking!(hours_from_now: 24)
+    cancelled = insert_concierge_booking!(hours_from_now: 24, status: "cancelled")
+
+    items = Reminders.due_items()
+    stages = for item <- items, item.booking_id == pending.booking_id, do: item.stage
+
+    assert "customer_24h" in stages
+    assert "cleaner" in stages
+    refute Enum.any?(items, &(&1.booking_id == cancelled.booking_id))
+  end
+
+  defp insert_concierge_booking!(opts) do
+    hours = Keyword.fetch!(opts, :hours_from_now)
+    status = Keyword.get(opts, :status, "pending")
     customer_id = Ecto.UUID.generate()
     worker_id = Ecto.UUID.generate()
     admin_id = Ecto.UUID.generate()
@@ -82,14 +96,15 @@ defmodule Mithril.Notifications.RemindersSendTest do
       INSERT INTO public.bookings (
         id, customer_id, cleaner_id, service_id, address, scheduled_date, scheduled_time,
         duration_hours, status, payment_status
-      ) VALUES ($1, $2, $3, 1, 'East Legon', $4, $5, 3, 'pending', 'pending')
+      ) VALUES ($1, $2, $3, 1, 'East Legon', $4, $5, 3, $6::public.booking_status, 'pending')
       """,
       [
         Ecto.UUID.dump!(booking_id),
         Ecto.UUID.dump!(customer_id),
         Ecto.UUID.dump!(worker_id),
         date,
-        time
+        time,
+        status
       ]
     )
 
@@ -109,6 +124,14 @@ defmodule Mithril.Notifications.RemindersSendTest do
     for table <- ~w(direct_booking_origins bookings profiles users) do
       Repo.query!("DROP TABLE IF EXISTS public.#{table} CASCADE")
     end
+
+    Repo.query!("DROP TYPE IF EXISTS public.booking_status CASCADE")
+
+    Repo.query!("""
+    CREATE TYPE public.booking_status AS ENUM (
+      'pending', 'confirmed', 'scheduled', 'cancelled', 'completed', 'no_show'
+    )
+    """)
 
     Repo.query!("""
     CREATE TABLE public.users (
@@ -137,7 +160,7 @@ defmodule Mithril.Notifications.RemindersSendTest do
       scheduled_date date NOT NULL,
       scheduled_time time NOT NULL,
       duration_hours numeric NOT NULL,
-      status text NOT NULL,
+      status public.booking_status NOT NULL,
       payment_status text NOT NULL,
       recurrence_interval text,
       customer_reminder_7d_sent_at timestamptz,
