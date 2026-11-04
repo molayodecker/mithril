@@ -452,11 +452,17 @@ defmodule Mithril.MobileGateway do
 
   defp query(sql, params, decode?) do
     case Repo.query(sql, params) do
-      {:ok, %{rows: []}} when decode? -> {:ok, []}
-      {:ok, %{rows: [[value]]}} when decode? -> {:ok, value}
-      {:ok, %{rows: rows}} when decode? -> {:ok, Enum.map(rows, fn [value] -> value end)}
+      {:ok, %{rows: rows}} when decode? -> {:ok, decode_rows(rows)}
       {:ok, _result} -> {:ok, nil}
       {:error, error} -> {:error, error}
     end
   end
+
+  # Postgrex sets rows to nil for INSERT/UPDATE/DELETE without RETURNING.
+  # nil is an atom, so Enum.map/2 raises Protocol.UndefinedError.
+  @doc false
+  def decode_rows(nil), do: []
+  def decode_rows([]), do: []
+  def decode_rows([[value]]), do: value
+  def decode_rows(rows) when is_list(rows), do: Enum.map(rows, fn [value] -> value end)
 end

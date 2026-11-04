@@ -89,7 +89,7 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewals do
            ON CONFLICT (subscription_id, occurrence_date) DO NOTHING
            RETURNING id, subscription_id, occurrence_date, paystack_reference, status, booking_id, last_error
            """,
-           [subscription_id, occurrence_date, reference]
+           [subscription_id, sql_date(occurrence_date), reference]
          ) do
       {:ok, %{rows: [row]}} ->
         row_to_attempt(row)
@@ -101,7 +101,7 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewals do
                FROM public.subscription_renewal_attempts
                WHERE subscription_id = $1::uuid AND occurrence_date = $2::date
                """,
-               [subscription_id, occurrence_date]
+               [subscription_id, sql_date(occurrence_date)]
              ) do
           {:ok, %{rows: [row]}} -> row_to_attempt(row)
           _ -> raise "claim_attempt_failed"
@@ -150,7 +150,7 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewals do
         SET #{set_sql}, updated_at = now()
         WHERE subscription_id = $1::uuid AND occurrence_date = $2::date
         """,
-        [subscription_id, occurrence_date | params]
+        [subscription_id, sql_date(occurrence_date) | params]
       )
     end
   end
@@ -173,7 +173,7 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewals do
              AND status::text <> 'cancelled'
            LIMIT 1
            """,
-           [subscription_id, occurrence_date]
+           [subscription_id, sql_date(occurrence_date)]
          ) do
       {:ok, %{rows: [[id, payment_status]]}} ->
         %{id: id, payment_status: to_string(payment_status || "")}
@@ -230,8 +230,8 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewals do
              subscription["customer_id"],
              subscription["cleaner_id"],
              subscription["service_id"],
-             occurrence_date,
-             scheduled_time,
+             sql_date(occurrence_date),
+             sql_time(scheduled_time),
              subscription["duration_hours"],
              subscription["address"],
              subscription["location_coordinates"],
@@ -302,7 +302,7 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewals do
   defp refresh_occurrence(subscription_id, anchor_date, today, charge_window_end) do
     case Repo.query(
            "SELECT public.refresh_subscription_recurrence_dates($1::uuid, $2::date)",
-           [subscription_id, anchor_date]
+           [subscription_id, sql_date(anchor_date)]
          ) do
       {:ok, %{rows: [[json]]}} when is_map(json) ->
         next = Map.get(json, "next_service_date") || Map.get(json, :next_service_date)
@@ -341,7 +341,7 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewals do
       ORDER BY next_occurrence_date ASC
       LIMIT $2
       """,
-      [charge_window_end, @batch_limit]
+      [sql_date(charge_window_end), @batch_limit]
     )
     |> case do
       {:ok, %{columns: columns, rows: rows}} ->
@@ -376,4 +376,29 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewals do
   end
 
   defp return_ok, do: :ok
+
+  defp sql_date(%Date{} = date), do: date
+
+  defp sql_date(value) when is_binary(value) do
+    case Date.from_iso8601(String.slice(value, 0, 10)) do
+      {:ok, date} -> date
+      _ -> value
+    end
+  end
+
+  defp sql_date(value), do: value
+
+  defp sql_time(%Time{} = time), do: time
+
+  defp sql_time(value) when is_binary(value) do
+    trimmed = String.trim(value)
+    candidate = if String.match?(trimmed, ~r/^\d{2}:\d{2}$/), do: trimmed <> ":00", else: trimmed
+
+    case Time.from_iso8601(candidate) do
+      {:ok, time} -> time
+      _ -> value
+    end
+  end
+
+  defp sql_time(value), do: value
 end

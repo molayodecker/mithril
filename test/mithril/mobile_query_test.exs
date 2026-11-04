@@ -5,6 +5,13 @@ defmodule Mithril.MobileQueryTest do
   alias Mithril.MobileQuery
   alias Mithril.MobileRpc
 
+  test "a query without returned rows decodes as an empty list" do
+    assert [] = MobileGateway.decode_rows(nil)
+    assert [] = MobileGateway.decode_rows([])
+    assert "row" = MobileGateway.decode_rows([["row"]])
+    assert ["a", "b"] = MobileGateway.decode_rows([["a"], ["b"]])
+  end
+
   test "compiles an equality filter as a bound parameter" do
     assert {:ok, %{sql: sql, params: ["booking-1", "user-1"]}} =
              MobileQuery.compile("user-1", %{
