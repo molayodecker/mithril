@@ -291,6 +291,7 @@ defmodule MithrilWeb.Router do
          DirectAdminContractsController,
          :remove_invoice
 
+    post "/admin/contracts/:id/letters/save", DirectAdminContractsController, :save_letter
     post "/admin/contracts/:id/letters", DirectAdminContractsController, :send_letter
     post "/admin/contracts/:id/sign", DirectAdminContractsController, :sign
 

@@ -1083,6 +1083,46 @@ defmodule Mithril.DirectContractsTest do
              DirectContracts.remove_assignment(admin_id, contract_id, assignment_id)
   end
 
+  test "saving a contract letter assigns a number without sending it" do
+    admin_id = Fixtures.insert_user!("admin")
+    worker_id = named_worker!("Ama Owusu")
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Saved Household",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000
+             })
+
+    assert {:error, :letter_needs_worker} = DirectContracts.save_letter(admin_id, contract_id)
+
+    assert {:ok, _} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerId" => worker_id,
+               "roleLabel" => "Househelp",
+               "monthlyPayMinor" => 80_000,
+               "clientRateMinor" => 100_000,
+               "advanceMode" => "manual"
+             })
+
+    assert {:ok, %{"letterNo" => number, "sent" => false, "channel" => nil, "viewUrl" => view_url}} =
+             DirectContracts.save_letter(admin_id, contract_id)
+
+    assert number =~ "LTR-"
+    token = view_url |> String.split("/") |> List.last()
+    assert {:ok, letter} = DirectContracts.public_letter(token)
+    assert letter["letterNo"] == number
+    assert letter["clientName"] == "Saved Household"
+
+    assert {:ok, detail} = DirectContracts.show(admin_id, contract_id, nil)
+    assert hd(detail["letters"])["letterNo"] == number
+    assert hd(detail["letters"])["status"] == "saved"
+    assert {:ok, %{"letters" => []}} = DirectContracts.list_for_customer(worker_id)
+
+    assert {:ok, %{"letterNo" => ^number, "sent" => false}} =
+             DirectContracts.save_letter(admin_id, contract_id)
+  end
+
   defp normalize_automatic(:ok), do: {:ok, %{"paidCount" => 0, "totalMinor" => 0}}
   defp normalize_automatic(other), do: other
 

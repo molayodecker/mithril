@@ -701,7 +701,7 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
       type: :object,
       properties: %{
         letterNo: %Schema{type: :string},
-        channel: %Schema{type: :string},
+        channel: %Schema{type: :string, nullable: true},
         sent: %Schema{type: :boolean},
         viewUrl: %Schema{type: :string}
       },

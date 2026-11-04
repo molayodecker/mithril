@@ -439,12 +439,21 @@ defmodule Mithril.DirectContracts do
 
   def public_show(_), do: {:error, :not_found}
 
+  def save_letter(user_id, contract_id) do
+    with :ok <- require_admin(user_id),
+         {:ok, admin_uid} <- dump_uuid(user_id),
+         {:ok, contract_uid} <- dump_uuid(contract_id),
+         {:ok, letter} <- prepare_letter(admin_uid, contract_uid, false) do
+      {:ok, letter_result(letter, nil, false)}
+    end
+  end
+
   def send_letter(user_id, contract_id, params) when is_map(params) do
     with :ok <- require_admin(user_id),
          {:ok, admin_uid} <- dump_uuid(user_id),
          {:ok, contract_uid} <- dump_uuid(contract_id),
          {:ok, channel} <- one_of(param(params, "channel"), ~w(email whatsapp)) do
-      with {:ok, letter} <- ensure_letter(admin_uid, contract_uid) do
+      with {:ok, letter} <- prepare_letter(admin_uid, contract_uid, true) do
         case deliver_letter(admin_uid, letter, channel) do
           :ok ->
             mark_letter_sent(letter["id"], channel, letter["publicToken"])
@@ -1991,7 +2000,7 @@ defmodule Mithril.DirectContracts do
     "WLT-#{number}"
   end
 
-  defp ensure_letter(admin_uid, contract_uid) do
+  defp prepare_letter(admin_uid, contract_uid, claim?) do
     transact(fn ->
       case fetch!(
              """
@@ -2037,16 +2046,27 @@ defmodule Mithril.DirectContracts do
           letter = write_letter(admin_uid, contract_uid, preview, issued)
           sync_worker_letters(admin_uid, contract_uid, letter["id"], contract, workers, issued)
 
-          {:ok, letter_uid} = dump_uuid(letter["id"])
+          if claim? do
+            {:ok, letter_uid} = dump_uuid(letter["id"])
 
-          fetch!(
-            "UPDATE public.direct_contract_letters SET sending_at = now() WHERE id = $1 AND sent_at IS NULL AND sending_at IS NULL",
-            [letter_uid]
-          )
+            fetch!(
+              "UPDATE public.direct_contract_letters SET sending_at = now() WHERE id = $1 AND sent_at IS NULL AND sending_at IS NULL",
+              [letter_uid]
+            )
+          end
 
           letter
       end
     end)
+  end
+
+  defp letter_result(letter, channel, sent) do
+    %{
+      "letterNo" => letter["letterNo"],
+      "channel" => channel,
+      "sent" => sent,
+      "viewUrl" => letter["viewUrl"]
+    }
   end
 
   defp write_letter(admin_uid, contract_uid, preview, issued) do
