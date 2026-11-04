@@ -60,7 +60,9 @@ defmodule Mithril.Auth.WhatsAppOtp do
     if to == nil or from == nil do
       {:error, :whatsapp_not_configured}
     else
-      case WhatsAppOutbound.send_content(to, from, content_sid(), %{"1" => code}, nil, force_from: true) do
+      case WhatsAppOutbound.send_content(to, from, content_sid(), %{"1" => code}, nil,
+             force_from: true
+           ) do
         {:ok, _message_sid} -> :ok
         {:error, reason} -> {:error, reason}
       end
