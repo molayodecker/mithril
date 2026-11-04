@@ -19,7 +19,7 @@ COPY config config
 COPY lib lib
 
 RUN mix compile
-RUN mix sentry.package_source_code
+RUN mix run --no-start -e 'Code.ensure_loaded!(Mithril.Sentry); Mix.Task.run("sentry.package_source_code")'
 RUN mix release
 
 FROM ${ALPINE_BASE_IMAGE} AS runtime
