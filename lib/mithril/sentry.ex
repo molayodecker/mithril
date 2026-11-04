@@ -38,6 +38,23 @@ defmodule Mithril.Sentry do
   end
 
   @doc """
+  Redacts bearer tokens in public Direct links, preserving route shape.
+  """
+  def scrub_url(conn) do
+    conn
+    |> Sentry.PlugContext.default_url_scrubber()
+    |> redact_public_token()
+  end
+
+  defp redact_public_token(value) when is_binary(value) do
+    Regex.replace(
+      ~r{(/direct/(?:invoices|billing-invoices|contract-invoices|contract-letters|worker-letters|pay)/)[^/?#]+},
+      value,
+      "\\1[Filtered]"
+    )
+  end
+
+  @doc """
   Removes database credentials and sensitive query parameters from traces.
   """
   def before_send(%Sentry.Transaction{} = transaction) do
@@ -69,6 +86,10 @@ defmodule Mithril.Sentry do
     data
     |> scrub_query_attribute("url.query")
     |> scrub_query_attribute(:"url.query")
+    |> scrub_path_attribute("url.path")
+    |> scrub_path_attribute(:"url.path")
+    |> scrub_path_attribute("url.full")
+    |> scrub_path_attribute(:"url.full")
     |> redact_database_url("db.url")
     |> redact_database_url(:"db.url")
   end
@@ -82,6 +103,13 @@ defmodule Mithril.Sentry do
 
       _ ->
         data
+    end
+  end
+
+  defp scrub_path_attribute(data, key) do
+    case Map.get(data, key) do
+      value when is_binary(value) -> Map.put(data, key, redact_public_token(value))
+      _ -> data
     end
   end
 
