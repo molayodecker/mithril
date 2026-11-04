@@ -8,8 +8,10 @@ defmodule Mithril.WhatsApp.WorkerAddedTemplate do
   """
 
   alias Mithril.DirectAdminWhatsApp
+  alias Mithril.WhatsApp.ContentTemplate
 
   @name "instaclean_worker_added"
+  @env_key :twilio_template_worker_added
 
   def name, do: @name
 
@@ -49,14 +51,11 @@ defmodule Mithril.WhatsApp.WorkerAddedTemplate do
   end
 
   def content_sid do
-    case Application.get_env(:mithril, :twilio_template_worker_added) do
-      sid when is_binary(sid) ->
-        sid = String.trim(sid)
-        if sid == "", do: nil, else: sid
+    ContentTemplate.content_sid(@name, @env_key)
+  end
 
-      _ ->
-        nil
-    end
+  def ensure do
+    ContentTemplate.ensure(@name, @env_key, definition())
   end
 
   def deliver(admin_uid, phone, name, role, client)
