@@ -15,4 +15,16 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewalsTest do
     refute source =~ "COALESCE($11::uuid[], '{}')",
            "uuid[] cast breaks slug ids such as fridge or oven"
   end
+
+  test "renewal queries pass location as text so Postgrex never decodes geometry" do
+    source = File.read!(@renewals_source)
+
+    assert source =~ "ST_AsEWKT(location_coordinates)",
+           "selecting location_coordinates returns PostGIS geometry, which Postgrex.DefaultTypes cannot decode"
+
+    assert source =~ "ST_GeomFromEWKT($8::text)",
+           "binding $8::geometry disconnects Postgrex when the renewal booking is inserted"
+
+    refute source =~ "$8::geometry"
+  end
 end
