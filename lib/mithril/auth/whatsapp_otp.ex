@@ -7,6 +7,7 @@ defmodule Mithril.Auth.WhatsAppOtp do
   the copy-code button, and the 10-minute expiry line.
   """
 
+  alias Mithril.Auth.TestPhones
   alias Mithril.Notifications.Outbound
   alias Mithril.ScheduledJobs.MessageDeliveryFallback
   alias Mithril.WhatsApp.ContentSids
@@ -37,6 +38,9 @@ defmodule Mithril.Auth.WhatsAppOtp do
   @spec send(String.t(), String.t()) :: :ok | {:error, atom()}
   def send(phone, code) when is_binary(phone) and is_binary(code) do
     cond do
+      TestPhones.configured?(phone) ->
+        {:error, :test_phone}
+
       MessageDeliveryFallback.blocked_recipient?(phone) ->
         {:error, :blocked}
 
@@ -56,7 +60,7 @@ defmodule Mithril.Auth.WhatsAppOtp do
     if to == nil or from == nil do
       {:error, :whatsapp_not_configured}
     else
-      case WhatsAppOutbound.send_content(to, from, content_sid(), %{"1" => code}) do
+      case WhatsAppOutbound.send_content(to, from, content_sid(), %{"1" => code}, nil, force_from: true) do
         {:ok, _message_sid} -> :ok
         {:error, reason} -> {:error, reason}
       end
