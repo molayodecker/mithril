@@ -1105,7 +1105,8 @@ defmodule Mithril.DirectContractsTest do
                "advanceMode" => "manual"
              })
 
-    assert {:ok, %{"letterNo" => number, "sent" => false, "channel" => nil, "viewUrl" => view_url}} =
+    assert {:ok,
+            %{"letterNo" => number, "sent" => false, "channel" => nil, "viewUrl" => view_url}} =
              DirectContracts.save_letter(admin_id, contract_id)
 
     assert number =~ "LTR-"
