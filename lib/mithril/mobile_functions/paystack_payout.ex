@@ -182,7 +182,7 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
            amount: amount,
            recipient: recipient,
            reason: reason,
-           reference: reference_candidate,
+           reference: String.downcase(reference_candidate),
            currency: currency
          }}
     end
