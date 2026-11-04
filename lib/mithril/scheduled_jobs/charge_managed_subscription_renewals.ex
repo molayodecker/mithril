@@ -168,7 +168,9 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewals do
     case Repo.query(
            """
            SELECT id, payment_status FROM public.bookings
-           WHERE subscription_id = $1::uuid AND scheduled_date = $2::date AND status <> 'cancelled'
+           WHERE subscription_id = $1::uuid
+             AND scheduled_date = $2::date
+             AND status::text <> 'cancelled'
            LIMIT 1
            """,
            [subscription_id, occurrence_date]
@@ -212,7 +214,11 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewals do
              timezone_name, supplies_option, supplies_allowance_minor, recurrence_interval, idempotency_key
            ) VALUES (
              $1::uuid, $2::uuid, $2::uuid, $3::integer, 'Regular Cleaning Service',
-             $4::date, $5::time, COALESCE($6::numeric, 2), $7, $8::geometry,
+             $4::date, $5::time, COALESCE($6::numeric, 2), $7,
+             CASE
+               WHEN $8::text IS NULL OR btrim($8::text) = '' THEN NULL
+               ELSE ST_GeomFromEWKT($8::text)
+             END,
              $9, $10, COALESCE($11::text[], '{}'), $12, $12, $12, $13, $14::uuid,
              CASE WHEN $2::uuid IS NULL THEN 'pending' ELSE 'confirmed' END,
              'pending', 'paystack', $15, 0, false, 0, COALESCE($16, 'v1'),
@@ -253,7 +259,7 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewals do
            UPDATE public.bookings
            SET payment_status = 'paid', status = $2, updated_at = now()
            WHERE id = $1::uuid
-             AND status NOT IN ('cancelled', 'completed')
+             AND status::text NOT IN ('cancelled', 'completed')
            RETURNING status
            """,
            [booking_id, status]
@@ -262,7 +268,9 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewals do
         :ok
 
       {:ok, %{num_rows: 0}} ->
-        case Repo.query("SELECT status FROM public.bookings WHERE id = $1::uuid", [booking_id]) do
+        case Repo.query("SELECT status::text FROM public.bookings WHERE id = $1::uuid", [
+               booking_id
+             ]) do
           {:ok, %{rows: [[terminal_status]]}}
           when terminal_status in ["cancelled", "completed"] ->
             {:error, "booking_terminal_state:#{terminal_status}"}
@@ -313,7 +321,14 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewals do
   defp load_due_subscriptions(charge_window_end) do
     Repo.query(
       """
-      SELECT id, customer_id, cleaner_id, service_id, address, location_coordinates, duration_hours,
+      -- location_coordinates is PostGIS geometry. Returning it makes Postgrex
+      -- disconnect with "type geometry can not be handled by Postgrex.DefaultTypes".
+      SELECT id, customer_id, cleaner_id, service_id, address,
+             CASE
+               WHEN location_coordinates IS NULL THEN NULL
+               ELSE ST_AsEWKT(location_coordinates)
+             END AS location_coordinates,
+             duration_hours,
              recurrence_interval, amount, recurring_amount_minor, currency, scheduled_time,
              next_occurrence_date, paystack_authorization_code, special_instructions, home_size,
              extra_task_ids, pricing_version
