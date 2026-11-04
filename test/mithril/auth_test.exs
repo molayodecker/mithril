@@ -871,6 +871,29 @@ defmodule Mithril.AuthTest do
     assert {:ok, _session} = Auth.login("new-user@example.com", "register-password")
   end
 
+  test "whatsapp otp uses the approved authentication template" do
+    assert Mithril.Auth.WhatsAppOtp.content_sid() == "HX0c13fa64693fc800d33ee2fe82d64c75"
+  end
+
+  test "phone OTP also sends the same code on WhatsApp when the client connection is weak" do
+    Application.delete_env(:mithril, :test_last_whatsapp_otp)
+
+    assert {:ok, %{ok: true, whatsapp_sent: true}} =
+             Auth.request_otp("0244123456", %{"also_whatsapp" => true})
+
+    {_phone, code} = Application.get_env(:mithril, :test_last_otp)
+    assert Application.get_env(:mithril, :test_last_whatsapp_otp) == {"+233244123456", code}
+  end
+
+  test "phone OTP does not send WhatsApp to a blocked recipient" do
+    Application.delete_env(:mithril, :test_last_whatsapp_otp)
+
+    assert {:ok, %{ok: true, whatsapp_sent: false}} =
+             Auth.request_otp("+233535729691", %{"also_whatsapp" => true})
+
+    assert Application.get_env(:mithril, :test_last_whatsapp_otp) == nil
+  end
+
   test "phone OTP creates a session" do
     assert {:ok, %{ok: true}} = Auth.request_otp("0244123456")
     {_phone, code} = Application.get_env(:mithril, :test_last_otp)
