@@ -46,6 +46,8 @@ defmodule Mithril.SentryTest do
       timestamp: 1,
       data: %{
         "url.query" => "otp=123456&page=2",
+        "url.path" => "/direct/pay/private-token-123/verify",
+        "url.full" => "https://api.tryinstaclean.com/direct/invoices/secret123?x=1",
         "db.url" => "postgres://mithril:secret-password@db.internal:5432/mithril"
       }
     }
@@ -67,6 +69,17 @@ defmodule Mithril.SentryTest do
     assert scrubbed.contexts.trace.data["db.url"] == "redacted"
     assert hd(scrubbed.spans).data["db.url"] == "redacted"
     refute hd(scrubbed.spans).data["url.query"] =~ "123456"
+    assert scrubbed.contexts.trace.data["url.path"] == "/direct/pay/[Filtered]/verify"
+
+    assert hd(scrubbed.spans).data["url.full"] ==
+             "https://api.tryinstaclean.com/direct/invoices/[Filtered]?x=1"
+  end
+
+  test "removes access tokens from Sentry request URLs" do
+    conn = Plug.Test.conn(:get, "/direct/contract-letters/secret-token/sign?otp=123456")
+
+    assert Mithril.Sentry.scrub_url(conn) =~ "/direct/contract-letters/[Filtered]/sign"
+    refute Mithril.Sentry.scrub_url(conn) =~ "secret-token"
   end
 
   defp context(path) do
