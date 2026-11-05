@@ -3,6 +3,7 @@ defmodule Mithril.Sumsub.Reconcile do
 
   alias Mithril.DbUuid
   alias Mithril.Repo
+  alias Mithril.Sumsub.Timestamp
 
   @spec derive_kyc_profile_kyc_status(String.t() | nil, String.t() | nil) :: String.t()
   def derive_kyc_profile_kyc_status(review_answer, review_status) do
@@ -73,7 +74,7 @@ defmodule Mithril.Sumsub.Reconcile do
          persist_errors: ["sumsub_status_unavailable: refusing to persist null reviewStatus"]
        }}
     else
-      now = DateTime.utc_now() |> DateTime.to_iso8601()
+      now = Timestamp.utc_now()
       kyc_status_db = derive_kyc_profile_kyc_status(review_answer, review_status)
       verification_status = map_kyc_profile_status_to_verification_status(kyc_status_db)
       fetched_id = applicant_id |> to_string() |> String.trim()
@@ -233,12 +234,10 @@ defmodule Mithril.Sumsub.Reconcile do
       end
 
     sumsub_linked_at =
-      cond do
-        applicant_changed -> now
-        match?(%DateTime{}, linked_at) -> DateTime.to_iso8601(linked_at)
-        match?(%NaiveDateTime{}, linked_at) -> NaiveDateTime.to_iso8601(linked_at)
-        is_binary(linked_at) and String.trim(linked_at) != "" -> linked_at
-        true -> now
+      if applicant_changed do
+        now
+      else
+        Timestamp.cast(linked_at) || now
       end
 
     case Repo.query(

@@ -5,6 +5,7 @@ defmodule Mithril.Sumsub.ApplicantLink do
   alias Mithril.Repo
   alias Mithril.Sumsub.CleanerApplicationLookup
   alias Mithril.Sumsub.Config
+  alias Mithril.Sumsub.Timestamp
 
   @spec persist_link(map()) :: :ok
   def persist_link(input) when is_map(input) do
@@ -14,7 +15,7 @@ defmodule Mithril.Sumsub.ApplicantLink do
     if present?(user_id) and present?(applicant_id) do
       level_name = Map.get(input, :level_name, Config.level_name())
       country = Map.get(input, :country, Config.country_code())
-      now = DateTime.utc_now() |> DateTime.to_iso8601()
+      now = Timestamp.utc_now()
 
       cleaner_application =
         case CleanerApplicationLookup.find_latest(%{user_id: user_id}) do
@@ -252,10 +253,17 @@ defmodule Mithril.Sumsub.ApplicantLink do
     submitted_done =
       not applicant_changed and timestamp_present?(Map.get(row, "submitted_at"))
 
-    existing_linked_at = normalize_timestamp(Map.get(row, "sumsub_linked_at"))
+    existing_linked_at = Timestamp.cast(Map.get(row, "sumsub_linked_at"))
 
     sumsub_linked_at =
       if applicant_changed or is_nil(existing_linked_at), do: now, else: existing_linked_at
+
+    submitted_at =
+      if submitted_done do
+        Timestamp.cast(Map.get(row, "submitted_at")) || now
+      else
+        now
+      end
 
     %{
       user_id: user_id,
@@ -264,7 +272,7 @@ defmodule Mithril.Sumsub.ApplicantLink do
       level_name: level_name,
       country: country,
       kyc_status: if(kyc_done, do: Map.get(row, "kyc_status"), else: "started"),
-      submitted_at: if(submitted_done, do: Map.get(row, "submitted_at"), else: now),
+      submitted_at: submitted_at,
       sumsub_linked_at: sumsub_linked_at
     }
   end
@@ -299,22 +307,7 @@ defmodule Mithril.Sumsub.ApplicantLink do
     end
   end
 
-  defp timestamp_present?(%DateTime{}), do: true
-  defp timestamp_present?(%NaiveDateTime{}), do: true
-  defp timestamp_present?(value) when is_binary(value), do: String.trim(value) != ""
-  defp timestamp_present?(_), do: false
-
-  defp normalize_timestamp(%DateTime{} = value), do: DateTime.to_iso8601(value)
-
-  defp normalize_timestamp(%NaiveDateTime{} = value),
-    do: NaiveDateTime.to_iso8601(value)
-
-  defp normalize_timestamp(value) when is_binary(value) do
-    trimmed = String.trim(value)
-    if trimmed == "", do: nil, else: trimmed
-  end
-
-  defp normalize_timestamp(_), do: nil
+  defp timestamp_present?(value), do: Timestamp.cast(value) != nil
 
   defp present?(value) when is_binary(value) and byte_size(value) == 16, do: true
   defp present?(value) when is_binary(value), do: String.trim(value) != ""
