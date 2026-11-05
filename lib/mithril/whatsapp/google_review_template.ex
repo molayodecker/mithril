@@ -74,17 +74,23 @@ defmodule Mithril.WhatsApp.GoogleReviewTemplate do
   end
 
   defp sid do
-    ContentTemplate.content_sid(@name, @env_key) || created_sid()
+    resolve_sid(
+      Application.get_env(:mithril, :google_review_ensure_template, false),
+      fn -> ContentTemplate.ensure(@name, @env_key, definition()) end,
+      fn -> ContentTemplate.content_sid(@name, @env_key) end
+    )
   end
 
-  defp created_sid do
-    if Application.get_env(:mithril, :google_review_ensure_template, false) do
-      case ContentTemplate.ensure(@name, @env_key, definition()) do
-        {:ok, content} when is_binary(content) -> content
-        _ -> nil
-      end
+  @doc false
+  def resolve_sid(true, ensure, _lookup) when is_function(ensure, 0) do
+    case ensure.() do
+      {:ok, content} when is_binary(content) -> content
+      _ -> nil
     end
   end
+
+  def resolve_sid(false, _ensure, lookup) when is_function(lookup, 0), do: lookup.()
+
 
   defp session(admin_uid, params) do
     case DirectAdminWhatsApp.deliver_as_staff(admin_uid, params) do
