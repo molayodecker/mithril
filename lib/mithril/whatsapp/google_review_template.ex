@@ -91,7 +91,6 @@ defmodule Mithril.WhatsApp.GoogleReviewTemplate do
 
   def resolve_sid(false, _ensure, lookup) when is_function(lookup, 0), do: lookup.()
 
-
   defp session(admin_uid, params) do
     case DirectAdminWhatsApp.deliver_as_staff(admin_uid, params) do
       {:ok, _} -> :ok
