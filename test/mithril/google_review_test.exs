@@ -53,6 +53,7 @@ defmodule Mithril.GoogleReviewTest do
       send(self(), :ensure_called)
       {:error, :approval_unavailable}
     end
+
     lookup = fn ->
       send(self(), :lookup_called)
       "HXstale"
@@ -68,6 +69,7 @@ defmodule Mithril.GoogleReviewTest do
 
   test "automatic provisioning uses the approved or submitted SID" do
     ensure = fn -> {:ok, "HXsubmitted"} end
+
     assert GoogleReviewTemplate.resolve_sid(true, ensure, fn -> flunk("must not skip ensure") end) ==
              "HXsubmitted"
   end
