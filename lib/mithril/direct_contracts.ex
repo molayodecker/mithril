@@ -760,9 +760,26 @@ defmodule Mithril.DirectContracts do
 
   defp latest_client_signature(contract_id, preview) do
     with {:ok, uid} <- dump_uuid(contract_id),
-         {:ok, %{rows: [[name, signed_at, image, start_on, fee, currency,
-                         client_name, billing_contact, phone, email, preamble,
-                         workers, clauses]]}} <-
+         {:ok,
+          %{
+            rows: [
+              [
+                name,
+                signed_at,
+                image,
+                start_on,
+                fee,
+                currency,
+                client_name,
+                billing_contact,
+                phone,
+                email,
+                preamble,
+                workers,
+                clauses
+              ]
+            ]
+          }} <-
            Repo.query(
              """
              SELECT client_signer_name, client_signed_at, client_signature,
