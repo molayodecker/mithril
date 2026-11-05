@@ -753,7 +753,26 @@ defmodule Mithril.DirectContracts do
         contract.provider_signature
       )
     )
-    |> Map.put("counterpartySignature", nil)
+    |> Map.put("counterpartySignature", latest_client_signature(contract.id))
+  end
+
+  defp latest_client_signature(contract_id) do
+    with {:ok, uid} <- dump_uuid(contract_id),
+         {:ok, %{rows: [[name, signed_at, image]]}} <-
+           Repo.query(
+             """
+             SELECT client_signer_name, client_signed_at, client_signature
+             FROM public.direct_contract_letters
+             WHERE contract_id = $1
+             ORDER BY letter_no DESC
+             LIMIT 1
+             """,
+             [uid]
+           ) do
+      signature_map(name, signed_at, image)
+    else
+      _ -> nil
+    end
   end
 
   defp signature_attrs(params) do
@@ -2321,7 +2340,8 @@ defmodule Mithril.DirectContracts do
       {:ok, uid} ->
         case Repo.query(
                """
-               SELECT id::text, letter_no, issued_on, channel, sent_at, public_token
+               SELECT id::text, letter_no, issued_on, channel, sent_at, public_token,
+                      client_signer_name, client_signed_at
                FROM public.direct_contract_letters
                WHERE contract_id = $1
                ORDER BY letter_no DESC
@@ -2329,14 +2349,16 @@ defmodule Mithril.DirectContracts do
                [uid]
              ) do
           {:ok, %{rows: rows}} ->
-            Enum.map(rows, fn [id, number, issued, channel, sent_at, token] ->
+            Enum.map(rows, fn [id, number, issued, channel, sent_at, token, signer, signed_at] ->
               %{
                 "id" => id,
                 "letterNo" => number,
                 "issuedOn" => Date.to_iso8601(issued),
                 "status" => letter_status(sent_at, channel),
                 "channel" => channel,
-                "viewUrl" => letter_url(token)
+                "viewUrl" => letter_url(token),
+                "clientSigned" => not is_nil(signed_at),
+                "clientSignerName" => if(is_nil(signed_at), do: nil, else: signer)
               }
             end)
 

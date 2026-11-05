@@ -543,6 +543,14 @@ defmodule Mithril.DirectContractsTest do
 
     assert signed["counterpartySignature"]["signerName"] == "Signed Household"
 
+    assert {:ok, signed_detail} = DirectContracts.show(admin_id, contract_id, nil)
+
+    assert signed_detail["letterPreview"]["counterpartySignature"]["signerName"] ==
+             "Signed Household"
+
+    assert hd(signed_detail["letters"])["clientSigned"] == true
+    assert hd(signed_detail["letters"])["clientSignerName"] == "Signed Household"
+
     assert {:error, :letter_already_signed} =
              DirectContracts.sign_public_letter(token, %{
                "signerName" => "Signed Household",
