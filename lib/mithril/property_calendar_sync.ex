@@ -19,7 +19,6 @@ defmodule Mithril.PropertyCalendarSync do
     stale_before =
       DateTime.utc_now()
       |> DateTime.add(-30, :minute)
-      |> DateTime.to_iso8601()
 
     case Repo.query(
            """
@@ -48,14 +47,14 @@ defmodule Mithril.PropertyCalendarSync do
 
   defp sync_feed(feed) do
     feed_id = feed["id"]
-    started = DateTime.utc_now() |> DateTime.to_iso8601()
+    started = DateTime.utc_now()
     mark_sync_started(feed_id, started)
 
     with {:ok, feed_url} <- decrypt_feed(feed["feed_url_encrypted"]),
          {:ok, ics_text} <-
            CalendarFeedSecurity.fetch_feed_text(feed_url, feed["provider"] || "airbnb"),
          :ok <- IcalSync.import_feed(feed, ics_text) do
-      success_at = DateTime.utc_now() |> DateTime.to_iso8601()
+      success_at = DateTime.utc_now()
 
       Repo.query(
         """
@@ -67,7 +66,7 @@ defmodule Mithril.PropertyCalendarSync do
       )
     else
       {:error, message} ->
-        failed_at = DateTime.utc_now() |> DateTime.to_iso8601()
+        failed_at = DateTime.utc_now()
         trimmed = message |> to_string() |> String.slice(0, 500)
 
         Repo.query(
