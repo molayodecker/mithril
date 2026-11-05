@@ -572,6 +572,21 @@ defmodule Mithril.DirectContractsTest do
     assert newer_detail["letterPreview"]["counterpartySignature"] == nil
     assert hd(newer_detail["letters"])["clientSigned"] == false
 
+    # Lexicographic ordering puts 999 after 1000; creation order must win.
+    Repo.query!(
+      """
+      UPDATE public.direct_contract_letters
+      SET letter_no = CASE WHEN client_signed_at IS NULL
+                           THEN 'LTR-2099-1000' ELSE 'LTR-2099-999' END
+      WHERE contract_id = $1
+      """,
+      [Ecto.UUID.dump!(contract_id)]
+    )
+
+    assert {:ok, numbered_detail} = DirectContracts.show(admin_id, contract_id, nil)
+    assert hd(numbered_detail["letters"])["letterNo"] == "LTR-2099-1000"
+    assert numbered_detail["letterPreview"]["counterpartySignature"] == nil
+
     assert {:error, :letter_already_signed} =
              DirectContracts.sign_public_letter(token, %{
                "signerName" => "Signed Household",
