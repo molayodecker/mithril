@@ -150,6 +150,10 @@ defmodule Mithril.MobileScope do
         {:ok,
          "AND (jsonb_populate_record(NULL::public.job_photo_comparisons, value)).booking_id IN (#{assigned_active_booking_ids(index)})"}
 
+      table == "cleaner_application_trainings" ->
+        {:ok,
+         "AND (jsonb_populate_record(NULL::public.cleaner_application_trainings, value)).application_id IN (SELECT id FROM public.cleaner_applications WHERE user_id::text = $#{index}::text)"}
+
       true ->
         :none
     end
@@ -240,6 +244,7 @@ defmodule Mithril.MobileScope do
   defp force_column("cleaner_data"), do: "user_id"
   defp force_column("cleaner_application_drafts"), do: "user_id"
   defp force_column("cleaner_applications"), do: "user_id"
+  defp force_column("cleaner_application_trainings"), do: "user_id"
   defp force_column("device_tokens"), do: "user_id"
   defp force_column("kyc_profiles"), do: "user_id"
   defp force_column("notifications"), do: "user_id"
