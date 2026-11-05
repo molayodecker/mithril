@@ -12,6 +12,7 @@ defmodule Mithril.Application do
         metrics_server_child() ++
         [
           Mithril.Repo,
+          Mithril.Schema.Check,
           Mithril.RateLimiter,
           {Phoenix.PubSub, name: Mithril.PubSub},
           MithrilWeb.Endpoint
