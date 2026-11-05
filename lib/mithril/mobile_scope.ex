@@ -152,7 +152,7 @@ defmodule Mithril.MobileScope do
 
       table == "cleaner_application_trainings" ->
         {:ok,
-         "AND (jsonb_populate_record(NULL::public.cleaner_application_trainings, value)).application_id IN (SELECT id FROM public.cleaner_applications WHERE user_id::text = $#{index}::text)"}
+         "AND (jsonb_populate_record(NULL::public.cleaner_application_trainings, value)).application_id IN (#{pending_application_ids(index)})"}
 
       true ->
         :none
@@ -178,6 +178,10 @@ defmodule Mithril.MobileScope do
 
       table == "cleaner_applications" and action in ["insert", "upsert"] ->
         {:ok, "cleaner_applications.user_id::text = $#{index}::text"}
+
+      table == "cleaner_application_trainings" and action in ["upsert", "delete"] ->
+        {:ok,
+         "cleaner_application_trainings.user_id::text = $#{index}::text AND cleaner_application_trainings.application_id IN (#{pending_application_ids(index)})"}
 
       MapSet.member?(@lifecycle, table) and action != "select" ->
         {:error, :forbidden}
@@ -310,6 +314,11 @@ defmodule Mithril.MobileScope do
     Enum.map_join(columns, " OR ", fn column ->
       "#{table}.#{column}::text = $#{index}::text"
     end)
+  end
+
+  # Lock the parent against concurrent approval while a training mutation runs.
+  defp pending_application_ids(index) do
+    "SELECT id FROM public.cleaner_applications WHERE user_id::text = $#{index}::text AND status::text = 'pending' FOR SHARE"
   end
 
   defp booking_ids(index) do
