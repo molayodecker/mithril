@@ -787,7 +787,8 @@ defmodule Mithril.DirectContracts do
                     billing_contact, phone, email, preamble, workers, clauses
              FROM public.direct_contract_letters
              WHERE contract_id = $1
-             ORDER BY created_at DESC, id DESC
+             ORDER BY split_part(letter_no, '-', 2)::integer DESC,
+                      split_part(letter_no, '-', 3)::bigint DESC
              LIMIT 1
              """,
              [uid]
@@ -2385,7 +2386,8 @@ defmodule Mithril.DirectContracts do
                       client_signer_name, client_signed_at
                FROM public.direct_contract_letters
                WHERE contract_id = $1
-               ORDER BY created_at DESC, id DESC
+               ORDER BY split_part(letter_no, '-', 2)::integer DESC,
+                      split_part(letter_no, '-', 3)::bigint DESC
                """,
                [uid]
              ) do
