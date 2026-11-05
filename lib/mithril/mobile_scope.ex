@@ -74,6 +74,9 @@ defmodule Mithril.MobileScope do
       MapSet.member?(@catalog, table) ->
         {:error, :forbidden}
 
+      table == "cleaner_applications" ->
+        {:ok, Enum.map(rows, &application_row(&1, user_id))}
+
       MapSet.member?(@lifecycle, table) ->
         {:error, :forbidden}
 
@@ -163,6 +166,10 @@ defmodule Mithril.MobileScope do
       MapSet.member?(@directory_select, table) and action == "select" ->
         :open
 
+      # Applicants submit their own row. Status and feedback are forced in the write path.
+      table == "cleaner_applications" and action in ["insert", "update", "upsert"] ->
+        {:ok, "cleaner_applications.user_id::text = $#{index}::text"}
+
       MapSet.member?(@lifecycle, table) and action != "select" ->
         {:error, :forbidden}
 
@@ -246,6 +253,36 @@ defmodule Mithril.MobileScope do
   defp force_column("cleaner_schedules"), do: "cleaner_id"
   defp force_column("cleaner_devices"), do: "cleaner_id"
   defp force_column(_), do: nil
+
+  @application_server_columns ~w(
+    id
+    kyc_completed_at
+    kyc_last_event_at
+    kyc_provider
+    kyc_provider_event
+    kyc_review_answer
+    kyc_review_status
+    kyc_status
+    ops_pending_review_reminder_sent_at
+    sumsub_applicant_id
+    sumsub_external_user_id
+    sumsub_level_name
+  )
+
+  def application_row(row, user_id) when is_map(row) do
+    row
+    |> Map.drop(@application_server_columns)
+    |> Map.put("user_id", user_id)
+    |> Map.put("status", "pending")
+    |> Map.put("admin_feedback", nil)
+  end
+
+  def application_patch(patch) when is_map(patch) do
+    patch
+    |> Map.drop(["user_id" | @application_server_columns])
+    |> Map.put("status", "pending")
+    |> Map.put("admin_feedback", nil)
+  end
 
   defp party_predicate(table, action, index, opts) do
     owned = party(table, ["customer_id", "cleaner_id"], index)

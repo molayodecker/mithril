@@ -151,7 +151,8 @@ defmodule Mithril.MobileQuery do
     "property_media" => MapSet.new(~w(insert delete)),
     "property_preferred_cleaners" => MapSet.new(~w(insert delete)),
     "property_private_instructions" => MapSet.new(~w(insert update upsert delete)),
-    "job_photo_comparisons" => MapSet.new(~w(insert update delete))
+    "job_photo_comparisons" => MapSet.new(~w(insert update delete)),
+    "cleaner_applications" => MapSet.new(~w(insert update))
   }
 
   @insert_columns %{
@@ -213,7 +214,32 @@ defmodule Mithril.MobileQuery do
     "job_photo_comparisons" =>
       MapSet.new(
         ~w(booking_id before_photo_url after_photo_url title description composite_photo_url)
-      )
+      ),
+    "cleaner_applications" => MapSet.new(~w(
+        additional_skills
+        admin_feedback
+        availability
+        bio
+        certifications
+        email
+        hourly_rate
+        languages
+        name
+        pets_comfort
+        phone
+        reference1_name
+        reference1_phone
+        reference2_name
+        reference2_phone
+        reference3_name
+        reference3_phone
+        service_areas
+        service_type_ids
+        skills
+        status
+        updated_at
+        user_id
+      ))
   }
 
   @update_columns %{
@@ -246,7 +272,31 @@ defmodule Mithril.MobileQuery do
     "property_calendar_feeds" => MapSet.new(~w(name source updated_at)),
     "property_private_instructions" =>
       MapSet.new(~w(wifi_network wifi_password parking_notes other_notes updated_at)),
-    "job_photo_comparisons" => MapSet.new(~w(composite_photo_url title description))
+    "job_photo_comparisons" => MapSet.new(~w(composite_photo_url title description)),
+    "cleaner_applications" => MapSet.new(~w(
+        additional_skills
+        admin_feedback
+        availability
+        bio
+        certifications
+        email
+        hourly_rate
+        languages
+        name
+        pets_comfort
+        phone
+        reference1_name
+        reference1_phone
+        reference2_name
+        reference2_phone
+        reference3_name
+        reference3_phone
+        service_areas
+        service_type_ids
+        skills
+        status
+        updated_at
+      ))
   }
 
   def compile(user_id, query) when is_binary(user_id) and is_map(query) do
@@ -382,7 +432,11 @@ defmodule Mithril.MobileQuery do
   end
 
   defp compile_action("update", table, query, user_id) do
-    patch = query["patch"] || %{}
+    patch =
+      case table do
+        "cleaner_applications" -> Mithril.MobileScope.application_patch(query["patch"] || %{})
+        _ -> query["patch"] || %{}
+      end
 
     with :ok <- validate_patch(table, patch),
          :ok <- validate_returning(table, query["returning"]),
