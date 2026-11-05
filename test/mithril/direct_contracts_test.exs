@@ -598,6 +598,8 @@ defmodule Mithril.DirectContractsTest do
         """
         SELECT public_token FROM public.direct_contract_worker_letters
         WHERE contract_id = $1
+        ORDER BY created_at, id
+        LIMIT 1
         """,
         [Ecto.UUID.dump!(contract_id)]
       ).rows
