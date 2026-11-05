@@ -150,6 +150,10 @@ defmodule Mithril.MobileScope do
         {:ok,
          "AND (jsonb_populate_record(NULL::public.job_photo_comparisons, value)).booking_id IN (#{assigned_active_booking_ids(index)})"}
 
+      table == "cleaner_application_trainings" ->
+        {:ok,
+         "AND (jsonb_populate_record(NULL::public.cleaner_application_trainings, value)).application_id IN (#{pending_application_ids(index)})"}
+
       true ->
         :none
     end
@@ -174,6 +178,10 @@ defmodule Mithril.MobileScope do
 
       table == "cleaner_applications" and action in ["insert", "upsert"] ->
         {:ok, "cleaner_applications.user_id::text = $#{index}::text"}
+
+      table == "cleaner_application_trainings" and action in ["update", "upsert", "delete"] ->
+        {:ok,
+         "cleaner_application_trainings.user_id::text = $#{index}::text AND cleaner_application_trainings.application_id IN (#{pending_application_ids(index)})"}
 
       MapSet.member?(@lifecycle, table) and action != "select" ->
         {:error, :forbidden}
@@ -240,6 +248,7 @@ defmodule Mithril.MobileScope do
   defp force_column("cleaner_data"), do: "user_id"
   defp force_column("cleaner_application_drafts"), do: "user_id"
   defp force_column("cleaner_applications"), do: "user_id"
+  defp force_column("cleaner_application_trainings"), do: "user_id"
   defp force_column("device_tokens"), do: "user_id"
   defp force_column("kyc_profiles"), do: "user_id"
   defp force_column("notifications"), do: "user_id"
@@ -305,6 +314,11 @@ defmodule Mithril.MobileScope do
     Enum.map_join(columns, " OR ", fn column ->
       "#{table}.#{column}::text = $#{index}::text"
     end)
+  end
+
+  # Lock the parent against concurrent approval while a training mutation runs.
+  defp pending_application_ids(index) do
+    "SELECT id FROM public.cleaner_applications WHERE user_id::text = $#{index}::text AND status::text = 'pending' FOR SHARE"
   end
 
   defp booking_ids(index) do

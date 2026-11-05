@@ -17,6 +17,7 @@ defmodule Mithril.MobileQuery do
     bookings
     cleaner_application_drafts
     cleaner_applications
+    cleaner_application_trainings
     cleaner_availability_exceptions
     cleaner_data
     cleaner_devices
@@ -152,12 +153,15 @@ defmodule Mithril.MobileQuery do
     "property_preferred_cleaners" => MapSet.new(~w(insert delete)),
     "property_private_instructions" => MapSet.new(~w(insert update upsert delete)),
     "job_photo_comparisons" => MapSet.new(~w(insert update delete)),
-    "cleaner_applications" => MapSet.new(~w(insert update))
+    "cleaner_applications" => MapSet.new(~w(insert update)),
+    "cleaner_application_trainings" => MapSet.new(~w(insert upsert delete))
   }
 
   @insert_columns %{
     "cleaner_application_drafts" =>
       MapSet.new(~w(user_id email payload current_step last_saved_at updated_at)),
+    "cleaner_application_trainings" =>
+      MapSet.new(~w(application_id user_id kind has_training provider trained_year updated_at)),
     "cleaner_availability_exceptions" => MapSet.new(~w(cleaner_id exception_date reason)),
     "availability" => MapSet.new(~w(cleaner_id day_of_week start_time end_time is_recurring)),
     "cleaner_schedules" => MapSet.new(~w(cleaner_id day_of_week start_time end_time)),

@@ -190,6 +190,56 @@ defmodule Mithril.MobileQueryTest do
              })
   end
 
+  test "cleaner application trainings stay on the caller's application" do
+    assert {:ok, %{sql: upsert_sql, params: [rows, user_id]}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "cleaner_application_trainings",
+               "action" => "upsert",
+               "onConflict" => "application_id,kind",
+               "rows" => [
+                 %{
+                   "application_id" => "app-1",
+                   "user_id" => "someone-else",
+                   "kind" => "cpr",
+                   "has_training" => true,
+                   "provider" => "Red Cross",
+                   "trained_year" => 2024,
+                   "updated_at" => "2026-11-05T22:00:00Z"
+                 }
+               ]
+             })
+
+    assert upsert_sql =~ "INSERT INTO public.cleaner_application_trainings"
+    assert upsert_sql =~ "ON CONFLICT (application_id, kind)"
+    assert upsert_sql =~ "cleaner_application_trainings.user_id::text = $2::text"
+
+    assert upsert_sql =~
+             "application_id IN (SELECT id FROM public.cleaner_applications WHERE user_id::text = $2::text AND status::text = 'pending' FOR SHARE)"
+
+    # The parent is checked for both the INSERT and ON CONFLICT UPDATE paths.
+    assert length(String.split(upsert_sql, "status::text = 'pending'")) == 3
+
+    assert user_id == "user-1"
+    assert hd(rows)["user_id"] == "user-1"
+
+    assert {:ok, %{sql: delete_sql, params: delete_params}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "cleaner_application_trainings",
+               "action" => "delete",
+               "filters" => [
+                 %{"op" => "eq", "column" => "application_id", "value" => "app-1"},
+                 %{"op" => "eq", "column" => "kind", "value" => "cook"}
+               ]
+             })
+
+    assert delete_sql =~ "DELETE FROM public.cleaner_application_trainings"
+    assert delete_sql =~ "cleaner_application_trainings.user_id::text = "
+    assert delete_sql =~ "status::text = 'pending' FOR SHARE"
+    assert "app-1" in delete_params
+    assert "user-1" in delete_params
+    assert "cook" in delete_params
+  end
+
   test "scoped updates number the ownership placeholder after the patch and filters" do
     assert {:ok, %{sql: sql, params: params}} =
              MobileQuery.compile("user-1", %{
