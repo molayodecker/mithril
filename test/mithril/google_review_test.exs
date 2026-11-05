@@ -49,8 +49,14 @@ defmodule Mithril.GoogleReviewTest do
   end
 
   test "automatic provisioning retries approval instead of trusting a partially created SID" do
-    ensure = fn -> send(self(), :ensure_called); {:error, :approval_unavailable} end
-    lookup = fn -> send(self(), :lookup_called); "HXstale" end
+    ensure = fn ->
+      send(self(), :ensure_called)
+      {:error, :approval_unavailable}
+    end
+    lookup = fn ->
+      send(self(), :lookup_called)
+      "HXstale"
+    end
 
     assert GoogleReviewTemplate.resolve_sid(true, ensure, lookup) == nil
     assert_received :ensure_called
