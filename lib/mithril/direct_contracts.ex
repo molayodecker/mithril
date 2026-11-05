@@ -753,26 +753,50 @@ defmodule Mithril.DirectContracts do
         contract.provider_signature
       )
     )
-    |> Map.put("counterpartySignature", latest_client_signature(contract.id))
+    |> then(fn preview ->
+      Map.put(preview, "counterpartySignature", latest_client_signature(contract.id, preview))
+    end)
   end
 
-  defp latest_client_signature(contract_id) do
+  defp latest_client_signature(contract_id, preview) do
     with {:ok, uid} <- dump_uuid(contract_id),
-         {:ok, %{rows: [[name, signed_at, image]]}} <-
+         {:ok, %{rows: [[name, signed_at, image, start_on, fee, currency,
+                         client_name, billing_contact, phone, email, preamble,
+                         workers, clauses]]}} <-
            Repo.query(
              """
-             SELECT client_signer_name, client_signed_at, client_signature
+             SELECT client_signer_name, client_signed_at, client_signature,
+                    start_on, monthly_fee_minor, currency, client_name,
+                    billing_contact, phone, email, preamble, workers, clauses
              FROM public.direct_contract_letters
              WHERE contract_id = $1
-             ORDER BY letter_no DESC
+             ORDER BY created_at DESC, id DESC
              LIMIT 1
              """,
              [uid]
-           ) do
+           ),
+         true <- not is_nil(signed_at),
+         true <-
+           signed_letter_matches_preview?(preview, %{
+             "startOn" => Date.to_iso8601(start_on),
+             "monthlyFeeMinor" => fee,
+             "currency" => currency,
+             "clientName" => client_name,
+             "billingContact" => billing_contact,
+             "phone" => phone,
+             "email" => email,
+             "preamble" => preamble,
+             "workers" => workers,
+             "clauses" => clauses
+           }) do
       signature_map(name, signed_at, image)
     else
       _ -> nil
     end
+  end
+
+  defp signed_letter_matches_preview?(preview, snapshot) do
+    Enum.all?(snapshot, fn {key, value} -> Map.get(preview, key) == value end)
   end
 
   defp signature_attrs(params) do
@@ -2344,7 +2368,7 @@ defmodule Mithril.DirectContracts do
                       client_signer_name, client_signed_at
                FROM public.direct_contract_letters
                WHERE contract_id = $1
-               ORDER BY letter_no DESC
+               ORDER BY created_at DESC, id DESC
                """,
                [uid]
              ) do
