@@ -128,6 +128,68 @@ defmodule Mithril.MobileQueryTest do
     end
   end
 
+  test "cleaner application submits are owned by the caller and cannot self-approve" do
+    assert {:ok, %{sql: insert_sql, params: [rows]}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "cleaner_applications",
+               "action" => "insert",
+               "rows" => [
+                 %{
+                   "user_id" => "someone-else",
+                   "name" => "A Applicant",
+                   "email" => "a@example.com",
+                   "phone" => "+233200000001",
+                   "bio" => "No bio provided",
+                   "hourly_rate" => 50,
+                   "status" => "approved",
+                   "admin_feedback" => "looks good",
+                   "kyc_status" => "completed",
+                   "service_type_ids" => [1]
+                 }
+               ],
+               "returning" => ["id"]
+             })
+
+    assert insert_sql =~ "INSERT INTO public.cleaner_applications"
+    row = hd(rows)
+    assert row["user_id"] == "user-1"
+    assert row["status"] == "pending"
+    assert row["admin_feedback"] == nil
+    refute Map.has_key?(row, "kyc_status")
+
+    assert {:ok, %{sql: update_sql, params: [patch | params]}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "cleaner_applications",
+               "action" => "update",
+               "patch" => %{
+                 "user_id" => "someone-else",
+                 "name" => "A Applicant",
+                 "status" => "approved",
+                 "bio" => "Updated"
+               },
+               "filters" => [%{"op" => "eq", "column" => "id", "value" => "app-1"}],
+               "returning" => ["id"]
+             })
+
+    assert update_sql =~ "UPDATE public.cleaner_applications"
+    assert update_sql =~ "cleaner_applications.user_id::text = "
+    assert update_sql =~ "cleaner_applications.status::text = 'pending'"
+    refute update_sql =~ "SET user_id"
+    refute Map.has_key?(patch, "status")
+    refute Map.has_key?(patch, "admin_feedback")
+    assert patch["name"] == "A Applicant"
+    refute Map.has_key?(patch, "user_id")
+    assert "app-1" in params
+    assert "user-1" in params
+
+    assert {:error, :forbidden} =
+             MobileQuery.compile("user-1", %{
+               "table" => "cleaner_applications",
+               "action" => "delete",
+               "filters" => [%{"op" => "eq", "column" => "id", "value" => "app-1"}]
+             })
+  end
+
   test "scoped updates number the ownership placeholder after the patch and filters" do
     assert {:ok, %{sql: sql, params: params}} =
              MobileQuery.compile("user-1", %{
