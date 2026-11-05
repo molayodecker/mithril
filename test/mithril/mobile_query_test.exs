@@ -128,6 +128,21 @@ defmodule Mithril.MobileQueryTest do
     end
   end
 
+  test "scoped updates number the ownership placeholder after the patch and filters" do
+    assert {:ok, %{sql: sql, params: params}} =
+             MobileQuery.compile("user-1", %{
+               "table" => "cleaner_application_drafts",
+               "action" => "update",
+               "patch" => %{"current_step" => 3},
+               "filters" => [%{"op" => "eq", "column" => "id", "value" => "draft-1"}]
+             })
+
+    assert sql =~ "$1::jsonb"
+    assert sql =~ "cleaner_application_drafts.id::text = $2::text"
+    assert sql =~ "cleaner_application_drafts.user_id::text = $3::text"
+    assert params == [%{"current_step" => 3}, "draft-1", "user-1"]
+  end
+
   test "compiles an allowlisted embed" do
     assert {:ok, %{sql: sql}} =
              MobileQuery.compile("user-1", %{

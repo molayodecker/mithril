@@ -388,7 +388,7 @@ defmodule Mithril.MobileQuery do
          :ok <- validate_returning(table, query["returning"]),
          {:ok, where_sql, params} <- filters_sql(table, query["filters"] || [], 2, []),
          {:ok, where_sql, params} <-
-           Mithril.MobileScope.apply(user_id, "update", table, where_sql, params) do
+           Mithril.MobileScope.apply(user_id, "update", table, where_sql, [patch | params]) do
       columns = Map.keys(patch)
 
       set_sql =
@@ -405,7 +405,7 @@ defmodule Mithril.MobileQuery do
       #{returning}
       """
 
-      {:ok, %{sql: sql, params: [patch | params]}}
+      {:ok, %{sql: sql, params: params}}
     end
   end
 
