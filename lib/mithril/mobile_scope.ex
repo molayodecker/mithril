@@ -166,8 +166,13 @@ defmodule Mithril.MobileScope do
       MapSet.member?(@directory_select, table) and action == "select" ->
         :open
 
-      # Applicants submit their own row. Status and feedback are forced in the write path.
-      table == "cleaner_applications" and action in ["insert", "update", "upsert"] ->
+      # An applicant can edit only while review is pending. Keep this predicate in
+      # the UPDATE itself so an admin approval racing with a save wins atomically.
+      table == "cleaner_applications" and action == "update" ->
+        {:ok,
+         "cleaner_applications.user_id::text = $#{index}::text AND cleaner_applications.status::text = 'pending'"}
+
+      table == "cleaner_applications" and action in ["insert", "upsert"] ->
         {:ok, "cleaner_applications.user_id::text = $#{index}::text"}
 
       MapSet.member?(@lifecycle, table) and action != "select" ->
@@ -280,8 +285,7 @@ defmodule Mithril.MobileScope do
   def application_patch(patch) when is_map(patch) do
     patch
     |> Map.drop(["user_id" | @application_server_columns])
-    |> Map.put("status", "pending")
-    |> Map.put("admin_feedback", nil)
+    |> Map.drop(["status", "admin_feedback"])
   end
 
   defp party_predicate(table, action, index, opts) do
