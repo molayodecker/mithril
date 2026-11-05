@@ -597,7 +597,7 @@ defmodule Mithril.DirectContractsTest do
       Repo.query!(
         """
         SELECT public_token FROM public.direct_contract_worker_letters
-        WHERE contract_id = $1
+        WHERE contract_id = $1 AND sent_at IS NOT NULL
         ORDER BY created_at, id
         LIMIT 1
         """,
