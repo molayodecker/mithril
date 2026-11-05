@@ -12,6 +12,7 @@ defmodule Mithril.DirectContracts do
   alias Mithril.DirectAdminActor
   alias Mithril.DirectAdminInvoices
   alias Mithril.DirectContracts.Calendar
+  alias Mithril.GoogleReview
   alias Mithril.WhatsApp.ContractLetterTemplate
   alias Mithril.WhatsApp.WorkerAddedTemplate
   alias Mithril.WhatsApp.InvoiceTemplate
@@ -463,6 +464,18 @@ defmodule Mithril.DirectContracts do
             {:error, reason}
         end
       end
+    end
+  end
+
+  def send_google_review(user_id, contract_id, params) when is_map(params) do
+    with :ok <- require_admin(user_id),
+         {:ok, admin_uid} <- dump_uuid(user_id),
+         {:ok, contract_uid} <- dump_uuid(contract_id),
+         {:ok, contact} <- review_contact(contract_uid) do
+      GoogleReview.send(admin_uid, param(params, "channel"), contact)
+    else
+      :error -> {:error, :invalid_request}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -1076,6 +1089,30 @@ defmodule Mithril.DirectContracts do
     else
       :error -> {:error, :invalid_request}
       {:error, error} -> map_pg(error)
+    end
+  end
+
+  defp review_contact(contract_uid) do
+    case Repo.query(
+           """
+           SELECT COALESCE(NULLIF(btrim(cl.billing_contact), ''), NULLIF(btrim(cl.name), '')),
+                  NULLIF(btrim(cl.phone), ''),
+                  NULLIF(btrim(cl.email), '')
+           FROM public.direct_contracts c
+           JOIN public.direct_contract_clients cl ON cl.id = c.client_id
+           WHERE c.id = $1
+           LIMIT 1
+           """,
+           [contract_uid]
+         ) do
+      {:ok, %{rows: [[name, phone, email]]}} ->
+        {:ok, %{name: name, phone: phone, email: email}}
+
+      {:ok, %{rows: []}} ->
+        {:error, :contract_not_found}
+
+      {:error, error} ->
+        map_pg(error)
     end
   end
 

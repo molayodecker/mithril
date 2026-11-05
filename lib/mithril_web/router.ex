@@ -293,6 +293,7 @@ defmodule MithrilWeb.Router do
 
     post "/admin/contracts/:id/letters/save", DirectAdminContractsController, :save_letter
     post "/admin/contracts/:id/letters", DirectAdminContractsController, :send_letter
+    post "/admin/contracts/:id/google-review", DirectAdminContractsController, :send_google_review
     post "/admin/contracts/:id/sign", DirectAdminContractsController, :sign
 
     get "/admin/bookings/:id/payment-diagnostics",
@@ -309,6 +310,7 @@ defmodule MithrilWeb.Router do
     post "/admin/bookings/:id/cash-payout", DirectAdminBookingsController, :cash_payout
     post "/admin/bookings/:id/notify-cleaner", DirectAdminBookingsController, :notify_cleaner
     post "/admin/bookings/:id/send-receipt", DirectAdminBookingsController, :send_receipt
+    post "/admin/bookings/:id/google-review", DirectAdminBookingsController, :send_google_review
     get "/admin/bookings/:id/invoice", DirectAdminInvoicesController, :show
     put "/admin/bookings/:id/invoice", DirectAdminInvoicesController, :upsert
     post "/admin/bookings/:id/invoice/send", DirectAdminInvoicesController, :send

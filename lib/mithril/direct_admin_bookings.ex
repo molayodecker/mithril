@@ -7,6 +7,7 @@ defmodule Mithril.DirectAdminBookings do
   require Logger
 
   alias Mithril.Auth
+  alias Mithril.GoogleReview
   alias Mithril.DirectAdminActor
   alias Mithril.DirectBookingCancels
   alias Mithril.DirectBookings
@@ -333,6 +334,49 @@ defmodule Mithril.DirectAdminBookings do
       nil -> {:error, :missing_contact}
       :error -> {:error, :invalid_request}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def send_google_review(user_id, booking_id, params) when is_map(params) do
+    with {:ok, admin_uid} <- dump_uuid(user_id),
+         :ok <- require_admin(admin_uid),
+         {:ok, bid} <- dump_uuid(booking_id),
+         {:ok, contact} <- fetch_review_contact(bid) do
+      channel = params["channel"] || params[:channel]
+      GoogleReview.send(admin_uid, channel, contact)
+    else
+      :error -> {:error, :invalid_request}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp fetch_review_contact(bid) do
+    case Repo.query(
+           """
+           SELECT COALESCE(
+                    NULLIF(btrim(cp.fullname), ''),
+                    NULLIF(btrim(concat_ws(' ', cp.firstname, cp.lastname)), ''),
+                    NULLIF(btrim(cu.email), ''),
+                    NULLIF(btrim(cu.phone), '')
+                  ),
+                  COALESCE(NULLIF(btrim(b.customer_contact_phone), ''), NULLIF(btrim(cu.phone), '')),
+                  NULLIF(btrim(cu.email), '')
+           FROM public.bookings b
+           JOIN public.users cu ON cu.id = b.customer_id
+           LEFT JOIN public.profiles cp ON cp.id = b.customer_id
+           WHERE b.id = $1
+           LIMIT 1
+           """,
+           [bid]
+         ) do
+      {:ok, %{rows: [[name, phone, email]]}} ->
+        {:ok, %{name: name, phone: phone, email: email}}
+
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        database_error(error)
     end
   end
 

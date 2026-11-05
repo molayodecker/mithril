@@ -383,6 +383,7 @@ for {env_key, config_key} <- [
       {"TWILIO_TEMPLATE_BILLING_INVOICE_LOCATION", :twilio_template_billing_invoice_location},
       {"TWILIO_TEMPLATE_BILLING_INVOICE_TEAM", :twilio_template_billing_invoice_team},
       {"TWILIO_TEMPLATE_CONTRACT_LETTER", :twilio_template_contract_letter},
+      {"TWILIO_TEMPLATE_GOOGLE_REVIEW", :twilio_template_google_review},
       {"TWILIO_TEMPLATE_JOB_OFFER", :twilio_template_job_offer},
       {"TWILIO_TEMPLATE_WORKER_ADDED", :twilio_template_worker_added}
     ] do
@@ -390,6 +391,10 @@ for {env_key, config_key} <- [
     config :mithril, config_key, content_sid
   end
 end
+
+config :mithril,
+       :google_review_ensure_template,
+       System.get_env("TWILIO_ACCOUNT_SID") not in [nil, ""]
 
 if direct_public_url = System.get_env("DIRECT_PUBLIC_URL") do
   config :mithril, :direct_public_url, direct_public_url
