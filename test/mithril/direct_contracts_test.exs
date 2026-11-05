@@ -551,6 +551,28 @@ defmodule Mithril.DirectContractsTest do
     assert hd(signed_detail["letters"])["clientSigned"] == true
     assert hd(signed_detail["letters"])["clientSignerName"] == "Signed Household"
 
+    # Sending the same agreement again keeps the signature she already gave.
+    assert {:ok, %{"viewUrl" => resent_url}} =
+             DirectContracts.send_letter(admin_id, contract_id, %{"channel" => "email"})
+
+    resent_token = resent_url |> String.split("/") |> List.last()
+    assert {:ok, resent} = DirectContracts.public_letter(resent_token)
+    assert resent["counterpartySignature"]["signerName"] == "Signed Household"
+
+    assert {:ok, resent_detail} = DirectContracts.show(admin_id, contract_id, nil)
+
+    assert resent_detail["letterPreview"]["counterpartySignature"]["signerName"] ==
+             "Signed Household"
+
+    # Saving the same agreement again keeps this letter and the signature on it.
+    assert {:ok, _} = DirectContracts.save_letter(admin_id, contract_id)
+    assert {:ok, draft_detail} = DirectContracts.show(admin_id, contract_id, nil)
+
+    assert draft_detail["letterPreview"]["counterpartySignature"]["signerName"] ==
+             "Signed Household"
+
+    assert hd(draft_detail["letters"])["clientSigned"] == true
+
     # Editing live terms must not imply that the client signed the new terms.
     assert {:ok, _} =
              DirectContracts.update_client(admin_id, contract_id, %{
@@ -575,10 +597,24 @@ defmodule Mithril.DirectContractsTest do
     # Lexicographic ordering puts 999 after 1000; creation order must win.
     Repo.query!(
       """
-      UPDATE public.direct_contract_letters
-      SET letter_no = CASE WHEN client_signed_at IS NULL
-                           THEN 'LTR-2099-1000' ELSE 'LTR-2099-999' END
-      WHERE contract_id = $1
+      UPDATE public.direct_contract_letters AS letter
+      SET letter_no = numbered.letter_no
+      FROM (
+        SELECT id,
+               CASE
+                 WHEN id = (
+                   SELECT id
+                   FROM public.direct_contract_letters
+                   WHERE contract_id = $1 AND client_signed_at IS NULL
+                   ORDER BY created_at DESC
+                   LIMIT 1
+                 ) THEN 'LTR-2099-1000'
+                 ELSE 'LTR-2099-' || lpad(row_number() OVER (ORDER BY created_at, id)::text, 3, '0')
+               END AS letter_no
+        FROM public.direct_contract_letters
+        WHERE contract_id = $1
+      ) AS numbered
+      WHERE letter.id = numbered.id
       """,
       [Ecto.UUID.dump!(contract_id)]
     )
@@ -711,14 +747,45 @@ defmodule Mithril.DirectContractsTest do
     assert Enum.any?(worker_letter["clauses"], &String.contains?(&1["body"], "GHS 1200.00"))
     refute Enum.any?(worker_letter["clauses"], &String.contains?(&1["body"], "GHS 4000.00"))
 
-    assert {:ok, %{"letterNo" => second_no}} =
-             DirectContracts.send_letter(admin_id, contract_id, %{"channel" => "email"})
+    Enum.each(1..10, fn _ ->
+      assert {:ok, %{"letterNo" => ^first_no, "viewUrl" => ^view_url}} =
+               DirectContracts.send_letter(admin_id, contract_id, %{"channel" => "email"})
+    end)
 
-    assert second_no != first_no
+    contract_uid = Ecto.UUID.dump!(contract_id)
+
+    assert Repo.query!(
+             "SELECT count(*) FROM public.direct_contract_letters WHERE contract_id = $1",
+             [contract_uid]
+           ).rows == [[1]]
+
+    assert Repo.query!(
+             "SELECT count(*) FROM public.direct_contract_worker_letters WHERE contract_id = $1",
+             [contract_uid]
+           ).rows == [[2]]
 
     assert {:ok, detail} = DirectContracts.show(admin_id, contract_id, nil)
-    assert Enum.map(detail["letters"], & &1["letterNo"]) == [second_no, first_no]
+    assert Enum.map(detail["letters"], & &1["letterNo"]) == [first_no]
     assert hd(detail["letters"])["status"] == "sent_email"
+
+    assert {:ok, _} =
+             DirectContracts.update_client(admin_id, contract_id, %{
+               "name" => "Kofi Mensah Holdings",
+               "kind" => "company",
+               "billingContact" => "Esi Mensah",
+               "phone" => "+233245550142",
+               "email" => "accounts@kmholdings.com.gh",
+               "monthlyFeeMinor" => 450_000
+             })
+
+    assert {:ok, %{"letterNo" => revised_no, "viewUrl" => revised_url}} =
+             DirectContracts.send_letter(admin_id, contract_id, %{"channel" => "email"})
+
+    assert revised_no != first_no
+    assert revised_url != view_url
+
+    assert {:ok, revised_detail} = DirectContracts.show(admin_id, contract_id, nil)
+    assert Enum.map(revised_detail["letters"], & &1["letterNo"]) == [revised_no, first_no]
 
     assert {:ok, _} =
              DirectContracts.end_assignment(admin_id, contract_id, househelp_assignment_id)

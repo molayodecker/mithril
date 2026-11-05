@@ -773,42 +773,35 @@ defmodule Mithril.DirectContracts do
 
   defp latest_client_signature(contract_id, preview) do
     with {:ok, uid} <- dump_uuid(contract_id),
-         {:ok,
-          %{
-            rows: [
-              [
-                name,
-                signed_at,
-                image,
-                start_on,
-                fee,
-                currency,
-                client_name,
-                billing_contact,
-                phone,
-                email,
-                preamble,
-                workers,
-                clauses
-              ]
-            ]
-          }} <-
+         {:ok, %{rows: rows}} <-
            Repo.query(
              """
              SELECT client_signer_name, client_signed_at, client_signature,
                     start_on, monthly_fee_minor, currency, client_name,
                     billing_contact, phone, email, preamble, workers, clauses
              FROM public.direct_contract_letters
-             WHERE contract_id = $1
+             WHERE contract_id = $1 AND client_signed_at IS NOT NULL
              ORDER BY split_part(letter_no, '-', 2)::integer DESC,
                       split_part(letter_no, '-', 3)::bigint DESC
-             LIMIT 1
              """,
              [uid]
-           ),
-         true <- not is_nil(signed_at),
-         true <-
-           signed_letter_matches_preview?(preview, %{
+           ) do
+      Enum.find_value(rows, fn [
+                                 name,
+                                 signed_at,
+                                 image,
+                                 start_on,
+                                 fee,
+                                 currency,
+                                 client_name,
+                                 billing_contact,
+                                 phone,
+                                 email,
+                                 preamble,
+                                 workers,
+                                 clauses
+                               ] ->
+        if signed_letter_matches_preview?(preview, %{
              "startOn" => Date.to_iso8601(start_on),
              "monthlyFeeMinor" => fee,
              "currency" => currency,
@@ -820,7 +813,9 @@ defmodule Mithril.DirectContracts do
              "workers" => workers,
              "clauses" => clauses
            }) do
-      signature_map(name, signed_at, image)
+          signature_map(name, signed_at, image)
+        end
+      end)
     else
       _ -> nil
     end
@@ -2134,7 +2129,7 @@ defmodule Mithril.DirectContracts do
           issued = Calendar.today()
 
           case fetch!(
-                 "SELECT 1 FROM public.direct_contract_letters WHERE contract_id = $1 AND sending_at IS NOT NULL AND sent_at IS NULL",
+                 "SELECT 1 FROM public.direct_contract_letters WHERE contract_id = $1 AND sending_at IS NOT NULL",
                  [contract_uid]
                ).rows do
             [] -> :ok
@@ -2147,10 +2142,13 @@ defmodule Mithril.DirectContracts do
           if claim? do
             {:ok, letter_uid} = dump_uuid(letter["id"])
 
-            fetch!(
-              "UPDATE public.direct_contract_letters SET sending_at = now() WHERE id = $1 AND sent_at IS NULL AND sending_at IS NULL",
-              [letter_uid]
-            )
+            %{num_rows: claimed} =
+              fetch!(
+                "UPDATE public.direct_contract_letters SET sending_at = now() WHERE id = $1 AND sending_at IS NULL",
+                [letter_uid]
+              )
+
+            if claimed == 0, do: Repo.rollback(:letter_in_progress)
           end
 
           letter
@@ -2170,6 +2168,48 @@ defmodule Mithril.DirectContracts do
   defp write_letter(admin_uid, contract_uid, preview, issued) do
     params = letter_write_params(preview, issued)
 
+    case reusable_sent_letter(contract_uid, params) do
+      [[id, number, token]] ->
+        # Another send of this agreement delivers the letter the client already has.
+        fetch!(
+          "DELETE FROM public.direct_contract_letters WHERE contract_id = $1 AND sent_at IS NULL",
+          [contract_uid]
+        )
+
+        letter_payload(id, number, token, preview)
+
+      [] ->
+        write_new_or_draft_letter(admin_uid, contract_uid, preview, params)
+    end
+  end
+
+  defp reusable_sent_letter(contract_uid, [_issued | terms]) do
+    fetch!(
+      """
+      SELECT id, letter_no, public_token
+      FROM public.direct_contract_letters
+      WHERE contract_id = $1
+        AND sent_at IS NOT NULL
+        AND start_on IS NOT DISTINCT FROM $2
+        AND monthly_fee_minor IS NOT DISTINCT FROM $3
+        AND currency IS NOT DISTINCT FROM $4
+        AND client_name IS NOT DISTINCT FROM $5
+        AND billing_contact IS NOT DISTINCT FROM $6
+        AND phone IS NOT DISTINCT FROM $7
+        AND email IS NOT DISTINCT FROM $8
+        AND preamble IS NOT DISTINCT FROM $9
+        AND workers IS NOT DISTINCT FROM $10::jsonb
+        AND clauses IS NOT DISTINCT FROM $11::jsonb
+      ORDER BY split_part(letter_no, '-', 2)::integer ASC,
+               split_part(letter_no, '-', 3)::bigint ASC
+      LIMIT 1
+      FOR UPDATE
+      """,
+      [contract_uid | terms]
+    ).rows
+  end
+
+  defp write_new_or_draft_letter(admin_uid, contract_uid, preview, params) do
     case fetch!(
            """
            SELECT id, letter_no, public_token
@@ -2190,16 +2230,36 @@ defmodule Mithril.DirectContracts do
               preamble = $10, workers = $11::jsonb, clauses = $12::jsonb,
               provider_signer_name = COALESCE(provider_signer_name, $13),
               provider_signed_at = COALESCE(provider_signed_at, $14),
-              provider_signature = COALESCE(provider_signature, $15)
+              provider_signature = COALESCE(provider_signature, $15),
+              client_signer_name = CASE WHEN same_terms THEN client_signer_name END,
+              client_signed_at = CASE WHEN same_terms THEN client_signed_at END,
+              client_signature = CASE WHEN same_terms THEN client_signature END
+          FROM (
+            SELECT (
+              start_on IS NOT DISTINCT FROM $3 AND
+              monthly_fee_minor IS NOT DISTINCT FROM $4 AND
+              currency IS NOT DISTINCT FROM $5 AND
+              client_name IS NOT DISTINCT FROM $6 AND
+              billing_contact IS NOT DISTINCT FROM $7 AND
+              phone IS NOT DISTINCT FROM $8 AND
+              email IS NOT DISTINCT FROM $9 AND
+              preamble IS NOT DISTINCT FROM $10 AND
+              workers IS NOT DISTINCT FROM $11::jsonb AND
+              clauses IS NOT DISTINCT FROM $12::jsonb
+            ) AS same_terms
+            FROM public.direct_contract_letters
+            WHERE id = $1
+          ) AS previous
           WHERE id = $1
           """,
           [id | params] ++ current_provider_signature(contract_uid)
         )
 
+        carry_client_signature(id, contract_uid)
         letter_payload(id, number, token, preview)
 
       [] ->
-        number = next_letter_no(issued.year)
+        number = next_letter_no(hd(params).year)
         token = random_token()
 
         %{rows: [[id]]} =
@@ -2218,8 +2278,44 @@ defmodule Mithril.DirectContracts do
               [admin_uid | current_provider_signature(contract_uid)]
           )
 
+        carry_client_signature(id, contract_uid)
         letter_payload(id, number, token, preview)
     end
+  end
+
+  # A resend of the same agreement keeps the signature the client already gave.
+  # A later letter with different terms stays unsigned.
+  defp carry_client_signature(letter_id, contract_uid) do
+    fetch!(
+      """
+      UPDATE public.direct_contract_letters AS target
+      SET client_signer_name = source.client_signer_name,
+          client_signed_at = source.client_signed_at,
+          client_signature = source.client_signature
+      FROM (
+        SELECT client_signer_name, client_signed_at, client_signature
+        FROM public.direct_contract_letters
+        WHERE contract_id = $2
+          AND id <> $1
+          AND client_signed_at IS NOT NULL
+          AND monthly_fee_minor = (SELECT monthly_fee_minor FROM public.direct_contract_letters WHERE id = $1)
+          AND start_on = (SELECT start_on FROM public.direct_contract_letters WHERE id = $1)
+          AND currency = (SELECT currency FROM public.direct_contract_letters WHERE id = $1)
+          AND client_name = (SELECT client_name FROM public.direct_contract_letters WHERE id = $1)
+          AND billing_contact IS NOT DISTINCT FROM (SELECT billing_contact FROM public.direct_contract_letters WHERE id = $1)
+          AND phone IS NOT DISTINCT FROM (SELECT phone FROM public.direct_contract_letters WHERE id = $1)
+          AND email IS NOT DISTINCT FROM (SELECT email FROM public.direct_contract_letters WHERE id = $1)
+          AND preamble = (SELECT preamble FROM public.direct_contract_letters WHERE id = $1)
+          AND workers = (SELECT workers FROM public.direct_contract_letters WHERE id = $1)
+          AND clauses = (SELECT clauses FROM public.direct_contract_letters WHERE id = $1)
+        ORDER BY split_part(letter_no, '-', 2)::integer DESC,
+                 split_part(letter_no, '-', 3)::bigint DESC
+        LIMIT 1
+      ) AS source
+      WHERE target.id = $1 AND target.client_signed_at IS NULL
+      """,
+      [letter_id, contract_uid]
+    )
   end
 
   defp letter_write_params(preview, issued) do
@@ -2464,8 +2560,8 @@ defmodule Mithril.DirectContracts do
                case Repo.query(
                       """
                       UPDATE public.direct_contract_letters
-                      SET channel = $2, sent_at = now(), sending_at = NULL
-                      WHERE id = $1 AND sent_at IS NULL AND sending_at IS NOT NULL
+                      SET channel = $2, sent_at = COALESCE(sent_at, now()), sending_at = NULL
+                      WHERE id = $1 AND sending_at IS NOT NULL
                       RETURNING letter_no, channel
                       """,
                       [uid, channel]
@@ -2505,7 +2601,7 @@ defmodule Mithril.DirectContracts do
   defp release_letter_claim(letter_id) do
     with {:ok, uid} <- dump_uuid(letter_id) do
       Repo.query(
-        "UPDATE public.direct_contract_letters SET sending_at = NULL WHERE id = $1 AND sent_at IS NULL",
+        "UPDATE public.direct_contract_letters SET sending_at = NULL WHERE id = $1",
         [uid]
       )
     end
@@ -2604,7 +2700,62 @@ defmodule Mithril.DirectContracts do
     {:ok, assignment_uid} = dump_uuid(worker.assignment_id)
     {:ok, worker_uid} = dump_uuid(worker.worker_id)
     drafted = Letter.worker_letter(contract, worker)
+    params = worker_letter_params(drafted, issued)
 
+    if reusable_sent_worker_letter(letter_uid, assignment_uid, params) != [] do
+      fetch!(
+        """
+        DELETE FROM public.direct_contract_worker_letters
+        WHERE client_letter_id = $1 AND assignment_id = $2 AND sent_at IS NULL
+        """,
+        [letter_uid, assignment_uid]
+      )
+    else
+      write_new_or_draft_worker_letter(
+        admin_uid,
+        contract_uid,
+        letter_uid,
+        assignment_uid,
+        worker_uid,
+        params
+      )
+    end
+  end
+
+  defp reusable_sent_worker_letter(letter_uid, assignment_uid, [_issued | terms]) do
+    fetch!(
+      """
+      SELECT id
+      FROM public.direct_contract_worker_letters
+      WHERE client_letter_id = $1
+        AND assignment_id = $2
+        AND sent_at IS NOT NULL
+        AND start_on IS NOT DISTINCT FROM $3
+        AND monthly_pay_minor IS NOT DISTINCT FROM $4
+        AND weekly_advance_minor IS NOT DISTINCT FROM $5
+        AND currency IS NOT DISTINCT FROM $6
+        AND worker_name IS NOT DISTINCT FROM $7
+        AND role_label IS NOT DISTINCT FROM $8
+        AND client_name IS NOT DISTINCT FROM $9
+        AND phone IS NOT DISTINCT FROM $10
+        AND email IS NOT DISTINCT FROM $11
+        AND preamble IS NOT DISTINCT FROM $12
+        AND clauses IS NOT DISTINCT FROM $13::jsonb
+      LIMIT 1
+      FOR UPDATE
+      """,
+      [letter_uid, assignment_uid | terms]
+    ).rows
+  end
+
+  defp write_new_or_draft_worker_letter(
+         admin_uid,
+         contract_uid,
+         letter_uid,
+         assignment_uid,
+         worker_uid,
+         params
+       ) do
     case fetch!(
            """
            SELECT id, letter_no, public_token
@@ -2626,11 +2777,11 @@ defmodule Mithril.DirectContracts do
               provider_signature = COALESCE(provider_signature, $16)
           WHERE id = $1
           """,
-          [id | worker_letter_params(drafted, issued)] ++ current_provider_signature(contract_uid)
+          [id | params] ++ current_provider_signature(contract_uid)
         )
 
       [] ->
-        number = next_letter_no(issued.year)
+        number = next_letter_no(hd(params).year)
         token = random_token()
 
         fetch!(
@@ -2651,7 +2802,7 @@ defmodule Mithril.DirectContracts do
             assignment_uid,
             worker_uid,
             number,
-            token | worker_letter_params(drafted, issued)
+            token | params
           ] ++ [admin_uid | current_provider_signature(contract_uid)]
         )
     end
