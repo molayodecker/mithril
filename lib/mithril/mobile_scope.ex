@@ -179,7 +179,7 @@ defmodule Mithril.MobileScope do
       table == "cleaner_applications" and action in ["insert", "upsert"] ->
         {:ok, "cleaner_applications.user_id::text = $#{index}::text"}
 
-      table == "cleaner_application_trainings" and action in ["upsert", "delete"] ->
+      table == "cleaner_application_trainings" and action in ["update", "upsert", "delete"] ->
         {:ok,
          "cleaner_application_trainings.user_id::text = $#{index}::text AND cleaner_application_trainings.application_id IN (#{pending_application_ids(index)})"}
 
