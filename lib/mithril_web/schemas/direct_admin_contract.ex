@@ -314,9 +314,11 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
         issuedOn: %Schema{type: :string, format: :date},
         status: %Schema{type: :string, enum: ["saved", "sent_email", "sent_whatsapp"]},
         channel: %Schema{type: :string, nullable: true},
-        viewUrl: %Schema{type: :string}
+        viewUrl: %Schema{type: :string},
+        clientSigned: %Schema{type: :boolean},
+        clientSignerName: %Schema{type: :string, nullable: true}
       },
-      required: [:id, :letterNo, :issuedOn, :status, :viewUrl]
+      required: [:id, :letterNo, :issuedOn, :status, :viewUrl, :clientSigned]
     })
   end
 

@@ -543,6 +543,50 @@ defmodule Mithril.DirectContractsTest do
 
     assert signed["counterpartySignature"]["signerName"] == "Signed Household"
 
+    assert {:ok, signed_detail} = DirectContracts.show(admin_id, contract_id, nil)
+
+    assert signed_detail["letterPreview"]["counterpartySignature"]["signerName"] ==
+             "Signed Household"
+
+    assert hd(signed_detail["letters"])["clientSigned"] == true
+    assert hd(signed_detail["letters"])["clientSignerName"] == "Signed Household"
+
+    # Editing live terms must not imply that the client signed the new terms.
+    assert {:ok, _} =
+             DirectContracts.update_client(admin_id, contract_id, %{
+               "name" => "Signed Household",
+               "kind" => "person",
+               "phone" => "+233245550142",
+               "email" => "signed@example.com",
+               "monthlyFeeMinor" => 250_000
+             })
+
+    assert {:ok, edited_detail} = DirectContracts.show(admin_id, contract_id, nil)
+    assert edited_detail["letterPreview"]["monthlyFeeMinor"] == 250_000
+    assert edited_detail["letterPreview"]["counterpartySignature"] == nil
+    assert hd(edited_detail["letters"])["clientSigned"] == true
+
+    # A subsequent unsigned snapshot supersedes the earlier signed letter.
+    assert {:ok, _} = DirectContracts.save_letter(admin_id, contract_id)
+    assert {:ok, newer_detail} = DirectContracts.show(admin_id, contract_id, nil)
+    assert newer_detail["letterPreview"]["counterpartySignature"] == nil
+    assert hd(newer_detail["letters"])["clientSigned"] == false
+
+    # Lexicographic ordering puts 999 after 1000; creation order must win.
+    Repo.query!(
+      """
+      UPDATE public.direct_contract_letters
+      SET letter_no = CASE WHEN client_signed_at IS NULL
+                           THEN 'LTR-2099-1000' ELSE 'LTR-2099-999' END
+      WHERE contract_id = $1
+      """,
+      [Ecto.UUID.dump!(contract_id)]
+    )
+
+    assert {:ok, numbered_detail} = DirectContracts.show(admin_id, contract_id, nil)
+    assert hd(numbered_detail["letters"])["letterNo"] == "LTR-2099-1000"
+    assert numbered_detail["letterPreview"]["counterpartySignature"] == nil
+
     assert {:error, :letter_already_signed} =
              DirectContracts.sign_public_letter(token, %{
                "signerName" => "Signed Household",
@@ -553,7 +597,9 @@ defmodule Mithril.DirectContractsTest do
       Repo.query!(
         """
         SELECT public_token FROM public.direct_contract_worker_letters
-        WHERE contract_id = $1
+        WHERE contract_id = $1 AND sent_at IS NOT NULL
+        ORDER BY created_at, id
+        LIMIT 1
         """,
         [Ecto.UUID.dump!(contract_id)]
       ).rows
