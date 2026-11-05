@@ -48,6 +48,24 @@ defmodule Mithril.GoogleReviewTest do
     assert share =~ URI.encode_www_form(GoogleReview.url())
   end
 
+  test "automatic provisioning retries approval instead of trusting a partially created SID" do
+    ensure = fn -> send(self(), :ensure_called); {:error, :approval_unavailable} end
+    lookup = fn -> send(self(), :lookup_called); "HXstale" end
+
+    assert GoogleReviewTemplate.resolve_sid(true, ensure, lookup) == nil
+    assert_received :ensure_called
+    refute_received :lookup_called
+
+    assert GoogleReviewTemplate.resolve_sid(false, ensure, lookup) == "HXstale"
+    assert_received :lookup_called
+  end
+
+  test "automatic provisioning uses the approved or submitted SID" do
+    ensure = fn -> {:ok, "HXsubmitted"} end
+    assert GoogleReviewTemplate.resolve_sid(true, ensure, fn -> flunk("must not skip ensure") end) ==
+             "HXsubmitted"
+  end
+
   test "the WhatsApp template button is the static Google review link" do
     definition = GoogleReviewTemplate.definition()
     [action] = definition["types"]["twilio/call-to-action"]["actions"]
