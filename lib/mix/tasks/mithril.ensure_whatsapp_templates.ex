@@ -16,6 +16,7 @@ defmodule Mix.Tasks.Mithril.EnsureWhatsappTemplates do
 
   alias Mithril.WhatsApp.BillingInvoiceTemplate
   alias Mithril.WhatsApp.ContractLetterTemplate
+  alias Mithril.WhatsApp.GoogleReviewTemplate
   alias Mithril.WhatsApp.InvoiceTemplate
   alias Mithril.WhatsApp.JobOfferTemplate
   alias Mithril.WhatsApp.PaymentTemplate
@@ -31,7 +32,8 @@ defmodule Mix.Tasks.Mithril.EnsureWhatsappTemplates do
         {"job_offer", JobOfferTemplate.ensure()},
         {"invoice", InvoiceTemplate.ensure()},
         {"contract_letter", ContractLetterTemplate.ensure()},
-        {"worker_added", WorkerAddedTemplate.ensure()}
+        {"worker_added", WorkerAddedTemplate.ensure()},
+        {"google_review", GoogleReviewTemplate.ensure()}
       ] ++
         Enum.map(BillingInvoiceTemplate.purposes(), fn purpose ->
           {"billing_invoice_#{purpose}", BillingInvoiceTemplate.ensure(purpose)}

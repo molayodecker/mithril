@@ -22,6 +22,7 @@ defmodule MithrilWeb.DirectAdminBookingsController do
     RescheduleBookingRequest
   }
 
+  alias MithrilWeb.Schemas.DirectAdminGoogleReview.{Request, Result}
   alias OpenApiSpex.Schema
 
   tags(["direct-admin-bookings"])
@@ -225,6 +226,25 @@ defmodule MithrilWeb.DirectAdminBookingsController do
 
   def send_receipt(conn, %{"id" => id}) do
     respond(conn, DirectAdminBookings.send_receipt(user_id(conn), id))
+  end
+
+  operation(:send_google_review,
+    operation_id: "direct.sendAdminBookingGoogleReview",
+    summary: "Ask the booking customer to review Instaclean on Google",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Booking ID"
+      ]
+    ],
+    request_body: {"Review request", "application/json", Request, required: true},
+    responses: [ok: {"Review request", "application/json", Result}]
+  )
+
+  def send_google_review(conn, %{"id" => id} = params) do
+    respond(conn, DirectAdminBookings.send_google_review(user_id(conn), id, params))
   end
 
   defp user_id(conn), do: conn.assigns.instaclean_user_id

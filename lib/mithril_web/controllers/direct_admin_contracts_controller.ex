@@ -28,6 +28,7 @@ defmodule MithrilWeb.DirectAdminContractsController do
     WriteClient
   }
 
+  alias MithrilWeb.Schemas.DirectAdminGoogleReview.{Request, Result}
   alias OpenApiSpex.Schema
 
   tags(["direct-admin-contracts"])
@@ -247,6 +248,20 @@ defmodule MithrilWeb.DirectAdminContractsController do
 
   def send_letter(conn, %{"id" => id} = params) do
     respond(conn, DirectContracts.send_letter(user_id(conn), id, params))
+  end
+
+  operation(:send_google_review,
+    operation_id: "direct.sendAdminContractGoogleReview",
+    summary: "Ask the contract client to review Instaclean on Google",
+    parameters: [
+      id: [in: :path, schema: %Schema{type: :string, format: :uuid}, required: true]
+    ],
+    request_body: {"Review request", "application/json", Request, required: true},
+    responses: [ok: {"Review request", "application/json", Result}]
+  )
+
+  def send_google_review(conn, %{"id" => id} = params) do
+    respond(conn, DirectContracts.send_google_review(user_id(conn), id, params))
   end
 
   operation(:sign,
