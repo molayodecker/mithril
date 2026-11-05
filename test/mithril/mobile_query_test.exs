@@ -173,8 +173,10 @@ defmodule Mithril.MobileQueryTest do
 
     assert update_sql =~ "UPDATE public.cleaner_applications"
     assert update_sql =~ "cleaner_applications.user_id::text = "
+    assert update_sql =~ "cleaner_applications.status::text = 'pending'"
     refute update_sql =~ "SET user_id"
-    assert patch["status"] == "pending"
+    refute Map.has_key?(patch, "status")
+    refute Map.has_key?(patch, "admin_feedback")
     assert patch["name"] == "A Applicant"
     refute Map.has_key?(patch, "user_id")
     assert "app-1" in params
