@@ -551,6 +551,27 @@ defmodule Mithril.DirectContractsTest do
     assert hd(signed_detail["letters"])["clientSigned"] == true
     assert hd(signed_detail["letters"])["clientSignerName"] == "Signed Household"
 
+    # Editing live terms must not imply that the client signed the new terms.
+    assert {:ok, _} =
+             DirectContracts.update_client(admin_id, contract_id, %{
+               "name" => "Signed Household",
+               "kind" => "person",
+               "phone" => "+233245550142",
+               "email" => "signed@example.com",
+               "monthlyFeeMinor" => 250_000
+             })
+
+    assert {:ok, edited_detail} = DirectContracts.show(admin_id, contract_id, nil)
+    assert edited_detail["letterPreview"]["monthlyFeeMinor"] == 250_000
+    assert edited_detail["letterPreview"]["counterpartySignature"] == nil
+    assert hd(edited_detail["letters"])["clientSigned"] == true
+
+    # A subsequent unsigned snapshot supersedes the earlier signed letter.
+    assert {:ok, _} = DirectContracts.save_letter(admin_id, contract_id)
+    assert {:ok, newer_detail} = DirectContracts.show(admin_id, contract_id, nil)
+    assert newer_detail["letterPreview"]["counterpartySignature"] == nil
+    assert hd(newer_detail["letters"])["clientSigned"] == false
+
     assert {:error, :letter_already_signed} =
              DirectContracts.sign_public_letter(token, %{
                "signerName" => "Signed Household",
