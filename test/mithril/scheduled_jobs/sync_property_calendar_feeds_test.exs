@@ -13,4 +13,20 @@ defmodule Mithril.ScheduledJobs.SyncPropertyCalendarFeedsTest do
   test "sync batch limit bounds concurrent feed work per cron tick" do
     assert PropertyCalendarSync.batch_limit() == 20
   end
+
+  describe "sync_batch/0 query parameters" do
+    setup do
+      :ok = Ecto.Adapters.SQL.Sandbox.checkout(Mithril.Repo)
+      :ok
+    end
+
+    test "timestamptz params are passed as DateTime structs, not ISO 8601 strings" do
+      stale_before = DateTime.add(DateTime.utc_now(), -30, :minute)
+
+      assert {:ok, %{rows: [[%DateTime{}]]}} =
+               Mithril.Repo.query("SELECT $1::timestamptz", [stale_before])
+
+      refute match?({:error, %DBConnection.EncodeError{}}, PropertyCalendarSync.sync_batch())
+    end
+  end
 end
