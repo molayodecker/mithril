@@ -103,15 +103,23 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     end
   end
 
-  # Paystack rejects a transfer recipient whose name is not letters and spaces.
-  # Account lookup still returns hyphenated and punctuated Ghanaian names, and
-  # creating the recipient then fails with "Invalid recipient name".
+  # Paystack accepts ASCII letters and spaces, and compares that string to the
+  # wallet name after deleting every other character. A hyphenated wallet name
+  # fails the character rule, and the same name with a space inserted fails the
+  # comparison. Account lookup still returns those names.
   @doc false
   def normalize_recipient_name(name) when is_binary(name) do
     name
-    |> String.replace(~r/[^\p{L}\s]/u, " ")
+    |> ascii_letters_and_spaces()
     |> String.replace(~r/\s+/u, " ")
     |> String.trim()
+  end
+
+  defp ascii_letters_and_spaces(name) do
+    name
+    |> String.normalize(:nfd)
+    |> String.replace(~r/\p{M}/u, "")
+    |> String.replace(~r/[^A-Za-z\s]/u, " ")
   end
 
   defp normalize_account_number("mobile_money", raw) do
@@ -401,19 +409,28 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
   end
 
   # The name the worker typed can differ from the mobile-money wallet. Try the
-  # name on the account first, then the submitted name, so a mismatch still saves.
+  # name on the account first, then the submitted name. For each source, try the
+  # spaced ASCII form, that form without one-letter initials, and the form with
+  # punctuation deleted instead of replaced by a space.
   @doc false
   def recipient_name_candidates(submitted_name, registered_name) do
-    registered = registered_name |> to_string() |> String.trim()
-
-    registered_letters =
-      if registered == "", do: "", else: normalize_recipient_name(registered)
-
-    [registered, registered_letters, submitted_name]
-    |> Enum.map(&to_string/1)
-    |> Enum.map(&String.trim/1)
+    [registered_name, submitted_name]
+    |> Enum.flat_map(&recipient_name_forms/1)
     |> Enum.reject(&(&1 == ""))
     |> Enum.uniq()
+  end
+
+  defp recipient_name_forms(name) do
+    spaced = name |> to_string() |> normalize_recipient_name()
+
+    without_initials =
+      spaced
+      |> String.split(" ", trim: true)
+      |> Enum.reject(&(String.length(&1) < 2))
+      |> Enum.join(" ")
+
+    compact = String.replace(spaced, " ", "")
+    [spaced, without_initials, compact]
   end
 
   defp registered_account_name(user_id, fields) do
@@ -445,13 +462,27 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
         write_recipient_audit(user_id, recipient_code, fields)
         {:ok, %{ok: true, data: data}}
 
-      {:error, {:status, _status, "Invalid recipient name"}} when rest != [] ->
-        create_recipient_with_names(user_id, fields, rest, secret)
+      {:error, {:status, status, message}} when rest != [] ->
+        if retryable_recipient_name_error?(message) do
+          create_recipient_with_names(user_id, fields, rest, secret)
+        else
+          recipient_create_error(status, message)
+        end
 
       {:error, {:status, status, message}} ->
-        http_status = if status >= 500, do: 502, else: 400
-        {:error, {:status, http_status, %{ok: false, error: message}}}
+        recipient_create_error(status, message)
     end
+  end
+
+  defp retryable_recipient_name_error?(message) when is_binary(message) do
+    message
+    |> String.downcase()
+    |> String.contains?("recipient name")
+  end
+
+  defp recipient_create_error(status, message) do
+    http_status = if status >= 500, do: 502, else: 400
+    {:error, {:status, http_status, %{ok: false, error: message}}}
   end
 
   defp load_payout_method(user_id, recipient) do
