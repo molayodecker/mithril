@@ -11,6 +11,7 @@ defmodule Mithril.MobileRpc do
     cleanup_failed_quick_tasks_booking
     cleanup_orphaned_pending_subscription
     complete_cleaner_booking
+    copy_my_application_services
     compute_booking_pricing
     compute_booking_pricing_with_promotion
     compute_booking_pricing_with_promotion_and_transportation
@@ -102,6 +103,7 @@ defmodule Mithril.MobileRpc do
     sync_profile_name_from_payout
     sync_recurring_unpaid_checkout_snapshots
     update_my_hourly_rate
+    update_my_offered_specialties
     validate_booking_timeslot
     upsert_cleaner_team_name
     validate_booking_timeslot
