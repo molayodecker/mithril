@@ -49,7 +49,12 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
         other -> other
       end
 
-    name = body |> Map.get("name", "") |> to_string() |> String.trim()
+    name =
+      body
+      |> Map.get("name", "")
+      |> to_string()
+      |> normalize_recipient_name()
+
     raw_account = body |> Map.get("account_number", "") |> to_string() |> String.trim()
     bank_code = body |> Map.get("bank_code", "") |> to_string() |> String.trim()
     currency = body |> Map.get("currency", "") |> to_string() |> String.trim() |> String.upcase()
@@ -96,6 +101,17 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
            }}
         end
     end
+  end
+
+  # Paystack rejects a transfer recipient whose name is not letters and spaces.
+  # Account lookup still returns hyphenated and punctuated Ghanaian names, and
+  # creating the recipient then fails with "Invalid recipient name".
+  @doc false
+  def normalize_recipient_name(name) when is_binary(name) do
+    name
+    |> String.replace(~r/[^\p{L}\s]/u, " ")
+    |> String.replace(~r/\s+/u, " ")
+    |> String.trim()
   end
 
   defp normalize_account_number("mobile_money", raw) do
