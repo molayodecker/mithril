@@ -421,6 +421,16 @@ defmodule Mithril.MobileFunctions.PaystackTest do
            ]
   end
 
+  test "punctuation inside a multiword wallet name keeps the existing spaces" do
+    assert PaystackPayout.recipient_name_candidates("Ama Serwaa", "AMA MENSAH-BOATENG") == [
+             "AMA MENSAH BOATENG",
+             "AMA MENSAHBOATENG",
+             "AMAMENSAHBOATENG",
+             "Ama Serwaa",
+             "AmaSerwaa"
+           ]
+  end
+
   test "an initial is tried with and without the single letter" do
     assert PaystackPayout.recipient_name_candidates("John K. Doe", nil) == [
              "John K Doe",

@@ -410,8 +410,8 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
 
   # The name the worker typed can differ from the mobile-money wallet. Try the
   # name on the account first, then the submitted name. For each source, try the
-  # spaced ASCII form, that form without one-letter initials, and the form with
-  # punctuation deleted instead of replaced by a space.
+  # spaced ASCII form, that form without one-letter initials, the original with
+  # punctuation removed and its spaces kept, and the letters joined together.
   @doc false
   def recipient_name_candidates(submitted_name, registered_name) do
     [registered_name, submitted_name]
@@ -421,7 +421,8 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
   end
 
   defp recipient_name_forms(name) do
-    spaced = name |> to_string() |> normalize_recipient_name()
+    raw = to_string(name)
+    spaced = normalize_recipient_name(raw)
 
     without_initials =
       spaced
@@ -429,8 +430,18 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
       |> Enum.reject(&(String.length(&1) < 2))
       |> Enum.join(" ")
 
+    punctuation_deleted = delete_punctuation_keep_spaces(raw)
     compact = String.replace(spaced, " ", "")
-    [spaced, without_initials, compact]
+    [spaced, without_initials, punctuation_deleted, compact]
+  end
+
+  defp delete_punctuation_keep_spaces(name) do
+    name
+    |> String.normalize(:nfd)
+    |> String.replace(~r/\p{M}/u, "")
+    |> String.replace(~r/[^A-Za-z\s]/u, "")
+    |> String.replace(~r/\s+/u, " ")
+    |> String.trim()
   end
 
   defp registered_account_name(user_id, fields) do
