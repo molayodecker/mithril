@@ -412,6 +412,14 @@ defmodule Mithril.MobileFunctions.PaystackTest do
              })
   end
 
+  test "a mismatched submitted name still tries the name on the account" do
+    assert PaystackPayout.recipient_name_candidates("Ama Serwaa", "MENSAH-BOATENG") == [
+             "MENSAH-BOATENG",
+             "MENSAH BOATENG",
+             "Ama Serwaa"
+           ]
+  end
+
   test "recipient names keep letters and turn punctuation into spaces" do
     assert PaystackPayout.normalize_recipient_name("MENSAH-BOATENG") == "MENSAH BOATENG"
     assert PaystackPayout.normalize_recipient_name("John K. Doe") == "John K Doe"
