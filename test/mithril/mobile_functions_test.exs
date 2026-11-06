@@ -414,9 +414,28 @@ defmodule Mithril.MobileFunctions.PaystackTest do
 
   test "a mismatched submitted name still tries the name on the account" do
     assert PaystackPayout.recipient_name_candidates("Ama Serwaa", "MENSAH-BOATENG") == [
-             "MENSAH-BOATENG",
              "MENSAH BOATENG",
-             "Ama Serwaa"
+             "MENSAHBOATENG",
+             "Ama Serwaa",
+             "AmaSerwaa"
+           ]
+  end
+
+  test "punctuation inside a multiword wallet name keeps the existing spaces" do
+    assert PaystackPayout.recipient_name_candidates("Ama Serwaa", "AMA MENSAH-BOATENG") == [
+             "AMA MENSAH BOATENG",
+             "AMA MENSAHBOATENG",
+             "AMAMENSAHBOATENG",
+             "Ama Serwaa",
+             "AmaSerwaa"
+           ]
+  end
+
+  test "an initial is tried with and without the single letter" do
+    assert PaystackPayout.recipient_name_candidates("John K. Doe", nil) == [
+             "John K Doe",
+             "John Doe",
+             "JohnKDoe"
            ]
   end
 
@@ -425,6 +444,7 @@ defmodule Mithril.MobileFunctions.PaystackTest do
     assert PaystackPayout.normalize_recipient_name("John K. Doe") == "John K Doe"
     assert PaystackPayout.normalize_recipient_name("  Ama   Serwaa  ") == "Ama Serwaa"
     assert PaystackPayout.normalize_recipient_name("O'Brien") == "O Brien"
+    assert PaystackPayout.normalize_recipient_name("José Mensah") == "Jose Mensah"
     assert PaystackPayout.normalize_recipient_name("---") == ""
   end
 
