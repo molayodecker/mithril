@@ -386,6 +386,7 @@ defmodule Mithril.MobileFunctions.PaystackTest do
   use ExUnit.Case, async: true
 
   alias Mithril.MobileFunctions.Paystack
+  alias Mithril.MobileFunctions.PaystackPayout
 
   test "fetch_banks returns configured error when secret missing" do
     previous = Application.get_env(:mithril, :paystack_secret_key)
@@ -408,6 +409,33 @@ defmodule Mithril.MobileFunctions.PaystackTest do
              Paystack.resolve_bank_account(user_id, %{
                "account_number" => "12",
                "bank_code" => "MTN"
+             })
+  end
+
+  test "a mismatched submitted name still tries the name on the account" do
+    assert PaystackPayout.recipient_name_candidates("Ama Serwaa", "MENSAH-BOATENG") == [
+             "MENSAH-BOATENG",
+             "MENSAH BOATENG",
+             "Ama Serwaa"
+           ]
+  end
+
+  test "recipient names keep letters and turn punctuation into spaces" do
+    assert PaystackPayout.normalize_recipient_name("MENSAH-BOATENG") == "MENSAH BOATENG"
+    assert PaystackPayout.normalize_recipient_name("John K. Doe") == "John K Doe"
+    assert PaystackPayout.normalize_recipient_name("  Ama   Serwaa  ") == "Ama Serwaa"
+    assert PaystackPayout.normalize_recipient_name("O'Brien") == "O Brien"
+    assert PaystackPayout.normalize_recipient_name("---") == ""
+  end
+
+  test "a recipient name that is only punctuation is rejected" do
+    assert {:error, {:status, 400, %{ok: false, error: "Invalid recipient name"}}} =
+             Paystack.create_transfer_recipient(Ecto.UUID.generate(), %{
+               "type" => "mobile_money",
+               "name" => "---",
+               "account_number" => "0241234567",
+               "bank_code" => "MTN",
+               "currency" => "GHS"
              })
   end
 

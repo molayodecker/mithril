@@ -49,7 +49,12 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
         other -> other
       end
 
-    name = body |> Map.get("name", "") |> to_string() |> String.trim()
+    name =
+      body
+      |> Map.get("name", "")
+      |> to_string()
+      |> normalize_recipient_name()
+
     raw_account = body |> Map.get("account_number", "") |> to_string() |> String.trim()
     bank_code = body |> Map.get("bank_code", "") |> to_string() |> String.trim()
     currency = body |> Map.get("currency", "") |> to_string() |> String.trim() |> String.upcase()
@@ -96,6 +101,17 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
            }}
         end
     end
+  end
+
+  # Paystack rejects a transfer recipient whose name is not letters and spaces.
+  # Account lookup still returns hyphenated and punctuated Ghanaian names, and
+  # creating the recipient then fails with "Invalid recipient name".
+  @doc false
+  def normalize_recipient_name(name) when is_binary(name) do
+    name
+    |> String.replace(~r/[^\p{L}\s]/u, " ")
+    |> String.replace(~r/\s+/u, " ")
+    |> String.trim()
   end
 
   defp normalize_account_number("mobile_money", raw) do
@@ -372,22 +388,65 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
   end
 
   defp maybe_reuse_or_create_paystack_recipient(user_id, fields, nil, _identity) do
+    case Paystack.secret_key() do
+      {:ok, secret} ->
+        names =
+          recipient_name_candidates(fields.name, registered_account_name(user_id, fields))
+
+        create_recipient_with_names(user_id, fields, names, secret)
+
+      {:error, :payment_not_configured} ->
+        {:error, {:status, 500, %{ok: false, error: "Server misconfigured"}}}
+    end
+  end
+
+  # The name the worker typed can differ from the mobile-money wallet. Try the
+  # name on the account first, then the submitted name, so a mismatch still saves.
+  @doc false
+  def recipient_name_candidates(submitted_name, registered_name) do
+    registered = registered_name |> to_string() |> String.trim()
+
+    registered_letters =
+      if registered == "", do: "", else: normalize_recipient_name(registered)
+
+    [registered, registered_letters, submitted_name]
+    |> Enum.map(&to_string/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+  end
+
+  defp registered_account_name(user_id, fields) do
+    case Paystack.resolve_bank_account(user_id, %{
+           "account_number" => fields.account_number,
+           "bank_code" => fields.bank_code
+         }) do
+      {:ok, %{data: %{account_name: name}}} when is_binary(name) -> name
+      _ -> nil
+    end
+  end
+
+  defp create_recipient_with_names(_user_id, _fields, [], _secret) do
+    {:error, {:status, 400, %{ok: false, error: "Invalid recipient name"}}}
+  end
+
+  defp create_recipient_with_names(user_id, fields, [name | rest], secret) do
     paystack_body = %{
       "type" => fields.type,
-      "name" => fields.name,
+      "name" => name,
       "account_number" => fields.account_number,
       "currency" => fields.currency,
       "bank_code" => fields.bank_code
     }
 
-    with {:ok, secret} <- Paystack.secret_key(),
-         {:ok, data} <- Paystack.post_json("/transferrecipient", paystack_body, secret) do
-      recipient_code = Map.get(data, "recipient_code")
-      write_recipient_audit(user_id, recipient_code, fields)
-      {:ok, %{ok: true, data: data}}
-    else
-      {:error, :payment_not_configured} ->
-        {:error, {:status, 500, %{ok: false, error: "Server misconfigured"}}}
+    case Paystack.post_json("/transferrecipient", paystack_body, secret) do
+      {:ok, data} ->
+        recipient_code = Map.get(data, "recipient_code")
+        write_recipient_audit(user_id, recipient_code, fields)
+        {:ok, %{ok: true, data: data}}
+
+      {:error, {:status, _status, "Invalid recipient name"}} when rest != [] ->
+        create_recipient_with_names(user_id, fields, rest, secret)
 
       {:error, {:status, status, message}} ->
         http_status = if status >= 500, do: 502, else: 400
