@@ -448,6 +448,14 @@ defmodule Mithril.MobileFunctions.PaystackTest do
     assert PaystackPayout.normalize_recipient_name("---") == ""
   end
 
+  test "a rejected recipient name is a review hold instead of the provider error" do
+    assert Mithril.DirectAdminPayoutNameReviews.hold_body(false, "AMA MENSAH") == %{
+             ok: true,
+             code: "PAYOUT_NAME_REVIEW",
+             data: %{held: true, names_match: false, account_name: "AMA MENSAH"}
+           }
+  end
+
   test "a recipient name that is only punctuation is rejected" do
     assert {:error, {:status, 400, %{ok: false, error: "Invalid recipient name"}}} =
              Paystack.create_transfer_recipient(Ecto.UUID.generate(), %{
