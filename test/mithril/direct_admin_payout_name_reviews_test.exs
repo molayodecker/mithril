@@ -201,6 +201,73 @@ defmodule Mithril.DirectAdminPayoutNameReviewsTest do
     refute Map.has_key?(preferences, "payout_name_mismatch")
   end
 
+
+  test "approving one account preserves another unresolved account flag", %{
+    admin_id: admin_id,
+    worker_id: worker_id
+  } do
+    attrs = %{
+      purpose: "payout",
+      payout_type: "mobile_money",
+      submitted_name: "Ama Serwaa",
+      account_name: "FIRST MISMATCH",
+      bank_code: "MTN",
+      account_number: "0240000011",
+      notify: fn _ -> %{email_sent: false, sms_sent: 0, slack_sent: false, sms_skipped: true} end
+    }
+
+    assert {:ok, first} = DirectAdminPayoutNameReviews.open(worker_id, attrs)
+
+    assert {:ok, second} =
+             DirectAdminPayoutNameReviews.open(
+               worker_id,
+               %{attrs | account_name: "SECOND MISMATCH", account_number: "0240000012"}
+             )
+
+    assert {:ok, %{"status" => "approved"}} =
+             DirectAdminPayoutNameReviews.review(admin_id, first.id, %{"decision" => "approve"})
+
+    [[preferences]] =
+      Repo.query!("SELECT preferences FROM public.profiles WHERE id = $1", [
+        Ecto.UUID.dump!(worker_id)
+      ]).rows
+
+    assert preferences["payout_name_mismatch"]["payout_account_name"] == "SECOND MISMATCH"
+
+    assert {:ok, %{"status" => "rejected"}} =
+             DirectAdminPayoutNameReviews.review(admin_id, second.id, %{"decision" => "reject"})
+
+    [[after_rejection]] =
+      Repo.query!("SELECT preferences FROM public.profiles WHERE id = $1", [
+        Ecto.UUID.dump!(worker_id)
+      ]).rows
+
+    assert after_rejection["payout_name_mismatch"]["payout_account_name"] ==
+             "SECOND MISMATCH"
+  end
+
+  test "payout and refund holds preserve both purpose flags", %{worker_id: worker_id} do
+    attrs = %{
+      payout_type: "bank",
+      submitted_name: "Ama Serwaa",
+      account_name: "UNKNOWN OWNER",
+      bank_code: "GH",
+      account_number: "10001122",
+      notify: fn _ -> %{email_sent: false, sms_sent: 0, slack_sent: false, sms_skipped: true} end
+    }
+
+    assert {:ok, _} = DirectAdminPayoutNameReviews.open(worker_id, Map.put(attrs, :purpose, "payout"))
+    assert {:ok, _} = DirectAdminPayoutNameReviews.open(worker_id, Map.put(attrs, :purpose, "refund"))
+
+    [[preferences]] =
+      Repo.query!("SELECT preferences FROM public.profiles WHERE id = $1", [
+        Ecto.UUID.dump!(worker_id)
+      ]).rows
+
+    assert preferences["payout_name_mismatches"]["payout"]["payout_account_name"] == "UNKNOWN OWNER"
+    assert preferences["payout_name_mismatches"]["refund"]["payout_account_name"] == "UNKNOWN OWNER"
+  end
+
   test "a guest cannot list reviews", %{worker_id: worker_id} do
     assert {:error, :forbidden} = DirectAdminPayoutNameReviews.list(worker_id)
   end
