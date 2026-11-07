@@ -40,9 +40,7 @@ defmodule Mithril.DirectAdminPayoutNameReviews do
              account_number: account_number
            }) do
         {:ok, %{id: review_id, inserted: inserted}} ->
-          if not names_match do
-            write_mismatch_flag(user_uid, purpose, payout_type, profile_name, wallet_name)
-          end
+          sync_mismatch_flag(user_uid, purpose)
 
           notified =
             inserted and not names_match and
@@ -237,9 +235,7 @@ defmodule Mithril.DirectAdminPayoutNameReviews do
            [review_uid, status, notes, admin_uid]
          ) do
       {:ok, %{rows: [[id, user_uid, purpose, names_match, status]]}} ->
-        if status == "approved" do
-          clear_mismatch_flag(user_uid, purpose)
-        end
+        sync_mismatch_flag(user_uid, purpose)
 
         {:ok,
          %{
@@ -265,76 +261,59 @@ defmodule Mithril.DirectAdminPayoutNameReviews do
     end
   end
 
-  defp write_mismatch_flag(user_uid, purpose, payout_type, profile_name, account_name) do
-    flag = %{
-      "flagged_at" =>
-        DateTime.utc_now() |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601(),
-      "profile_name" => profile_name || "",
-      "payout_account_name" => account_name || "",
-      "payout_type" => payout_type,
-      "purpose" => purpose
-    }
-
+  # Rebuild the purpose flag from the remaining unresolved review rows. The
+  # UPDATE modifies the current JSONB value in PostgreSQL, avoiding lost flags
+  # when payout and refund requests are handled concurrently.
+  defp sync_mismatch_flag(user_uid, purpose) do
     case Repo.query(
-           "SELECT COALESCE(preferences, '{}'::jsonb) FROM public.profiles WHERE id = $1",
-           [user_uid]
+           """
+           WITH active AS (
+             SELECT jsonb_build_object(
+               'flagged_at', to_char(r.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+               'profile_name', coalesce(r.profile_name, ''),
+               'payout_account_name', coalesce(r.account_name, ''),
+               'payout_type', r.payout_type,
+               'purpose', r.purpose
+             ) AS flag
+             FROM public.payout_name_reviews r
+             WHERE r.user_id = $1
+               AND r.purpose = $2
+               AND r.names_match = false
+               AND r.status IN ('pending', 'rejected')
+             ORDER BY CASE WHEN r.status = 'pending' THEN 0 ELSE 1 END,
+                      r.updated_at DESC, r.id DESC
+             LIMIT 1
+           ),
+           chosen AS (SELECT (SELECT flag FROM active) AS flag)
+           UPDATE public.profiles p
+           SET preferences =
+             CASE
+               WHEN chosen.flag IS NULL THEN
+                 CASE WHEN $2 = 'payout' THEN
+                   (coalesce(p.preferences, '{}'::jsonb) #- ARRAY['payout_name_mismatches', $2]) - 'payout_name_mismatch'
+                 ELSE
+                   coalesce(p.preferences, '{}'::jsonb) #- ARRAY['payout_name_mismatches', $2]
+                 END
+               WHEN $2 = 'payout' THEN
+                 jsonb_set(
+                   jsonb_set(coalesce(p.preferences, '{}'::jsonb),
+                             ARRAY['payout_name_mismatches', $2], chosen.flag, true),
+                   '{payout_name_mismatch}', chosen.flag, true
+                 )
+               ELSE
+                 jsonb_set(coalesce(p.preferences, '{}'::jsonb),
+                           ARRAY['payout_name_mismatches', $2], chosen.flag, true)
+             END,
+             updated_at = now()
+           FROM chosen
+           WHERE p.id = $1
+           """,
+           [user_uid, purpose]
          ) do
-      {:ok, %{rows: [[preferences]]}} when is_map(preferences) ->
-        nested =
-          preferences
-          |> Map.get("payout_name_mismatches", %{})
-          |> Map.put(purpose, flag)
-
-        next = Map.put(preferences, "payout_name_mismatches", nested)
-
-        next =
-          if purpose == "payout", do: Map.put(next, "payout_name_mismatch", flag), else: next
-
-        case Repo.query(
-               "UPDATE public.profiles SET preferences = $2::jsonb, updated_at = now() WHERE id = $1",
-               [user_uid, next]
-             ) do
-          {:ok, _} -> :ok
-          {:error, error} -> Logger.warning("payout name flag was not saved: #{inspect(error)}")
-        end
-
-      {:ok, %{rows: []}} ->
-        :ok
-
+      {:ok, _} -> :ok
       {:error, error} ->
-        Logger.warning("payout name flag was not read: #{inspect(error)}")
-    end
-  end
-
-  defp clear_mismatch_flag(user_uid, purpose) do
-    case Repo.query(
-           "SELECT COALESCE(preferences, '{}'::jsonb) FROM public.profiles WHERE id = $1",
-           [user_uid]
-         ) do
-      {:ok, %{rows: [[preferences]]}} when is_map(preferences) ->
-        nested =
-          preferences
-          |> Map.get("payout_name_mismatches", %{})
-          |> Map.delete(purpose)
-
-        next = Map.put(preferences, "payout_name_mismatches", nested)
-
-        next =
-          if nested == %{} do
-            Map.delete(next, "payout_name_mismatches")
-          else
-            next
-          end
-
-        next = if purpose == "payout", do: Map.delete(next, "payout_name_mismatch"), else: next
-
-        Repo.query(
-          "UPDATE public.profiles SET preferences = $2::jsonb, updated_at = now() WHERE id = $1",
-          [user_uid, next]
-        )
-
-      _ ->
-        :ok
+        Logger.warning("payout name flag sync failed: #{inspect(error)}")
+        {:error, database_reason(error)}
     end
   end
 
