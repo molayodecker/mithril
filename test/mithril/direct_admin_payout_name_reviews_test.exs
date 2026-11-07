@@ -201,7 +201,6 @@ defmodule Mithril.DirectAdminPayoutNameReviewsTest do
     refute Map.has_key?(preferences, "payout_name_mismatch")
   end
 
-
   test "approving one account preserves another unresolved account flag", %{
     admin_id: admin_id,
     worker_id: worker_id
@@ -256,16 +255,22 @@ defmodule Mithril.DirectAdminPayoutNameReviewsTest do
       notify: fn _ -> %{email_sent: false, sms_sent: 0, slack_sent: false, sms_skipped: true} end
     }
 
-    assert {:ok, _} = DirectAdminPayoutNameReviews.open(worker_id, Map.put(attrs, :purpose, "payout"))
-    assert {:ok, _} = DirectAdminPayoutNameReviews.open(worker_id, Map.put(attrs, :purpose, "refund"))
+    assert {:ok, _} =
+             DirectAdminPayoutNameReviews.open(worker_id, Map.put(attrs, :purpose, "payout"))
+
+    assert {:ok, _} =
+             DirectAdminPayoutNameReviews.open(worker_id, Map.put(attrs, :purpose, "refund"))
 
     [[preferences]] =
       Repo.query!("SELECT preferences FROM public.profiles WHERE id = $1", [
         Ecto.UUID.dump!(worker_id)
       ]).rows
 
-    assert preferences["payout_name_mismatches"]["payout"]["payout_account_name"] == "UNKNOWN OWNER"
-    assert preferences["payout_name_mismatches"]["refund"]["payout_account_name"] == "UNKNOWN OWNER"
+    assert preferences["payout_name_mismatches"]["payout"]["payout_account_name"] ==
+             "UNKNOWN OWNER"
+
+    assert preferences["payout_name_mismatches"]["refund"]["payout_account_name"] ==
+             "UNKNOWN OWNER"
   end
 
   test "a guest cannot list reviews", %{worker_id: worker_id} do
