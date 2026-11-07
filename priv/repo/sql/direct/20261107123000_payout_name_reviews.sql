@@ -215,13 +215,13 @@ BEGIN
     PERFORM public._reconcile_payout_test_pause_if_configured();
 
     IF v_method_count = 0 THEN
-      -- A pending Direct review has no payout method yet. Keep the hold.
+      -- An unresolved Direct review has no payout method yet. Keep the hold.
       IF EXISTS (
         SELECT 1
         FROM public.payout_name_reviews review
         WHERE review.user_id = p_user_id
           AND review.purpose = v_purpose
-          AND review.status = 'pending'
+          AND review.status IN ('pending', 'rejected')
           AND review.names_match = false
       ) THEN
         v_should_clear := false;
