@@ -1,9 +1,12 @@
 defmodule Mithril.MobileFunctions.PaystackPayout do
   @moduledoc false
 
+  require Logger
+
   alias Mithril.Auth.Phone
   alias Mithril.DbUuid
   alias Mithril.DirectAdminActor
+  alias Mithril.DirectAdminPayoutNameReviews
   alias Mithril.DirectWorkerLoans
   alias Mithril.IdentityVerification
   alias Mithril.MobileFunctions.Paystack
@@ -398,10 +401,11 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
   defp maybe_reuse_or_create_paystack_recipient(user_id, fields, nil, _identity) do
     case Paystack.secret_key() do
       {:ok, secret} ->
-        names =
-          recipient_name_candidates(fields.name, registered_account_name(user_id, fields))
+        registered = registered_account_name(user_id, fields)
 
-        create_recipient_with_names(user_id, fields, names, secret)
+        names = recipient_name_candidates(fields.name, registered)
+
+        create_recipient_with_names(user_id, fields, names, secret, registered)
 
       {:error, :payment_not_configured} ->
         {:error, {:status, 500, %{ok: false, error: "Server misconfigured"}}}
@@ -454,11 +458,11 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     end
   end
 
-  defp create_recipient_with_names(_user_id, _fields, [], _secret) do
+  defp create_recipient_with_names(_user_id, _fields, [], _secret, _registered) do
     {:error, {:status, 400, %{ok: false, error: "Invalid recipient name"}}}
   end
 
-  defp create_recipient_with_names(user_id, fields, [name | rest], secret) do
+  defp create_recipient_with_names(user_id, fields, [name | rest], secret, registered) do
     paystack_body = %{
       "type" => fields.type,
       "name" => name,
@@ -475,13 +479,38 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
 
       {:error, {:status, status, message}} when rest != [] ->
         if retryable_recipient_name_error?(message) do
-          create_recipient_with_names(user_id, fields, rest, secret)
+          create_recipient_with_names(user_id, fields, rest, secret, registered)
         else
           recipient_create_error(status, message)
         end
 
       {:error, {:status, status, message}} ->
-        recipient_create_error(status, message)
+        if retryable_recipient_name_error?(message) do
+          hold_for_name_review(user_id, fields, registered)
+        else
+          recipient_create_error(status, message)
+        end
+    end
+  end
+
+  # Paystack rejected every spelling. Hold the account for a name review
+  # instead of returning that provider error to the worker.
+  defp hold_for_name_review(user_id, fields, registered) do
+    case DirectAdminPayoutNameReviews.open(user_id, %{
+           purpose: Atom.to_string(fields.purpose),
+           payout_type: fields.payout_type,
+           submitted_name: fields.name,
+           account_name: registered,
+           bank_code: fields.bank_code,
+           account_number: fields.account_number
+         }) do
+      {:ok, review} ->
+        {:ok, DirectAdminPayoutNameReviews.hold_body(review.names_match, review.account_name)}
+
+      {:error, reason} ->
+        Logger.warning("payout name review hold was not recorded: #{inspect(reason)}")
+
+        {:ok, DirectAdminPayoutNameReviews.hold_body(false, registered || fields.name)}
     end
   end
 

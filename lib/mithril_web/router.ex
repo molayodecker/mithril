@@ -239,6 +239,13 @@ defmodule MithrilWeb.Router do
     get "/admin/reports/summary", DirectAdminReportsController, :summary
     get "/admin/service-areas", DirectAdminServiceAreasController, :index
     get "/admin/payouts", DirectAdminPayoutsController, :index
+    get "/admin/payout-name-reviews", DirectAdminPayoutNameReviewsController, :index
+    get "/admin/payout-name-reviews/:id", DirectAdminPayoutNameReviewsController, :show
+
+    post "/admin/payout-name-reviews/:id/review",
+         DirectAdminPayoutNameReviewsController,
+         :review
+
     get "/admin/reviews", DirectAdminReviewsController, :index
     get "/admin/team", DirectAdminTeamController, :index
     post "/admin/team/grant", DirectAdminTeamController, :grant

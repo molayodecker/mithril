@@ -55,6 +55,7 @@ defmodule MithrilWeb.Plugs.DirectOpsAuthorization do
   defp permission_for(["bookings", _, "invoice" | _], _), do: "billing"
   defp permission_for(["billing" | _], _), do: "billing"
   defp permission_for(["worker-loan-requests" | _], _), do: "finance_loans"
+  defp permission_for(["payout-name-reviews" | _], _), do: "payout_names"
   defp permission_for(["notification-" <> _ | _], _), do: "notifications"
   defp permission_for(["notifications" | _], _), do: "notifications"
   defp permission_for(["whatsapp" | _], _), do: "whatsapp_inbox"

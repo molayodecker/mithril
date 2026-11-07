@@ -27,6 +27,7 @@ defmodule Mithril.OpsPermissions do
     %{id: "billing", label: "Billing & invoices"},
     %{id: "contracts", label: "Contracts"},
     %{id: "finance_loans", label: "Worker finance & loans"},
+    %{id: "payout_names", label: "Payout name reviews"},
     %{id: "analytics", label: "Analytics"},
     %{id: "reports", label: "Reports"},
     %{id: "system_health", label: "System health"},

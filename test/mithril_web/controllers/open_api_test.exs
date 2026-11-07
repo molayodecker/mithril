@@ -109,6 +109,13 @@ defmodule MithrilWeb.OpenApiTest do
              "direct.upsertAdminPaymentAdvice"
 
     assert spec["paths"]["/direct/admin/payouts"]["get"]
+
+    assert spec["paths"]["/direct/admin/payout-name-reviews"]["get"]["operationId"] ==
+             "direct.listAdminPayoutNameReviews"
+
+    assert spec["paths"]["/direct/admin/payout-name-reviews/{id}/review"]["post"]["operationId"] ==
+             "direct.reviewAdminPayoutName"
+
     assert spec["paths"]["/direct/admin/reviews"]["get"]
     assert spec["paths"]["/direct/admin/team"]["get"]
 
