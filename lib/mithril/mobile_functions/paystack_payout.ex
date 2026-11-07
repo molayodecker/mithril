@@ -510,7 +510,9 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
       {:error, reason} ->
         Logger.warning("payout name review hold was not recorded: #{inspect(reason)}")
 
-        {:ok, DirectAdminPayoutNameReviews.hold_body(false, registered || fields.name)}
+        {:error,
+         {:status, 503,
+          %{ok: false, error: "Payout name review temporarily unavailable. Please retry."}}}
     end
   end
 
