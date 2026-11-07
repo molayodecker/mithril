@@ -312,7 +312,9 @@ defmodule Mithril.DirectAdminPayoutNameReviews do
            """,
            [user_uid, purpose]
          ) do
-      {:ok, _} -> :ok
+      {:ok, _} ->
+        :ok
+
       {:error, error} ->
         Logger.warning("payout name flag sync failed: #{inspect(error)}")
         {:error, database_reason(error)}
