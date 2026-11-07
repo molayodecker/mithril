@@ -297,12 +297,14 @@ defmodule Mithril.DirectAdminPayoutNameReviews do
                WHEN $2 = 'payout' THEN
                  jsonb_set(
                    jsonb_set(coalesce(p.preferences, '{}'::jsonb),
-                             ARRAY['payout_name_mismatches', $2], chosen.flag, true),
+                             '{payout_name_mismatches}',
+                             coalesce(p.preferences -> 'payout_name_mismatches', '{}'::jsonb) || jsonb_build_object($2, chosen.flag), true),
                    '{payout_name_mismatch}', chosen.flag, true
                  )
                ELSE
                  jsonb_set(coalesce(p.preferences, '{}'::jsonb),
-                           ARRAY['payout_name_mismatches', $2], chosen.flag, true)
+                           '{payout_name_mismatches}',
+                           coalesce(p.preferences -> 'payout_name_mismatches', '{}'::jsonb) || jsonb_build_object($2, chosen.flag), true)
              END,
              updated_at = now()
            FROM chosen
