@@ -16,6 +16,8 @@ defmodule Mithril.MobileGateway do
     delete-property-media
     initialize-stripe-booking-payment
     upload-job-photo
+    upload-profile-avatar
+    get-profile-avatar-url
     get-job-photo-url
     delete-job-photo
     stripe-verify-payment-intent

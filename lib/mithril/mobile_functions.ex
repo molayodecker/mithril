@@ -13,6 +13,7 @@ defmodule Mithril.MobileFunctions do
   alias Mithril.MobileFunctions.NotifyBookingRescheduled
   alias Mithril.MobileFunctions.NotifyPaymentFailureOps
   alias Mithril.MobileFunctions.Paystack
+  alias Mithril.MobileFunctions.ProfileAvatar
   alias Mithril.MobileFunctions.RankCleanersWithAi
   alias Mithril.MobileFunctions.ReplaceCleanerWeeklyAvailability
   alias Mithril.MobileFunctions.RequestDataExport
@@ -82,6 +83,12 @@ defmodule Mithril.MobileFunctions do
 
   def invoke(user_id, "delete-property-media", body) when is_map(body),
     do: DeletePropertyMedia.call(user_id, body)
+
+  def invoke(user_id, "upload-profile-avatar", body) when is_map(body),
+    do: ProfileAvatar.upload(user_id, body)
+
+  def invoke(user_id, "get-profile-avatar-url", body) when is_map(body),
+    do: ProfileAvatar.url(user_id, body)
 
   def invoke(user_id, "upload-job-photo", body) when is_map(body),
     do: JobPhotos.upload(user_id, body)
