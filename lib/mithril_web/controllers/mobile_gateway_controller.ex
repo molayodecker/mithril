@@ -51,8 +51,7 @@ defmodule MithrilWeb.MobileGatewayController do
 
   def guest_function(conn, params) do
     name = function_name(params["name"])
-    body = Map.drop(params, ["name"])
-    respond(conn, MobileGateway.call_guest_function(name, body))
+    respond(conn, MobileGateway.call_guest_function(name, function_body(conn)))
   end
 
   operation(:query,
@@ -80,12 +79,15 @@ defmodule MithrilWeb.MobileGatewayController do
 
   def function(conn, params) do
     name = function_name(params["name"])
-    body = Map.drop(params, ["name"])
-    respond(conn, MobileGateway.invoke_function(user_id(conn), name, body))
+    respond(conn, MobileGateway.invoke_function(user_id(conn), name, function_body(conn)))
   end
 
   defp function_name(name) when is_list(name), do: Enum.join(name, "/")
   defp function_name(name), do: name
+
+  # The route parameter is also `name`. Phoenix copies that over the JSON body,
+  # so dropping `params["name"]` erases the Paystack recipient name.
+  defp function_body(conn), do: conn.body_params
 
   defp respond(conn, {:ok, data}) do
     json(conn, %{data: data})
