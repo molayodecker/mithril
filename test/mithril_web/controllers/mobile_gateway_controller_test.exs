@@ -101,4 +101,25 @@ defmodule MithrilWeb.MobileGatewayControllerTest do
 
     assert json_response(conn, 403)["error"] == "forbidden"
   end
+
+  test "POST /mobile/functions keeps a JSON name when the path parameter is also name" do
+    user_id = Ecto.UUID.generate()
+    {:ok, access_token, _claims} = Token.issue(user_id, "jwt@example.com")
+
+    conn =
+      build_conn()
+      |> put_req_header("authorization", "Bearer #{access_token}")
+      |> put_req_header("content-type", "application/json")
+      |> post("/mobile/functions/paystack-create-transfer-recipient", %{
+        "type" => "mobile_money",
+        "name" => "Ama Mensah",
+        "account_number" => "0244123456",
+        "bank_code" => "MTN",
+        "currency" => "GHS",
+        "purpose" => "payout"
+      })
+
+    response = json_response(conn, conn.status)
+    refute response["error"] == "Invalid recipient name"
+  end
 end
