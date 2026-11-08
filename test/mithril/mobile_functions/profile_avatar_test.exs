@@ -22,6 +22,15 @@ defmodule Mithril.MobileFunctions.ProfileAvatarTest do
              })
   end
 
+  test "refuses to sign another user's avatar path" do
+    other = "123e4567-e89b-42d3-a456-426614174001"
+
+    assert {:error, {:status, 403, %{error: "forbidden"}}} =
+             ProfileAvatar.url(@user, %{
+               "storage_path" => "#{other}/avatar-1760000000000.jpg"
+             })
+  end
+
   test "rejects signing a path outside the caller's avatar prefix" do
     for path <- [
           "../secret.jpg",

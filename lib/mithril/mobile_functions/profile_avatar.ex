@@ -24,8 +24,10 @@ defmodule Mithril.MobileFunctions.ProfileAvatar do
 
   def upload(_, _), do: {:error, {:status, 400, %{error: "bad_request"}}}
 
-  def url(_user_id, body) when is_map(body) do
-    with {:ok, path} <- validate_path(body["storage_path"]),
+  def url(user_id, body) when is_binary(user_id) and is_map(body) do
+    with :ok <- valid_user(user_id),
+         {:ok, path} <- validate_path(body["storage_path"]),
+         :ok <- owned_by(user_id, path),
          {:ok, url} <- R2Storage.signed_url("avatars/" <> path, expiry(body)) do
       {:ok, %{path: path, url: url}}
     else
@@ -72,6 +74,16 @@ defmodule Mithril.MobileFunctions.ProfileAvatar do
 
   defp object_path(user_id, extension) do
     "#{user_id}/avatar-#{System.system_time(:millisecond)}.#{extension}"
+  end
+
+  defp owned_by(user_id, path) do
+    prefix = String.downcase(user_id) <> "/"
+
+    if String.starts_with?(String.downcase(path), prefix) do
+      :ok
+    else
+      {:error, :forbidden}
+    end
   end
 
   defp validate_path(path) when is_binary(path) do
