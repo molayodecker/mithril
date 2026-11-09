@@ -9,6 +9,7 @@ defmodule Mithril.MobileFunctions.ProfileAvatar do
 
   @max_bytes 5 * 1024 * 1024
   @signed_ttl 604_800
+  @shared_signed_ttl 3_600
   @avatar_path ~r/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/avatar-\d+\.(jpg|jpeg|png|webp|gif)$/i
 
   def upload(user_id, body) when is_binary(user_id) and is_map(body) do
@@ -30,7 +31,7 @@ defmodule Mithril.MobileFunctions.ProfileAvatar do
     with :ok <- valid_user(user_id),
          {:ok, path} <- validate_path(body["storage_path"]),
          :ok <- authorize_view(user_id, path),
-         {:ok, url} <- R2Storage.signed_url("avatars/" <> path, expiry(body)) do
+         {:ok, url} <- R2Storage.signed_url("avatars/" <> path, view_expiry(user_id, path, body)) do
       {:ok, %{path: path, url: url}}
     else
       {:error, reason} -> fail(reason)
@@ -110,7 +111,8 @@ defmodule Mithril.MobileFunctions.ProfileAvatar do
     WHERE p.id = $1::uuid
       AND (
         p.avatar_url = $2
-        OR p.avatar_url LIKE ('%/avatars/' || $2 || '%')
+        OR p.avatar_url LIKE ('%/avatars/' || $2 || '?%')
+        OR p.avatar_url LIKE ('%/avatars/' || $2)
       )
       AND (
         EXISTS (
@@ -156,6 +158,17 @@ defmodule Mithril.MobileFunctions.ProfileAvatar do
   end
 
   defp validate_path(_), do: {:error, :bad_request}
+
+  defp view_expiry(user_id, path, body) do
+    [owner_id | _] = String.split(path, "/", parts: 2)
+    requested = expiry(body)
+
+    if DbUuid.equal?(user_id, owner_id) do
+      requested
+    else
+      min(requested, @shared_signed_ttl)
+    end
+  end
 
   defp expiry(%{"expires_in" => seconds}) when is_integer(seconds),
     do: min(max(seconds, 1), @signed_ttl)
