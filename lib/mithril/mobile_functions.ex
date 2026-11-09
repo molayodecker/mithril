@@ -90,6 +90,9 @@ defmodule Mithril.MobileFunctions do
   def invoke(user_id, "get-profile-avatar-url", body) when is_map(body),
     do: ProfileAvatar.url(user_id, body)
 
+  def invoke(user_id, "delete-profile-avatar", body) when is_map(body),
+    do: ProfileAvatar.delete(user_id, body)
+
   def invoke(user_id, "upload-job-photo", body) when is_map(body),
     do: JobPhotos.upload(user_id, body)
 

@@ -3,10 +3,13 @@ defmodule Mithril.MobileFunctions.ProfileAvatar do
   Authenticated profile photo uploads for private Cloudflare R2 media.
   """
 
+  alias Mithril.DbUuid
+  alias Mithril.Repo
   alias Mithril.R2Storage
 
   @max_bytes 5 * 1024 * 1024
   @signed_ttl 604_800
+  @shared_signed_ttl 3_600
   @avatar_path ~r/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/avatar-\d+\.(jpg|jpeg|png|webp|gif)$/i
 
   def upload(user_id, body) when is_binary(user_id) and is_map(body) do
@@ -27,8 +30,8 @@ defmodule Mithril.MobileFunctions.ProfileAvatar do
   def url(user_id, body) when is_binary(user_id) and is_map(body) do
     with :ok <- valid_user(user_id),
          {:ok, path} <- validate_path(body["storage_path"]),
-         :ok <- owned_by(user_id, path),
-         {:ok, url} <- R2Storage.signed_url("avatars/" <> path, expiry(body)) do
+         :ok <- authorize_view(user_id, path),
+         {:ok, url} <- R2Storage.signed_url("avatars/" <> path, view_expiry(user_id, path, body)) do
       {:ok, %{path: path, url: url}}
     else
       {:error, reason} -> fail(reason)
@@ -36,6 +39,19 @@ defmodule Mithril.MobileFunctions.ProfileAvatar do
   end
 
   def url(_, _), do: {:error, {:status, 400, %{error: "bad_request"}}}
+
+  def delete(user_id, body) when is_binary(user_id) and is_map(body) do
+    with :ok <- valid_user(user_id),
+         {:ok, path} <- validate_path(body["storage_path"]),
+         :ok <- owned_by(user_id, path),
+         :ok <- R2Storage.delete("avatars/" <> path) do
+      {:ok, %{deleted: true}}
+    else
+      {:error, reason} -> fail(reason)
+    end
+  end
+
+  def delete(_, _), do: {:error, {:status, 400, %{error: "bad_request"}}}
 
   defp valid_user(user_id) do
     case Ecto.UUID.cast(user_id) do
@@ -76,6 +92,53 @@ defmodule Mithril.MobileFunctions.ProfileAvatar do
     "#{user_id}/avatar-#{System.system_time(:millisecond)}.#{extension}"
   end
 
+  # A private R2 object path is not an access token. Only sign the avatar
+  # currently referenced by a profile the caller is entitled to view.
+  defp authorize_view(user_id, path) do
+    [owner_id | _] = String.split(path, "/", parts: 2)
+
+    if DbUuid.equal?(user_id, owner_id) do
+      :ok
+    else
+      can_view_registered_avatar?(user_id, owner_id, path)
+    end
+  end
+
+  defp can_view_registered_avatar?(viewer_id, owner_id, path) do
+    sql = """
+    SELECT 1
+    FROM public.profiles p
+    WHERE p.id = $1::uuid
+      AND (
+        p.avatar_url = $2
+        OR p.avatar_url LIKE ('%/avatars/' || $2 || '?%')
+        OR p.avatar_url LIKE ('%/avatars/' || $2)
+      )
+      AND (
+        EXISTS (
+          SELECT 1 FROM public.cleaner_data cd
+          WHERE cd.user_id = p.id AND cd.verified IS TRUE
+        )
+        OR EXISTS (
+          SELECT 1 FROM public.bookings b
+          WHERE (b.customer_id = $3::uuid AND b.cleaner_id = p.id)
+             OR (b.cleaner_id = $3::uuid AND b.customer_id = p.id)
+        )
+        OR EXISTS (
+          SELECT 1 FROM public.conversations c
+          WHERE (c.customer_id = $3::uuid AND c.cleaner_id = p.id)
+             OR (c.cleaner_id = $3::uuid AND c.customer_id = p.id)
+        )
+      )
+    LIMIT 1
+    """
+
+    case Repo.query(sql, [DbUuid.dump!(owner_id), path, DbUuid.dump!(viewer_id)]) do
+      {:ok, %{rows: [[1]]}} -> :ok
+      _ -> {:error, :forbidden}
+    end
+  end
+
   defp owned_by(user_id, path) do
     prefix = String.downcase(user_id) <> "/"
 
@@ -95,6 +158,17 @@ defmodule Mithril.MobileFunctions.ProfileAvatar do
   end
 
   defp validate_path(_), do: {:error, :bad_request}
+
+  defp view_expiry(user_id, path, body) do
+    [owner_id | _] = String.split(path, "/", parts: 2)
+    requested = expiry(body)
+
+    if DbUuid.equal?(user_id, owner_id) do
+      requested
+    else
+      min(requested, @shared_signed_ttl)
+    end
+  end
 
   defp expiry(%{"expires_in" => seconds}) when is_integer(seconds),
     do: min(max(seconds, 1), @signed_ttl)
