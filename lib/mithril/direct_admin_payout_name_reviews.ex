@@ -309,6 +309,7 @@ defmodule Mithril.DirectAdminPayoutNameReviews do
              updated_at = now()
            FROM chosen
            WHERE p.id = $1
+             AND set_config('mithril.payout_name_review_sync', 'on', true) = 'on'
            """,
            [user_uid, purpose]
          ) do

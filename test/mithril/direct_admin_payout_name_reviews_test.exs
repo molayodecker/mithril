@@ -276,4 +276,121 @@ defmodule Mithril.DirectAdminPayoutNameReviewsTest do
   test "a guest cannot list reviews", %{worker_id: worker_id} do
     assert {:error, :forbidden} = DirectAdminPayoutNameReviews.list(worker_id)
   end
+
+  test "a profile mismatch flag appears in the pending queue", %{
+    admin_id: admin_id,
+    worker_id: worker_id
+  } do
+    sql =
+      "priv/repo/sql/direct/20261109170000_enqueue_payout_name_reviews_from_flags.sql"
+      |> File.read!()
+
+    execute_sql_script(sql)
+
+    flag =
+      Jason.encode!(%{
+        "flagged_at" => "2026-11-08 04:19:59",
+        "profile_name" => "cwztle bkfvvp",
+        "payout_account_name" => "SAMUEL AMENUME",
+        "payout_type" => "mobile_money",
+        "requires_review" => true,
+        "source" => "payout_name_mismatch"
+      })
+
+    Repo.query!(
+      "UPDATE public.profiles SET preferences = jsonb_build_object('payout_name_mismatch', $2::text::jsonb) WHERE id = $1",
+      [Ecto.UUID.dump!(worker_id), flag]
+    )
+
+    assert {:ok, [review]} = DirectAdminPayoutNameReviews.list(admin_id)
+    assert review["profileName"] == "cwztle bkfvvp"
+    assert review["accountName"] == "SAMUEL AMENUME"
+    assert review["namesMatch"] == false
+    assert review["status"] == "pending"
+
+    Repo.query!(
+      "UPDATE public.profiles SET preferences = jsonb_build_object('payout_name_mismatch', $2::text::jsonb) WHERE id = $1",
+      [Ecto.UUID.dump!(worker_id), flag]
+    )
+
+    assert {:ok, [_]} = DirectAdminPayoutNameReviews.list(admin_id)
+
+    assert {:ok, _} =
+             DirectAdminPayoutNameReviews.review(admin_id, review["id"], %{"decision" => "reject"})
+
+    assert {:ok, []} = DirectAdminPayoutNameReviews.list(admin_id)
+
+    assert {:ok, [closed]} =
+             DirectAdminPayoutNameReviews.list(admin_id, %{"status" => "rejected"})
+
+    assert closed["id"] == review["id"]
+  end
+
+  defp execute_sql_script(sql) do
+    sql
+    |> sql_statements()
+    |> Enum.each(&Repo.query!/1)
+  end
+
+  defp sql_statements(sql) do
+    sql
+    |> strip_sql_comments()
+    |> split_sql([], [])
+    |> Enum.reverse()
+  end
+
+  defp strip_sql_comments(sql) do
+    sql
+    |> String.split("\n")
+    |> Enum.map(fn line ->
+      case String.split(line, "--", parts: 2) do
+        [code, _comment] -> code
+        [code] -> code
+      end
+    end)
+    |> Enum.join("\n")
+  end
+
+  defp split_sql(<<>>, statements, current) do
+    push_statement(statements, current)
+  end
+
+  defp split_sql(<<";", rest::binary>>, statements, current) do
+    split_sql(rest, push_statement(statements, current), [])
+  end
+
+  defp split_sql(<<"$", rest::binary>>, statements, current) do
+    {marker, after_open} = dollar_marker(rest)
+    {body, after_body} = take_until(after_open, marker)
+    split_sql(after_body, statements, current ++ [marker, body, marker])
+  end
+
+  defp split_sql(<<char::utf8, rest::binary>>, statements, current) do
+    split_sql(rest, statements, current ++ [<<char::utf8>>])
+  end
+
+  defp dollar_marker(rest) do
+    case Regex.run(~r/\A([A-Za-z_][A-Za-z0-9_]*)?\$/, rest) do
+      [full, tag] -> {"$" <> tag <> "$", String.replace_prefix(rest, full, "")}
+      [full] -> {"$$", String.replace_prefix(rest, full, "")}
+    end
+  end
+
+  defp take_until(sql, marker) do
+    size = byte_size(marker)
+
+    case :binary.match(sql, marker) do
+      {index, ^size} ->
+        {binary_part(sql, 0, index),
+         binary_part(sql, index + size, byte_size(sql) - index - size)}
+
+      :nomatch ->
+        {sql, <<>>}
+    end
+  end
+
+  defp push_statement(statements, current) do
+    statement = current |> IO.iodata_to_binary() |> String.trim()
+    if statement == "", do: statements, else: [statement | statements]
+  end
 end
