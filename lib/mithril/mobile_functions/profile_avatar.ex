@@ -3,6 +3,8 @@ defmodule Mithril.MobileFunctions.ProfileAvatar do
   Authenticated profile photo uploads for private Cloudflare R2 media.
   """
 
+  alias Mithril.DbUuid
+  alias Mithril.Repo
   alias Mithril.R2Storage
 
   @max_bytes 5 * 1024 * 1024
@@ -27,6 +29,7 @@ defmodule Mithril.MobileFunctions.ProfileAvatar do
   def url(user_id, body) when is_binary(user_id) and is_map(body) do
     with :ok <- valid_user(user_id),
          {:ok, path} <- validate_path(body["storage_path"]),
+         :ok <- authorize_view(user_id, path),
          {:ok, url} <- R2Storage.signed_url("avatars/" <> path, expiry(body)) do
       {:ok, %{path: path, url: url}}
     else
@@ -86,6 +89,52 @@ defmodule Mithril.MobileFunctions.ProfileAvatar do
 
   defp object_path(user_id, extension) do
     "#{user_id}/avatar-#{System.system_time(:millisecond)}.#{extension}"
+  end
+
+  # A private R2 object path is not an access token. Only sign the avatar
+  # currently referenced by a profile the caller is entitled to view.
+  defp authorize_view(user_id, path) do
+    [owner_id | _] = String.split(path, "/", parts: 2)
+
+    if DbUuid.equal?(user_id, owner_id) do
+      :ok
+    else
+      can_view_registered_avatar?(user_id, owner_id, path)
+    end
+  end
+
+  defp can_view_registered_avatar?(viewer_id, owner_id, path) do
+    sql = """
+    SELECT 1
+    FROM public.profiles p
+    WHERE p.id = $1::uuid
+      AND (
+        p.avatar_url = $2
+        OR p.avatar_url LIKE ('%/avatars/' || $2 || '%')
+      )
+      AND (
+        EXISTS (
+          SELECT 1 FROM public.cleaner_data cd
+          WHERE cd.user_id = p.id AND cd.verified IS TRUE
+        )
+        OR EXISTS (
+          SELECT 1 FROM public.bookings b
+          WHERE (b.customer_id = $3::uuid AND b.cleaner_id = p.id)
+             OR (b.cleaner_id = $3::uuid AND b.customer_id = p.id)
+        )
+        OR EXISTS (
+          SELECT 1 FROM public.conversations c
+          WHERE (c.customer_id = $3::uuid AND c.cleaner_id = p.id)
+             OR (c.cleaner_id = $3::uuid AND c.customer_id = p.id)
+        )
+      )
+    LIMIT 1
+    """
+
+    case Repo.query(sql, [DbUuid.dump!(owner_id), path, DbUuid.dump!(viewer_id)]) do
+      {:ok, %{rows: [[1]]}} -> :ok
+      _ -> {:error, :forbidden}
+    end
   end
 
   defp owned_by(user_id, path) do
