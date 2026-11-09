@@ -22,12 +22,26 @@ defmodule Mithril.MobileFunctions.ProfileAvatarTest do
              })
   end
 
-  test "refuses to sign another user's avatar path" do
+  test "any signed-in user can request a view URL for a valid avatar path" do
+    other = "123e4567-e89b-42d3-a456-426614174001"
+
+    assert {:error, {:status, 503, %{error: "storage_not_configured"}}} =
+             ProfileAvatar.url(@user, %{
+               "storage_path" => "#{other}/avatar-1760000000000.jpg"
+             })
+  end
+
+  test "only the owner can delete an avatar object" do
     other = "123e4567-e89b-42d3-a456-426614174001"
 
     assert {:error, {:status, 403, %{error: "forbidden"}}} =
-             ProfileAvatar.url(@user, %{
+             ProfileAvatar.delete(@user, %{
                "storage_path" => "#{other}/avatar-1760000000000.jpg"
+             })
+
+    assert {:error, {:status, 503, %{error: "storage_not_configured"}}} =
+             ProfileAvatar.delete(@user, %{
+               "storage_path" => "#{@user}/avatar-1760000000000.jpg"
              })
   end
 

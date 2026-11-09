@@ -27,7 +27,6 @@ defmodule Mithril.MobileFunctions.ProfileAvatar do
   def url(user_id, body) when is_binary(user_id) and is_map(body) do
     with :ok <- valid_user(user_id),
          {:ok, path} <- validate_path(body["storage_path"]),
-         :ok <- owned_by(user_id, path),
          {:ok, url} <- R2Storage.signed_url("avatars/" <> path, expiry(body)) do
       {:ok, %{path: path, url: url}}
     else
@@ -36,6 +35,19 @@ defmodule Mithril.MobileFunctions.ProfileAvatar do
   end
 
   def url(_, _), do: {:error, {:status, 400, %{error: "bad_request"}}}
+
+  def delete(user_id, body) when is_binary(user_id) and is_map(body) do
+    with :ok <- valid_user(user_id),
+         {:ok, path} <- validate_path(body["storage_path"]),
+         :ok <- owned_by(user_id, path),
+         :ok <- R2Storage.delete("avatars/" <> path) do
+      {:ok, %{deleted: true}}
+    else
+      {:error, reason} -> fail(reason)
+    end
+  end
+
+  def delete(_, _), do: {:error, {:status, 400, %{error: "bad_request"}}}
 
   defp valid_user(user_id) do
     case Ecto.UUID.cast(user_id) do

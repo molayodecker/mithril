@@ -18,6 +18,7 @@ defmodule Mithril.MobileGateway do
     upload-job-photo
     upload-profile-avatar
     get-profile-avatar-url
+    delete-profile-avatar
     get-job-photo-url
     delete-job-photo
     stripe-verify-payment-intent
