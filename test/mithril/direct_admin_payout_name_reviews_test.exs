@@ -361,15 +361,17 @@ defmodule Mithril.DirectAdminPayoutNameReviewsTest do
     admin_id: admin_id,
     worker_id: worker_id
   } do
-    sql = File.read!("priv/repo/sql/direct/20261109170000_enqueue_payout_name_reviews_from_flags.sql")
+    sql =
+      File.read!("priv/repo/sql/direct/20261109170000_enqueue_payout_name_reviews_from_flags.sql")
     execute_sql_script(sql)
 
-    flag = Jason.encode!(%{
-      "profile_name" => "Ama Serwaa",
-      "payout_account_name" => "ANOTHER NAME",
-      "payout_type" => "mobile_money",
-      "flagged_at" => "2026-11-09T12:00:00Z"
-    })
+    flag =
+      Jason.encode!(%{
+        "profile_name" => "Ama Serwaa",
+        "payout_account_name" => "ANOTHER NAME",
+        "payout_type" => "mobile_money",
+        "flagged_at" => "2026-11-09T12:00:00Z"
+      })
 
     Repo.query!(
       "UPDATE public.profiles SET preferences = jsonb_build_object('payout_name_mismatch', $2::text::jsonb) WHERE id = $1",
@@ -402,11 +404,12 @@ defmodule Mithril.DirectAdminPayoutNameReviewsTest do
       File.read!("priv/repo/sql/direct/20261109170000_enqueue_payout_name_reviews_from_flags.sql")
     )
 
-    flag = Jason.encode!(%{
-      "profile_name" => "Ama Serwaa",
-      "payout_account_name" => "SERWAA AMA",
-      "payout_type" => "mobile_money"
-    })
+    flag =
+      Jason.encode!(%{
+        "profile_name" => "Ama Serwaa",
+        "payout_account_name" => "SERWAA AMA",
+        "payout_type" => "mobile_money"
+      })
 
     Repo.query!(
       "UPDATE public.profiles SET preferences = jsonb_build_object('payout_name_mismatch', $2::text::jsonb) WHERE id = $1",
