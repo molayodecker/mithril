@@ -588,22 +588,25 @@ defmodule Mithril.Direct do
         kp.level_name,
         kp.document_types
       FROM public.kyc_profiles kp
-      WHERE kp.user_id = ca.user_id
-         OR (
-           ca.user_id IS NULL
-           AND NULLIF(btrim(ca.sumsub_applicant_id), '') IS NOT NULL
-           AND kp.sumsub_applicant_id = ca.sumsub_applicant_id
-         )
+      WHERE (
+        kp.user_id = ca.user_id
+        OR (
+          ca.user_id IS NULL
+          AND NULLIF(btrim(ca.sumsub_applicant_id), '') IS NOT NULL
+          AND kp.sumsub_applicant_id = ca.sumsub_applicant_id
+        )
+      )
+        AND lower(btrim(coalesce(kp.level_name, ''))) = $2
+        AND NOT (
+          lower(btrim(coalesce(kp.kyc_status, ''))) IN ('', 'not_started')
+          AND btrim(coalesce(kp.review_answer, '')) = ''
+          AND btrim(coalesce(kp.sumsub_applicant_id, '')) = ''
+          AND btrim(coalesce(kp.last_event_type, '')) = ''
+          AND kp.submitted_at IS NULL
+          AND kp.reviewed_at IS NULL
+          AND kp.completed_at IS NULL
+        )
       ORDER BY
-        CASE
-          WHEN lower(btrim(coalesce(kp.kyc_status, ''))) IN ('', 'not_started')
-           AND btrim(coalesce(kp.review_answer, '')) = ''
-           AND btrim(coalesce(kp.sumsub_applicant_id, '')) = ''
-           AND btrim(coalesce(kp.last_event_type, '')) = ''
-           AND kp.submitted_at IS NULL
-          THEN 1
-          ELSE 0
-        END,
         CASE
           WHEN kp.reviewed_at IS NULL AND kp.completed_at IS NULL AND kp.submitted_at IS NULL
           THEN COALESCE(kp.updated_at, kp.created_at, '-infinity'::timestamptz)
@@ -619,7 +622,13 @@ defmodule Mithril.Direct do
     ) kp ON true
     WHERE ca.id = $1
     LIMIT 1
-    """)
+    """, [
+      :mithril
+      |> Application.get_env(:sumsub_level_name, "id-and-liveness")
+      |> to_string()
+      |> String.trim()
+      |> String.downcase()
+    ])
   end
 
   def list_admin_cleaner_application_drafts(user_id) do
@@ -1301,11 +1310,11 @@ defmodule Mithril.Direct do
     end
   end
 
-  defp admin_json_row(user_id, id, sql) do
+  defp admin_json_row(user_id, id, sql, extra_params \\ []) do
     with {:ok, uid} <- dump_uuid(user_id),
          {:ok, rid} <- dump_uuid(id),
          :ok <- require_admin(uid),
-         {:ok, result} <- Repo.query(sql, [rid]) do
+         {:ok, result} <- Repo.query(sql, [rid | extra_params]) do
       case result.rows do
         [[row]] -> {:ok, row}
         [] -> {:error, :not_found}
