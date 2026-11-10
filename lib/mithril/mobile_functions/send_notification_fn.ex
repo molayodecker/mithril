@@ -38,12 +38,18 @@ defmodule Mithril.MobileFunctions.SendNotificationFn do
     text = Templates.body("payout_name_mismatch_report", variables(body))
 
     result =
-      SupportOps.notify(%{
+      SupportOps.notify_payout_name_mismatch(%{
         subject: Templates.subject("payout_name_mismatch_report"),
         plain_body: text
       })
 
-    %{"emailSent" => result.email_sent, "smsSent" => false, "whatsappSent" => false}
+    response = %{"emailSent" => result.email_sent, "smsSent" => false, "whatsappSent" => false}
+
+    if result.email_sent do
+      response
+    else
+      Map.put(response, "errors", ["compliance_email_not_sent"])
+    end
   end
 
   defp deliver(_template, body) do

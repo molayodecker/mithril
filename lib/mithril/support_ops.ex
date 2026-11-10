@@ -4,10 +4,12 @@ defmodule Mithril.SupportOps do
   require Logger
 
   alias Mithril.Auth.SMS
+  alias Mithril.Notifications.Resend
 
   @slack_prefix "https://hooks.slack.com/"
   @slack_body_max 2900
   @sms_max 320
+  @default_compliance_email "support@tryinstaclean.com"
 
   @type notify_result :: %{
           email_sent: boolean(),
@@ -33,6 +35,23 @@ defmodule Mithril.SupportOps do
   @spec delivered?(notify_result()) :: boolean()
   def delivered?(result) do
     result.email_sent or result.slack_sent or result.sms_sent > 0
+  end
+
+  # Payout name reviews must reach a person even when SUPPORT_OPS_EMAILS is unset.
+  # The mobile request's email is ignored; this address is owned by the server.
+  @spec notify_payout_name_mismatch(%{subject: String.t(), plain_body: String.t()}) ::
+          notify_result
+  def notify_payout_name_mismatch(%{subject: subject, plain_body: plain_body}) do
+    email_sent = send_compliance_emails(subject, plain_body)
+    slack_sent = send_slack(plain_body)
+    sms_sent = send_ops_sms_if_needed(plain_body, email_sent, slack_sent)
+
+    %{
+      email_sent: email_sent,
+      sms_sent: sms_sent,
+      slack_sent: slack_sent,
+      sms_skipped: sms_sent == 0 and not sms_enabled?()
+    }
   end
 
   @spec send_slack(String.t()) :: boolean()
@@ -61,6 +80,22 @@ defmodule Mithril.SupportOps do
           Logger.warning("support_ops slack error=#{inspect(error)}")
           false
       end
+    end
+  end
+
+  defp send_compliance_emails(subject, plain_body) do
+    html = "<pre>#{html_escape(plain_body)}</pre>"
+
+    compliance_emails()
+    |> Enum.any?(fn email ->
+      Resend.deliver(%{to: email, subject: subject, html: html, text: plain_body}) == :ok
+    end)
+  end
+
+  defp compliance_emails do
+    case ops_emails() do
+      [] -> [@default_compliance_email]
+      emails -> emails
     end
   end
 

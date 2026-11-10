@@ -16,7 +16,7 @@ defmodule Mithril.DirectAdminPayoutNameReviews do
   @statuses ~w(pending approved rejected)
 
   def open(user_id, attrs) when is_binary(user_id) and is_map(attrs) do
-    notify = Map.get(attrs, :notify, &SupportOps.notify/1)
+    notify = Map.get(attrs, :notify, &SupportOps.notify_payout_name_mismatch/1)
 
     with {:ok, user_uid} <- dump_uuid(user_id) do
       profile_name = profile_display_name(user_uid)
