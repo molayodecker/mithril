@@ -64,6 +64,21 @@ defmodule Mithril.DirectAdminPayoutNameReviewsTest do
     )
     """)
 
+    # The deployed database already provides this reconciliation predicate.
+    # Recreate a minimal equivalent in this isolated table-fixture schema.
+    Repo.query!("""
+    CREATE OR REPLACE FUNCTION public._payout_names_match(a text, b text)
+    RETURNS boolean LANGUAGE sql IMMUTABLE AS $
+      SELECT (
+        SELECT array_agg(token ORDER BY token)
+        FROM regexp_split_to_table(lower(btrim(a)), '[[:space:]]+') AS token
+      ) IS NOT DISTINCT FROM (
+        SELECT array_agg(token ORDER BY token)
+        FROM regexp_split_to_table(lower(btrim(b)), '[[:space:]]+') AS token
+      )
+    $
+    """)
+
     Repo.query!("""
     CREATE UNIQUE INDEX payout_name_reviews_one_pending_idx
       ON public.payout_name_reviews (user_id, purpose, account_number)
