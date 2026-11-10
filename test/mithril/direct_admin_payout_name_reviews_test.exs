@@ -292,6 +292,47 @@ defmodule Mithril.DirectAdminPayoutNameReviewsTest do
     assert {:error, :forbidden} = DirectAdminPayoutNameReviews.list(worker_id)
   end
 
+  test "a new mismatch emails the support inbox when no ops list is set", %{worker_id: worker_id} do
+    previous = %{
+      resend_adapter: Application.get_env(:mithril, :resend_adapter),
+      test_resend_messages: Application.get_env(:mithril, :test_resend_messages),
+      support_ops_emails: Application.get_env(:mithril, :support_ops_emails),
+      support_ops_phones: Application.get_env(:mithril, :support_ops_phones),
+      support_ops_slack_webhook_url: Application.get_env(:mithril, :support_ops_slack_webhook_url)
+    }
+
+    Application.put_env(:mithril, :resend_adapter, Mithril.Notifications.Resend.Test)
+    Application.put_env(:mithril, :test_resend_messages, [])
+    Application.put_env(:mithril, :support_ops_emails, "")
+    Application.put_env(:mithril, :support_ops_phones, "")
+    Application.put_env(:mithril, :support_ops_slack_webhook_url, "")
+
+    on_exit(fn ->
+      restore_env(:resend_adapter, previous.resend_adapter)
+      restore_env(:test_resend_messages, previous.test_resend_messages)
+      restore_env(:support_ops_emails, previous.support_ops_emails)
+      restore_env(:support_ops_phones, previous.support_ops_phones)
+      restore_env(:support_ops_slack_webhook_url, previous.support_ops_slack_webhook_url)
+    end)
+
+    assert {:ok, %{notified: true, names_match: false}} =
+             DirectAdminPayoutNameReviews.open(worker_id, %{
+               purpose: "payout",
+               payout_type: "mobile_money",
+               submitted_name: "Ama Serwaa",
+               account_name: "MENSAH BOATENG",
+               bank_code: "MTN",
+               account_number: "0240000099"
+             })
+
+    assert [%{to: "support@tryinstaclean.com", text: text}] =
+             Application.get_env(:mithril, :test_resend_messages)
+
+    assert text =~ "Ama Serwaa"
+    assert text =~ "MENSAH BOATENG"
+    refute text =~ "0240000099"
+  end
+
   test "a profile mismatch flag appears in the pending queue", %{
     admin_id: admin_id,
     worker_id: worker_id
@@ -502,4 +543,7 @@ defmodule Mithril.DirectAdminPayoutNameReviewsTest do
     statement = current |> IO.iodata_to_binary() |> String.trim()
     if statement == "", do: statements, else: [statement | statements]
   end
+
+  defp restore_env(key, nil), do: Application.delete_env(:mithril, key)
+  defp restore_env(key, value), do: Application.put_env(:mithril, key, value)
 end

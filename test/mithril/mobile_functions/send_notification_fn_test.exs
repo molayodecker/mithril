@@ -97,6 +97,71 @@ defmodule Mithril.MobileFunctions.SendNotificationFnTest do
            )
   end
 
+  test "a payout name mismatch report emails the support inbox when no ops list is set" do
+    previous = compliance_mail_env()
+    Application.put_env(:mithril, :resend_adapter, Mithril.Notifications.Resend.Test)
+    Application.put_env(:mithril, :test_resend_messages, [])
+    Application.put_env(:mithril, :support_ops_emails, "")
+    Application.put_env(:mithril, :support_ops_phones, "")
+    Application.put_env(:mithril, :support_ops_slack_webhook_url, "")
+
+    on_exit(fn -> restore_compliance_mail_env(previous) end)
+
+    caller_id = Ecto.UUID.generate()
+
+    assert {:ok, %{"emailSent" => true, "smsSent" => false, "whatsappSent" => false}} =
+             SendNotificationFn.call(
+               caller_id,
+               %{
+                 "template" => "payout_name_mismatch_report",
+                 "channel" => "email",
+                 "email" => "attacker@example.com",
+                 "variables" => %{
+                   "profileName" => "Ama",
+                   "payoutAccountName" => "Boateng",
+                   "payoutType" => "mobile_money"
+                 }
+               },
+               fn user_id, "payout_name_mismatch_report", body ->
+                 variables = Map.put(body["variables"], "userId", user_id)
+                 {:ok, Map.put(body, "variables", variables)}
+               end
+             )
+
+    assert [message] = Application.get_env(:mithril, :test_resend_messages)
+    assert message.to == "support@tryinstaclean.com"
+    assert message.subject =~ "Payout name mismatch"
+    assert message.text =~ "Ama"
+    assert message.text =~ "Boateng"
+    assert message.text =~ caller_id
+    refute message.text =~ "attacker@example.com"
+  end
+
+  test "a configured ops list receives the payout name mismatch report" do
+    previous = compliance_mail_env()
+    Application.put_env(:mithril, :resend_adapter, Mithril.Notifications.Resend.Test)
+    Application.put_env(:mithril, :test_resend_messages, [])
+    Application.put_env(:mithril, :support_ops_emails, "ops-review@example.com")
+    Application.put_env(:mithril, :support_ops_phones, "")
+    Application.put_env(:mithril, :support_ops_slack_webhook_url, "")
+
+    on_exit(fn -> restore_compliance_mail_env(previous) end)
+
+    assert {:ok, %{"emailSent" => true}} =
+             SendNotificationFn.call(
+               Ecto.UUID.generate(),
+               %{
+                 "template" => "payout_name_mismatch_report",
+                 "channel" => "email",
+                 "variables" => %{"profileName" => "Ama", "payoutAccountName" => "Boateng"}
+               },
+               fn _user_id, _template, body -> {:ok, body} end
+             )
+
+    assert [%{to: "ops-review@example.com"}] =
+             Application.get_env(:mithril, :test_resend_messages)
+  end
+
   test "invitation URLs use trusted origins and encode stored tokens" do
     url =
       SendNotificationFn.trusted_invite_url("co_cleaner_invite", "abc&next=https://evil.example")
@@ -104,6 +169,24 @@ defmodule Mithril.MobileFunctions.SendNotificationFnTest do
     assert URI.parse(url).host == "tryinstaclean.com"
     assert URI.parse(url).path == "/api/co-cleaner-invite"
     assert URI.decode_query(URI.parse(url).query)["token"] == "abc&next=https://evil.example"
+  end
+
+  defp compliance_mail_env do
+    %{
+      resend_adapter: Application.get_env(:mithril, :resend_adapter),
+      test_resend_messages: Application.get_env(:mithril, :test_resend_messages),
+      support_ops_emails: Application.get_env(:mithril, :support_ops_emails),
+      support_ops_phones: Application.get_env(:mithril, :support_ops_phones),
+      support_ops_slack_webhook_url: Application.get_env(:mithril, :support_ops_slack_webhook_url)
+    }
+  end
+
+  defp restore_compliance_mail_env(previous) do
+    restore_env(:resend_adapter, previous.resend_adapter)
+    restore_env(:test_resend_messages, previous.test_resend_messages)
+    restore_env(:support_ops_emails, previous.support_ops_emails)
+    restore_env(:support_ops_phones, previous.support_ops_phones)
+    restore_env(:support_ops_slack_webhook_url, previous.support_ops_slack_webhook_url)
   end
 
   defp restore_env(key, nil), do: Application.delete_env(:mithril, key)
