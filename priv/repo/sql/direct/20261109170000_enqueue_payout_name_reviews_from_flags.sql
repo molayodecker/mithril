@@ -93,20 +93,23 @@ BEGIN
   END IF;
 
   BEGIN
-    IF TG_OP = 'INSERT'
-       OR coalesce(NEW.preferences -> 'payout_name_mismatches' -> 'payout',
-                   NEW.preferences -> 'payout_name_mismatch')
-          IS DISTINCT FROM
-          coalesce(OLD.preferences -> 'payout_name_mismatches' -> 'payout',
-                   OLD.preferences -> 'payout_name_mismatch') THEN
+    IF TG_OP = 'INSERT' THEN
       PERFORM public.enqueue_payout_name_review_from_flag(NEW.id, NEW.preferences, 'payout');
-    END IF;
-
-    IF TG_OP = 'INSERT'
-       OR NEW.preferences -> 'payout_name_mismatches' -> 'refund'
-          IS DISTINCT FROM
-          OLD.preferences -> 'payout_name_mismatches' -> 'refund' THEN
       PERFORM public.enqueue_payout_name_review_from_flag(NEW.id, NEW.preferences, 'refund');
+    ELSE
+      IF coalesce(NEW.preferences -> 'payout_name_mismatches' -> 'payout',
+                  NEW.preferences -> 'payout_name_mismatch')
+         IS DISTINCT FROM
+         coalesce(OLD.preferences -> 'payout_name_mismatches' -> 'payout',
+                  OLD.preferences -> 'payout_name_mismatch') THEN
+        PERFORM public.enqueue_payout_name_review_from_flag(NEW.id, NEW.preferences, 'payout');
+      END IF;
+
+      IF NEW.preferences -> 'payout_name_mismatches' -> 'refund'
+         IS DISTINCT FROM
+         OLD.preferences -> 'payout_name_mismatches' -> 'refund' THEN
+        PERFORM public.enqueue_payout_name_review_from_flag(NEW.id, NEW.preferences, 'refund');
+      END IF;
     END IF;
   EXCEPTION
     WHEN OTHERS THEN
