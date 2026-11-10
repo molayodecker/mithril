@@ -468,7 +468,7 @@ defmodule Mithril.Direct do
   end
 
   def get_admin_cleaner_application(user_id, application_id) do
-    admin_json_row(user_id, application_id, """
+    query = """
     SELECT jsonb_build_object(
       'id', ca.id,
       'userId', ca.user_id,
@@ -622,7 +622,9 @@ defmodule Mithril.Direct do
     ) kp ON true
     WHERE ca.id = $1
     LIMIT 1
-    """, [worker_kyc_level()])
+    """
+
+    admin_json_row(user_id, application_id, query, [worker_kyc_level()])
   end
 
   defp worker_kyc_level do
