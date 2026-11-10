@@ -363,6 +363,7 @@ defmodule Mithril.DirectAdminPayoutNameReviewsTest do
   } do
     sql =
       File.read!("priv/repo/sql/direct/20261109170000_enqueue_payout_name_reviews_from_flags.sql")
+
     execute_sql_script(sql)
 
     flag =
