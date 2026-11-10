@@ -68,7 +68,7 @@ defmodule Mithril.DirectAdminPayoutNameReviewsTest do
     # Recreate a minimal equivalent in this isolated table-fixture schema.
     Repo.query!("""
     CREATE OR REPLACE FUNCTION public._payout_names_match(a text, b text)
-    RETURNS boolean LANGUAGE sql IMMUTABLE AS $
+    RETURNS boolean LANGUAGE sql IMMUTABLE AS $matcher$
       SELECT (
         SELECT array_agg(token ORDER BY token)
         FROM regexp_split_to_table(lower(btrim(a)), '[[:space:]]+') AS token
@@ -76,7 +76,7 @@ defmodule Mithril.DirectAdminPayoutNameReviewsTest do
         SELECT array_agg(token ORDER BY token)
         FROM regexp_split_to_table(lower(btrim(b)), '[[:space:]]+') AS token
       )
-    $
+    $matcher$
     """)
 
     Repo.query!("""
