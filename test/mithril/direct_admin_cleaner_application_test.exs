@@ -269,8 +269,14 @@ defmodule Mithril.DirectAdminCleanerApplicationTest do
         $1::uuid, $2::uuid, $3, $4, $5, $6, 'applicantReviewed', now(), now()
       )
       """,
-      [Ecto.UUID.dump!(Ecto.UUID.generate()), Ecto.UUID.dump!(user_id),
-       level, status, answer, applicant_id]
+      [
+        Ecto.UUID.dump!(Ecto.UUID.generate()),
+        Ecto.UUID.dump!(user_id),
+        level,
+        status,
+        answer,
+        applicant_id
+      ]
     )
   end
 
