@@ -326,6 +326,96 @@ defmodule Mithril.DirectAdminPayoutNameReviewsTest do
     assert closed["id"] == review["id"]
   end
 
+  test "backfill reuses an existing pending review with an account number", %{
+    admin_id: admin_id,
+    worker_id: worker_id
+  } do
+    assert {:ok, opened} =
+             DirectAdminPayoutNameReviews.open(worker_id, %{
+               purpose: "payout",
+               payout_type: "mobile_money",
+               submitted_name: "Ama Serwaa",
+               account_name: "ANOTHER NAME",
+               bank_code: "MTN",
+               account_number: "0240000066",
+               notify: fn _ ->
+                 %{email_sent: false, sms_sent: 0, slack_sent: false, sms_skipped: true}
+               end
+             })
+
+    execute_sql_script(
+      File.read!("priv/repo/sql/direct/20261109170000_enqueue_payout_name_reviews_from_flags.sql")
+    )
+
+    assert {:ok, [review]} = DirectAdminPayoutNameReviews.list(admin_id)
+    assert review["id"] == opened.id
+    assert review["maskedAccount"] == "•••• 0066"
+
+    assert {:ok, %{"status" => "approved"}} =
+             DirectAdminPayoutNameReviews.review(admin_id, opened.id, %{"decision" => "approve"})
+
+    assert {:ok, []} = DirectAdminPayoutNameReviews.list(admin_id)
+  end
+
+  test "a rejected mismatch is not reopened on unrelated preference updates or backfill", %{
+    admin_id: admin_id,
+    worker_id: worker_id
+  } do
+    sql = File.read!("priv/repo/sql/direct/20261109170000_enqueue_payout_name_reviews_from_flags.sql")
+    execute_sql_script(sql)
+
+    flag = Jason.encode!(%{
+      "profile_name" => "Ama Serwaa",
+      "payout_account_name" => "ANOTHER NAME",
+      "payout_type" => "mobile_money",
+      "flagged_at" => "2026-11-09T12:00:00Z"
+    })
+
+    Repo.query!(
+      "UPDATE public.profiles SET preferences = jsonb_build_object('payout_name_mismatch', $2::text::jsonb) WHERE id = $1",
+      [Ecto.UUID.dump!(worker_id), flag]
+    )
+
+    assert {:ok, [review]} = DirectAdminPayoutNameReviews.list(admin_id)
+
+    assert {:ok, %{"status" => "rejected"}} =
+             DirectAdminPayoutNameReviews.review(admin_id, review["id"], %{"decision" => "reject"})
+
+    # Simulate a new request transaction after the admin's suppression guard.
+    Repo.query!("SELECT set_config('mithril.payout_name_review_sync', 'off', true)")
+
+    Repo.query!(
+      "UPDATE public.profiles SET preferences = preferences || '{\"theme\": \"dark\"}'::jsonb WHERE id = $1",
+      [Ecto.UUID.dump!(worker_id)]
+    )
+
+    assert {:ok, []} = DirectAdminPayoutNameReviews.list(admin_id)
+    execute_sql_script(sql)
+    assert {:ok, []} = DirectAdminPayoutNameReviews.list(admin_id)
+  end
+
+  test "reordered equivalent names never create a pending review", %{
+    admin_id: admin_id,
+    worker_id: worker_id
+  } do
+    execute_sql_script(
+      File.read!("priv/repo/sql/direct/20261109170000_enqueue_payout_name_reviews_from_flags.sql")
+    )
+
+    flag = Jason.encode!(%{
+      "profile_name" => "Ama Serwaa",
+      "payout_account_name" => "SERWAA AMA",
+      "payout_type" => "mobile_money"
+    })
+
+    Repo.query!(
+      "UPDATE public.profiles SET preferences = jsonb_build_object('payout_name_mismatch', $2::text::jsonb) WHERE id = $1",
+      [Ecto.UUID.dump!(worker_id), flag]
+    )
+
+    assert {:ok, []} = DirectAdminPayoutNameReviews.list(admin_id)
+  end
+
   defp execute_sql_script(sql) do
     sql
     |> sql_statements()
