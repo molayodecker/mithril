@@ -18,8 +18,6 @@ DECLARE
   v_profile text;
   v_account text;
   v_type text;
-  v_norm_profile text;
-  v_norm_account text;
 BEGIN
   IF p_user_id IS NULL OR v_purpose NOT IN ('payout', 'refund') THEN
     RETURN;
@@ -41,15 +39,28 @@ BEGIN
     RETURN;
   END IF;
 
-  v_norm_profile := btrim(regexp_replace(lower(regexp_replace(v_profile, '[^[:alnum:]]+', ' ', 'g')), '\s+', ' ', 'g'));
-  v_norm_account := btrim(regexp_replace(lower(regexp_replace(v_account, '[^[:alnum:]]+', ' ', 'g')), '\s+', ' ', 'g'));
-  IF v_norm_profile = v_norm_account THEN
+  -- Match the payout reconciliation semantics (reordered names, accents, typos).
+  IF public._payout_names_match(v_profile, v_account) THEN
     RETURN;
   END IF;
 
   v_type := lower(btrim(coalesce(v_flag ->> 'payout_type', 'mobile_money')));
   IF v_type NOT IN ('bank', 'mobile_money') THEN
     v_type := 'mobile_money';
+  END IF;
+
+  -- Profile flags may be synced from an existing Direct review with a real
+  -- account number. Do not manufacture an accountless duplicate, or replay a
+  -- previously approved/rejected event during a rerun of this backfill.
+  IF EXISTS (
+    SELECT 1 FROM public.payout_name_reviews r
+    WHERE r.user_id = p_user_id
+      AND r.purpose = v_purpose
+      AND r.payout_type = v_type
+      AND lower(btrim(coalesce(r.account_name, ''))) = lower(btrim(v_account))
+      AND r.status IN ('pending', 'approved', 'rejected')
+  ) THEN
+    RETURN;
   END IF;
 
   INSERT INTO public.payout_name_reviews (
@@ -81,13 +92,22 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  IF TG_OP = 'UPDATE' AND NEW.preferences IS NOT DISTINCT FROM OLD.preferences THEN
-    RETURN NEW;
-  END IF;
-
   BEGIN
-    PERFORM public.enqueue_payout_name_review_from_flag(NEW.id, NEW.preferences, 'payout');
-    PERFORM public.enqueue_payout_name_review_from_flag(NEW.id, NEW.preferences, 'refund');
+    IF TG_OP = 'INSERT'
+       OR coalesce(NEW.preferences -> 'payout_name_mismatches' -> 'payout',
+                   NEW.preferences -> 'payout_name_mismatch')
+          IS DISTINCT FROM
+          coalesce(OLD.preferences -> 'payout_name_mismatches' -> 'payout',
+                   OLD.preferences -> 'payout_name_mismatch') THEN
+      PERFORM public.enqueue_payout_name_review_from_flag(NEW.id, NEW.preferences, 'payout');
+    END IF;
+
+    IF TG_OP = 'INSERT'
+       OR NEW.preferences -> 'payout_name_mismatches' -> 'refund'
+          IS DISTINCT FROM
+          OLD.preferences -> 'payout_name_mismatches' -> 'refund' THEN
+      PERFORM public.enqueue_payout_name_review_from_flag(NEW.id, NEW.preferences, 'refund');
+    END IF;
   EXCEPTION
     WHEN OTHERS THEN
       RAISE WARNING 'payout name review enqueue failed for %: %', NEW.id, SQLERRM;
