@@ -223,6 +223,57 @@ defmodule Mithril.DirectAdminCleanerApplicationTest do
     assert detail["kyc"]["documentTypes"] == []
   end
 
+  test "ignores newer reviews at unrelated Sumsub levels" do
+    insert_application(@application, @worker, %{kyc_status: "pending"})
+
+    insert_kyc_profile(@worker, "id-and-liveness", "rejected", "RED", "worker-review")
+    insert_kyc_profile(@worker, "basic-kyc", "completed", "GREEN", "unrelated-review")
+
+    assert {:ok, detail} = Direct.get_admin_cleaner_application(@admin, @application)
+    assert detail["kyc"]["source"] == "kyc_profiles"
+    assert detail["kyc"]["status"] == "rejected"
+    assert detail["kyc"]["reviewAnswer"] == "RED"
+    assert detail["kyc"]["applicantId"] == "worker-review"
+  end
+
+  test "falls back to application review when only empty worker profiles exist" do
+    insert_application(@application, @worker, %{
+      kyc_status: "completed",
+      kyc_review_answer: "GREEN",
+      sumsub_applicant_id: "application-review",
+      sumsub_level_name: "id-and-liveness"
+    })
+
+    Repo.query!(
+      """
+      INSERT INTO public.kyc_profiles (id, user_id, kyc_status, level_name, updated_at, created_at)
+      VALUES ($1::uuid, $2::uuid, 'not_started', 'id-and-liveness', now(), now())
+      """,
+      [Ecto.UUID.dump!(Ecto.UUID.generate()), Ecto.UUID.dump!(@worker)]
+    )
+
+    assert {:ok, detail} = Direct.get_admin_cleaner_application(@admin, @application)
+    assert detail["kyc"]["source"] == "cleaner_applications"
+    assert detail["kyc"]["status"] == "completed"
+    assert detail["kyc"]["reviewAnswer"] == "GREEN"
+    assert detail["kyc"]["applicantId"] == "application-review"
+  end
+
+  defp insert_kyc_profile(user_id, level, status, answer, applicant_id) do
+    Repo.query!(
+      """
+      INSERT INTO public.kyc_profiles (
+        id, user_id, level_name, kyc_status, review_answer, sumsub_applicant_id,
+        last_event_type, updated_at, created_at
+      ) VALUES (
+        $1::uuid, $2::uuid, $3, $4, $5, $6, 'applicantReviewed', now(), now()
+      )
+      """,
+      [Ecto.UUID.dump!(Ecto.UUID.generate()), Ecto.UUID.dump!(user_id),
+       level, status, answer, applicant_id]
+    )
+  end
+
   defp insert_application(id, user_id, attrs) do
     Repo.query!(
       """
