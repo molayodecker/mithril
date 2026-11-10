@@ -175,12 +175,17 @@ defmodule Mithril.DirectAdminCleanerApplicationTest do
            }
 
     assert Enum.at(detail["guarantors"], 1)["name"] == nil
+    assert detail["kycStatus"] == "completed"
     assert detail["kyc"]["source"] == "kyc_profiles"
     assert detail["kyc"]["status"] == "completed"
     assert detail["kyc"]["reviewAnswer"] == "GREEN"
     assert detail["kyc"]["applicantId"] == "applicant-real"
     assert detail["kyc"]["levelName"] == "id-and-liveness"
     assert detail["kyc"]["documentTypes"] == ["PASSPORT"]
+
+    listed = listed_application(@application)
+    assert listed["kycStatus"] == "completed"
+    assert listed["kycReviewAnswer"] == "GREEN"
   end
 
   test "weekly availability and application KYC are used when no Sumsub profile exists" do
@@ -234,6 +239,10 @@ defmodule Mithril.DirectAdminCleanerApplicationTest do
     assert detail["kyc"]["status"] == "rejected"
     assert detail["kyc"]["reviewAnswer"] == "RED"
     assert detail["kyc"]["applicantId"] == "worker-review"
+
+    listed = listed_application(@application)
+    assert listed["kycStatus"] == "rejected"
+    assert listed["kycReviewAnswer"] == "RED"
   end
 
   test "falls back to application review when only empty worker profiles exist" do
@@ -257,6 +266,11 @@ defmodule Mithril.DirectAdminCleanerApplicationTest do
     assert detail["kyc"]["status"] == "completed"
     assert detail["kyc"]["reviewAnswer"] == "GREEN"
     assert detail["kyc"]["applicantId"] == "application-review"
+  end
+
+  defp listed_application(id) do
+    assert {:ok, applications} = Direct.list_admin_cleaner_applications(@admin)
+    Enum.find(applications, &(&1["id"] == id))
   end
 
   defp insert_kyc_profile(user_id, level, status, answer, applicant_id) do
