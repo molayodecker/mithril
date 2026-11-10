@@ -428,7 +428,8 @@ defmodule Mithril.Direct do
              'completedJobs', cd.completed_jobs,
              'placementOptIn', COALESCE(pcp.placement_opt_in, false),
              'placementStatus', COALESCE(pcp.placement_status, 'inactive'),
-             'desiredRoles', COALESCE(to_jsonb(pcp.desired_roles), '[]'::jsonb)
+             'desiredRoles', COALESCE(to_jsonb(pcp.desired_roles), '[]'::jsonb),
+             'specialties', COALESCE(to_jsonb(cd.specialties), '[]'::jsonb)
            )
            FROM public.cleaner_data cd
            JOIN public.users u ON u.id = cd.user_id

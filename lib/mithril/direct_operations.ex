@@ -118,7 +118,7 @@ defmodule Mithril.DirectOperations do
 
   def list_cleaners(user_id, params) when is_map(params) do
     with {:ok, actor_uid} <- dump_uuid(user_id),
-         :ok <- require_admin(actor_uid),
+         :ok <- require_roster_staff(actor_uid),
          {:ok, search} <- optional_search(params["q"]),
          {:ok, status} <- optional_status(params["status"]),
          {:ok, verified} <- optional_boolean(params["verified"]),
@@ -907,6 +907,24 @@ defmodule Mithril.DirectOperations do
       "application_not_found" -> {:error, :application_not_found}
       "user_not_found" -> {:error, :application_user_not_found}
       _ -> database_error(error)
+    end
+  end
+
+  defp require_roster_staff(uid) do
+    case Repo.query(
+           """
+           SELECT EXISTS (
+             SELECT 1
+             FROM public.user_roles
+             WHERE user_id = $1
+               AND role_id IN ('admin', 'reviewer')
+           )
+           """,
+           [uid]
+         ) do
+      {:ok, %{rows: [[true]]}} -> :ok
+      {:ok, %{rows: [[false]]}} -> {:error, :forbidden}
+      {:error, error} -> database_error(error)
     end
   end
 
