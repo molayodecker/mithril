@@ -511,8 +511,88 @@ defmodule MithrilWeb.Schemas.Direct do
     })
   end
 
+  defmodule AdminCleanerApplicationGuarantor do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminCleanerApplicationGuarantor",
+      type: :object,
+      properties: %{
+        label: %Schema{type: :string},
+        name: %Schema{type: :string, nullable: true},
+        phone: %Schema{type: :string, nullable: true},
+        relationship: %Schema{type: :string, nullable: true}
+      },
+      required: [:label, :name, :phone, :relationship]
+    })
+  end
+
+  defmodule AdminCleanerApplicationWeekday do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminCleanerApplicationWeekday",
+      type: :object,
+      properties: %{
+        day: %Schema{
+          type: :string,
+          enum: ~w(monday tuesday wednesday thursday friday saturday sunday)
+        },
+        available: %Schema{type: :boolean},
+        start: %Schema{type: :string, nullable: true},
+        end: %Schema{type: :string, nullable: true}
+      },
+      required: [:day, :available, :start, :end]
+    })
+  end
+
+  defmodule AdminCleanerApplicationKyc do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminCleanerApplicationKyc",
+      type: :object,
+      properties: %{
+        source: %Schema{type: :string, enum: ~w(kyc_profiles cleaner_applications)},
+        status: %Schema{type: :string},
+        reviewAnswer: %Schema{type: :string, nullable: true},
+        reviewStatus: %Schema{type: :string, nullable: true},
+        completedAt: %Schema{type: :string, format: :"date-time", nullable: true},
+        reviewedAt: %Schema{type: :string, format: :"date-time", nullable: true},
+        submittedAt: %Schema{type: :string, format: :"date-time", nullable: true},
+        applicantId: %Schema{type: :string, nullable: true},
+        levelName: %Schema{type: :string, nullable: true},
+        reviewReason: %Schema{type: :string, nullable: true},
+        documentTypes: %Schema{type: :array, items: %Schema{type: :string}}
+      },
+      required: [
+        :source,
+        :status,
+        :reviewAnswer,
+        :reviewStatus,
+        :completedAt,
+        :reviewedAt,
+        :submittedAt,
+        :applicantId,
+        :levelName,
+        :reviewReason,
+        :documentTypes
+      ]
+    })
+  end
+
   defmodule AdminCleanerApplicationDetail do
     require OpenApiSpex
+
+    alias MithrilWeb.Schemas.Direct.{
+      AdminCleanerApplicationGuarantor,
+      AdminCleanerApplicationKyc,
+      AdminCleanerApplicationWeekday
+    }
+
     alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{
@@ -536,7 +616,17 @@ defmodule MithrilWeb.Schemas.Direct do
         yearsOfExperience: %Schema{type: :string, nullable: true},
         hoursPerWeek: %Schema{type: :string, nullable: true},
         certifications: %Schema{type: :array, items: %Schema{type: :string}},
-        adminFeedback: %Schema{type: :string, nullable: true}
+        adminFeedback: %Schema{type: :string, nullable: true},
+        hasCleaningExperience: %Schema{type: :boolean, nullable: true},
+        previousEmployers: %Schema{type: :string, nullable: true},
+        clientDescription: %Schema{type: :string, nullable: true},
+        additionalSkills: %Schema{type: :array, items: %Schema{type: :string}},
+        availableDays: %Schema{type: :array, items: %Schema{type: :string}},
+        preferredShifts: %Schema{type: :array, items: %Schema{type: :string}},
+        availabilityStart: %Schema{type: :string, nullable: true},
+        weeklyAvailability: %Schema{type: :array, items: AdminCleanerApplicationWeekday},
+        guarantors: %Schema{type: :array, items: AdminCleanerApplicationGuarantor},
+        kyc: AdminCleanerApplicationKyc
       },
       required: [
         :id,
@@ -556,7 +646,17 @@ defmodule MithrilWeb.Schemas.Direct do
         :yearsOfExperience,
         :hoursPerWeek,
         :certifications,
-        :adminFeedback
+        :adminFeedback,
+        :hasCleaningExperience,
+        :previousEmployers,
+        :clientDescription,
+        :additionalSkills,
+        :availableDays,
+        :preferredShifts,
+        :availabilityStart,
+        :weeklyAvailability,
+        :guarantors,
+        :kyc
       ]
     })
   end
