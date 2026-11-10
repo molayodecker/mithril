@@ -421,7 +421,8 @@ defmodule MithrilWeb.Schemas.Direct do
             type: :string,
             enum: ~w(househelp nanny cleaner elder_caregiver cook driver gardener)
           }
-        }
+        },
+        specialties: %Schema{type: :array, items: %Schema{type: :string}}
       },
       required: [
         :userId,
@@ -431,7 +432,8 @@ defmodule MithrilWeb.Schemas.Direct do
         :completedJobs,
         :placementOptIn,
         :placementStatus,
-        :desiredRoles
+        :desiredRoles,
+        :specialties
       ]
     })
   end
