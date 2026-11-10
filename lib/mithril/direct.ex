@@ -622,13 +622,15 @@ defmodule Mithril.Direct do
     ) kp ON true
     WHERE ca.id = $1
     LIMIT 1
-    """, [
-      :mithril
-      |> Application.get_env(:sumsub_level_name, "id-and-liveness")
-      |> to_string()
-      |> String.trim()
-      |> String.downcase()
-    ])
+    """, [worker_kyc_level()])
+  end
+
+  defp worker_kyc_level do
+    :mithril
+    |> Application.get_env(:sumsub_level_name, "id-and-liveness")
+    |> to_string()
+    |> String.trim()
+    |> String.downcase()
   end
 
   def list_admin_cleaner_application_drafts(user_id) do
