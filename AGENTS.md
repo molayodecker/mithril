@@ -190,7 +190,13 @@ Never put high-cardinality or sensitive values into Prometheus labels, including
 - addresses
 - payment references
 
-## 11. Dependency review
+## 11. Reuse existing functions
+
+Search the repo before adding a function. If one already does the job, call it.
+
+A private function still counts. Make it public, or move it to a shared module, and call it. Do not copy the body under a new name. `require_roster_staff/1` was a duplicate of `Direct.require_admin/1`, which already allows `admin` and `reviewer`.
+
+## 12. Dependency review
 
 When adding a dependency:
 
@@ -201,7 +207,7 @@ When adding a dependency:
 
 For example, if Mithril already uses Bandit, do not add Cowboy only to expose an internal metrics endpoint when Bandit can safely serve it.
 
-## 12. Regression tests
+## 13. Regression tests
 
 Every confirmed bug discovered during implementation or review should normally get a regression test.
 

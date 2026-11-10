@@ -1,0 +1,22 @@
+---
+description: Reuse an existing function instead of adding a near-duplicate
+alwaysApply: true
+---
+
+# Reuse functions
+
+Search the repo before writing a function. If one already does the job, call it.
+
+A private function still counts. Make it public, or move it to a shared module, and call it. Do not copy the body under a new name.
+
+```elixir
+# BAD — Direct.require_admin/1 already allows admin and reviewer
+defp require_roster_staff(uid) do
+  Repo.query("... role_id IN ('admin', 'reviewer')", [uid])
+end
+
+# GOOD — call the existing check
+:ok <- Direct.require_admin(uid)
+```
+
+Add a function only when no existing one can take the difference as an argument.

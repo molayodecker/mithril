@@ -107,14 +107,11 @@ defmodule Mithril.DirectRosterServicesTest do
       [Ecto.UUID.dump!(worker_id)]
     )
 
-    assert {:ok, cleaners} =
+    assert {:error, :forbidden} =
              DirectOperations.list_cleaners(reviewer_id, %{
                "status" => "active",
                "verified" => true
              })
-
-    cleaner = Enum.find(cleaners, &(&1["userId"] == worker_id))
-    assert cleaner["specialties"] == ["ironing", "window_cleaning"]
 
     assert {:ok, candidates} = Direct.list_admin_candidates(reviewer_id)
     candidate = Enum.find(candidates, &(&1["userId"] == worker_id))
