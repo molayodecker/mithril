@@ -448,23 +448,69 @@ defmodule Mithril.Direct do
   end
 
   def list_admin_cleaner_applications(user_id) do
-    admin_json_list(user_id, """
-    SELECT jsonb_build_object(
-      'id', ca.id,
-      'userId', ca.user_id,
-      'name', COALESCE(NULLIF(btrim(ca.name), ''), 'Applicant'),
-      'email', ca.email,
-      'phone', ca.phone,
-      'status', COALESCE(NULLIF(btrim(ca.status), ''), 'pending'),
-      'kycStatus', COALESCE(NULLIF(btrim(ca.kyc_status), ''), 'pending'),
-      'hourlyRateGhs', ca.hourly_rate,
-      'skills', COALESCE(to_jsonb(ca.skills), '[]'::jsonb),
-      'createdAt', ca.created_at
+    admin_json_list(
+      user_id,
+      """
+      SELECT jsonb_build_object(
+        'id', ca.id,
+        'userId', ca.user_id,
+        'name', COALESCE(NULLIF(btrim(ca.name), ''), 'Applicant'),
+        'email', ca.email,
+        'phone', ca.phone,
+        'status', COALESCE(NULLIF(btrim(ca.status), ''), 'pending'),
+        'kycStatus', CASE
+          WHEN kp.id IS NOT NULL THEN COALESCE(NULLIF(btrim(kp.kyc_status), ''), 'not_started')
+          ELSE COALESCE(NULLIF(btrim(ca.kyc_status), ''), 'not_started')
+        END,
+        'kycReviewAnswer', CASE
+          WHEN kp.id IS NOT NULL THEN NULLIF(upper(btrim(kp.review_answer)), '')
+          ELSE NULLIF(upper(btrim(ca.kyc_review_answer)), '')
+        END,
+        'hourlyRateGhs', ca.hourly_rate,
+        'skills', COALESCE(to_jsonb(ca.skills), '[]'::jsonb),
+        'createdAt', ca.created_at
+      )
+      FROM public.cleaner_applications ca
+      LEFT JOIN LATERAL (
+        SELECT kp.id, kp.kyc_status, kp.review_answer
+        FROM public.kyc_profiles kp
+        WHERE (
+          kp.user_id = ca.user_id
+          OR (
+            ca.user_id IS NULL
+            AND NULLIF(btrim(ca.sumsub_applicant_id), '') IS NOT NULL
+            AND kp.sumsub_applicant_id = ca.sumsub_applicant_id
+          )
+        )
+          AND lower(btrim(coalesce(kp.level_name, ''))) = $1
+          AND NOT (
+            lower(btrim(coalesce(kp.kyc_status, ''))) IN ('', 'not_started')
+            AND btrim(coalesce(kp.review_answer, '')) = ''
+            AND btrim(coalesce(kp.sumsub_applicant_id, '')) = ''
+            AND btrim(coalesce(kp.last_event_type, '')) = ''
+            AND kp.submitted_at IS NULL
+            AND kp.reviewed_at IS NULL
+            AND kp.completed_at IS NULL
+          )
+        ORDER BY
+          CASE
+            WHEN kp.reviewed_at IS NULL AND kp.completed_at IS NULL AND kp.submitted_at IS NULL
+            THEN COALESCE(kp.updated_at, kp.created_at, '-infinity'::timestamptz)
+            ELSE GREATEST(
+              COALESCE(kp.reviewed_at, '-infinity'::timestamptz),
+              COALESCE(kp.completed_at, '-infinity'::timestamptz),
+              COALESCE(kp.submitted_at, '-infinity'::timestamptz)
+            )
+          END DESC,
+          kp.updated_at DESC NULLS LAST,
+          kp.created_at DESC NULLS LAST
+        LIMIT 1
+      ) kp ON true
+      ORDER BY ca.created_at DESC NULLS LAST
+      LIMIT 200
+      """,
+      [worker_kyc_level()]
     )
-    FROM public.cleaner_applications ca
-    ORDER BY ca.created_at DESC NULLS LAST
-    LIMIT 200
-    """)
   end
 
   def get_admin_cleaner_application(user_id, application_id) do
@@ -476,7 +522,10 @@ defmodule Mithril.Direct do
       'email', ca.email,
       'phone', ca.phone,
       'status', COALESCE(NULLIF(btrim(ca.status), ''), 'pending'),
-      'kycStatus', COALESCE(NULLIF(btrim(ca.kyc_status), ''), 'pending'),
+      'kycStatus', CASE
+        WHEN kp.id IS NOT NULL THEN COALESCE(NULLIF(btrim(kp.kyc_status), ''), 'not_started')
+        ELSE COALESCE(NULLIF(btrim(ca.kyc_status), ''), 'not_started')
+      END,
       'hourlyRateGhs', ca.hourly_rate,
       'skills', COALESCE(to_jsonb(ca.skills), '[]'::jsonb),
       'createdAt', ca.created_at,
@@ -1302,10 +1351,10 @@ defmodule Mithril.Direct do
     end
   end
 
-  defp admin_json_list(user_id, sql) do
+  defp admin_json_list(user_id, sql, params \\ []) do
     with {:ok, uid} <- dump_uuid(user_id),
          :ok <- require_admin(uid),
-         {:ok, result} <- Repo.query(sql) do
+         {:ok, result} <- Repo.query(sql, params) do
       {:ok, Enum.map(result.rows, &hd/1)}
     else
       :error -> {:error, :invalid_user}

@@ -492,6 +492,7 @@ defmodule MithrilWeb.Schemas.Direct do
         phone: %Schema{type: :string, nullable: true},
         status: %Schema{type: :string},
         kycStatus: %Schema{type: :string},
+        kycReviewAnswer: %Schema{type: :string, nullable: true},
         hourlyRateGhs: %Schema{type: :number},
         skills: %Schema{type: :array, items: %Schema{type: :string}},
         createdAt: %Schema{type: :string, format: :"date-time", nullable: true}
@@ -504,6 +505,7 @@ defmodule MithrilWeb.Schemas.Direct do
         :phone,
         :status,
         :kycStatus,
+        :kycReviewAnswer,
         :hourlyRateGhs,
         :skills,
         :createdAt
