@@ -6,6 +6,11 @@ defmodule Mithril.AuthTest do
   alias Mithril.Auth.Token
   alias Mithril.Repo
 
+  import Phoenix.ConnTest
+  import Plug.Conn
+
+  @endpoint MithrilWeb.Endpoint
+
   setup do
     :ok = Sandbox.checkout(Repo)
 
@@ -447,6 +452,117 @@ defmodule Mithril.AuthTest do
 
     assert {:ok, %{exists: true}} = Auth.check_availability(%{"email" => email})
     assert {:error, :email_taken} = Auth.register(email, "another-password")
+  end
+
+  test "lookup_sign_in_account finds a phone across Ghana formats without returning the password" do
+    {user_id, email} =
+      insert_account("phone-lookup@tryinstaclean.com", "correct-horse", phone: "+233241110099")
+
+    assert {:ok, lookup} = Auth.lookup_sign_in_account("0241110099")
+    assert lookup.has_account
+    assert lookup.matched_by == "phone"
+    assert lookup.user_id == user_id
+    assert lookup.email == email
+    assert lookup.phone_e164 == "+233241110099"
+    assert lookup.supports_phone_otp
+    assert lookup.supports_email_password
+    assert "phone" in lookup.providers
+    assert "email" in lookup.providers
+    refute Map.has_key?(lookup, :password_hash)
+  end
+
+  test "lookup_sign_in_account reports an unknown phone as no account" do
+    assert {:ok, lookup} = Auth.lookup_sign_in_account("0200000000")
+    refute lookup.has_account
+    assert lookup.user_id == nil
+    assert lookup.providers == []
+  end
+
+  test "lookup_sign_in_account still finds a suspended account so sign-up is not offered" do
+    {user_id, email} =
+      insert_account("suspended-lookup@tryinstaclean.com", "correct-horse",
+        phone: "+233241110066"
+      )
+
+    Repo.query!("UPDATE public.users SET status = 'suspended' WHERE id = $1::uuid", [
+      dump_uuid(user_id)
+    ])
+
+    assert {:ok, lookup} = Auth.lookup_sign_in_account(String.upcase(email))
+    assert lookup.has_account
+    assert lookup.user_id == user_id
+    assert lookup.matched_by == "email"
+  end
+
+  test "lookup_sign_in_account tells phone sign-in to use Google when that is the only provider" do
+    user_id = Ecto.UUID.generate()
+    {:ok, user_uuid} = Ecto.UUID.dump(user_id)
+    email = "google-only-lookup@tryinstaclean.com"
+
+    Repo.query!(
+      "INSERT INTO auth.users (id, email) VALUES ($1, $2)",
+      [user_uuid, email]
+    )
+
+    Repo.query!(
+      "UPDATE public.users SET email = $2, password_hash = '' WHERE id = $1",
+      [user_uuid, email]
+    )
+
+    Repo.query!(
+      "INSERT INTO public.mithril_auth_identities (user_id, provider, provider_subject) VALUES ($1, 'google', $2)",
+      [user_uuid, "google-subject-lookup"]
+    )
+
+    assert {:ok, lookup} = Auth.lookup_sign_in_account(email)
+    assert lookup.has_account
+    assert lookup.matched_by == "email"
+    assert lookup.providers == ["google"]
+    refute lookup.supports_phone_otp
+    refute lookup.supports_email_password
+  end
+
+  test "lookup_sign_in_account finds an auth user that has no public profile" do
+    user_id = Ecto.UUID.generate()
+    {:ok, user_uuid} = Ecto.UUID.dump(user_id)
+
+    Repo.query!(
+      "INSERT INTO auth.users (id, phone) VALUES ($1, $2)",
+      [user_uuid, "+233241110088"]
+    )
+
+    Repo.query!("DELETE FROM public.users WHERE id = $1", [user_uuid])
+
+    assert {:ok, lookup} = Auth.lookup_sign_in_account("+233241110088")
+    assert lookup.has_account
+    assert lookup.user_id == user_id
+    assert lookup.matched_by == "phone"
+    assert lookup.supports_phone_otp
+    assert lookup.phone_e164 == "+233241110088"
+  end
+
+  test "POST /mobile/rpc/lookup_sign_in_account succeeds when the bearer token is missing or invalid" do
+    {user_id, _email} =
+      insert_account("rpc-lookup@tryinstaclean.com", "correct-horse", phone: "+233241110077")
+
+    missing =
+      post(build_conn(), "/mobile/rpc/lookup_sign_in_account", %{
+        "args" => %{"lookup_identifier" => "0241110077"}
+      })
+
+    assert json_response(missing, 200)["data"]["user_id"] == user_id
+
+    stale =
+      build_conn()
+      |> put_req_header("authorization", "Bearer not-a-session")
+      |> post("/mobile/rpc/lookup_sign_in_account", %{
+        "args" => %{"lookup_identifier" => "0241110077"}
+      })
+
+    stale_data = json_response(stale, 200)["data"]
+    assert stale_data["has_account"] == true
+    assert stale_data["supports_phone_otp"] == true
+    refute Map.has_key?(stale_data, "password_hash")
   end
 
   test "check_availability treats a legacy public.users email as taken" do

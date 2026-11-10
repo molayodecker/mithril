@@ -206,6 +206,33 @@ defmodule Mithril.Auth do
     end
   end
 
+  @doc """
+  Read-only sign-in lookup used by the phone and email screens before a session exists.
+
+  Returns the mobile `lookup_sign_in_account` row. The caller already supplied the
+  identifier, and the result says whether that account can use phone OTP or must
+  continue with another provider. Password hashes are never returned.
+  """
+  def lookup_sign_in_account(identifier) when is_binary(identifier) do
+    raw = String.trim(identifier)
+
+    cond do
+      raw == "" or byte_size(raw) > 320 ->
+        {:ok, empty_sign_in_lookup()}
+
+      String.contains?(raw, "@") ->
+        lookup_sign_in_account(:email, normalize_login(raw))
+
+      true ->
+        case Phone.normalize(raw) do
+          {:ok, e164} -> lookup_sign_in_account(:phone, phone_lookup_variants(e164))
+          :error -> {:ok, empty_sign_in_lookup()}
+        end
+    end
+  end
+
+  def lookup_sign_in_account(_), do: {:ok, empty_sign_in_lookup()}
+
   def admin?(user_id) when is_binary(user_id), do: has_role?(user_id, "admin")
 
   def reviewer?(user_id) when is_binary(user_id), do: has_role?(user_id, "reviewer")
@@ -1949,6 +1976,219 @@ defmodule Mithril.Auth do
         {:ok, false}
     end
   end
+
+  defp lookup_sign_in_account(:email, email) do
+    account_predicate =
+      "lower(btrim(coalesce(a.email, ''))) = $1 OR lower(btrim(coalesce(u.email, ''))) = $1"
+
+    user_predicate = "lower(btrim(coalesce(u.email, ''))) = $1"
+    auth_predicate = "lower(btrim(coalesce(au.email, ''))) = $1"
+
+    finish_sign_in_lookup(account_predicate, user_predicate, auth_predicate, [email], "email")
+  end
+
+  defp lookup_sign_in_account(:phone, variants) do
+    account_predicate = "a.phone = ANY($1::text[]) OR u.phone = ANY($1::text[])"
+    user_predicate = "u.phone = ANY($1::text[])"
+    auth_predicate = "au.phone = ANY($1::text[])"
+
+    finish_sign_in_lookup(
+      account_predicate,
+      user_predicate,
+      auth_predicate,
+      [variants],
+      "phone"
+    )
+  end
+
+  defp finish_sign_in_lookup(
+         account_predicate,
+         user_predicate,
+         auth_predicate,
+         params,
+         matched_by
+       ) do
+    sql = sign_in_match_sql(account_predicate, user_predicate, auth_predicate)
+    fallback = sign_in_match_sql(account_predicate, user_predicate, nil)
+
+    case query_sign_in_match(sql, fallback, params) do
+      {:ok, {user_id, email, phone, password_hash}} ->
+        with {:ok, providers} <- identity_providers(user_id) do
+          {:ok, sign_in_lookup_row(user_id, email, phone, password_hash, matched_by, providers)}
+        end
+
+      :none ->
+        {:ok, empty_sign_in_lookup()}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp sign_in_match_sql(account_predicate, user_predicate, nil) do
+    """
+    SELECT id::text, email, phone, password_hash
+    FROM (
+      SELECT a.user_id AS id,
+             nullif(btrim(coalesce(a.email, u.email)), '') AS email,
+             nullif(btrim(coalesce(a.phone, u.phone)), '') AS phone,
+             coalesce(nullif(a.password_hash, ''), nullif(u.password_hash, '')) AS password_hash,
+             coalesce(a.updated_at, u.updated_at) AS updated_at,
+             0 AS match_rank
+      FROM public.mithril_auth_accounts a
+      JOIN public.users u ON u.id = a.user_id
+      WHERE #{account_predicate}
+
+      UNION ALL
+
+      SELECT u.id,
+             nullif(btrim(u.email), ''),
+             nullif(btrim(u.phone), ''),
+             nullif(u.password_hash, ''),
+             u.updated_at,
+             1 AS match_rank
+      FROM public.users u
+      WHERE #{user_predicate}
+        AND NOT EXISTS (
+          SELECT 1 FROM public.mithril_auth_accounts a WHERE a.user_id = u.id
+        )
+    ) matches
+    ORDER BY match_rank ASC, updated_at DESC NULLS LAST
+    LIMIT 1
+    """
+  end
+
+  defp sign_in_match_sql(account_predicate, user_predicate, auth_predicate) do
+    """
+    SELECT id::text, email, phone, password_hash
+    FROM (
+      SELECT a.user_id AS id,
+             nullif(btrim(coalesce(a.email, u.email)), '') AS email,
+             nullif(btrim(coalesce(a.phone, u.phone)), '') AS phone,
+             coalesce(nullif(a.password_hash, ''), nullif(u.password_hash, '')) AS password_hash,
+             coalesce(a.updated_at, u.updated_at) AS updated_at,
+             0 AS match_rank
+      FROM public.mithril_auth_accounts a
+      JOIN public.users u ON u.id = a.user_id
+      WHERE #{account_predicate}
+
+      UNION ALL
+
+      SELECT u.id,
+             nullif(btrim(u.email), ''),
+             nullif(btrim(u.phone), ''),
+             nullif(u.password_hash, ''),
+             u.updated_at,
+             1 AS match_rank
+      FROM public.users u
+      WHERE #{user_predicate}
+        AND NOT EXISTS (
+          SELECT 1 FROM public.mithril_auth_accounts a WHERE a.user_id = u.id
+        )
+
+      UNION ALL
+
+      SELECT au.id,
+             nullif(btrim(au.email), ''),
+             nullif(btrim(au.phone), ''),
+             nullif(au.encrypted_password, ''),
+             au.created_at,
+             2 AS match_rank
+      FROM auth.users au
+      WHERE #{auth_predicate}
+        AND NOT EXISTS (SELECT 1 FROM public.users pu WHERE pu.id = au.id)
+    ) matches
+    ORDER BY match_rank ASC, updated_at DESC NULLS LAST
+    LIMIT 1
+    """
+  end
+
+  defp query_sign_in_match(sql, fallback_sql, params) do
+    case Repo.query(sql, params) do
+      {:ok, %{rows: [[user_id, email, phone, password_hash]]}} ->
+        {:ok, {user_id, email, phone, password_hash}}
+
+      {:ok, %{rows: []}} ->
+        :none
+
+      {:error, error} ->
+        if fallback_sql && missing_auth_users?(error) do
+          query_sign_in_match(fallback_sql, nil, params)
+        else
+          database_error(error)
+        end
+    end
+  end
+
+  defp sign_in_lookup_row(user_id, email, phone, password_hash, matched_by, stored_providers) do
+    phone_e164 = canonical_sign_in_phone(phone)
+    providers = sign_in_providers(stored_providers, password_hash, phone_e164)
+
+    %{
+      email: email,
+      has_account: true,
+      matched_by: matched_by,
+      phone_e164: phone_e164,
+      providers: providers,
+      supports_email_password: password_set?(password_hash) or "email" in providers,
+      supports_phone_otp: is_binary(phone_e164) or "phone" in providers,
+      user_id: user_id
+    }
+  end
+
+  defp empty_sign_in_lookup do
+    %{
+      email: nil,
+      has_account: false,
+      matched_by: nil,
+      phone_e164: nil,
+      providers: [],
+      supports_email_password: false,
+      supports_phone_otp: false,
+      user_id: nil
+    }
+  end
+
+  defp sign_in_providers(stored_providers, password_hash, phone_e164) do
+    providers =
+      stored_providers
+      |> prepend_provider(if(password_set?(password_hash), do: ["email"], else: []))
+      |> prepend_provider(if(is_binary(phone_e164), do: ["phone"], else: []))
+
+    providers
+    |> Enum.map(&String.downcase/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp prepend_provider(providers, extra), do: extra ++ providers
+
+  defp identity_providers(user_id) do
+    case Repo.query(
+           """
+           SELECT DISTINCT lower(provider)
+           FROM public.mithril_auth_identities
+           WHERE user_id = $1::uuid
+           """,
+           [dump_uuid(user_id)]
+         ) do
+      {:ok, %{rows: rows}} -> {:ok, Enum.map(rows, fn [provider] -> provider end)}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp canonical_sign_in_phone(phone) when is_binary(phone) and phone != "" do
+    case Phone.normalize(phone) do
+      {:ok, e164} -> e164
+      :error -> nil
+    end
+  end
+
+  defp canonical_sign_in_phone(_), do: nil
+
+  defp password_set?(hash) when is_binary(hash) and hash != "", do: true
+  defp password_set?(_), do: false
 
   defp phone_lookup_variants(e164) do
     digits = String.replace_prefix(e164, "+", "")

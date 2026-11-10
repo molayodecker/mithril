@@ -2,6 +2,7 @@ defmodule MithrilWeb.MobileGatewayController do
   use Phoenix.Controller, formats: [:json]
   use OpenApiSpex.ControllerSpecs
 
+  alias Mithril.Auth
   alias Mithril.MobileGateway
   alias MithrilWeb.Schemas.MobileRpc.RpcResult
   alias OpenApiSpex.Schema
@@ -52,6 +53,20 @@ defmodule MithrilWeb.MobileGatewayController do
   def guest_function(conn, params) do
     name = function_name(params["name"])
     respond(conn, MobileGateway.call_guest_function(name, function_body(conn)))
+  end
+
+  operation(:lookup_sign_in_account,
+    operation_id: "mobile.lookupSignInAccount",
+    summary: "Look up a sign-in account by email or phone without a session",
+    responses: [
+      ok: {"Lookup result", "application/json", %Schema{type: :object}}
+    ]
+  )
+
+  def lookup_sign_in_account(conn, params) do
+    args = if is_map(params["args"]), do: params["args"], else: %{}
+    identifier = args["lookup_identifier"] || params["lookup_identifier"]
+    respond(conn, Auth.lookup_sign_in_account(identifier))
   end
 
   operation(:query,
