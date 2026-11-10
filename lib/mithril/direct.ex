@@ -468,7 +468,7 @@ defmodule Mithril.Direct do
   end
 
   def get_admin_cleaner_application(user_id, application_id) do
-    admin_json_row(user_id, application_id, """
+    query = """
     SELECT jsonb_build_object(
       'id', ca.id,
       'userId', ca.user_id,
@@ -484,15 +484,155 @@ defmodule Mithril.Direct do
       'applicantBio', NULLIF(btrim(ca.applicant_bio), ''),
       'languages', COALESCE(to_jsonb(ca.languages), '[]'::jsonb),
       'serviceAreas', COALESCE(to_jsonb(ca.service_areas), '[]'::jsonb),
-      'yearsOfExperience', ca.years_of_experience,
-      'hoursPerWeek', ca.hours_per_week,
+      'yearsOfExperience', NULLIF(btrim(ca.years_of_experience), ''),
+      'hoursPerWeek', NULLIF(btrim(ca.hours_per_week), ''),
       'certifications', COALESCE(to_jsonb(ca.certifications), '[]'::jsonb),
-      'adminFeedback', NULLIF(btrim(ca.admin_feedback), '')
+      'adminFeedback', NULLIF(btrim(ca.admin_feedback), ''),
+      'hasCleaningExperience', ca.has_cleaning_experience,
+      'previousEmployers', NULLIF(btrim(ca.previous_employers), ''),
+      'clientDescription', NULLIF(btrim(ca.client_description), ''),
+      'additionalSkills', COALESCE(to_jsonb(ca.additional_skills), '[]'::jsonb),
+      'availableDays', CASE
+        WHEN ca.available_days IS NOT NULL AND cardinality(ca.available_days) > 0 THEN to_jsonb(ca.available_days)
+        WHEN jsonb_typeof(ca.availability->'availableDays') = 'array' THEN ca.availability->'availableDays'
+        ELSE '[]'::jsonb
+      END,
+      'preferredShifts', CASE
+        WHEN jsonb_typeof(ca.availability->'preferredShifts') = 'array' THEN ca.availability->'preferredShifts'
+        ELSE '[]'::jsonb
+      END,
+      'availabilityStart', NULLIF(btrim(ca.availability->>'startDate'), ''),
+      'weeklyAvailability', COALESCE((
+        SELECT jsonb_agg(jsonb_build_object(
+          'day', day.day,
+          'available', CASE
+            WHEN jsonb_typeof(ca.availability->day.day->'available') = 'boolean'
+            THEN (ca.availability->day.day->>'available')::boolean
+            ELSE false
+          END,
+          'start', NULLIF(btrim(ca.availability->day.day->>'start'), ''),
+          'end', NULLIF(btrim(ca.availability->day.day->>'end'), '')
+        ) ORDER BY day.ord)
+        FROM (
+          VALUES
+            ('monday', 1),
+            ('tuesday', 2),
+            ('wednesday', 3),
+            ('thursday', 4),
+            ('friday', 5),
+            ('saturday', 6),
+            ('sunday', 7)
+        ) AS day(day, ord)
+        WHERE jsonb_typeof(ca.availability->day.day) = 'object'
+      ), '[]'::jsonb),
+      'guarantors', jsonb_build_array(
+        jsonb_build_object(
+          'label', 'Guarantor 1',
+          'name', NULLIF(btrim(ca.reference1_name), ''),
+          'phone', NULLIF(btrim(ca.reference1_phone), ''),
+          'relationship', NULLIF(btrim(ca.reference1_relationship), '')
+        ),
+        jsonb_build_object(
+          'label', 'Guarantor 2',
+          'name', NULLIF(btrim(ca.reference2_name), ''),
+          'phone', NULLIF(btrim(ca.reference2_phone), ''),
+          'relationship', NULLIF(btrim(ca.reference2_relationship), '')
+        ),
+        jsonb_build_object(
+          'label', 'Guarantor 3',
+          'name', NULLIF(btrim(ca.reference3_name), ''),
+          'phone', NULLIF(btrim(ca.reference3_phone), ''),
+          'relationship', NULLIF(btrim(ca.reference3_relationship), '')
+        )
+      ),
+      'kyc', CASE
+        WHEN kp.id IS NOT NULL THEN jsonb_build_object(
+          'source', 'kyc_profiles',
+          'status', COALESCE(NULLIF(btrim(kp.kyc_status), ''), 'not_started'),
+          'reviewAnswer', NULLIF(upper(btrim(kp.review_answer)), ''),
+          'reviewStatus', NULL,
+          'completedAt', kp.completed_at,
+          'reviewedAt', kp.reviewed_at,
+          'submittedAt', kp.submitted_at,
+          'applicantId', NULLIF(btrim(kp.sumsub_applicant_id), ''),
+          'levelName', NULLIF(btrim(kp.level_name), ''),
+          'reviewReason', NULLIF(btrim(kp.review_reason), ''),
+          'documentTypes', COALESCE(to_jsonb(kp.document_types), '[]'::jsonb)
+        )
+        ELSE jsonb_build_object(
+          'source', 'cleaner_applications',
+          'status', COALESCE(NULLIF(btrim(ca.kyc_status), ''), 'not_started'),
+          'reviewAnswer', NULLIF(upper(btrim(ca.kyc_review_answer)), ''),
+          'reviewStatus', NULLIF(btrim(ca.kyc_review_status), ''),
+          'completedAt', ca.kyc_completed_at,
+          'reviewedAt', NULL,
+          'submittedAt', NULL,
+          'applicantId', NULLIF(btrim(ca.sumsub_applicant_id), ''),
+          'levelName', NULLIF(btrim(ca.sumsub_level_name), ''),
+          'reviewReason', NULL,
+          'documentTypes', '[]'::jsonb
+        )
+      END
     )
     FROM public.cleaner_applications ca
+    LEFT JOIN LATERAL (
+      SELECT
+        kp.id,
+        kp.kyc_status,
+        kp.review_answer,
+        kp.review_reason,
+        kp.reviewed_at,
+        kp.completed_at,
+        kp.submitted_at,
+        kp.sumsub_applicant_id,
+        kp.level_name,
+        kp.document_types
+      FROM public.kyc_profiles kp
+      WHERE (
+        kp.user_id = ca.user_id
+        OR (
+          ca.user_id IS NULL
+          AND NULLIF(btrim(ca.sumsub_applicant_id), '') IS NOT NULL
+          AND kp.sumsub_applicant_id = ca.sumsub_applicant_id
+        )
+      )
+        AND lower(btrim(coalesce(kp.level_name, ''))) = $2
+        AND NOT (
+          lower(btrim(coalesce(kp.kyc_status, ''))) IN ('', 'not_started')
+          AND btrim(coalesce(kp.review_answer, '')) = ''
+          AND btrim(coalesce(kp.sumsub_applicant_id, '')) = ''
+          AND btrim(coalesce(kp.last_event_type, '')) = ''
+          AND kp.submitted_at IS NULL
+          AND kp.reviewed_at IS NULL
+          AND kp.completed_at IS NULL
+        )
+      ORDER BY
+        CASE
+          WHEN kp.reviewed_at IS NULL AND kp.completed_at IS NULL AND kp.submitted_at IS NULL
+          THEN COALESCE(kp.updated_at, kp.created_at, '-infinity'::timestamptz)
+          ELSE GREATEST(
+            COALESCE(kp.reviewed_at, '-infinity'::timestamptz),
+            COALESCE(kp.completed_at, '-infinity'::timestamptz),
+            COALESCE(kp.submitted_at, '-infinity'::timestamptz)
+          )
+        END DESC,
+        kp.updated_at DESC NULLS LAST,
+        kp.created_at DESC NULLS LAST
+      LIMIT 1
+    ) kp ON true
     WHERE ca.id = $1
     LIMIT 1
-    """)
+    """
+
+    admin_json_row(user_id, application_id, query, [worker_kyc_level()])
+  end
+
+  defp worker_kyc_level do
+    :mithril
+    |> Application.get_env(:sumsub_level_name, "id-and-liveness")
+    |> to_string()
+    |> String.trim()
+    |> String.downcase()
   end
 
   def list_admin_cleaner_application_drafts(user_id) do
@@ -1174,11 +1314,11 @@ defmodule Mithril.Direct do
     end
   end
 
-  defp admin_json_row(user_id, id, sql) do
+  defp admin_json_row(user_id, id, sql, extra_params \\ []) do
     with {:ok, uid} <- dump_uuid(user_id),
          {:ok, rid} <- dump_uuid(id),
          :ok <- require_admin(uid),
-         {:ok, result} <- Repo.query(sql, [rid]) do
+         {:ok, result} <- Repo.query(sql, [rid | extra_params]) do
       case result.rows do
         [[row]] -> {:ok, row}
         [] -> {:error, :not_found}
