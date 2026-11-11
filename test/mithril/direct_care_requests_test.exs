@@ -95,6 +95,75 @@ defmodule Mithril.DirectCareRequestsTest do
 
     assert {:ok, %{"success" => true, "requests" => []}} =
              MobileGateway.call_rpc(worker_id, "list_direct_requests_for_worker", %{})
+
+    assert {:ok, %{"success" => true, "request" => owner_detail}} =
+             MobileGateway.call_rpc(customer_id, "get_direct_request", %{
+               "p_care_request_id" => request_id
+             })
+
+    assert [%{"worker_user_id" => ^worker_id, "offer_kind" => "accept"}] =
+             owner_detail["responses"]
+  end
+
+  test "matched workers lose access after verification or specialty changes" do
+    customer_id = insert_user!()
+    worker_id = insert_user!()
+    insert_cleaner!(worker_id, ["child_care"])
+
+    assert {:ok, %{"care_request_id" => request_id}} =
+             MobileGateway.call_rpc(customer_id, "create_direct_request", %{
+               "p_category" => "family_care",
+               "p_service_slug" => "child_care",
+               "p_frequency" => "weekly",
+               "p_budget_amount_major" => 100,
+               "p_budget_unit" => "per_day",
+               "p_budget_negotiable" => false,
+               "p_location_label" => "Accra",
+               "p_latitude" => nil,
+               "p_longitude" => nil,
+               "p_timezone_name" => "Africa/Accra",
+               "p_notes" => nil,
+               "p_details" => %{}
+             })
+
+    Repo.query!(
+      "UPDATE public.cleaner_data SET specialties = ARRAY['pet_care'] WHERE user_id = $1",
+      [Ecto.UUID.dump!(worker_id)]
+    )
+
+    assert_worker_cannot_access!(worker_id, request_id)
+
+    Repo.query!(
+      "UPDATE public.cleaner_data SET specialties = ARRAY['child_care'], verified = false WHERE user_id = $1",
+      [Ecto.UUID.dump!(worker_id)]
+    )
+
+    assert_worker_cannot_access!(worker_id, request_id)
+
+    Repo.query!(
+      "UPDATE public.cleaner_data SET verified = true, status = 'inactive' WHERE user_id = $1",
+      [Ecto.UUID.dump!(worker_id)]
+    )
+
+    assert_worker_cannot_access!(worker_id, request_id)
+  end
+
+  defp assert_worker_cannot_access!(worker_id, request_id) do
+    assert {:ok, %{"success" => true, "requests" => []}} =
+             MobileGateway.call_rpc(worker_id, "list_direct_requests_for_worker", %{})
+
+    assert {:ok, %{"success" => false, "error" => "not_found"}} =
+             MobileGateway.call_rpc(worker_id, "get_direct_request", %{
+               "p_care_request_id" => request_id
+             })
+
+    assert {:ok, %{"success" => false, "error" => "not_found"}} =
+             MobileGateway.call_rpc(worker_id, "respond_to_care_request", %{
+               "p_care_request_id" => request_id,
+               "p_offer_kind" => "accept",
+               "p_amount_major" => nil,
+               "p_note" => nil
+             })
   end
 
   defp insert_user! do
