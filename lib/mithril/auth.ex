@@ -2122,7 +2122,8 @@ defmodule Mithril.Auth do
 
   defp sign_in_lookup_row(user_id, email, phone, password_hash, matched_by, stored_providers) do
     phone_e164 = canonical_sign_in_phone(phone)
-    providers = sign_in_providers(stored_providers, password_hash, phone_e164)
+    phone_otp_ready = phone_otp_account?(user_id, phone_e164)
+    providers = sign_in_providers(stored_providers, password_hash, phone_otp_ready)
 
     %{
       email: email,
@@ -2131,9 +2132,18 @@ defmodule Mithril.Auth do
       phone_e164: phone_e164,
       providers: providers,
       supports_email_password: password_set?(password_hash) or "email" in providers,
-      supports_phone_otp: is_binary(phone_e164) or "phone" in providers,
+      supports_phone_otp: phone_otp_ready,
       user_id: user_id
     }
+  end
+
+  defp phone_otp_account?(_user_id, nil), do: false
+
+  defp phone_otp_account?(user_id, phone_e164) do
+    case fetch_account_by_phone(phone_e164) do
+      {:ok, %{user_id: ^user_id}} -> true
+      _ -> false
+    end
   end
 
   defp empty_sign_in_lookup do
@@ -2149,11 +2159,12 @@ defmodule Mithril.Auth do
     }
   end
 
-  defp sign_in_providers(stored_providers, password_hash, phone_e164) do
+  defp sign_in_providers(stored_providers, password_hash, phone_otp_ready) do
     providers =
       stored_providers
+      |> Enum.reject(&(String.downcase(&1) == "phone" and not phone_otp_ready))
       |> prepend_provider(if(password_set?(password_hash), do: ["email"], else: []))
-      |> prepend_provider(if(is_binary(phone_e164), do: ["phone"], else: []))
+      |> prepend_provider(if(phone_otp_ready, do: ["phone"], else: []))
 
     providers
     |> Enum.map(&String.downcase/1)
