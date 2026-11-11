@@ -14,6 +14,12 @@ defmodule Mithril.DirectCareRequestsTest do
       raise "Refusing to create care-request fixtures; expected mithril_test, got #{inspect(database)}"
     end
 
+    Repo.query!("""
+    CREATE TABLE IF NOT EXISTS public.users (
+      id uuid PRIMARY KEY
+    )
+    """)
+
     Repo.query!("CREATE SCHEMA IF NOT EXISTS auth")
 
     Repo.query!("""
