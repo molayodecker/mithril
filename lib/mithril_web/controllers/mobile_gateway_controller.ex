@@ -68,14 +68,13 @@ defmodule MithrilWeb.MobileGatewayController do
     identifier = args["lookup_identifier"] || params["lookup_identifier"]
     case Auth.lookup_sign_in_account(identifier) do
       {:ok, lookup} ->
-        public_lookup =
-          Map.take(lookup, [
-            :has_account,
-            :matched_by,
-            :providers,
-            :supports_email_password,
-            :supports_phone_otp
-          ])
+        public_lookup = %{
+          has_account: lookup.has_account,
+          matched_by: lookup.matched_by,
+          providers: lookup.providers,
+          supports_email_password: lookup.supports_email_password,
+          supports_phone_otp: lookup.supports_phone_otp
+        }
 
         respond(conn, {:ok, public_lookup})
 
