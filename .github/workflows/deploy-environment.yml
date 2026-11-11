@@ -161,9 +161,7 @@ jobs:
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master pinned 2026-09-20
 
       - name: Install PostgreSQL client
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
+        run: bash scripts/install_postgres_client.sh
 
       - name: Start Fly Managed Postgres proxy
         shell: bash
