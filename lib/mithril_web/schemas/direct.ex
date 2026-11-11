@@ -665,16 +665,47 @@ defmodule MithrilWeb.Schemas.Direct do
     })
   end
 
+  defmodule AdminCleanerApplicationStatusCounts do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminCleanerApplicationStatusCounts",
+      type: :object,
+      properties: %{
+        all: %Schema{type: :integer},
+        pending: %Schema{type: :integer},
+        requested_info: %Schema{type: :integer},
+        approved: %Schema{type: :integer},
+        rejected: %Schema{type: :integer}
+      },
+      required: [:all, :pending, :requested_info, :approved, :rejected]
+    })
+  end
+
   defmodule AdminCleanerApplicationListResponse do
     require OpenApiSpex
-    alias MithrilWeb.Schemas.Direct.AdminCleanerApplication
+
+    alias MithrilWeb.Schemas.Direct.{
+      AdminCleanerApplication,
+      AdminCleanerApplicationStatusCounts
+    }
+
     alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{
       title: "DirectAdminCleanerApplicationListResponse",
       type: :object,
-      properties: %{applications: %Schema{type: :array, items: AdminCleanerApplication}},
-      required: [:applications]
+      properties: %{
+        applications: %Schema{type: :array, items: AdminCleanerApplication},
+        page: %Schema{type: :integer, minimum: 1},
+        limit: %Schema{type: :integer},
+        total: %Schema{type: :integer},
+        totalPages: %Schema{type: :integer},
+        directoryTotal: %Schema{type: :integer},
+        counts: AdminCleanerApplicationStatusCounts
+      },
+      required: [:applications, :page, :limit, :total, :totalPages, :directoryTotal, :counts]
     })
   end
 
@@ -752,16 +783,60 @@ defmodule MithrilWeb.Schemas.Direct do
     })
   end
 
+  defmodule AdminCleanerApplicationDraftStepCount do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminCleanerApplicationDraftStepCount",
+      type: :object,
+      properties: %{
+        step: %Schema{type: :integer},
+        count: %Schema{type: :integer}
+      },
+      required: [:step, :count]
+    })
+  end
+
+  defmodule AdminCleanerApplicationDraftCounts do
+    require OpenApiSpex
+    alias MithrilWeb.Schemas.Direct.AdminCleanerApplicationDraftStepCount
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminCleanerApplicationDraftCounts",
+      type: :object,
+      properties: %{
+        all: %Schema{type: :integer},
+        steps: %Schema{type: :array, items: AdminCleanerApplicationDraftStepCount}
+      },
+      required: [:all, :steps]
+    })
+  end
+
   defmodule AdminCleanerApplicationDraftListResponse do
     require OpenApiSpex
-    alias MithrilWeb.Schemas.Direct.AdminCleanerApplicationDraft
+
+    alias MithrilWeb.Schemas.Direct.{
+      AdminCleanerApplicationDraft,
+      AdminCleanerApplicationDraftCounts
+    }
+
     alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{
       title: "DirectAdminCleanerApplicationDraftListResponse",
       type: :object,
-      properties: %{drafts: %Schema{type: :array, items: AdminCleanerApplicationDraft}},
-      required: [:drafts]
+      properties: %{
+        drafts: %Schema{type: :array, items: AdminCleanerApplicationDraft},
+        page: %Schema{type: :integer, minimum: 1},
+        limit: %Schema{type: :integer},
+        total: %Schema{type: :integer},
+        totalPages: %Schema{type: :integer},
+        directoryTotal: %Schema{type: :integer},
+        counts: AdminCleanerApplicationDraftCounts
+      },
+      required: [:drafts, :page, :limit, :total, :totalPages, :directoryTotal, :counts]
     })
   end
 

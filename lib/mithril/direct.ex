@@ -448,70 +448,23 @@ defmodule Mithril.Direct do
     end
   end
 
-  def list_admin_cleaner_applications(user_id) do
-    admin_json_list(
-      user_id,
-      """
-      SELECT jsonb_build_object(
-        'id', ca.id,
-        'userId', ca.user_id,
-        'name', COALESCE(NULLIF(btrim(ca.name), ''), 'Applicant'),
-        'email', ca.email,
-        'phone', ca.phone,
-        'status', COALESCE(NULLIF(btrim(ca.status), ''), 'pending'),
-        'kycStatus', CASE
-          WHEN kp.id IS NOT NULL THEN COALESCE(NULLIF(btrim(kp.kyc_status), ''), 'not_started')
-          ELSE COALESCE(NULLIF(btrim(ca.kyc_status), ''), 'not_started')
-        END,
-        'kycReviewAnswer', CASE
-          WHEN kp.id IS NOT NULL THEN NULLIF(upper(btrim(kp.review_answer)), '')
-          ELSE NULLIF(upper(btrim(ca.kyc_review_answer)), '')
-        END,
-        'hourlyRateGhs', ca.hourly_rate,
-        'skills', COALESCE(to_jsonb(ca.skills), '[]'::jsonb),
-        'createdAt', ca.created_at
-      )
-      FROM public.cleaner_applications ca
-      LEFT JOIN LATERAL (
-        SELECT kp.id, kp.kyc_status, kp.review_answer
-        FROM public.kyc_profiles kp
-        WHERE (
-          kp.user_id = ca.user_id
-          OR (
-            ca.user_id IS NULL
-            AND NULLIF(btrim(ca.sumsub_applicant_id), '') IS NOT NULL
-            AND kp.sumsub_applicant_id = ca.sumsub_applicant_id
-          )
-        )
-          AND lower(btrim(coalesce(kp.level_name, ''))) = $1
-          AND NOT (
-            lower(btrim(coalesce(kp.kyc_status, ''))) IN ('', 'not_started')
-            AND btrim(coalesce(kp.review_answer, '')) = ''
-            AND btrim(coalesce(kp.sumsub_applicant_id, '')) = ''
-            AND btrim(coalesce(kp.last_event_type, '')) = ''
-            AND kp.submitted_at IS NULL
-            AND kp.reviewed_at IS NULL
-            AND kp.completed_at IS NULL
-          )
-        ORDER BY
-          CASE
-            WHEN kp.reviewed_at IS NULL AND kp.completed_at IS NULL AND kp.submitted_at IS NULL
-            THEN COALESCE(kp.updated_at, kp.created_at, '-infinity'::timestamptz)
-            ELSE GREATEST(
-              COALESCE(kp.reviewed_at, '-infinity'::timestamptz),
-              COALESCE(kp.completed_at, '-infinity'::timestamptz),
-              COALESCE(kp.submitted_at, '-infinity'::timestamptz)
-            )
-          END DESC,
-          kp.updated_at DESC NULLS LAST,
-          kp.created_at DESC NULLS LAST
-        LIMIT 1
-      ) kp ON true
-      ORDER BY ca.created_at DESC NULLS LAST
-      LIMIT 200
-      """,
-      [worker_kyc_level()]
-    )
+  @application_page_size 50
+  @application_statuses ~w(pending requested_info approved rejected)
+  @application_sorts ~w(name rate started status)
+  @draft_sorts ~w(name step started saved)
+
+  def list_admin_cleaner_applications(user_id, params \\ %{}) when is_map(params) do
+    with {:ok, uid} <- dump_uuid(user_id),
+         :ok <- require_admin(uid),
+         {:ok, filters} <- application_page_filters(params),
+         {:ok, counts} <- application_page_counts(filters),
+         {:ok, applications} <- application_page_rows(filters) do
+      {:ok, page_payload("applications", applications, filters, counts)}
+    else
+      :error -> {:error, :invalid_user}
+      {:error, error} when is_atom(error) -> {:error, error}
+      {:error, error} -> database_error(error)
+    end
   end
 
   def get_admin_cleaner_application(user_id, application_id) do
@@ -685,32 +638,18 @@ defmodule Mithril.Direct do
     |> String.downcase()
   end
 
-  def list_admin_cleaner_application_drafts(user_id) do
-    admin_json_list(user_id, """
-    SELECT jsonb_build_object(
-      'id', d.id,
-      'userId', d.user_id,
-      'name', COALESCE(
-        NULLIF(btrim(p.fullname), ''),
-        NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
-        NULLIF(btrim(concat_ws(' ', d.payload->>'firstName', d.payload->>'lastName')), ''),
-        u.email,
-        d.email,
-        'Applicant'
-      ),
-      'email', COALESCE(NULLIF(btrim(d.email), ''), u.email),
-      'phone', COALESCE(NULLIF(btrim(u.phone), ''), NULLIF(btrim(d.payload->>'phone'), '')),
-      'currentStep', d.current_step,
-      'createdAt', d.created_at,
-      'updatedAt', d.updated_at,
-      'lastSavedAt', d.last_saved_at
-    )
-    FROM public.cleaner_application_drafts d
-    LEFT JOIN public.users u ON u.id = d.user_id
-    LEFT JOIN public.profiles p ON p.id = d.user_id
-    ORDER BY d.updated_at DESC
-    LIMIT 200
-    """)
+  def list_admin_cleaner_application_drafts(user_id, params \\ %{}) when is_map(params) do
+    with {:ok, uid} <- dump_uuid(user_id),
+         :ok <- require_admin(uid),
+         {:ok, filters} <- draft_page_filters(params),
+         {:ok, counts} <- draft_page_counts(filters),
+         {:ok, drafts} <- draft_page_rows(filters) do
+      {:ok, page_payload("drafts", drafts, filters, counts)}
+    else
+      :error -> {:error, :invalid_user}
+      {:error, error} when is_atom(error) -> {:error, error}
+      {:error, error} -> database_error(error)
+    end
   end
 
   def get_admin_cleaner_application_draft(user_id, draft_id) do
@@ -1351,6 +1290,463 @@ defmodule Mithril.Direct do
       {:error, error} -> database_error(error)
     end
   end
+
+  defp page_payload(collection, rows, filters, counts) do
+    total = counts.selected
+
+    %{
+      collection => rows,
+      "page" => filters.page,
+      "limit" => @application_page_size,
+      "total" => total,
+      "totalPages" => page_count(total),
+      "directoryTotal" => counts.directory,
+      "counts" => counts.public
+    }
+  end
+
+  defp page_count(total) when total <= 0, do: 0
+
+  defp page_count(total), do: div(total + @application_page_size - 1, @application_page_size)
+
+  defp application_page_filters(params) do
+    with {:ok, page} <- page_number(params),
+         {:ok, sort} <- page_choice(params, "sort", @application_sorts, "started"),
+         {:ok, direction} <-
+           page_choice(params, "direction", ~w(asc desc), default_direction(sort)),
+         {:ok, status} <- optional_choice(params, "status", @application_statuses),
+         {:ok, started_from} <- optional_date(params, "startedFrom"),
+         {:ok, started_to} <- optional_date(params, "startedTo") do
+      {:ok, page_filters(page, sort, direction, status, nil, started_from, started_to, params)}
+    end
+  end
+
+  defp draft_page_filters(params) do
+    with {:ok, page} <- page_number(params),
+         {:ok, sort} <- page_choice(params, "sort", @draft_sorts, "saved"),
+         {:ok, direction} <-
+           page_choice(params, "direction", ~w(asc desc), default_direction(sort)),
+         {:ok, step} <- optional_step(params),
+         {:ok, started_from} <- optional_date(params, "startedFrom"),
+         {:ok, started_to} <- optional_date(params, "startedTo") do
+      {:ok, page_filters(page, sort, direction, nil, step, started_from, started_to, params)}
+    end
+  end
+
+  defp page_filters(page, sort, direction, status, step, started_from, started_to, params) do
+    %{
+      page: page,
+      sort: sort,
+      direction: direction,
+      status: status,
+      step: step,
+      started_from: started_from,
+      started_to: started_to,
+      like: search_like(params["q"] || params[:q])
+    }
+  end
+
+  defp application_page_counts(filters) do
+    sql = """
+    SELECT
+      count(*)::int,
+      count(*) FILTER (WHERE #{application_search_sql("$1")} AND #{application_date_sql("$2", "$3")})::int,
+      count(*) FILTER (WHERE #{application_search_sql("$1")} AND #{application_date_sql("$2", "$3")} AND #{application_status_sql()} = 'pending')::int,
+      count(*) FILTER (WHERE #{application_search_sql("$1")} AND #{application_date_sql("$2", "$3")} AND #{application_status_sql()} = 'requested_info')::int,
+      count(*) FILTER (WHERE #{application_search_sql("$1")} AND #{application_date_sql("$2", "$3")} AND #{application_status_sql()} = 'approved')::int,
+      count(*) FILTER (WHERE #{application_search_sql("$1")} AND #{application_date_sql("$2", "$3")} AND #{application_status_sql()} = 'rejected')::int
+    FROM public.cleaner_applications ca
+    """
+
+    case Repo.query(sql, [filters.like, filters.started_from, filters.started_to]) do
+      {:ok, %{rows: [[directory, filtered, pending, requested, approved, rejected]]}} ->
+        selected =
+          case filters.status do
+            nil -> filtered
+            "pending" -> pending
+            "requested_info" -> requested
+            "approved" -> approved
+            "rejected" -> rejected
+          end
+
+        {:ok,
+         %{
+           directory: directory,
+           selected: selected,
+           public: %{
+             "all" => filtered,
+             "pending" => pending,
+             "requested_info" => requested,
+             "approved" => approved,
+             "rejected" => rejected
+           }
+         }}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp application_page_rows(filters) do
+    offset = (filters.page - 1) * @application_page_size
+
+    sql = """
+    SELECT jsonb_build_object(
+      'id', ca.id,
+      'userId', ca.user_id,
+      'name', COALESCE(NULLIF(btrim(ca.name), ''), 'Applicant'),
+      'email', ca.email,
+      'phone', ca.phone,
+      'status', #{application_status_sql()},
+      'kycStatus', CASE
+        WHEN kp.id IS NOT NULL THEN COALESCE(NULLIF(btrim(kp.kyc_status), ''), 'not_started')
+        ELSE COALESCE(NULLIF(btrim(ca.kyc_status), ''), 'not_started')
+      END,
+      'kycReviewAnswer', CASE
+        WHEN kp.id IS NOT NULL THEN NULLIF(upper(btrim(kp.review_answer)), '')
+        ELSE NULLIF(upper(btrim(ca.kyc_review_answer)), '')
+      END,
+      'hourlyRateGhs', ca.hourly_rate,
+      'skills', COALESCE(to_jsonb(ca.skills), '[]'::jsonb),
+      'createdAt', ca.created_at
+    )
+    FROM public.cleaner_applications ca
+    LEFT JOIN LATERAL (
+      SELECT kp.id, kp.kyc_status, kp.review_answer
+      FROM public.kyc_profiles kp
+      WHERE (
+        kp.user_id = ca.user_id
+        OR (
+          ca.user_id IS NULL
+          AND NULLIF(btrim(ca.sumsub_applicant_id), '') IS NOT NULL
+          AND kp.sumsub_applicant_id = ca.sumsub_applicant_id
+        )
+      )
+        AND lower(btrim(coalesce(kp.level_name, ''))) = $1
+        AND NOT (
+          lower(btrim(coalesce(kp.kyc_status, ''))) IN ('', 'not_started')
+          AND btrim(coalesce(kp.review_answer, '')) = ''
+          AND btrim(coalesce(kp.sumsub_applicant_id, '')) = ''
+          AND btrim(coalesce(kp.last_event_type, '')) = ''
+          AND kp.submitted_at IS NULL
+          AND kp.reviewed_at IS NULL
+          AND kp.completed_at IS NULL
+        )
+      ORDER BY
+        CASE
+          WHEN kp.reviewed_at IS NULL AND kp.completed_at IS NULL AND kp.submitted_at IS NULL
+          THEN COALESCE(kp.updated_at, kp.created_at, '-infinity'::timestamptz)
+          ELSE GREATEST(
+            COALESCE(kp.reviewed_at, '-infinity'::timestamptz),
+            COALESCE(kp.completed_at, '-infinity'::timestamptz),
+            COALESCE(kp.submitted_at, '-infinity'::timestamptz)
+          )
+        END DESC,
+        kp.updated_at DESC NULLS LAST,
+        kp.created_at DESC NULLS LAST
+      LIMIT 1
+    ) kp ON true
+    WHERE #{application_search_sql("$2")}
+      AND #{application_date_sql("$3", "$4")}
+      AND ($5::text IS NULL OR #{application_status_sql()} = $5)
+    ORDER BY #{application_order(filters.sort, filters.direction)}
+    LIMIT $6
+    OFFSET $7
+    """
+
+    case Repo.query(sql, [
+           worker_kyc_level(),
+           filters.like,
+           filters.started_from,
+           filters.started_to,
+           filters.status,
+           @application_page_size,
+           offset
+         ]) do
+      {:ok, result} -> {:ok, Enum.map(result.rows, &hd/1)}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp draft_page_counts(filters) do
+    directory_sql = "SELECT count(*)::int FROM public.cleaner_application_drafts"
+
+    grouped_sql = """
+    SELECT d.current_step, count(*)::int
+    #{draft_from_sql()}
+    WHERE #{draft_search_sql()}
+      AND #{draft_date_sql()}
+    GROUP BY d.current_step
+    ORDER BY d.current_step NULLS LAST
+    """
+
+    with {:ok, %{rows: [[directory]]}} <- Repo.query(directory_sql, []),
+         {:ok, grouped} <-
+           Repo.query(grouped_sql, [filters.like, filters.started_from, filters.started_to]) do
+      steps =
+        Enum.flat_map(grouped.rows, fn
+          [step, count] when is_integer(step) and step >= 1 ->
+            [%{"step" => step, "count" => count}]
+
+          _ ->
+            []
+        end)
+
+      filtered = Enum.reduce(grouped.rows, 0, fn [_, count], sum -> sum + count end)
+
+      selected =
+        case filters.step do
+          nil -> filtered
+          step -> Enum.find_value(steps, 0, &if(&1["step"] == step, do: &1["count"]))
+        end
+
+      {:ok,
+       %{directory: directory, selected: selected, public: %{"all" => filtered, "steps" => steps}}}
+    else
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp draft_page_rows(filters) do
+    offset = (filters.page - 1) * @application_page_size
+
+    sql = """
+    SELECT jsonb_build_object(
+      'id', d.id,
+      'userId', d.user_id,
+      'name', #{draft_name_sql()},
+      'email', COALESCE(NULLIF(btrim(d.email), ''), u.email),
+      'phone', COALESCE(NULLIF(btrim(u.phone), ''), NULLIF(btrim(d.payload->>'phone'), '')),
+      'currentStep', d.current_step,
+      'createdAt', d.created_at,
+      'updatedAt', d.updated_at,
+      'lastSavedAt', d.last_saved_at
+    )
+    #{draft_from_sql()}
+    WHERE #{draft_search_sql()}
+      AND #{draft_date_sql()}
+      AND ($4::int IS NULL OR d.current_step = $4)
+    ORDER BY #{draft_order(filters.sort, filters.direction)}
+    LIMIT $5
+    OFFSET $6
+    """
+
+    case Repo.query(sql, [
+           filters.like,
+           filters.started_from,
+           filters.started_to,
+           filters.step,
+           @application_page_size,
+           offset
+         ]) do
+      {:ok, result} -> {:ok, Enum.map(result.rows, &hd/1)}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp application_status_sql, do: "COALESCE(NULLIF(btrim(ca.status), ''), 'pending')"
+
+  defp application_search_sql(param) do
+    """
+    (
+      #{param}::text IS NULL
+      OR lower(ca.name) LIKE #{param}
+      OR lower(coalesce(ca.email, '')) LIKE #{param}
+      OR lower(coalesce(ca.phone, '')) LIKE #{param}
+      OR EXISTS (
+        SELECT 1
+        FROM unnest(coalesce(ca.skills, ARRAY[]::text[])) AS skill
+        WHERE lower(skill) LIKE #{param}
+      )
+    )
+    """
+  end
+
+  defp application_date_sql(from_param, to_param) do
+    """
+    (
+      #{from_param}::date IS NULL
+      OR (ca.created_at AT TIME ZONE 'Africa/Accra')::date >= #{from_param}::date
+    )
+    AND (
+      #{to_param}::date IS NULL
+      OR (ca.created_at AT TIME ZONE 'Africa/Accra')::date <= #{to_param}::date
+    )
+    """
+  end
+
+  defp application_order("name", "asc"), do: "lower(ca.name) ASC, ca.id ASC"
+  defp application_order("name", "desc"), do: "lower(ca.name) DESC, ca.id ASC"
+  defp application_order("rate", "asc"), do: "ca.hourly_rate ASC NULLS LAST, ca.id ASC"
+  defp application_order("rate", "desc"), do: "ca.hourly_rate DESC NULLS LAST, ca.id ASC"
+  defp application_order("status", "asc"), do: "#{application_status_sql()} ASC, ca.id ASC"
+  defp application_order("status", "desc"), do: "#{application_status_sql()} DESC, ca.id ASC"
+  defp application_order("started", "asc"), do: "ca.created_at ASC NULLS LAST, ca.id ASC"
+  defp application_order("started", "desc"), do: "ca.created_at DESC NULLS LAST, ca.id ASC"
+
+  defp draft_from_sql do
+    """
+    FROM public.cleaner_application_drafts d
+    LEFT JOIN public.users u ON u.id = d.user_id
+    LEFT JOIN public.profiles p ON p.id = d.user_id
+    """
+  end
+
+  defp draft_name_sql do
+    """
+    COALESCE(
+      NULLIF(btrim(p.fullname), ''),
+      NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
+      NULLIF(btrim(concat_ws(' ', d.payload->>'firstName', d.payload->>'lastName')), ''),
+      u.email,
+      d.email,
+      'Applicant'
+    )
+    """
+  end
+
+  defp draft_search_sql do
+    """
+    (
+      $1::text IS NULL
+      OR lower(#{draft_name_sql()}) LIKE $1
+      OR lower(coalesce(d.email, u.email, '')) LIKE $1
+      OR lower(coalesce(u.phone, d.payload->>'phone', '')) LIKE $1
+    )
+    """
+  end
+
+  defp draft_date_sql do
+    """
+    (
+      $2::date IS NULL
+      OR (d.created_at AT TIME ZONE 'Africa/Accra')::date >= $2::date
+    )
+    AND (
+      $3::date IS NULL
+      OR (d.created_at AT TIME ZONE 'Africa/Accra')::date <= $3::date
+    )
+    """
+  end
+
+  defp draft_order("name", "asc"), do: "lower(#{draft_name_sql()}) ASC, d.id ASC"
+  defp draft_order("name", "desc"), do: "lower(#{draft_name_sql()}) DESC, d.id ASC"
+  defp draft_order("step", "asc"), do: "d.current_step ASC NULLS LAST, d.id ASC"
+  defp draft_order("step", "desc"), do: "d.current_step DESC NULLS LAST, d.id ASC"
+  defp draft_order("started", "asc"), do: "d.created_at ASC NULLS LAST, d.id ASC"
+  defp draft_order("started", "desc"), do: "d.created_at DESC NULLS LAST, d.id ASC"
+
+  defp draft_order("saved", "asc"),
+    do: "COALESCE(d.last_saved_at, d.updated_at) ASC NULLS LAST, d.id ASC"
+
+  defp draft_order("saved", "desc"),
+    do: "COALESCE(d.last_saved_at, d.updated_at) DESC NULLS LAST, d.id ASC"
+
+  defp page_number(params) do
+    case blank_param(params, "page") do
+      nil ->
+        {:ok, 1}
+
+      value when is_integer(value) and value in 1..10_000 ->
+        {:ok, value}
+
+      value when is_binary(value) ->
+        case Integer.parse(value) do
+          {page, ""} when page in 1..10_000 -> {:ok, page}
+          _ -> {:error, :invalid_request}
+        end
+
+      _ ->
+        {:error, :invalid_request}
+    end
+  end
+
+  defp page_choice(params, key, allowed, default) do
+    case blank_param(params, key) do
+      nil ->
+        {:ok, default}
+
+      value when is_binary(value) ->
+        if value in allowed, do: {:ok, value}, else: {:error, :invalid_request}
+
+      _ ->
+        {:error, :invalid_request}
+    end
+  end
+
+  defp optional_choice(params, key, allowed) do
+    case blank_param(params, key) do
+      nil ->
+        {:ok, nil}
+
+      "all" ->
+        {:ok, nil}
+
+      value when is_binary(value) ->
+        if value in allowed, do: {:ok, value}, else: {:error, :invalid_request}
+
+      _ ->
+        {:error, :invalid_request}
+    end
+  end
+
+  defp optional_step(params) do
+    case blank_param(params, "step") do
+      nil ->
+        {:ok, nil}
+
+      "all" ->
+        {:ok, nil}
+
+      value when is_integer(value) and value in 1..100 ->
+        {:ok, value}
+
+      value when is_binary(value) ->
+        case Integer.parse(value) do
+          {step, ""} when step in 1..100 -> {:ok, step}
+          _ -> {:error, :invalid_request}
+        end
+
+      _ ->
+        {:error, :invalid_request}
+    end
+  end
+
+  defp optional_date(params, key) do
+    case blank_param(params, key) do
+      nil ->
+        {:ok, nil}
+
+      value when is_binary(value) ->
+        case Date.from_iso8601(value) do
+          {:ok, date} -> {:ok, date}
+          _ -> {:error, :invalid_request}
+        end
+
+      _ ->
+        {:error, :invalid_request}
+    end
+  end
+
+  defp blank_param(params, key) do
+    value = params[key] || params[String.to_atom(key)]
+    if value in [nil, ""], do: nil, else: value
+  end
+
+  defp default_direction(sort) when sort in ~w(name status step), do: "asc"
+  defp default_direction(_sort), do: "desc"
+
+  defp search_like(value) when is_binary(value) do
+    cleaned =
+      value
+      |> String.trim()
+      |> String.slice(0, 80)
+      |> String.replace(~r/[%_\\]/, "")
+
+    if cleaned == "", do: nil, else: "%" <> String.downcase(cleaned) <> "%"
+  end
+
+  defp search_like(_value), do: nil
 
   defp admin_json_list(user_id, sql, params \\ []) do
     with {:ok, uid} <- dump_uuid(user_id),

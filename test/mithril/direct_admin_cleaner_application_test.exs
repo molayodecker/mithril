@@ -268,8 +268,148 @@ defmodule Mithril.DirectAdminCleanerApplicationTest do
     assert detail["kyc"]["applicantId"] == "application-review"
   end
 
+  test "search, sort, and the next page reach applications outside the first 50" do
+    Enum.each(1..51, fn n ->
+      name = if n == 1, do: "Needle Person", else: "Page Person #{n}"
+      status = if n == 2, do: "rejected", else: "pending"
+      created_at = if n == 1, do: ~U[2026-01-01 00:00:00Z], else: ~U[2026-11-01 00:00:00Z]
+
+      Repo.query!(
+        """
+        INSERT INTO public.cleaner_applications (id, name, status, hourly_rate, skills, email, created_at)
+        VALUES ($1::uuid, $2, $3, 40, ARRAY['Window']::text[], $4, $5)
+        """,
+        [
+          Ecto.UUID.dump!(Ecto.UUID.generate()),
+          name,
+          status,
+          "page#{n}@tryinstaclean.com",
+          created_at
+        ]
+      )
+    end)
+
+    assert {:ok, first} = Direct.list_admin_cleaner_applications(@admin)
+    assert first["limit"] == 50
+    assert first["page"] == 1
+    assert first["directoryTotal"] == 51
+    assert first["total"] == 51
+    assert length(first["applications"]) == 50
+    refute Enum.any?(first["applications"], &(&1["name"] == "Needle Person"))
+
+    assert {:ok, second} = Direct.list_admin_cleaner_applications(@admin, %{"page" => "2"})
+    assert Enum.map(second["applications"], & &1["name"]) == ["Needle Person"]
+
+    assert {:ok, found} = Direct.list_admin_cleaner_applications(@admin, %{"q" => "needle"})
+    assert found["total"] == 1
+    assert hd(found["applications"])["name"] == "Needle Person"
+    assert found["counts"]["all"] == 1
+
+    assert {:ok, rejected} =
+             Direct.list_admin_cleaner_applications(@admin, %{"status" => "rejected"})
+
+    assert rejected["total"] == 1
+    assert hd(rejected["applications"])["name"] == "Page Person 2"
+    assert rejected["counts"]["rejected"] == 1
+    assert rejected["counts"]["all"] == 51
+
+    assert {:ok, started} =
+             Direct.list_admin_cleaner_applications(@admin, %{
+               "startedFrom" => "2026-01-01",
+               "startedTo" => "2026-01-02"
+             })
+
+    assert started["total"] == 1
+    assert hd(started["applications"])["name"] == "Needle Person"
+
+    assert {:ok, by_name} = Direct.list_admin_cleaner_applications(@admin, %{"sort" => "name"})
+    assert hd(by_name["applications"])["name"] == "Needle Person"
+
+    assert {:error, :invalid_request} =
+             Direct.list_admin_cleaner_applications(@admin, %{"sort" => "email"})
+  end
+
+  test "search, step, and the next page reach drafts outside the first 50" do
+    Repo.query!("DROP TABLE IF EXISTS public.cleaner_application_drafts CASCADE")
+    Repo.query!("DROP TABLE IF EXISTS public.profiles CASCADE")
+
+    Repo.query!("""
+    CREATE TABLE public.profiles (
+      id uuid PRIMARY KEY,
+      fullname text,
+      firstname text,
+      lastname text
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.cleaner_application_drafts (
+      id uuid PRIMARY KEY,
+      user_id uuid,
+      email text,
+      payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+      current_step integer NOT NULL,
+      created_at timestamptz NOT NULL,
+      updated_at timestamptz NOT NULL,
+      last_saved_at timestamptz
+    )
+    """)
+
+    Enum.each(1..51, fn n ->
+      id = Ecto.UUID.generate()
+      name = if n == 1, do: "Needle", else: "Draft"
+      step = if n == 3, do: 3, else: 1
+      created_at = if n == 1, do: ~U[2026-01-01 00:00:00Z], else: ~U[2026-11-01 00:00:00Z]
+
+      Repo.query!(
+        """
+        INSERT INTO public.users (id, email) VALUES ($1::uuid, $2)
+        """,
+        [Ecto.UUID.dump!(id), "draft#{n}@tryinstaclean.com"]
+      )
+
+      Repo.query!(
+        """
+        INSERT INTO public.cleaner_application_drafts (
+          id, user_id, email, payload, current_step, created_at, updated_at, last_saved_at
+        ) VALUES (
+          $1::uuid, $2::uuid, $3, jsonb_build_object('firstName', $4::text, 'lastName', 'Person'), $5, $6, $6, $6
+        )
+        """,
+        [
+          Ecto.UUID.dump!(Ecto.UUID.generate()),
+          Ecto.UUID.dump!(id),
+          "draft#{n}@tryinstaclean.com",
+          name,
+          step,
+          created_at
+        ]
+      )
+    end)
+
+    assert {:ok, first} = Direct.list_admin_cleaner_application_drafts(@admin)
+    assert first["limit"] == 50
+    assert length(first["drafts"]) == 50
+    assert first["directoryTotal"] == 51
+    refute Enum.any?(first["drafts"], &(&1["name"] == "Needle Person"))
+
+    assert {:ok, second} = Direct.list_admin_cleaner_application_drafts(@admin, %{"page" => 2})
+    assert Enum.map(second["drafts"], & &1["name"]) == ["Needle Person"]
+
+    assert {:ok, found} = Direct.list_admin_cleaner_application_drafts(@admin, %{"q" => "needle"})
+    assert found["total"] == 1
+    assert hd(found["drafts"])["name"] == "Needle Person"
+
+    assert {:ok, step} = Direct.list_admin_cleaner_application_drafts(@admin, %{"step" => "3"})
+    assert step["total"] == 1
+    assert step["counts"]["all"] == 51
+    assert Enum.any?(step["counts"]["steps"], &(&1["step"] == 3 and &1["count"] == 1))
+  end
+
   defp listed_application(id) do
-    assert {:ok, applications} = Direct.list_admin_cleaner_applications(@admin)
+    assert {:ok, %{"applications" => applications}} =
+             Direct.list_admin_cleaner_applications(@admin)
+
     Enum.find(applications, &(&1["id"] == id))
   end
 
