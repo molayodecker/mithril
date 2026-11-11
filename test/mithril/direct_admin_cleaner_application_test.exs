@@ -283,7 +283,7 @@ defmodule Mithril.DirectAdminCleanerApplicationTest do
           Ecto.UUID.dump!(Ecto.UUID.generate()),
           name,
           status,
-          "page#{n}@tryinstaclean.com",
+          "page_#{n}@tryinstaclean.com",
           created_at
         ]
       )
@@ -304,6 +304,19 @@ defmodule Mithril.DirectAdminCleanerApplicationTest do
     assert found["total"] == 1
     assert hd(found["applications"])["name"] == "Needle Person"
     assert found["counts"]["all"] == 1
+
+    assert {:ok, literal_email} =
+             Direct.list_admin_cleaner_applications(@admin, %{
+               "q" => "page_1@tryinstaclean.com"
+             })
+
+    assert literal_email["total"] == 1
+    assert hd(literal_email["applications"])["email"] == "page_1@tryinstaclean.com"
+
+    assert {:ok, wildcard} =
+             Direct.list_admin_cleaner_applications(@admin, %{"q" => "page%1@"})
+
+    assert wildcard["total"] == 0
 
     assert {:ok, rejected} =
              Direct.list_admin_cleaner_applications(@admin, %{"status" => "rejected"})
@@ -365,7 +378,7 @@ defmodule Mithril.DirectAdminCleanerApplicationTest do
         """
         INSERT INTO public.users (id, email) VALUES ($1::uuid, $2)
         """,
-        [Ecto.UUID.dump!(id), "draft#{n}@tryinstaclean.com"]
+        [Ecto.UUID.dump!(id), "draft_#{n}@tryinstaclean.com"]
       )
 
       Repo.query!(
@@ -379,7 +392,7 @@ defmodule Mithril.DirectAdminCleanerApplicationTest do
         [
           Ecto.UUID.dump!(Ecto.UUID.generate()),
           Ecto.UUID.dump!(id),
-          "draft#{n}@tryinstaclean.com",
+          "draft_#{n}@tryinstaclean.com",
           name,
           step,
           created_at
@@ -399,6 +412,19 @@ defmodule Mithril.DirectAdminCleanerApplicationTest do
     assert {:ok, found} = Direct.list_admin_cleaner_application_drafts(@admin, %{"q" => "needle"})
     assert found["total"] == 1
     assert hd(found["drafts"])["name"] == "Needle Person"
+
+    assert {:ok, literal_email} =
+             Direct.list_admin_cleaner_application_drafts(@admin, %{
+               "q" => "draft_1@tryinstaclean.com"
+             })
+
+    assert literal_email["total"] == 1
+    assert hd(literal_email["drafts"])["email"] == "draft_1@tryinstaclean.com"
+
+    assert {:ok, wildcard} =
+             Direct.list_admin_cleaner_application_drafts(@admin, %{"q" => "draft%1@"})
+
+    assert wildcard["total"] == 0
 
     assert {:ok, step} = Direct.list_admin_cleaner_application_drafts(@admin, %{"step" => "3"})
     assert step["total"] == 1
