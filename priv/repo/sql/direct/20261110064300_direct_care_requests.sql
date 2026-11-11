@@ -177,6 +177,16 @@ BEGIN
     ON m.care_request_id = r.id
    AND m.worker_user_id = caller
   WHERE r.status = 'submitted'
+    AND EXISTS (
+      SELECT 1 FROM public.cleaner_data cd
+      WHERE cd.user_id = caller
+        AND cd.verified IS TRUE
+        AND cd.status = 'active'
+        AND EXISTS (
+          SELECT 1 FROM unnest(COALESCE(cd.specialties, '{}'::text[])) AS offered(slug)
+          WHERE lower(btrim(offered.slug)) = r.specialty_slug
+        )
+    )
     AND NOT EXISTS (
       SELECT 1
       FROM public.direct_care_request_responses response
@@ -217,7 +227,20 @@ BEGIN
     'budget_unit', r.budget_unit,
     'budget_negotiable', r.budget_negotiable,
     'status', r.status,
-    'created_at', r.created_at
+    'created_at', r.created_at,
+    'responses', CASE WHEN r.customer_id = caller THEN COALESCE((
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'worker_user_id', response.worker_user_id,
+          'offer_kind', response.offer_kind,
+          'amount_minor', response.amount_minor,
+          'note', response.note,
+          'created_at', response.created_at
+        ) ORDER BY response.created_at DESC
+      )
+      FROM public.direct_care_request_responses response
+      WHERE response.care_request_id = r.id
+    ), '[]'::jsonb) ELSE '[]'::jsonb END
   )
   INTO request
   FROM public.direct_care_requests r
@@ -229,6 +252,17 @@ BEGIN
         FROM public.direct_care_request_matches m
         WHERE m.care_request_id = r.id
           AND m.worker_user_id = caller
+          AND r.status = 'submitted'
+          AND EXISTS (
+            SELECT 1 FROM public.cleaner_data cd
+            WHERE cd.user_id = caller
+              AND cd.verified IS TRUE
+              AND cd.status = 'active'
+              AND EXISTS (
+                SELECT 1 FROM unnest(COALESCE(cd.specialties, '{}'::text[])) AS offered(slug)
+                WHERE lower(btrim(offered.slug)) = r.specialty_slug
+              )
+          )
       )
     );
 
@@ -277,6 +311,16 @@ BEGIN
     WHERE m.care_request_id = p_care_request_id
       AND m.worker_user_id = caller
       AND r.status = 'submitted'
+      AND EXISTS (
+      SELECT 1 FROM public.cleaner_data cd
+      WHERE cd.user_id = caller
+        AND cd.verified IS TRUE
+        AND cd.status = 'active'
+        AND EXISTS (
+          SELECT 1 FROM unnest(COALESCE(cd.specialties, '{}'::text[])) AS offered(slug)
+          WHERE lower(btrim(offered.slug)) = r.specialty_slug
+        )
+    )
   ) THEN
     RETURN jsonb_build_object('success', false, 'error', 'not_found');
   END IF;
