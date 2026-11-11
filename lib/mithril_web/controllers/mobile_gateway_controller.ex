@@ -66,7 +66,22 @@ defmodule MithrilWeb.MobileGatewayController do
   def lookup_sign_in_account(conn, params) do
     args = if is_map(params["args"]), do: params["args"], else: %{}
     identifier = args["lookup_identifier"] || params["lookup_identifier"]
-    respond(conn, Auth.lookup_sign_in_account(identifier))
+    case Auth.lookup_sign_in_account(identifier) do
+      {:ok, lookup} ->
+        public_lookup =
+          Map.take(lookup, [
+            :has_account,
+            :matched_by,
+            :providers,
+            :supports_email_password,
+            :supports_phone_otp
+          ])
+
+        respond(conn, {:ok, public_lookup})
+
+      error ->
+        respond(conn, error)
+    end
   end
 
   operation(:query,
