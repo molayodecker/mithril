@@ -542,7 +542,7 @@ defmodule Mithril.AuthTest do
   end
 
   test "POST /mobile/rpc/lookup_sign_in_account succeeds when the bearer token is missing or invalid" do
-    {user_id, _email} =
+    {_user_id, _email} =
       insert_account("rpc-lookup@tryinstaclean.com", "correct-horse", phone: "+233241110077")
 
     missing =
