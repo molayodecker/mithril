@@ -357,6 +357,9 @@ defmodule MithrilWeb.Router do
   scope "/mobile", MithrilWeb do
     pipe_through [:mobile_guest]
 
+    # The installed apps call this path before a session exists. It stays off
+    # the authenticated RPC router so a missing token is not reported as unauthorized.
+    post "/rpc/lookup_sign_in_account", MobileGatewayController, :lookup_sign_in_account
     post "/guest/rpc/:name", MobileGatewayController, :guest_rpc
     post "/guest/functions/*name", MobileGatewayController, :guest_function
     get "/guest/app-update-policy", MobileAppUpdatePolicyController, :show
