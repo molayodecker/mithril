@@ -1550,13 +1550,13 @@ defmodule Mithril.Direct do
     """
     (
       #{param}::text IS NULL
-      OR lower(ca.name) LIKE #{param}
-      OR lower(coalesce(ca.email, '')) LIKE #{param}
-      OR lower(coalesce(ca.phone, '')) LIKE #{param}
+      OR lower(ca.name) LIKE #{param} ESCAPE '!'
+      OR lower(coalesce(ca.email, '')) LIKE #{param} ESCAPE '!'
+      OR lower(coalesce(ca.phone, '')) LIKE #{param} ESCAPE '!'
       OR EXISTS (
         SELECT 1
         FROM unnest(coalesce(ca.skills, ARRAY[]::text[])) AS skill
-        WHERE lower(skill) LIKE #{param}
+        WHERE lower(skill) LIKE #{param} ESCAPE '!'
       )
     )
     """
@@ -1609,9 +1609,9 @@ defmodule Mithril.Direct do
     """
     (
       $1::text IS NULL
-      OR lower(#{draft_name_sql()}) LIKE $1
-      OR lower(coalesce(d.email, u.email, '')) LIKE $1
-      OR lower(coalesce(u.phone, d.payload->>'phone', '')) LIKE $1
+      OR lower(#{draft_name_sql()}) LIKE $1 ESCAPE '!'
+      OR lower(coalesce(d.email, u.email, '')) LIKE $1 ESCAPE '!'
+      OR lower(coalesce(u.phone, d.payload->>'phone', '')) LIKE $1 ESCAPE '!'
     )
     """
   end
@@ -1741,7 +1741,9 @@ defmodule Mithril.Direct do
       value
       |> String.trim()
       |> String.slice(0, 80)
-      |> String.replace(~r/[%_\\]/, "")
+      |> String.replace("!", "!!")
+      |> String.replace("%", "!%")
+      |> String.replace("_", "!_")
 
     if cleaned == "", do: nil, else: "%" <> String.downcase(cleaned) <> "%"
   end
