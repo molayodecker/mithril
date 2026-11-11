@@ -66,6 +66,7 @@ defmodule MithrilWeb.MobileGatewayController do
   def lookup_sign_in_account(conn, params) do
     args = if is_map(params["args"]), do: params["args"], else: %{}
     identifier = args["lookup_identifier"] || params["lookup_identifier"]
+
     case Auth.lookup_sign_in_account(identifier) do
       {:ok, lookup} ->
         public_lookup = %{
