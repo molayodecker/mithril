@@ -33,6 +33,45 @@ defmodule MithrilWeb.DirectController do
 
   alias OpenApiSpex.Schema
 
+  @application_page_parameters [
+    page: [
+      in: :query,
+      schema: %Schema{type: :integer, minimum: 1},
+      required: false
+    ],
+    q: [
+      in: :query,
+      schema: %Schema{type: :string, maxLength: 80},
+      required: false,
+      description: "Name, email, phone, or skill"
+    ],
+    status: [
+      in: :query,
+      schema: %Schema{type: :string, enum: ["pending", "requested_info", "approved", "rejected"]},
+      required: false
+    ],
+    startedFrom: [
+      in: :query,
+      schema: %Schema{type: :string, format: :date},
+      required: false
+    ],
+    startedTo: [
+      in: :query,
+      schema: %Schema{type: :string, format: :date},
+      required: false
+    ],
+    sort: [
+      in: :query,
+      schema: %Schema{type: :string},
+      required: false
+    ],
+    direction: [
+      in: :query,
+      schema: %Schema{type: :string, enum: ["asc", "desc"]},
+      required: false
+    ]
+  ]
+
   tags(["direct"])
 
   operation(:list_placements,
@@ -155,15 +194,14 @@ defmodule MithrilWeb.DirectController do
   operation(:list_admin_cleaner_applications,
     operation_id: "direct.listAdminCleanerApplications",
     summary: "List submitted cleaner applications for Direct operations",
+    parameters: @application_page_parameters,
     responses: [
       ok: {"Cleaner applications", "application/json", AdminCleanerApplicationListResponse}
     ]
   )
 
-  def list_admin_cleaner_applications(conn, _params) do
-    respond(conn, Direct.list_admin_cleaner_applications(user_id(conn)), fn applications ->
-      %{applications: applications}
-    end)
+  def list_admin_cleaner_applications(conn, params) do
+    respond(conn, Direct.list_admin_cleaner_applications(user_id(conn), params))
   end
 
   operation(:show_admin_cleaner_application,
@@ -189,6 +227,16 @@ defmodule MithrilWeb.DirectController do
   operation(:list_admin_cleaner_application_drafts,
     operation_id: "direct.listAdminCleanerApplicationDrafts",
     summary: "List in-progress cleaner application drafts for Direct operations",
+    parameters:
+      @application_page_parameters ++
+        [
+          step: [
+            in: :query,
+            schema: %Schema{type: :integer, minimum: 1, maximum: 100},
+            required: false,
+            description: "Draft step"
+          ]
+        ],
     responses: [
       ok:
         {"Cleaner application drafts", "application/json",
@@ -196,10 +244,8 @@ defmodule MithrilWeb.DirectController do
     ]
   )
 
-  def list_admin_cleaner_application_drafts(conn, _params) do
-    respond(conn, Direct.list_admin_cleaner_application_drafts(user_id(conn)), fn drafts ->
-      %{drafts: drafts}
-    end)
+  def list_admin_cleaner_application_drafts(conn, params) do
+    respond(conn, Direct.list_admin_cleaner_application_drafts(user_id(conn), params))
   end
 
   operation(:show_admin_cleaner_application_draft,
