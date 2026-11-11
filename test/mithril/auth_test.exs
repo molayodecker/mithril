@@ -537,7 +537,7 @@ defmodule Mithril.AuthTest do
     assert lookup.has_account
     assert lookup.user_id == user_id
     assert lookup.matched_by == "phone"
-    assert lookup.supports_phone_otp
+    refute lookup.supports_phone_otp
     assert lookup.phone_e164 == "+233241110088"
   end
 
@@ -550,7 +550,11 @@ defmodule Mithril.AuthTest do
         "args" => %{"lookup_identifier" => "0241110077"}
       })
 
-    assert json_response(missing, 200)["data"]["user_id"] == user_id
+    missing_data = json_response(missing, 200)["data"]
+    assert missing_data["has_account"] == true
+    refute Map.has_key?(missing_data, "user_id")
+    refute Map.has_key?(missing_data, "email")
+    refute Map.has_key?(missing_data, "phone_e164")
 
     stale =
       build_conn()
@@ -563,6 +567,19 @@ defmodule Mithril.AuthTest do
     assert stale_data["has_account"] == true
     assert stale_data["supports_phone_otp"] == true
     refute Map.has_key?(stale_data, "password_hash")
+    refute Map.has_key?(stale_data, "user_id")
+    refute Map.has_key?(stale_data, "email")
+    refute Map.has_key?(stale_data, "phone_e164")
+
+    by_email =
+      post(build_conn(), "/mobile/rpc/lookup_sign_in_account", %{
+        "args" => %{"lookup_identifier" => "rpc-lookup@tryinstaclean.com"}
+      })
+
+    email_data = json_response(by_email, 200)["data"]
+    assert email_data["has_account"] == true
+    refute Map.has_key?(email_data, "phone_e164")
+    refute Map.has_key?(email_data, "user_id")
   end
 
   test "check_availability treats a legacy public.users email as taken" do
