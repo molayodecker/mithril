@@ -1469,12 +1469,17 @@ defmodule Mithril.Direct do
   end
 
   defp draft_page_counts(filters) do
-    directory_sql = "SELECT count(*)::int FROM public.cleaner_application_drafts"
+    directory_sql = """
+    SELECT count(*)::int
+    #{draft_from_sql()}
+    WHERE #{draft_still_open_sql()}
+    """
 
     grouped_sql = """
     SELECT d.current_step, count(*)::int
     #{draft_from_sql()}
-    WHERE #{draft_search_sql()}
+    WHERE #{draft_still_open_sql()}
+      AND #{draft_search_sql()}
       AND #{draft_date_sql()}
     GROUP BY d.current_step
     ORDER BY d.current_step NULLS LAST
@@ -1523,7 +1528,8 @@ defmodule Mithril.Direct do
       'lastSavedAt', d.last_saved_at
     )
     #{draft_from_sql()}
-    WHERE #{draft_search_sql()}
+    WHERE #{draft_still_open_sql()}
+      AND #{draft_search_sql()}
       AND #{draft_date_sql()}
       AND ($4::int IS NULL OR d.current_step = $4)
     ORDER BY #{draft_order(filters.sort, filters.direction)}
@@ -1583,6 +1589,31 @@ defmodule Mithril.Direct do
   defp application_order("status", "desc"), do: "#{application_status_sql()} DESC, ca.id ASC"
   defp application_order("started", "asc"), do: "ca.created_at ASC NULLS LAST, ca.id ASC"
   defp application_order("started", "desc"), do: "ca.created_at DESC NULLS LAST, ca.id ASC"
+
+  defp draft_still_open_sql do
+    """
+    NOT EXISTS (
+      SELECT 1
+      FROM public.cleaner_data cd
+      WHERE cd.user_id = d.user_id
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM public.cleaner_applications ca
+      WHERE lower(btrim(ca.status::text)) = 'approved'
+        AND (
+          ca.user_id = d.user_id
+          OR (
+            NULLIF(lower(btrim(ca.email)), '') IS NOT NULL
+            AND lower(btrim(ca.email)) IN (
+              lower(btrim(COALESCE(d.email, ''))),
+              lower(btrim(COALESCE(u.email, '')))
+            )
+          )
+        )
+    )
+    """
+  end
 
   defp draft_from_sql do
     """
