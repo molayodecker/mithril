@@ -8,6 +8,7 @@ defmodule Mithril.DirectOperations do
 
   require Logger
 
+  alias Mithril.AccountCompletionBonus
   alias Mithril.Paystack
   alias Mithril.Repo
 
@@ -228,7 +229,8 @@ defmodule Mithril.DirectOperations do
          :ok <- require_admin(actor_uid) do
       case Repo.query("SELECT public.approve_cleaner_application($1::uuid)", [app_id]) do
         {:ok, %{rows: [[result]]}} ->
-          {:ok, result}
+          bonus = AccountCompletionBonus.credit_if_offered(user_id, application_id)
+          {:ok, put_completion_bonus(result, bonus)}
 
         {:ok, %{rows: []}} ->
           {:error, :application_not_found}
@@ -909,6 +911,12 @@ defmodule Mithril.DirectOperations do
       _ -> database_error(error)
     end
   end
+
+  defp put_completion_bonus(result, status) when is_map(result) and is_atom(status) do
+    Map.put(result, "accountCompletionBonus", Atom.to_string(status))
+  end
+
+  defp put_completion_bonus(result, _status), do: result
 
   defp require_admin(uid) do
     case Repo.query(

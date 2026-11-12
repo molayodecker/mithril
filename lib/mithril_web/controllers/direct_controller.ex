@@ -2,7 +2,10 @@ defmodule MithrilWeb.DirectController do
   use Phoenix.Controller, formats: [:json]
   use OpenApiSpex.ControllerSpecs
 
+  alias Mithril.AccountCompletionBonus
   alias Mithril.Direct
+
+  alias MithrilWeb.Schemas.AccountCompletionOfferResponse
 
   alias MithrilWeb.Schemas.Direct.{
     AdminCandidatesResponse,
@@ -246,6 +249,18 @@ defmodule MithrilWeb.DirectController do
 
   def list_admin_cleaner_application_drafts(conn, params) do
     respond(conn, Direct.list_admin_cleaner_application_drafts(user_id(conn), params))
+  end
+
+  operation(:send_account_completion_offers,
+    operation_id: "direct.sendAccountCompletionOffers",
+    summary: "WhatsApp the next unfinished accounts a GHS 25 completion offer",
+    responses: [
+      ok: {"Account completion offers", "application/json", AccountCompletionOfferResponse}
+    ]
+  )
+
+  def send_account_completion_offers(conn, _params) do
+    respond(conn, AccountCompletionBonus.send_offers(user_id(conn)))
   end
 
   operation(:show_admin_cleaner_application_draft,
