@@ -41,7 +41,11 @@ defmodule MithrilWeb.Schemas.MobileCalls do
       type: :object,
       properties: %{
         balance: %Schema{type: :integer, description: "Balance in pesewas"},
-        currency: %Schema{type: :string}
+        currency: %Schema{type: :string},
+        minimum_subunit: %Schema{
+          type: :integer,
+          description: "Smallest withdrawal this wallet can start, in pesewas"
+        }
       },
       required: [:balance, :currency]
     })

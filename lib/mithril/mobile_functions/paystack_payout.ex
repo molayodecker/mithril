@@ -15,7 +15,11 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
 
   @uuid_regex ~r/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   @min_withdrawal_subunit 5_000
+  @completion_bonus_min_subunit 2_500
   @max_transfer_subunit 100_000_000
+
+  def minimum_withdrawal_subunit(true), do: @completion_bonus_min_subunit
+  def minimum_withdrawal_subunit(false), do: @min_withdrawal_subunit
 
   @spec create_recipient(String.t(), map()) :: {:ok, map()} | {:error, term()}
   def create_recipient(user_id, body) when is_binary(user_id) and is_map(body) do
@@ -184,6 +188,8 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
           generated_retry_reference(user_id, recipient, amount, currency)
       end
 
+    floor = withdrawal_floor(user_id)
+
     cond do
       currency != "GHS" ->
         {:error, {:status, 400, %{ok: false, error: "Unsupported currency"}}}
@@ -191,8 +197,8 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
       not is_integer(amount) or amount <= 0 ->
         {:error, {:status, 400, %{ok: false, error: "Invalid amount"}}}
 
-      amount < @min_withdrawal_subunit ->
-        {:error, {:status, 400, %{ok: false, error: "Minimum withdrawal is GHS 50.00"}}}
+      amount < floor ->
+        {:error, {:status, 400, %{ok: false, error: minimum_withdrawal_message(floor)}}}
 
       amount > @max_transfer_subunit ->
         {:error, {:status, 400, %{ok: false, error: "Amount exceeds per-transfer limit"}}}
@@ -210,7 +216,8 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
            recipient: recipient,
            reason: reason,
            reference: String.downcase(reference_candidate),
-           currency: currency
+           currency: currency,
+           minimum: floor
          }}
     end
   end
@@ -748,7 +755,11 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
                     source_uid
                   ),
                 recovered <- recovery_result(fields, payload),
-                :ok <- validate_net_withdrawal(recovered.net),
+                :ok <-
+                  validate_net_withdrawal(
+                    recovered.net,
+                    Map.get(fields, :minimum, @min_withdrawal_subunit)
+                  ),
                 transfer_fields <- Map.put(fields, :amount, recovered.net),
                 :ok <-
                   maybe_begin_withdrawal(user_id, transfer_fields, payout_method, recovered.net),
@@ -789,22 +800,23 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     }
   end
 
-  defp validate_net_withdrawal(net) when is_integer(net) and net == 0, do: :ok
+  defp validate_net_withdrawal(0, _floor), do: :ok
 
-  defp validate_net_withdrawal(net)
-       when is_integer(net) and net > 0 and net < @min_withdrawal_subunit do
+  defp validate_net_withdrawal(net, floor)
+       when is_integer(net) and is_integer(floor) and net > 0 and net < floor do
     {:error,
      {:status, 400,
       %{
         ok: false,
-        error: "After loan recovery, remaining withdrawal is below GHS 50.00"
+        error: recovered_minimum_message(floor)
       }}}
   end
 
-  defp validate_net_withdrawal(net) when is_integer(net) and net >= @min_withdrawal_subunit,
-    do: :ok
+  defp validate_net_withdrawal(net, floor)
+       when is_integer(net) and is_integer(floor) and net >= floor,
+       do: :ok
 
-  defp validate_net_withdrawal(_),
+  defp validate_net_withdrawal(_, _),
     do: {:error, {:status, 500, %{ok: false, error: "Could not start withdrawal"}}}
 
   defp maybe_begin_withdrawal(_user_id, _fields, _payout_method, 0), do: :ok
@@ -846,10 +858,50 @@ defmodule Mithril.MobileFunctions.PaystackPayout do
     end
   end
 
+  defp withdrawal_floor(user_id) do
+    minimum_withdrawal_subunit(completion_bonus?(user_id))
+  end
+
+  defp completion_bonus?(user_id) when is_binary(user_id) do
+    case Ecto.UUID.dump(user_id) do
+      {:ok, uid} ->
+        case Repo.query(
+               """
+               SELECT EXISTS (
+                 SELECT 1
+                 FROM public.account_completion_offers
+                 WHERE user_id = $1 AND credited_at IS NOT NULL
+               )
+               """,
+               [uid]
+             ) do
+          {:ok, %{rows: [[true]]}} -> true
+          _ -> false
+        end
+
+      _ ->
+        false
+    end
+  end
+
+  defp completion_bonus?(_), do: false
+
+  defp minimum_withdrawal_message(2_500), do: "Minimum withdrawal is GHS 25.00"
+  defp minimum_withdrawal_message(_), do: "Minimum withdrawal is GHS 50.00"
+
+  defp recovered_minimum_message(2_500),
+    do: "After loan recovery, remaining withdrawal is below GHS 25.00"
+
+  defp recovered_minimum_message(_),
+    do: "After loan recovery, remaining withdrawal is below GHS 50.00"
+
   defp map_begin_withdrawal_error(message) do
     cond do
+      String.contains?(message, "below_minimum_withdrawal_2500") ->
+        {:error, {:status, 400, %{ok: false, error: minimum_withdrawal_message(2_500)}}}
+
       String.contains?(message, "below_minimum_withdrawal") ->
-        {:error, {:status, 400, %{ok: false, error: "Minimum withdrawal is GHS 50.00"}}}
+        {:error, {:status, 400, %{ok: false, error: minimum_withdrawal_message(5_000)}}}
 
       String.contains?(message, "insufficient_balance") ->
         {:error, {:status, 400, %{ok: false, error: "Insufficient balance"}}}

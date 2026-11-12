@@ -9,6 +9,7 @@ defmodule Mithril.WhatsApp.WorkerAddedTemplate do
 
   alias Mithril.DirectAdminWhatsApp
   alias Mithril.WhatsApp.ContentTemplate
+  alias Mithril.WhatsApp.TemplateVariables
 
   @name "instaclean_worker_added"
   @env_key :twilio_template_worker_added
@@ -38,9 +39,9 @@ defmodule Mithril.WhatsApp.WorkerAddedTemplate do
 
   def variables(%{"workerName" => name, "roleLabel" => role, "clientName" => client}) do
     %{
-      "1" => clip(name, 60, "there"),
-      "2" => clip(role, 40, "a worker"),
-      "3" => clip(client, 80, "a client")
+      "1" => TemplateVariables.clip(name, 60, "there"),
+      "2" => TemplateVariables.clip(role, 40, "a worker"),
+      "3" => TemplateVariables.clip(client, 80, "a client")
     }
   end
 
@@ -80,18 +81,5 @@ defmodule Mithril.WhatsApp.WorkerAddedTemplate do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end
-  end
-
-  defp clip(value, max, fallback) do
-    cleaned =
-      value
-      |> to_string()
-      |> String.replace(~r/[\r\n\t]+/, " ")
-      |> String.replace(~r/[{}]/, "")
-      |> String.replace(~r/\s+/, " ")
-      |> String.trim()
-      |> String.slice(0, max)
-
-    if cleaned == "", do: fallback, else: cleaned
   end
 end

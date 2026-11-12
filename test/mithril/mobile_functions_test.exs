@@ -521,6 +521,11 @@ defmodule Mithril.MobileFunctions.PaystackTest do
              })
   end
 
+  test "completion bonus lowers the withdrawal minimum to GHS 25" do
+    assert PaystackPayout.minimum_withdrawal_subunit(true) == 2_500
+    assert PaystackPayout.minimum_withdrawal_subunit(false) == 5_000
+  end
+
   test "initiate_transfer enforces minimum withdrawal" do
     user_id = Ecto.UUID.generate()
 

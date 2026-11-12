@@ -207,6 +207,10 @@ defmodule MithrilWeb.Router do
         DirectController,
         :list_admin_cleaner_application_drafts
 
+    post "/admin/cleaner-application-drafts/completion-offer",
+         DirectController,
+         :send_account_completion_offers
+
     get "/admin/cleaner-application-drafts/:id",
         DirectController,
         :show_admin_cleaner_application_draft
