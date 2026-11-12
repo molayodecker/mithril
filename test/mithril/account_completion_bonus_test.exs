@@ -231,7 +231,6 @@ defmodule Mithril.AccountCompletionBonusTest do
              AccountCompletionBonus.unoffered_drafts(20)
   end
 
-
   test "an applicant cannot redeem an offer assigned to a different user by editing the phone" do
     Repo.query!(
       "INSERT INTO public.users (id, phone) VALUES ($1, $2), ($3, $4)",
