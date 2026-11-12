@@ -9,6 +9,7 @@ defmodule Mithril.WhatsApp.AccountCompletionTemplate do
 
   alias Mithril.DirectAdminWhatsApp
   alias Mithril.WhatsApp.ContentTemplate
+  alias Mithril.WhatsApp.TemplateVariables
 
   @name "instaclean_complete_account_bonus"
   @env_key :twilio_template_account_completion
@@ -33,7 +34,7 @@ defmodule Mithril.WhatsApp.AccountCompletionTemplate do
   end
 
   def variables(name) do
-    %{"1" => clip(name, 60, "there")}
+    %{"1" => TemplateVariables.clip(name, 60, "there")}
   end
 
   def readable(name) do
@@ -72,16 +73,4 @@ defmodule Mithril.WhatsApp.AccountCompletionTemplate do
     end
   end
 
-  defp clip(value, max, fallback) do
-    cleaned =
-      value
-      |> to_string()
-      |> String.replace(~r/[\r\n\t]+/, " ")
-      |> String.replace(~r/[{}]/, "")
-      |> String.replace(~r/\s+/, " ")
-      |> String.trim()
-      |> String.slice(0, max)
-
-    if cleaned == "", do: fallback, else: cleaned
-  end
 end
