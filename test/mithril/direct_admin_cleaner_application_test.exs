@@ -100,6 +100,12 @@ defmodule Mithril.DirectAdminCleanerApplicationTest do
     )
     """)
 
+    Repo.query!("""
+    CREATE TABLE IF NOT EXISTS public.cleaner_data (
+      user_id uuid PRIMARY KEY
+    )
+    """)
+
     Repo.query!("INSERT INTO public.users (id) VALUES ($1::uuid)", [Ecto.UUID.dump!(@admin)])
 
     Repo.query!(
@@ -430,6 +436,86 @@ defmodule Mithril.DirectAdminCleanerApplicationTest do
     assert step["total"] == 1
     assert step["counts"]["all"] == 51
     assert Enum.any?(step["counts"]["steps"], &(&1["step"] == 3 and &1["count"] == 1))
+  end
+
+  test "approved workers and roster workers stay out of the draft queue" do
+    Repo.query!("DROP TABLE IF EXISTS public.cleaner_application_drafts CASCADE")
+    Repo.query!("DROP TABLE IF EXISTS public.profiles CASCADE")
+
+    Repo.query!("""
+    CREATE TABLE public.profiles (
+      id uuid PRIMARY KEY,
+      fullname text,
+      firstname text,
+      lastname text
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.cleaner_application_drafts (
+      id uuid PRIMARY KEY,
+      user_id uuid,
+      email text,
+      payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+      current_step integer NOT NULL,
+      created_at timestamptz NOT NULL,
+      updated_at timestamptz NOT NULL,
+      last_saved_at timestamptz
+    )
+    """)
+
+    open_id = Ecto.UUID.generate()
+    approved_id = Ecto.UUID.generate()
+    roster_id = Ecto.UUID.generate()
+    email_id = Ecto.UUID.generate()
+    now = ~U[2026-11-01 00:00:00Z]
+
+    for {id, email} <- [
+          {open_id, "open@tryinstaclean.com"},
+          {approved_id, "approved@tryinstaclean.com"},
+          {roster_id, "roster@tryinstaclean.com"},
+          {email_id, "approved@tryinstaclean.com"}
+        ] do
+      Repo.query!("INSERT INTO public.users (id, email) VALUES ($1::uuid, $2)", [
+        Ecto.UUID.dump!(id),
+        email
+      ])
+    end
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_applications (id, user_id, name, email, status, hourly_rate)
+      VALUES ($1::uuid, $2::uuid, 'Approved Person', 'approved@tryinstaclean.com', 'approved', 10)
+      """,
+      [Ecto.UUID.dump!(Ecto.UUID.generate()), Ecto.UUID.dump!(approved_id)]
+    )
+
+    Repo.query!("INSERT INTO public.cleaner_data (user_id) VALUES ($1::uuid)", [
+      Ecto.UUID.dump!(roster_id)
+    ])
+
+    for {id, email, name} <- [
+          {open_id, "open@tryinstaclean.com", "Open"},
+          {approved_id, "approved@tryinstaclean.com", "Approved"},
+          {roster_id, "roster@tryinstaclean.com", "Roster"},
+          {email_id, "approved@tryinstaclean.com", "Email"}
+        ] do
+      Repo.query!(
+        """
+        INSERT INTO public.cleaner_application_drafts (
+          id, user_id, email, payload, current_step, created_at, updated_at, last_saved_at
+        ) VALUES (
+          $1::uuid, $2::uuid, $3, jsonb_build_object('firstName', $4::text, 'lastName', 'Person'), 1, $5, $5, $5
+        )
+        """,
+        [Ecto.UUID.dump!(Ecto.UUID.generate()), Ecto.UUID.dump!(id), email, name, now]
+      )
+    end
+
+    assert {:ok, page} = Direct.list_admin_cleaner_application_drafts(@admin)
+    assert Enum.map(page["drafts"], & &1["name"]) == ["Open Person"]
+    assert page["directoryTotal"] == 1
+    assert page["total"] == 1
   end
 
   defp listed_application(id) do
