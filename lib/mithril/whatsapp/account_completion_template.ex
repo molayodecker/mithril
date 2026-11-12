@@ -72,5 +72,4 @@ defmodule Mithril.WhatsApp.AccountCompletionTemplate do
       {:error, reason} -> {:error, reason}
     end
   end
-
 end
