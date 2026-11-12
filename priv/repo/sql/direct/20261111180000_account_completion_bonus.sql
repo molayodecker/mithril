@@ -203,4 +203,9 @@ BEGIN
 EXCEPTION
   WHEN undefined_object THEN
     NULL;
+  WHEN OTHERS THEN
+    IF SQLERRM NOT LIKE '%MPG system roles%' THEN
+      RAISE;
+    END IF;
+    RAISE NOTICE 'skipping wallet balance grant: %', SQLERRM;
 END $$;
