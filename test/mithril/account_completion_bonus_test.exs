@@ -291,11 +291,11 @@ defmodule Mithril.AccountCompletionBonusTest do
   end
 
   test "shared WhatsApp sanitizer keeps both templates safe" do
-    assert Mithril.WhatsApp.TemplateVariables.clip(" Ama\\n{Owusu} ", 60, "there") ==
+    assert Mithril.WhatsApp.TemplateVariables.clip(" Ama\n{Owusu} ", 60, "there") ==
              "Ama Owusu"
 
     assert Mithril.WhatsApp.WorkerAddedTemplate.readable(
-             "Ama\\n{Owusu}",
+             "Ama\n{Owusu}",
              "Housekeeper",
              "Client"
            ) =~ "Hello Ama Owusu,"
