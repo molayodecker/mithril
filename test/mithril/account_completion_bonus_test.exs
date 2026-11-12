@@ -231,5 +231,76 @@ defmodule Mithril.AccountCompletionBonusTest do
              AccountCompletionBonus.unoffered_drafts(20)
   end
 
+
+  test "an applicant cannot redeem an offer assigned to a different user by editing the phone" do
+    Repo.query!(
+      "INSERT INTO public.users (id, phone) VALUES ($1, $2), ($3, $4)",
+      [dump(@open), "0241111111", dump(@offered), "0244444444"]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.account_completion_offers (user_id, phone, offered_by)
+      VALUES ($1, $2, $3)
+      """,
+      [dump(@offered), "+233244444444", dump(@admin)]
+    )
+
+    application_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_applications (id, user_id, phone, status)
+      VALUES ($1, $2, $3, 'approved')
+      """,
+      [dump(application_id), dump(@open), "0244444444"]
+    )
+
+    assert AccountCompletionBonus.credit_if_offered(@admin, application_id) == :skipped
+
+    assert %{rows: [[nil, owner]]} =
+             Repo.query!(
+               "SELECT credited_at, user_id FROM public.account_completion_offers WHERE phone = $1",
+               ["+233244444444"]
+             )
+
+    assert owner == dump(@offered)
+  end
+
+  test "unbound phone-only offers cannot be redeemed through an editable application phone" do
+    Repo.query!("INSERT INTO public.users (id, phone) VALUES ($1, $2)", [
+      dump(@open),
+      "0241111111"
+    ])
+
+    Repo.query!(
+      "INSERT INTO public.account_completion_offers (phone, offered_by) VALUES ($1, $2)",
+      ["+233244444444", dump(@admin)]
+    )
+
+    application_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_applications (id, user_id, phone, status)
+      VALUES ($1, $2, $3, 'approved')
+      """,
+      [dump(application_id), dump(@open), "0244444444"]
+    )
+
+    assert AccountCompletionBonus.credit_if_offered(@admin, application_id) == :skipped
+  end
+
+  test "shared WhatsApp sanitizer keeps both templates safe" do
+    assert Mithril.WhatsApp.TemplateVariables.clip(" Ama\\n{Owusu} ", 60, "there") ==
+             "Ama Owusu"
+
+    assert Mithril.WhatsApp.WorkerAddedTemplate.readable(
+             "Ama\\n{Owusu}",
+             "Housekeeper",
+             "Client"
+           ) =~ "Hello Ama Owusu,"
+  end
+
   defp dump(id), do: Ecto.UUID.dump!(id)
 end
