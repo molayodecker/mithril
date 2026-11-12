@@ -82,5 +82,4 @@ defmodule Mithril.WhatsApp.WorkerAddedTemplate do
       {:error, reason} -> {:error, reason}
     end
   end
-
 end
