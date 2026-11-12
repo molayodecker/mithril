@@ -16,7 +16,7 @@ defmodule Mithril.AccountCompletionBonus do
   def send_offers(user_id) when is_binary(user_id) do
     with {:ok, admin_id} <- Ecto.UUID.cast(user_id),
          true <- Auth.staff?(admin_id) do
-      deliver_batch(user_id, admin_id)
+      deliver_batch(Ecto.UUID.dump!(admin_id), admin_id)
     else
       _ -> {:error, :forbidden}
     end
@@ -111,20 +111,16 @@ defmodule Mithril.AccountCompletionBonus do
            """
            SELECT o.id, ca.user_id
            FROM public.cleaner_applications ca
-           LEFT JOIN public.users u ON u.id = ca.user_id
            JOIN public.account_completion_offers o
              ON o.credited_at IS NULL
-            AND (
-              (ca.user_id IS NOT NULL AND o.user_id = ca.user_id)
-              OR o.phone = public.account_completion_phone(u.phone)
-              OR o.phone = public.account_completion_phone(ca.phone)
-            )
+            AND ca.user_id IS NOT NULL
+            AND o.user_id = ca.user_id
            WHERE ca.id = $1::uuid
            ORDER BY o.offered_at
            LIMIT 1
            FOR UPDATE OF o
            """,
-           [application_id]
+           [Ecto.UUID.dump!(application_id)]
          ) do
       {:ok, %{rows: []}} ->
         :skipped
@@ -152,7 +148,7 @@ defmodule Mithril.AccountCompletionBonus do
                SET credited_at = now(), user_id = $2::uuid
                WHERE id = $1 AND credited_at IS NULL
                """,
-               [offer_id, worker_id]
+               [offer_id, Ecto.UUID.dump!(worker_id)]
              ) do
           {:ok, %{num_rows: 1}} -> :credited
           {:ok, _} -> Repo.rollback(:already_credited)
