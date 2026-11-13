@@ -1,6 +1,7 @@
 defmodule Mithril.WhatsApp.AccountCompletionTemplate do
   @moduledoc """
   WhatsApp template promising GHS 25 when an unfinished account is completed.
+  The message includes the app download link https://onelink.to/h4ns6f.
 
   Set `TWILIO_TEMPLATE_ACCOUNT_COMPLETION` to the approved Twilio Content SID
   `instaclean_complete_account_bonus`. Until WhatsApp approves that template,
@@ -13,11 +14,15 @@ defmodule Mithril.WhatsApp.AccountCompletionTemplate do
 
   @name "instaclean_complete_account_bonus"
   @env_key :twilio_template_account_completion
+  @download_url "https://onelink.to/h4ns6f"
+  @button "Download the app"
 
   def name, do: @name
 
+  def download_url, do: @download_url
+
   def body do
-    "Hello {{1}}, finish your Instaclean account and we will add GHS 25 to your wallet. You can withdraw it after your account is complete."
+    "Hello {{1}}, finish your Instaclean account and we will add GHS 25 to your wallet. You can withdraw it after your account is complete. Download the app: #{@download_url}"
   end
 
   def definition do
@@ -26,8 +31,15 @@ defmodule Mithril.WhatsApp.AccountCompletionTemplate do
       "language" => "en",
       "variables" => %{"1" => "Ama"},
       "types" => %{
-        "twilio/text" => %{
-          "body" => body()
+        "twilio/call-to-action" => %{
+          "body" => body(),
+          "actions" => [
+            %{
+              "type" => "URL",
+              "title" => @button,
+              "url" => @download_url
+            }
+          ]
         }
       }
     }
@@ -40,7 +52,7 @@ defmodule Mithril.WhatsApp.AccountCompletionTemplate do
   def readable(name) do
     filled = variables(name)
 
-    "Hello #{filled["1"]}, finish your Instaclean account and we will add GHS 25 to your wallet. You can withdraw it after your account is complete."
+    "Hello #{filled["1"]}, finish your Instaclean account and we will add GHS 25 to your wallet. You can withdraw it after your account is complete. Download the app: #{@download_url}"
   end
 
   def content_sid do

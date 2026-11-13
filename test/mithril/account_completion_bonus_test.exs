@@ -120,9 +120,21 @@ defmodule Mithril.AccountCompletionBonusTest do
     :ok
   end
 
-  test "the WhatsApp says we will add GHS 25" do
-    assert AccountCompletionTemplate.readable("Ama\n{Owusu}") =~
+  test "the WhatsApp says we will add GHS 25 and where to download the app" do
+    message = AccountCompletionTemplate.readable("Ama\n{Owusu}")
+
+    assert message =~
              "Hello Ama Owusu, finish your Instaclean account and we will add GHS 25"
+
+    assert message =~ AccountCompletionTemplate.download_url()
+
+    action =
+      AccountCompletionTemplate.definition()
+      |> get_in(["types", "twilio/call-to-action", "actions"])
+      |> hd()
+
+    assert action["title"] == "Download the app"
+    assert action["url"] == AccountCompletionTemplate.download_url()
   end
 
   test "a credited offer lowers the withdrawal minimum to GHS 25" do
