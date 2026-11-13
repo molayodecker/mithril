@@ -92,12 +92,20 @@ defmodule Mithril.Transport.Ranking do
         {:error, {:status, 400, %{error: "duration_hours must be an integer between 1 and 24"}}}
 
       true ->
-        {:ok,
-         %{
-           scheduled_date: scheduled_date,
-           start_time: start_time,
-           duration_hours: normalize_duration(duration_hours)
-         }}
+        # Postgrex encodes `$4::date` parameters only from `%Date{}` structs,
+        # so parse the validated string before it reaches the query.
+        case Date.from_iso8601(scheduled_date) do
+          {:ok, date} ->
+            {:ok,
+             %{
+               scheduled_date: date,
+               start_time: start_time,
+               duration_hours: normalize_duration(duration_hours)
+             }}
+
+          {:error, _} ->
+            {:error, {:status, 400, %{error: "scheduled_date must be YYYY-MM-DD"}}}
+        end
     end
   end
 
