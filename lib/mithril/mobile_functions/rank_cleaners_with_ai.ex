@@ -504,6 +504,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
     requested_ids = MapSet.new(requested_uuid_ids)
 
     with :ok <- validate_requested_ids(requested, requested_uuid_ids),
+         {:ok, booking_date} <- parse_booking_date(scheduled_date),
          {:ok, specialty_slug} <- service_specialty(service_id),
          {:ok, %{rows: rows}} <-
            Repo.query(
@@ -511,7 +512,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
              SELECT id
              FROM public.get_nearby_available_cleaners($1, $2, $3, $4::date, $5::time, $6)
              """,
-             [latitude, longitude, radius, scheduled_date, start_time, duration_hours]
+             [latitude, longitude, radius, booking_date, start_time, duration_hours]
            ) do
       ids =
         rows
@@ -530,6 +531,18 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
         {:fallback, "candidate_lookup_failed"}
     end
   end
+
+  # Postgrex encodes `$4::date` parameters only from `%Date{}` structs.
+  defp parse_booking_date(%Date{} = date), do: {:ok, date}
+
+  defp parse_booking_date(value) when is_binary(value) do
+    case value |> String.trim() |> Date.from_iso8601() do
+      {:ok, date} -> {:ok, date}
+      {:error, _} -> {:fallback, "invalid_booking_date"}
+    end
+  end
+
+  defp parse_booking_date(_), do: {:fallback, "invalid_booking_date"}
 
   defp validate_requested_ids(requested, requested_uuid_ids) do
     if requested != [] and length(requested_uuid_ids) == length(requested) do

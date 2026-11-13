@@ -300,7 +300,8 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
            fields.lat,
            fields.lng,
            @radius_meters,
-           fields.scheduled_date,
+           # Already validated by ensure_future_date/1; Postgrex needs a %Date{}.
+           Date.from_iso8601!(fields.scheduled_date),
            fields.start_time,
            fields.duration_hours
          ]) do
