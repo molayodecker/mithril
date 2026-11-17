@@ -145,7 +145,7 @@ defmodule Mithril.StripeBookingPaymentAttemptReserveTest do
     statement =
       sql_path
       |> File.read!()
-      |> String.split("\\n-- %%\\n")
+      |> String.split("\n-- %%\n")
       |> Enum.find(
         &String.contains?(&1, "FUNCTION public.complete_stripe_booking_payment_attempt")
       )
