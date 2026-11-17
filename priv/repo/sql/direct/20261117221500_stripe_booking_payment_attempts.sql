@@ -72,6 +72,9 @@ AS $function$
 DECLARE
   v_customer_id uuid;
   v_payment_status text;
+  v_booking_status text;
+  v_canonical_amount_minor bigint;
+  v_canonical_currency text;
   v_booking_reference text;
   v_fingerprint text := NULLIF(btrim(p_request_fingerprint), '');
   v_currency text := upper(NULLIF(btrim(p_currency), ''));
@@ -98,8 +101,11 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
-  SELECT b.customer_id, b.payment_status, b.reference
-  INTO v_customer_id, v_payment_status, v_booking_reference
+  SELECT b.customer_id, b.payment_status, b.status::text,
+         COALESCE(b.final_amount_minor, b.total_price)::bigint,
+         upper(COALESCE(b.currency, 'GHS')), b.reference
+  INTO v_customer_id, v_payment_status, v_booking_status,
+       v_canonical_amount_minor, v_canonical_currency, v_booking_reference
   FROM public.bookings b
   WHERE b.id = p_booking_id
   FOR UPDATE;
@@ -132,6 +138,16 @@ BEGIN
     stripe_client_secret := NULL;
     RETURN NEXT;
     RETURN;
+  END IF;
+
+  -- The snapshot was fetched in an earlier transaction. A reschedule can
+  -- reprice the booking before this lock, so never reserve a stale amount.
+  IF lower(coalesce(v_payment_status, '')) NOT IN ('pending', 'failed')
+     OR v_booking_status NOT IN ('pending', 'confirmed')
+     OR v_canonical_amount_minor IS DISTINCT FROM p_amount_minor
+     OR v_canonical_currency IS DISTINCT FROM v_currency THEN
+    RAISE EXCEPTION 'booking payment snapshot changed before Stripe reservation'
+      USING ERRCODE = '22023';
   END IF;
 
   SELECT pa.*
@@ -319,6 +335,21 @@ BEGIN
   END IF;
 
   IF v_attempt.status NOT IN ('initializing', 'ready') THEN
+    -- Stripe may have created the intent while a concurrent reschedule
+    -- invalidated this attempt. Keep its ID so the webhook can find the
+    -- stale attempt and refund a late successful charge.
+    IF v_attempt.stripe_payment_intent_id IS NOT NULL
+       AND v_attempt.stripe_payment_intent_id <> v_payment_intent_id THEN
+      RAISE EXCEPTION 'payment intent does not match existing attempt'
+        USING ERRCODE = '22023';
+    END IF;
+
+    UPDATE public.payment_attempts pa
+    SET stripe_payment_intent_id = v_payment_intent_id,
+        updated_at = now()
+    WHERE pa.id = p_attempt_id
+    RETURNING * INTO v_attempt;
+
     state := v_attempt.status;
     reference := v_attempt.reference;
     stripe_payment_intent_id := v_attempt.stripe_payment_intent_id;
