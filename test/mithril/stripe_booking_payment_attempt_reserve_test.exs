@@ -7,6 +7,7 @@ defmodule Mithril.StripeBookingPaymentAttemptReserveTest do
   setup do
     :ok = Sandbox.checkout(Repo)
     create_tables!()
+    create_auth_stub!()
     create_reserve_function!()
     create_complete_function!()
     :ok
@@ -77,6 +78,18 @@ defmodule Mithril.StripeBookingPaymentAttemptReserveTest do
                "SELECT status, stripe_payment_intent_id FROM public.payment_attempts WHERE id = $1",
                [Ecto.UUID.dump!(attempt_id)]
              )
+  end
+
+  defp create_auth_stub! do
+    # The isolated CI PostgreSQL fixture does not install Supabase's auth schema.
+    # Both payment functions check auth.uid(), so provide an anonymous context.
+    Repo.query!("CREATE SCHEMA IF NOT EXISTS auth")
+
+    Repo.query!("""
+    CREATE OR REPLACE FUNCTION auth.uid()
+    RETURNS uuid LANGUAGE sql STABLE
+    AS $ SELECT NULL::uuid $
+    """)
   end
 
   defp create_tables! do
