@@ -88,7 +88,7 @@ defmodule Mithril.StripeBookingPaymentAttemptReserveTest do
     Repo.query!("""
     CREATE OR REPLACE FUNCTION auth.uid()
     RETURNS uuid LANGUAGE sql STABLE
-    AS $ SELECT NULL::uuid $
+    AS 'SELECT NULL::uuid'
     """)
   end
 
