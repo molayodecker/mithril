@@ -42,6 +42,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS payment_attempts_stripe_payment_intent_idx
 
 -- %%
 
+-- Staging already has this 5-argument overload with a provider default.
+-- CREATE OR REPLACE cannot remove that default. Drop only this signature.
+-- The 4-argument Paystack function is a different function and stays.
+DROP FUNCTION IF EXISTS public.reserve_booking_payment_attempt(uuid, text, bigint, text, text);
+
+-- %%
+
 CREATE OR REPLACE FUNCTION public.reserve_booking_payment_attempt(
   p_booking_id uuid,
   p_request_fingerprint text,
@@ -246,6 +253,10 @@ BEGIN
   RETURN NEXT;
 END;
 $function$;
+
+-- %%
+
+DROP FUNCTION IF EXISTS public.complete_stripe_booking_payment_attempt(uuid, text, text, text);
 
 -- %%
 

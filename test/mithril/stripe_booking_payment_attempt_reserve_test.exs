@@ -13,6 +13,38 @@ defmodule Mithril.StripeBookingPaymentAttemptReserveTest do
     :ok
   end
 
+  test "replaces a five-argument reserve function that still has a provider default" do
+    Repo.query!("""
+    DROP FUNCTION IF EXISTS public.reserve_booking_payment_attempt(uuid, text, bigint, text, text)
+    """)
+
+    Repo.query!("""
+    CREATE FUNCTION public.reserve_booking_payment_attempt(
+      p_booking_id uuid,
+      p_request_fingerprint text,
+      p_amount_minor bigint,
+      p_currency text,
+      p_provider text DEFAULT 'paystack'
+    )
+    RETURNS TABLE(attempt_id uuid)
+    LANGUAGE sql
+    AS $$ SELECT NULL::uuid $$
+    """)
+
+    create_reserve_function!()
+
+    missing_booking_id = Ecto.UUID.generate()
+
+    assert %{num_rows: 0} =
+             Repo.query!(
+               """
+               SELECT attempt_id
+               FROM public.reserve_booking_payment_attempt($1::uuid, $2::text, $3::bigint, $4::text, 'stripe')
+               """,
+               [Ecto.UUID.dump!(missing_booking_id), "fingerprint", 100, "GHS"]
+             )
+  end
+
   test "returns no row and inserts nothing when the booking is missing" do
     missing_booking_id = Ecto.UUID.generate()
 
@@ -139,13 +171,11 @@ defmodule Mithril.StripeBookingPaymentAttemptReserveTest do
         "priv/repo/sql/direct/20261117221500_stripe_booking_payment_attempts.sql"
       ])
 
-    statement =
-      sql_path
-      |> File.read!()
-      |> String.split("\n-- %%\n")
-      |> Enum.find(&String.contains?(&1, "FUNCTION public.reserve_booking_payment_attempt"))
-
-    Repo.query!(String.trim(statement))
+    sql_path
+    |> File.read!()
+    |> String.split("\n-- %%\n")
+    |> Enum.filter(&String.contains?(&1, "public.reserve_booking_payment_attempt"))
+    |> Enum.each(fn statement -> Repo.query!(String.trim(statement)) end)
   end
 
   defp create_complete_function! do
@@ -155,14 +185,10 @@ defmodule Mithril.StripeBookingPaymentAttemptReserveTest do
         "priv/repo/sql/direct/20261117221500_stripe_booking_payment_attempts.sql"
       ])
 
-    statement =
-      sql_path
-      |> File.read!()
-      |> String.split("\n-- %%\n")
-      |> Enum.find(
-        &String.contains?(&1, "FUNCTION public.complete_stripe_booking_payment_attempt")
-      )
-
-    Repo.query!(String.trim(statement))
+    sql_path
+    |> File.read!()
+    |> String.split("\n-- %%\n")
+    |> Enum.filter(&String.contains?(&1, "public.complete_stripe_booking_payment_attempt"))
+    |> Enum.each(fn statement -> Repo.query!(String.trim(statement)) end)
   end
 end
