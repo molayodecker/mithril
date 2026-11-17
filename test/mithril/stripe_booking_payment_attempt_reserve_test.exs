@@ -136,13 +136,19 @@ defmodule Mithril.StripeBookingPaymentAttemptReserveTest do
   end
 
   defp create_complete_function! do
-    sql_path = Path.join([File.cwd!(), "priv/repo/sql/direct/20261117221500_stripe_booking_payment_attempts.sql"])
+    sql_path =
+      Path.join([
+        File.cwd!(),
+        "priv/repo/sql/direct/20261117221500_stripe_booking_payment_attempts.sql"
+      ])
 
     statement =
       sql_path
       |> File.read!()
       |> String.split("\\n-- %%\\n")
-      |> Enum.find(&String.contains?(&1, "FUNCTION public.complete_stripe_booking_payment_attempt"))
+      |> Enum.find(
+        &String.contains?(&1, "FUNCTION public.complete_stripe_booking_payment_attempt")
+      )
 
     Repo.query!(String.trim(statement))
   end
