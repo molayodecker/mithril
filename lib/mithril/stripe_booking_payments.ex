@@ -602,8 +602,16 @@ defmodule Mithril.StripeBookingPayments do
            reference: ref
          }}
 
-      {:ok, %{rows: [_row]}} ->
+      {:ok, %{rows: [["ready", ^reference, ^payment_intent_id, secret, _status]]}}
+      when is_binary(secret) and secret != "" ->
         {:ok, %{}}
+
+      {:ok, %{rows: [[state, _ref, _pi, _secret, _payment_status]]}} ->
+        Logger.warning("Stripe completion rejected: #{inspect(state)}")
+        {:error, :prepare_failed}
+
+      {:ok, %{rows: []}} ->
+        {:error, :prepare_failed}
 
       {:error, error} ->
         Logger.error("Stripe complete attempt failed: #{inspect(error)}")
