@@ -423,20 +423,22 @@ defmodule Mithril.DirectBookings do
     end
   end
 
+  # A new checkout replaces the one already open. A late payment on the retired
+  # attempt is refunded because the attempt is failed and the booking is cancelled.
   defp ensure_no_active_payment_attempts(booking_id) do
     case Repo.query(
            """
-           SELECT EXISTS(
-             SELECT 1
-             FROM public.payment_attempts
-             WHERE booking_id = $1
-               AND status IN ('initializing', 'ready')
-           )
+           UPDATE public.payment_attempts
+           SET status = 'failed',
+               failure_reason = 'Replaced by a new checkout',
+               failed_at = COALESCE(failed_at, now()),
+               updated_at = now()
+           WHERE booking_id = $1
+             AND status IN ('initializing', 'ready')
            """,
            [booking_id]
          ) do
-      {:ok, %{rows: [[false]]}} -> :ok
-      {:ok, %{rows: [[true]]}} -> {:error, :payment_in_progress}
+      {:ok, _} -> :ok
       {:error, error} -> database_error(error)
     end
   end

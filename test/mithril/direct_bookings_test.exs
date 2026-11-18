@@ -789,8 +789,9 @@ defmodule Mithril.DirectBookingsTest do
                ).rows
     end
 
-    test "atomic unpaid replacement refuses an active payment checkout" do
+    test "cancels an open checkout and replaces the unpaid booking" do
       customer_id = Ecto.UUID.generate()
+      cleaner_id = Ecto.UUID.generate()
 
       booking_id =
         insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "pending",
@@ -800,28 +801,39 @@ defmodule Mithril.DirectBookingsTest do
       Repo.query!(
         """
         INSERT INTO public.payment_attempts
-          (booking_id, reference, status, amount_minor, currency)
-        VALUES ($1, 'T_replace_active', 'ready', 19350, 'GHS')
+          (booking_id, reference, status, amount_minor, currency, expires_at)
+        VALUES ($1, 'T_replace_active', 'ready', 19350, 'GHS', now() + interval '5 minutes')
         """,
         [Ecto.UUID.dump!(booking_id)]
       )
 
-      assert {:error, :payment_in_progress} =
+      insert_cleaner!(cleaner_id)
+
+      assert {:ok, replacement} =
                DirectBookings.replace_unpaid_booking(
                  customer_id,
                  booking_id,
-                 replacement_params(Ecto.UUID.generate())
+                 replacement_params(cleaner_id)
                )
 
-      assert [["pending", "pending", "T_replace_active"]] =
+      assert replacement.id != booking_id
+
+      assert [["cancelled"]] =
                Repo.query!(
-                 "SELECT status, payment_status, reference FROM public.bookings WHERE id = $1",
+                 "SELECT status FROM public.bookings WHERE id = $1",
+                 [Ecto.UUID.dump!(booking_id)]
+               ).rows
+
+      assert [["failed", "Replaced by a new checkout"]] =
+               Repo.query!(
+                 "SELECT status, failure_reason FROM public.payment_attempts WHERE booking_id = $1",
                  [Ecto.UUID.dump!(booking_id)]
                ).rows
     end
 
-    test "refuses replacement while payment initialization is in progress" do
+    test "cancels a checkout that is still initializing and replaces the booking" do
       customer_id = Ecto.UUID.generate()
+      cleaner_id = Ecto.UUID.generate()
 
       booking_id =
         insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "pending",
@@ -837,12 +849,64 @@ defmodule Mithril.DirectBookingsTest do
         [Ecto.UUID.dump!(booking_id)]
       )
 
-      assert {:error, :payment_in_progress} =
+      insert_cleaner!(cleaner_id)
+
+      assert {:ok, replacement} =
                DirectBookings.replace_unpaid_booking(
                  customer_id,
                  booking_id,
-                 replacement_params(Ecto.UUID.generate())
+                 replacement_params(cleaner_id)
                )
+
+      assert replacement.id != booking_id
+
+      assert [["failed"]] =
+               Repo.query!(
+                 "SELECT status FROM public.payment_attempts WHERE booking_id = $1",
+                 [Ecto.UUID.dump!(booking_id)]
+               ).rows
+    end
+
+    test "cancels a past checkout and replaces the unpaid booking" do
+      customer_id = Ecto.UUID.generate()
+      cleaner_id = Ecto.UUID.generate()
+
+      booking_id =
+        insert_booking!(customer_id, Date.add(Date.utc_today(), 3), ~T[10:00:00], "pending",
+          reference: "T_replace_expired"
+        )
+
+      Repo.query!(
+        """
+        INSERT INTO public.payment_attempts
+          (booking_id, reference, status, amount_minor, currency, expires_at)
+        VALUES ($1, 'T_replace_expired', 'ready', 19350, 'GHS', now() - interval '1 minute')
+        """,
+        [Ecto.UUID.dump!(booking_id)]
+      )
+
+      insert_cleaner!(cleaner_id)
+
+      assert {:ok, replacement} =
+               DirectBookings.replace_unpaid_booking(
+                 customer_id,
+                 booking_id,
+                 replacement_params(cleaner_id)
+               )
+
+      assert replacement.id != booking_id
+
+      assert [["cancelled"]] =
+               Repo.query!(
+                 "SELECT status FROM public.bookings WHERE id = $1",
+                 [Ecto.UUID.dump!(booking_id)]
+               ).rows
+
+      assert [["failed", "Replaced by a new checkout"]] =
+               Repo.query!(
+                 "SELECT status, failure_reason FROM public.payment_attempts WHERE booking_id = $1",
+                 [Ecto.UUID.dump!(booking_id)]
+               ).rows
     end
 
     test "returns cancel_conflict when the booking payment state cannot be released" do
@@ -1824,6 +1888,7 @@ defmodule Mithril.DirectBookingsTest do
       currency text NOT NULL DEFAULT 'GHS',
       failure_reason text,
       failed_at timestamptz,
+      expires_at timestamptz,
       updated_at timestamptz NOT NULL DEFAULT now()
     )
     """)
