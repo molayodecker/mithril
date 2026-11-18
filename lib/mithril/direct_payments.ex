@@ -10,6 +10,7 @@ defmodule Mithril.DirectPayments do
   require Logger
 
   alias Mithril.DirectAssignmentNotify
+  alias Mithril.DirectPaystackReturn
   alias Mithril.Paystack
   alias Mithril.Repo
 
@@ -267,7 +268,12 @@ defmodule Mithril.DirectPayments do
           currency: booking.currency,
           reference: attempt.reference,
           callback_url: callback_url,
-          metadata: metadata
+          metadata:
+            Map.put(
+              metadata,
+              :cancel_action,
+              DirectPaystackReturn.cancel_action_url(callback_url)
+            )
         }
         |> Map.merge(routing)
 

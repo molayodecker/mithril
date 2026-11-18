@@ -52,14 +52,41 @@ defmodule Mithril.DirectPaystackReturn do
   @spec resolve_from_query(String.t(), map()) :: String.t()
   def resolve_from_query(booking_id, query_params)
       when is_binary(booking_id) and is_map(query_params) do
-    reference =
-      query_params["reference"] ||
-        query_params["trxref"]
+    if cancel_outcome?(query_params) do
+      build_cancel_deep_link(booking_id, scheme: query_params["scheme"])
+    else
+      reference =
+        query_params["reference"] ||
+          query_params["trxref"]
 
-    build_deep_link(booking_id,
-      scheme: query_params["scheme"],
-      reference: reference
-    )
+      build_deep_link(booking_id,
+        scheme: query_params["scheme"],
+        reference: reference
+      )
+    end
+  end
+
+  @doc """
+  Paystack only leaves the hosted checkout when `metadata.cancel_action` is an
+  HTTPS URL. Reuse the validated callback and mark it as a cancel return.
+  """
+  @spec cancel_action_url(String.t()) :: String.t()
+  def cancel_action_url(callback_url) when is_binary(callback_url) do
+    uri = URI.parse(callback_url)
+
+    query =
+      (uri.query || "")
+      |> URI.decode_query()
+      |> Map.put("outcome", "cancel")
+
+    URI.to_string(%{uri | query: URI.encode_query(query)})
+  end
+
+  @spec build_cancel_deep_link(String.t(), keyword()) :: String.t()
+  def build_cancel_deep_link(booking_id, opts \\ []) when is_binary(booking_id) do
+    scheme = opts |> Keyword.get(:scheme) |> normalize_scheme()
+    query = URI.encode_query([{"booking_id", String.trim(booking_id)}])
+    "#{scheme}://payment/cancel?#{query}"
   end
 
   @spec redirect_html(String.t()) :: String.t()
@@ -79,7 +106,7 @@ defmodule Mithril.DirectPaystackReturn do
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <meta http-equiv="refresh" content="0;url=#{escaped_attr}" />
-        <title>Payment complete — Instaclean</title>
+        <title>#{page_title(deep_link)}</title>
         <style>
           body { font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f8fafc; color: #0f172a; }
           main { text-align: center; padding: 2rem; }
@@ -95,6 +122,17 @@ defmodule Mithril.DirectPaystackReturn do
     </html>
     """
   end
+
+  defp page_title(deep_link) do
+    if String.contains?(deep_link, "://payment/cancel?") do
+      "Payment cancelled — Instaclean"
+    else
+      "Payment complete — Instaclean"
+    end
+  end
+
+  defp cancel_outcome?(%{"outcome" => "cancel"}), do: true
+  defp cancel_outcome?(_), do: false
 
   defp reference_from_opt(ref) when is_binary(ref) do
     trimmed = String.trim(ref)

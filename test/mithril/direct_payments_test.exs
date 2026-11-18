@@ -40,6 +40,10 @@ defmodule Mithril.DirectPaymentsTest do
     assert receipt.split_code == "SPL_test"
     assert receipt.metadata.booking_id == booking_id
     assert receipt.metadata.customer_id == customer_id
+
+    assert receipt.metadata.cancel_action ==
+             "https://direct.tryinstaclean.com/bookings/#{booking_id}?outcome=cancel"
+
     refute Map.has_key?(receipt.metadata, :subscription_id)
   end
 
