@@ -427,7 +427,7 @@ defmodule Mithril.DirectBookings do
 
   defp execute_unpaid_replacement(:replace, customer_id, booking_id, input, existing) do
     with {:ok, attempts} <- open_payment_attempts(booking_id),
-         :ok <- reconcile_open_attempts(attempts),
+         :ok <- reconcile_open_attempts(customer_id, booking_id, attempts),
          :ok <- retire_reconciled_attempts(booking_id, Enum.map(attempts, & &1.id)),
          :ok <- cancel_original_for_replacement(customer_id, booking_id) do
       if reusable_replacement?(existing) do
@@ -625,16 +625,19 @@ defmodule Mithril.DirectBookings do
 
   defp attempts_match_price?(_attempts, _price, _currency), do: false
 
-  defp reconcile_open_attempts(attempts) do
+  defp reconcile_open_attempts(customer_id, booking_id, attempts) do
     Enum.reduce_while(attempts, :ok, fn attempt, :ok ->
-      case reconcile_open_attempt(attempt) do
+      case reconcile_open_attempt(customer_id, booking_id, attempt) do
         :ok -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
   end
 
-  defp reconcile_open_attempt(%{provider: "stripe", stripe_payment_intent_id: intent_id})
+  defp reconcile_open_attempt(_customer_id, _booking_id, %{
+         provider: "stripe",
+         stripe_payment_intent_id: intent_id
+       })
        when is_binary(intent_id) and intent_id != "" do
     case Stripe.cancel_payment_intent(intent_id) do
       :ok -> :ok
@@ -642,21 +645,22 @@ defmodule Mithril.DirectBookings do
     end
   end
 
-  defp reconcile_open_attempt(%{provider: "stripe"}), do: :ok
+  defp reconcile_open_attempt(_customer_id, _booking_id, %{provider: "stripe"}), do: :ok
 
-  defp reconcile_open_attempt(%{provider: "paystack"} = attempt) do
-    reconcile_paystack_attempt(attempt)
+  defp reconcile_open_attempt(customer_id, booking_id, %{provider: "paystack"} = attempt) do
+    reconcile_paystack_attempt(customer_id, booking_id, attempt)
   end
 
-  defp reconcile_open_attempt(_attempt), do: {:error, :payment_in_progress}
+  defp reconcile_open_attempt(_customer_id, _booking_id, _attempt),
+    do: {:error, :payment_in_progress}
 
-  defp reconcile_paystack_attempt(attempt) do
+  defp reconcile_paystack_attempt(customer_id, booking_id, attempt) do
     reference = attempt.reference
 
     if is_binary(reference) and reference != "" do
       case Paystack.verify(reference) do
         {:ok, receipt} ->
-          reconcile_paystack_receipt(attempt, receipt)
+          reconcile_paystack_receipt(customer_id, booking_id, attempt, receipt)
 
         {:error, :not_found} ->
           :ok
@@ -672,10 +676,10 @@ defmodule Mithril.DirectBookings do
     end
   end
 
-  defp reconcile_paystack_receipt(attempt, receipt) do
+  defp reconcile_paystack_receipt(customer_id, booking_id, attempt, receipt) do
     case provider_status(receipt) do
       "success" ->
-        refund_paystack_charge(attempt)
+        refund_paystack_charge(customer_id, booking_id, attempt)
 
       status when status in @terminal_paystack_statuses ->
         :ok
@@ -685,23 +689,27 @@ defmodule Mithril.DirectBookings do
     end
   end
 
-  defp refund_paystack_charge(attempt) do
+  defp refund_paystack_charge(customer_id, booking_id, attempt) do
     case Paystack.refund(%{
            transaction: attempt.reference,
            amount: amount_minor(attempt.amount_minor),
            currency: attempt.currency,
            customer_note: "Replaced by a new Instaclean checkout"
          }) do
-      {:ok, _refund} ->
-        :ok
+      {:ok, refund} ->
+        record_replaced_refund(customer_id, booking_id, attempt, refund_reference(refund))
 
       {:error, _reason} ->
         case Paystack.verify(attempt.reference) do
           {:ok, receipt} ->
-            if provider_status(receipt) in @terminal_paystack_statuses do
-              :ok
+            if provider_status(receipt) in ["reversed", "refunded"] do
+              record_replaced_refund(customer_id, booking_id, attempt, nil)
             else
-              {:error, :payment_in_progress}
+              if provider_status(receipt) in @terminal_paystack_statuses do
+                :ok
+              else
+                {:error, :payment_in_progress}
+              end
             end
 
           {:error, _} ->
@@ -709,6 +717,37 @@ defmodule Mithril.DirectBookings do
         end
     end
   end
+
+  defp record_replaced_refund(customer_id, booking_id, attempt, paystack_refund_reference) do
+    case Repo.query(
+           """
+           INSERT INTO public.booking_refunds (
+             booking_id, customer_id, tier, refund_percent, refund_amount_minor,
+             paystack_transaction_reference, paystack_refund_reference, status
+           ) VALUES ($1, $2, 'full', 100, $3, $4, $5, 'pending')
+           """,
+           [
+             booking_id,
+             customer_id,
+             amount_minor(attempt.amount_minor),
+             attempt.reference,
+             paystack_refund_reference
+           ]
+         ) do
+      {:ok, _} ->
+        :ok
+
+      {:error, %Postgrex.Error{postgres: %{code: :unique_violation}}} ->
+        :ok
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp refund_reference(%{id: id}) when is_binary(id) and id != "", do: id
+  defp refund_reference(%{"id" => id}) when is_binary(id) and id != "", do: id
+  defp refund_reference(_refund), do: nil
 
   defp provider_status(receipt) when is_map(receipt) do
     case receipt[:status] || receipt["status"] do

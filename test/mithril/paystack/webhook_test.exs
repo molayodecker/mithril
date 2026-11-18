@@ -134,29 +134,57 @@ defmodule Mithril.Paystack.WebhookTest do
     assert {:error, :amount_mismatch} = Webhook.handle(raw, sign(raw))
   end
 
-  test "does not settle a successful charge after the booking was cancelled" do
+  test "refunds a successful charge after the booking was cancelled" do
     {booking_id, reference} = insert_pending_booking!(20_000)
 
     Repo.query!(
-      "UPDATE public.bookings SET status = 'cancelled' WHERE id = $1",
+      "UPDATE public.bookings SET status = 'cancelled', reference = NULL WHERE id = $1",
       [Ecto.UUID.dump!(booking_id)]
     )
 
+    Mithril.Paystack.Test.put_attempt(reference, %{
+      status: "success",
+      reference: reference,
+      amount: 20_000,
+      currency: "GHS"
+    })
+
     raw = charge_success(reference, 20_000)
 
-    assert {:error, :payment_not_payable} = Webhook.handle(raw, sign(raw))
+    try do
+      assert {:ok, %{refunded: true, settled: false, already_refunded: false}} =
+               Webhook.handle(raw, sign(raw))
 
-    assert [["cancelled", "pending"]] =
-             Repo.query!(
-               "SELECT status, payment_status FROM public.bookings WHERE id = $1",
-               [Ecto.UUID.dump!(booking_id)]
-             ).rows
+      Application.put_env(:mithril, :paystack_test_refund_result, {:error, :provider_unavailable})
 
-    assert [["ready"]] =
-             Repo.query!(
-               "SELECT status FROM public.payment_attempts WHERE reference = $1",
-               [reference]
-             ).rows
+      assert {:ok, %{refunded: true, settled: false, already_refunded: true}} =
+               Webhook.handle(raw, sign(raw))
+
+      assert [["cancelled", "pending"]] =
+               Repo.query!(
+                 "SELECT status, payment_status FROM public.bookings WHERE id = $1",
+                 [Ecto.UUID.dump!(booking_id)]
+               ).rows
+
+      assert [["ready"]] =
+               Repo.query!(
+                 "SELECT status FROM public.payment_attempts WHERE reference = $1",
+                 [reference]
+               ).rows
+
+      assert [["pending", ^reference]] =
+               Repo.query!(
+                 """
+                 SELECT status, paystack_transaction_reference
+                 FROM public.booking_refunds
+                 WHERE booking_id = $1
+                 """,
+                 [Ecto.UUID.dump!(booking_id)]
+               ).rows
+    after
+      Application.delete_env(:mithril, :paystack_test_refund_result)
+      Mithril.Paystack.Test.forget_attempt(reference)
+    end
   end
 
   test "rejects charge.success when amount or currency is missing" do
