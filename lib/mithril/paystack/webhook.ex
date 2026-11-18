@@ -6,6 +6,7 @@ defmodule Mithril.Paystack.Webhook do
   alias Mithril.DirectAssignmentNotify
   alias Mithril.DirectCancellation
   alias Mithril.DirectPaymentRequests
+  alias Mithril.Paystack
   alias Mithril.Repo
 
   @refund_events ~w(
@@ -25,6 +26,7 @@ defmodule Mithril.Paystack.Webhook do
           | :payment_incomplete
           | :payment_reference_mismatch
           | :payment_not_payable
+          | :provider_unavailable
           | :database_unavailable
 
   @spec handle(binary(), String.t() | nil) :: {:ok, map()} | {:error, error()}
@@ -59,7 +61,8 @@ defmodule Mithril.Paystack.Webhook do
              :amount_mismatch,
              :payment_incomplete,
              :payment_reference_mismatch,
-             :payment_not_payable
+             :payment_not_payable,
+             :provider_unavailable
            ] ->
         Logger.warning(
           "paystack webhook rejected request_id=#{request_id} error=#{inspect(reason)}"
@@ -113,20 +116,26 @@ defmodule Mithril.Paystack.Webhook do
   defp settle_charge(event) do
     reference = event.reference
 
-    if is_nil(reference) do
-      {:ok, %{ignored: true, reason: "missing_reference"}}
-    else
-      Repo.transaction(fn ->
-        case lock_attempt(reference) do
-          nil ->
-            settle_unmatched_charge(event)
+    result =
+      if is_nil(reference) do
+        {:ok, %{ignored: true, reason: "missing_reference"}}
+      else
+        Repo.transaction(fn ->
+          case lock_attempt(reference) do
+            nil ->
+              settle_unmatched_charge(event)
 
-          attempt ->
-            apply_charge(attempt, event)
-        end
-      end)
-      |> normalize_transaction()
-      |> notify_settled_assignment()
+            attempt ->
+              apply_charge(attempt, event)
+          end
+        end)
+        |> normalize_transaction()
+        |> notify_settled_assignment()
+      end
+
+    case result do
+      {:error, :stale_attempt} -> refund_replaced_charge(event)
+      other -> other
     end
   end
 
@@ -165,7 +174,19 @@ defmodule Mithril.Paystack.Webhook do
         %{already_paid: true, reference: attempt.reference, booking_id: attempt.booking_id}
 
       attempt.booking_status == "cancelled" and not paid?(attempt.payment_status) ->
-        Repo.rollback(:payment_not_payable)
+        cond do
+          event.status not in [nil, "success"] ->
+            Repo.rollback(:payment_incomplete)
+
+          event.amount_minor != attempt.amount_minor ->
+            Repo.rollback(:amount_mismatch)
+
+          event.currency != attempt.currency ->
+            Repo.rollback(:amount_mismatch)
+
+          true ->
+            Repo.rollback(:stale_attempt)
+        end
 
       event.status not in [nil, "success"] ->
         Repo.rollback(:payment_incomplete)
@@ -185,6 +206,205 @@ defmodule Mithril.Paystack.Webhook do
         %{settled: true, reference: attempt.reference, booking_id: attempt.booking_id}
     end
   end
+
+  # The booking was already cancelled. Refund a captured charge once. A second
+  # delivery sees the refund row, or Paystack's reversed status, and does not
+  # refund again.
+  defp refund_replaced_charge(event) do
+    cond do
+      refund_already_recorded?(event.reference) ->
+        {:ok, replaced_refund_result(event.reference, true)}
+
+      true ->
+        refund_verified_replacement(event)
+    end
+  end
+
+  defp refund_verified_replacement(event) do
+    case Paystack.verify(event.reference) do
+      {:ok, receipt} ->
+        cond do
+          provider_status(receipt) in ["reversed", "refunded"] ->
+            {:ok, replaced_refund_result(event.reference, true)}
+
+          provider_status(receipt) == "success" ->
+            send_replaced_refund(event)
+
+          true ->
+            {:ok,
+             %{
+               ignored: true,
+               settled: false,
+               reason: "stale_uncharged",
+               reference: event.reference
+             }}
+        end
+
+      {:error, :not_found} ->
+        {:ok,
+         %{ignored: true, settled: false, reason: "stale_uncharged", reference: event.reference}}
+
+      {:error, _reason} ->
+        {:error, :provider_unavailable}
+    end
+  end
+
+  defp send_replaced_refund(event) do
+    case claim_replaced_refund(event) do
+      {:ok, :already_refunded} ->
+        {:ok, replaced_refund_result(event.reference, true)}
+
+      {:ok, refund_id} ->
+        case Paystack.refund(%{
+               transaction: event.reference,
+               amount: event.amount_minor,
+               currency: event.currency,
+               customer_note: "Refund for a checkout that was replaced"
+             }) do
+          {:ok, refund} ->
+            store_replaced_refund_reference(refund_id, refund)
+            {:ok, replaced_refund_result(event.reference, false)}
+
+          {:error, _reason} ->
+            case Paystack.verify(event.reference) do
+              {:ok, receipt} ->
+                if provider_status(receipt) in ["reversed", "refunded"] do
+                  {:ok, replaced_refund_result(event.reference, true)}
+                else
+                  {:error, :provider_unavailable}
+                end
+
+              {:error, _reason} ->
+                {:error, :provider_unavailable}
+            end
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp replaced_refund_result(reference, already_refunded) do
+    %{
+      refunded: true,
+      settled: false,
+      already_refunded: already_refunded,
+      reference: reference
+    }
+  end
+
+  defp refund_already_recorded?(reference) do
+    case Repo.query(
+           """
+           SELECT 1
+           FROM public.booking_refunds
+           WHERE paystack_transaction_reference = $1
+             AND status IN ('pending', 'processed')
+           LIMIT 1
+           """,
+           [reference]
+         ) do
+      {:ok, %{rows: [_row]}} -> true
+      _other -> false
+    end
+  end
+
+  defp claim_replaced_refund(event) do
+    case Repo.query(
+           """
+           SELECT b.id, b.customer_id
+           FROM public.payment_attempts pa
+           JOIN public.bookings b ON b.id = pa.booking_id
+           WHERE pa.reference = $1
+             AND b.status = 'cancelled'
+           LIMIT 1
+           """,
+           [event.reference]
+         ) do
+      {:ok, %{rows: [[booking_id, customer_id]]}} ->
+        insert_replaced_refund(booking_id, customer_id, event)
+
+      {:ok, %{rows: []}} ->
+        {:error, :payment_not_payable}
+
+      {:error, _error} ->
+        {:error, :database_unavailable}
+    end
+  end
+
+  defp insert_replaced_refund(booking_id, customer_id, event) do
+    case Repo.query(
+           """
+           INSERT INTO public.booking_refunds (
+             booking_id, customer_id, tier, refund_percent, refund_amount_minor,
+             paystack_transaction_reference, status
+           ) VALUES ($1, $2, 'full', 100, $3, $4, 'pending')
+           RETURNING id
+           """,
+           [booking_id, customer_id, event.amount_minor, event.reference]
+         ) do
+      {:ok, %{rows: [[refund_id]]}} ->
+        {:ok, refund_id}
+
+      {:error, %Postgrex.Error{postgres: %{code: :unique_violation}}} ->
+        existing_replaced_refund(event.reference)
+
+      {:error, _error} ->
+        {:error, :database_unavailable}
+    end
+  end
+
+  defp existing_replaced_refund(reference) do
+    case Repo.query(
+           """
+           SELECT id, status, paystack_refund_reference
+           FROM public.booking_refunds
+           WHERE paystack_transaction_reference = $1
+           LIMIT 1
+           """,
+           [reference]
+         ) do
+      {:ok, %{rows: [[_id, "processed", _reference]]}} ->
+        {:ok, :already_refunded}
+
+      {:ok, %{rows: [[_id, _status, refund_reference]]}} when is_binary(refund_reference) ->
+        {:ok, :already_refunded}
+
+      {:ok, %{rows: [[refund_id, _status, _reference]]}} ->
+        {:ok, refund_id}
+
+      _other ->
+        {:error, :database_unavailable}
+    end
+  end
+
+  defp store_replaced_refund_reference(refund_id, refund) do
+    reference =
+      case refund do
+        %{id: id} when is_binary(id) and id != "" -> id
+        %{"id" => id} when is_binary(id) and id != "" -> id
+        _other -> nil
+      end
+
+    Repo.query(
+      """
+      UPDATE public.booking_refunds
+      SET paystack_refund_reference = COALESCE($2, paystack_refund_reference),
+          updated_at = now()
+      WHERE id = $1
+      """,
+      [refund_id, reference]
+    )
+  end
+
+  defp provider_status(receipt) when is_map(receipt) do
+    case receipt[:status] || receipt["status"] do
+      status when is_binary(status) -> String.downcase(status)
+      _status -> nil
+    end
+  end
+
+  defp provider_status(_receipt), do: nil
 
   defp mark_paid!(attempt) do
     with {:ok, %{num_rows: rows}} when rows > 0 <-

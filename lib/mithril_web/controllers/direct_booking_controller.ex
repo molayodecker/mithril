@@ -269,7 +269,8 @@ defmodule MithrilWeb.DirectBookingController do
   defp error_response(:payment_not_payable), do: {409, "payment_not_payable"}
   defp error_response(:payment_reference_mismatch), do: {409, "payment_reference_mismatch"}
   defp error_response(:amount_mismatch), do: {409, "amount_mismatch"}
-  defp error_response(:payment_in_progress), do: {503, "payment_in_progress"}
+  # An open checkout is a conflict, not an outage. 503 made the app treat it as down.
+  defp error_response(:payment_in_progress), do: {409, "payment_in_progress"}
   defp error_response(:payment_routing_unavailable), do: {503, "payment_routing_unavailable"}
   defp error_response(:payment_not_configured), do: {503, "payment_not_configured"}
   defp error_response(:database_unavailable), do: {503, "database_unavailable"}

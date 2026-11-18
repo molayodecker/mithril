@@ -9,7 +9,9 @@ defmodule Mithril.DirectBookings do
 
   require Logger
 
+  alias Mithril.Paystack
   alias Mithril.Repo
+  alias Mithril.Stripe
 
   @default_timezone "Africa/Accra"
   # Paystack plan intervals. Hourly and legacy bi-weekly stay unbookable.
@@ -18,6 +20,8 @@ defmodule Mithril.DirectBookings do
   # Preserve operationally distinct linen choices; existing legacy values remain accepted.
   @linen_handling ~w(replace_no_wash wash_hang_dry wash_dry_repack_onsite no_bedding_replace clean_linen_provided launder_on_site no_linen_change)
   @turnover_sources ~w(manual airbnb_ical)
+  # Paystack statuses that prove the reference was not captured.
+  @terminal_paystack_statuses ~w(abandoned failed reversed refunded)
 
   def list_services do
     # `service_types.duration` is a display string like "2 hours", so it cannot
@@ -198,28 +202,37 @@ defmodule Mithril.DirectBookings do
           | idempotency_key: replacement_idempotency_key(bid, input.idempotency_key)
         }
 
-        Repo.transaction(fn ->
-          with {:ok, original} <- lock_unpaid_replacement_booking(customer_id, bid),
-               :ok <- lock_booking_idempotency(customer_id, replacement_input.idempotency_key),
-               {:ok, existing} <-
-                 find_idempotent_booking(customer_id, replacement_input.idempotency_key),
-               {:ok, path} <- replacement_path(original, existing),
-               {:ok, result} <-
-                 execute_unpaid_replacement(
-                   path,
-                   customer_id,
-                   bid,
-                   replacement_input
-                   |> merge_replacement_visit_details(original, params)
-                   |> merge_replacement_legacy_details(original, params),
-                   existing
-                 ) do
-            result
-          else
-            {:error, reason} -> Repo.rollback(reason)
+        with {:ok, gate} <- open_checkout_gate(customer_id, bid, replacement_input) do
+          case gate do
+            {:resume, result} ->
+              {:ok, result}
+
+            :replace ->
+              Repo.transaction(fn ->
+                with {:ok, original} <- lock_unpaid_replacement_booking(customer_id, bid),
+                     :ok <-
+                       lock_booking_idempotency(customer_id, replacement_input.idempotency_key),
+                     {:ok, existing} <-
+                       find_idempotent_booking(customer_id, replacement_input.idempotency_key),
+                     {:ok, path} <- replacement_path(original, existing),
+                     {:ok, result} <-
+                       execute_unpaid_replacement(
+                         path,
+                         customer_id,
+                         bid,
+                         replacement_input
+                         |> merge_replacement_visit_details(original, params)
+                         |> merge_replacement_legacy_details(original, params),
+                         existing
+                       ) do
+                  result
+                else
+                  {:error, reason} -> Repo.rollback(reason)
+                end
+              end)
+              |> normalize_transaction()
           end
-        end)
-        |> normalize_transaction()
+        end
       else
         :error -> {:error, :not_found}
         {:error, reason} -> {:error, reason}
@@ -413,7 +426,9 @@ defmodule Mithril.DirectBookings do
     do: {:ok, existing}
 
   defp execute_unpaid_replacement(:replace, customer_id, booking_id, input, existing) do
-    with :ok <- ensure_no_active_payment_attempts(booking_id),
+    with {:ok, attempts} <- open_payment_attempts(booking_id),
+         :ok <- reconcile_open_attempts(customer_id, booking_id, attempts),
+         :ok <- retire_reconciled_attempts(booking_id, Enum.map(attempts, & &1.id)),
          :ok <- cancel_original_for_replacement(customer_id, booking_id) do
       if reusable_replacement?(existing) do
         {:ok, existing}
@@ -423,10 +438,357 @@ defmodule Mithril.DirectBookings do
     end
   end
 
-  defp ensure_no_active_payment_attempts(booking_id) do
+  # Same service, worker, schedule, address, and price: keep the checkout the
+  # customer already started. Payment reopens that Paystack URL or Stripe secret.
+  # A real change retires a Paystack attempt only after the booking row is locked
+  # and Paystack says the reference was not charged, or the captured charge is
+  # refunded. The lock stops a webhook from marking that charge paid underneath.
+  defp open_checkout_gate(customer_id, booking_id, input) do
+    with {:ok, existing} <- find_idempotent_booking(customer_id, input.idempotency_key) do
+      if reusable_replacement?(existing) do
+        {:ok, :replace}
+      else
+        classify_open_checkout(customer_id, booking_id, input)
+      end
+    end
+  end
+
+  defp classify_open_checkout(customer_id, booking_id, input) do
+    with {:ok, attempts} <- open_payment_attempts(booking_id) do
+      if attempts == [] do
+        {:ok, :replace}
+      else
+        classify_open_attempts(customer_id, booking_id, input, attempts)
+      end
+    end
+  end
+
+  defp classify_open_attempts(customer_id, booking_id, input, attempts) do
+    case fetch_replacement_identity(customer_id, booking_id) do
+      {:ok, booking} ->
+        if payable_replacement?(booking) do
+          classify_payable_checkout(booking, input, attempts)
+        else
+          {:ok, :replace}
+        end
+
+      {:error, :not_found} ->
+        {:ok, :replace}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp classify_payable_checkout(booking, input, attempts) do
+    case same_open_checkout?(booking, input, attempts) do
+      {:ok, true} ->
+        {:ok, {:resume, resume_booking_result(booking)}}
+
+      {:ok, false} ->
+        {:ok, :replace}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp payable_replacement?(booking) do
+    booking.status == "pending" and booking.payment_status in ["pending", "unpaid"]
+  end
+
+  defp resume_booking_result(booking) do
+    booking_result(
+      booking.id,
+      booking.status,
+      booking.payment_status,
+      booking.amount_minor,
+      booking.currency,
+      booking.subscription_id
+    )
+  end
+
+  defp fetch_replacement_identity(customer_id, booking_id) do
     case Repo.query(
            """
-           SELECT EXISTS(
+           SELECT id::text, status::text, payment_status::text, subscription_id::text,
+                  service_id, cleaner_id::text, scheduled_date, scheduled_time,
+                  duration_hours, address,
+                  COALESCE(final_amount_minor, total_price),
+                  COALESCE(currency, 'GHS')
+           FROM public.bookings
+           WHERE id = $1 AND customer_id = $2
+           """,
+           [booking_id, customer_id]
+         ) do
+      {:ok,
+       %{
+         rows: [
+           [
+             id,
+             status,
+             payment_status,
+             subscription_id,
+             service_id,
+             cleaner_id,
+             scheduled_date,
+             scheduled_time,
+             duration_hours,
+             address,
+             amount_minor,
+             currency
+           ]
+         ]
+       }} ->
+        {:ok,
+         %{
+           id: id,
+           status: status,
+           payment_status: payment_status,
+           subscription_id: subscription_id,
+           service_id: service_id,
+           cleaner_id: cleaner_id,
+           scheduled_date: scheduled_date,
+           scheduled_time: scheduled_time,
+           duration_hours: duration_hours,
+           address: address,
+           amount_minor: amount_minor,
+           currency: currency
+         }}
+
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp open_payment_attempts(booking_id) do
+    case Repo.query(
+           """
+           SELECT id::text, reference, status, amount_minor, currency,
+                  COALESCE(provider, 'paystack'), stripe_payment_intent_id
+           FROM public.payment_attempts
+           WHERE booking_id = $1
+             AND status IN ('initializing', 'ready')
+           """,
+           [booking_id]
+         ) do
+      {:ok, %{rows: rows}} ->
+        {:ok,
+         Enum.map(rows, fn [id, reference, status, amount, currency, provider, intent_id] ->
+           %{
+             id: id,
+             reference: reference,
+             status: status,
+             amount_minor: amount,
+             currency: currency,
+             provider: provider,
+             stripe_payment_intent_id: intent_id
+           }
+         end)}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp same_open_checkout?(booking, input, attempts) do
+    case compute_pricing(input) do
+      {:ok, pricing} ->
+        price = amount_minor(pricing["finalAmountMinor"])
+        currency = pricing["currency"]
+
+        {:ok,
+         booking.service_id == input.service_id and
+           same_id?(booking.cleaner_id, input.cleaner_id) and
+           same_date?(booking.scheduled_date, input.scheduled_date) and
+           same_time?(booking.scheduled_time, input.scheduled_time) and
+           same_number?(booking.duration_hours, input.duration_hours) and
+           same_text?(booking.address, input.address) and
+           amount_minor(booking.amount_minor) == price and
+           same_currency?(booking.currency, currency) and
+           attempts_match_price?(attempts, price, currency)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp attempts_match_price?(attempts, price, currency) when is_integer(price) do
+    Enum.all?(attempts, fn attempt ->
+      amount_minor(attempt.amount_minor) == price and
+        same_currency?(attempt.currency, currency)
+    end)
+  end
+
+  defp attempts_match_price?(_attempts, _price, _currency), do: false
+
+  defp reconcile_open_attempts(customer_id, booking_id, attempts) do
+    Enum.reduce_while(attempts, :ok, fn attempt, :ok ->
+      case reconcile_open_attempt(customer_id, booking_id, attempt) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp reconcile_open_attempt(_customer_id, _booking_id, %{
+         provider: "stripe",
+         stripe_payment_intent_id: intent_id
+       })
+       when is_binary(intent_id) and intent_id != "" do
+    case Stripe.cancel_payment_intent(intent_id) do
+      :ok -> :ok
+      {:error, _} -> {:error, :payment_in_progress}
+    end
+  end
+
+  defp reconcile_open_attempt(_customer_id, _booking_id, %{provider: "stripe"}), do: :ok
+
+  defp reconcile_open_attempt(customer_id, booking_id, %{provider: "paystack"} = attempt) do
+    reconcile_paystack_attempt(customer_id, booking_id, attempt)
+  end
+
+  defp reconcile_open_attempt(_customer_id, _booking_id, _attempt),
+    do: {:error, :payment_in_progress}
+
+  defp reconcile_paystack_attempt(customer_id, booking_id, attempt) do
+    reference = attempt.reference
+
+    if is_binary(reference) and reference != "" do
+      case Paystack.verify(reference) do
+        {:ok, receipt} ->
+          reconcile_paystack_receipt(customer_id, booking_id, attempt, receipt)
+
+        {:error, :not_found} ->
+          :ok
+
+        {:error, {:provider, 404, _message}} ->
+          :ok
+
+        {:error, _} ->
+          {:error, :payment_in_progress}
+      end
+    else
+      {:error, :payment_in_progress}
+    end
+  end
+
+  defp reconcile_paystack_receipt(customer_id, booking_id, attempt, receipt) do
+    case provider_status(receipt) do
+      "success" ->
+        refund_paystack_charge(customer_id, booking_id, attempt)
+
+      status when status in @terminal_paystack_statuses ->
+        :ok
+
+      _status ->
+        {:error, :payment_in_progress}
+    end
+  end
+
+  defp refund_paystack_charge(customer_id, booking_id, attempt) do
+    case Paystack.refund(%{
+           transaction: attempt.reference,
+           amount: amount_minor(attempt.amount_minor),
+           currency: attempt.currency,
+           customer_note: "Replaced by a new Instaclean checkout"
+         }) do
+      {:ok, refund} ->
+        record_replaced_refund(customer_id, booking_id, attempt, refund_reference(refund))
+
+      {:error, _reason} ->
+        case Paystack.verify(attempt.reference) do
+          {:ok, receipt} ->
+            if provider_status(receipt) in ["reversed", "refunded"] do
+              record_replaced_refund(customer_id, booking_id, attempt, nil)
+            else
+              if provider_status(receipt) in @terminal_paystack_statuses do
+                :ok
+              else
+                {:error, :payment_in_progress}
+              end
+            end
+
+          {:error, _} ->
+            {:error, :payment_in_progress}
+        end
+    end
+  end
+
+  defp record_replaced_refund(customer_id, booking_id, attempt, paystack_refund_reference) do
+    case Repo.query(
+           """
+           INSERT INTO public.booking_refunds (
+             booking_id, customer_id, tier, refund_percent, refund_amount_minor,
+             paystack_transaction_reference, paystack_refund_reference, status
+           ) VALUES ($1, $2, 'full', 100, $3, $4, $5, 'pending')
+           """,
+           [
+             booking_id,
+             customer_id,
+             amount_minor(attempt.amount_minor),
+             attempt.reference,
+             paystack_refund_reference
+           ]
+         ) do
+      {:ok, _} ->
+        :ok
+
+      {:error, %Postgrex.Error{postgres: %{code: :unique_violation}}} ->
+        :ok
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp refund_reference(%{id: id}) when is_binary(id) and id != "", do: id
+  defp refund_reference(%{"id" => id}) when is_binary(id) and id != "", do: id
+  defp refund_reference(_refund), do: nil
+
+  defp provider_status(receipt) when is_map(receipt) do
+    case receipt[:status] || receipt["status"] do
+      status when is_binary(status) -> String.downcase(status)
+      _status -> nil
+    end
+  end
+
+  defp provider_status(_receipt), do: nil
+
+  defp retire_reconciled_attempts(booking_id, attempt_ids) do
+    with :ok <- fail_reconciled_attempts(booking_id, attempt_ids) do
+      confirm_no_open_attempts(booking_id)
+    end
+  end
+
+  defp fail_reconciled_attempts(_booking_id, []), do: :ok
+
+  defp fail_reconciled_attempts(booking_id, attempt_ids) do
+    case Repo.query(
+           """
+           UPDATE public.payment_attempts
+           SET status = 'failed',
+               failure_reason = 'Replaced by a new checkout',
+               failed_at = COALESCE(failed_at, now()),
+               updated_at = now()
+           WHERE booking_id = $1
+             AND id::text = ANY($2::text[])
+             AND status IN ('initializing', 'ready')
+           """,
+           [booking_id, attempt_ids]
+         ) do
+      {:ok, _} -> :ok
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp confirm_no_open_attempts(booking_id) do
+    case Repo.query(
+           """
+           SELECT EXISTS (
              SELECT 1
              FROM public.payment_attempts
              WHERE booking_id = $1
@@ -440,6 +802,56 @@ defmodule Mithril.DirectBookings do
       {:error, error} -> database_error(error)
     end
   end
+
+  defp same_id?(left, right) do
+    case {uuid_string(left), uuid_string(right)} do
+      {{:ok, left_id}, {:ok, right_id}} -> String.downcase(left_id) == String.downcase(right_id)
+      _other -> false
+    end
+  end
+
+  defp uuid_string(value) when is_binary(value) do
+    case Ecto.UUID.cast(value) do
+      {:ok, id} -> {:ok, id}
+      :error -> :error
+    end
+  end
+
+  defp uuid_string(_value), do: :error
+
+  defp same_date?(%Date{} = left, %Date{} = right), do: Date.compare(left, right) == :eq
+  defp same_date?(_left, _right), do: false
+
+  defp same_time?(%Time{} = left, %Time{} = right) do
+    Time.compare(Time.truncate(left, :second), Time.truncate(right, :second)) == :eq
+  end
+
+  defp same_time?(_left, _right), do: false
+
+  defp same_number?(left, right) do
+    case {decimal_number(left), decimal_number(right)} do
+      {left_number, right_number}
+      when is_number(left_number) and is_number(right_number) ->
+        left_number == right_number
+
+      _other ->
+        false
+    end
+  end
+
+  defp same_text?(left, right) do
+    text = normalized_checkout_text(left)
+    text != "" and text == normalized_checkout_text(right)
+  end
+
+  defp normalized_checkout_text(value) when is_binary(value), do: String.trim(value)
+  defp normalized_checkout_text(_value), do: ""
+
+  defp same_currency?(left, right) when is_binary(left) and is_binary(right) do
+    String.upcase(left) == String.upcase(right)
+  end
+
+  defp same_currency?(_left, _right), do: false
 
   defp cancel_original_for_replacement(customer_id, booking_id) do
     case Repo.query(

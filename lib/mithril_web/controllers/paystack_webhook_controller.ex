@@ -63,6 +63,11 @@ defmodule MithrilWeb.PaystackWebhookController do
         |> put_status(:conflict)
         |> json(%{error: "Booking is no longer payable"})
 
+      {:error, :provider_unavailable} ->
+        conn
+        |> put_status(:service_unavailable)
+        |> json(%{error: "Paystack refund could not be confirmed"})
+
       {:error, :database_unavailable} ->
         conn
         |> put_status(:internal_server_error)
