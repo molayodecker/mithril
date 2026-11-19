@@ -59,7 +59,9 @@ BEGIN
   max_hours := LEAST(max_hours, 10);
   checked := GREATEST(min_hours, LEAST(max_hours, checked));
 
-  duration_hours := round(checked * 2) / 2;
+  -- The service step was applied above. Re-rounding to half-hours here can
+  -- violate non-half-hour service limits (for example, 3.2 or 3.25 hours).
+  duration_hours := checked;
   home_size := bedroom_count::text || ' bed, ' || bathroom_count::text || ' bath';
   RETURN NEXT;
 END;
