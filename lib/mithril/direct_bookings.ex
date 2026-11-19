@@ -1721,8 +1721,7 @@ defmodule Mithril.DirectBookings do
   end
 
   defp apply_reschedule(:unpaid, booking, schedule, pricing, customer_id) do
-    with :ok <- update_reschedule_schedule(booking, schedule, customer_id, :unpaid),
-         :ok <- maybe_invalidate_repriced_checkout(booking, pricing) do
+    with :ok <- update_reschedule_schedule(booking, schedule, customer_id, :unpaid) do
       update_unpaid_pricing(booking.id, pricing)
     end
   end
@@ -1734,7 +1733,7 @@ defmodule Mithril.DirectBookings do
              WITH retired AS (
                UPDATE public.payment_attempts
                SET status = 'failed',
-                   failure_reason = 'Booking repriced during reschedule',
+                   failure_reason = 'Booking price changed',
                    failed_at = COALESCE(failed_at, now()),
                    updated_at = now()
                WHERE booking_id = $1::uuid
@@ -1919,25 +1918,34 @@ defmodule Mithril.DirectBookings do
     }
   end
 
-  defp stored_promotion_discount(booking_id) do
+  defp stored_reprice_amounts(booking_id) do
     case Repo.query(
            """
-           SELECT COALESCE(promotion_discount_minor, 0)
+           SELECT COALESCE(promotion_discount_minor, 0), final_amount_minor
            FROM public.bookings
            WHERE id = $1
+           FOR UPDATE
            """,
            [dump!(booking_id)]
          ) do
-      {:ok, %{rows: [[discount]]}} -> {:ok, discount}
+      {:ok, %{rows: [[discount, amount]]}} -> {:ok, %{discount: discount, amount_minor: amount}}
       {:ok, %{rows: []}} -> {:error, :not_found}
       {:error, error} -> database_error(error)
     end
   end
 
   defp update_unpaid_pricing(booking_id, pricing) do
-    with {:ok, discount} <- stored_promotion_discount(booking_id) do
-      charged = preserve_promotion_charge(pricing["finalAmountMinor"], discount)
-      write_unpaid_pricing(booking_id, Map.put(pricing, "finalAmountMinor", charged))
+    with {:ok, stored} <- stored_reprice_amounts(booking_id) do
+      charged = preserve_promotion_charge(pricing["finalAmountMinor"], stored.discount)
+      next_pricing = Map.put(pricing, "finalAmountMinor", charged)
+
+      with :ok <-
+             maybe_invalidate_repriced_checkout(
+               %{id: booking_id, amount_minor: stored.amount_minor},
+               next_pricing
+             ) do
+        write_unpaid_pricing(booking_id, next_pricing)
+      end
     end
   end
 
