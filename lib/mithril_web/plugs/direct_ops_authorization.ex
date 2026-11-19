@@ -35,6 +35,7 @@ defmodule MithrilWeb.Plugs.DirectOpsAuthorization do
 
         cond do
           permissions == [] and "reviewer" in roles -> conn
+          reviewer_whatsapp_send?(roles, rest, conn.method) -> conn
           permission_for(rest, conn.method) in permissions -> conn
           true -> reject(conn)
         end
@@ -43,6 +44,19 @@ defmodule MithrilWeb.Plugs.DirectOpsAuthorization do
         reject(conn)
     end
   end
+
+  @doc """
+  A reviewer can send WhatsApp without the WhatsApp desk grant.
+  Other desks stay limited to their assigned permissions.
+  """
+  def reviewer_whatsapp_send?(roles, rest, method)
+      when is_list(roles) and is_list(rest) and is_binary(method) do
+    "reviewer" in roles and whatsapp_send_path?(rest, method)
+  end
+
+  defp whatsapp_send_path?(["whatsapp" | _], _method), do: true
+  defp whatsapp_send_path?(["contracts", _, "worker-rating"], "POST"), do: true
+  defp whatsapp_send_path?(_rest, _method), do: false
 
   # Administrative role changes and financial transfers are admin-only.
   defp permission_for(["team" | _], _), do: nil
