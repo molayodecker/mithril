@@ -19,7 +19,9 @@ defmodule Mithril.MarketingQuotes do
         # Email is the primary lead notification. Once received by support,
         # a WhatsApp outage must not make the client retry the same quote.
         case deliver_whatsapp(quote) do
-          :ok -> :ok
+          :ok ->
+            :ok
+
           {:error, reason} ->
             Logger.warning("Marketing quote WhatsApp notification failed: #{inspect(reason)}")
         end
