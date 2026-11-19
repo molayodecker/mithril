@@ -1,6 +1,8 @@
 defmodule Mithril.MobileGateway do
   @moduledoc false
 
+  require Logger
+
   alias Mithril.DbUuid
   alias Mithril.MobileFunctions
   alias Mithril.MobileQuery
@@ -457,7 +459,15 @@ defmodule Mithril.MobileGateway do
     case Repo.query(sql, params) do
       {:ok, %{rows: rows}} when decode? -> {:ok, decode_rows(rows)}
       {:ok, _result} -> {:ok, nil}
-      {:error, error} -> {:error, error}
+      {:error, %Postgrex.Error{} = error} ->
+        Logger.warning(
+          "mobile_rpc_database_error code=#{inspect(error.postgres[:code])} message=#{error.postgres[:message]}"
+        )
+
+        {:error, error}
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
