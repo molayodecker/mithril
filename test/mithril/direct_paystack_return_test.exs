@@ -44,6 +44,26 @@ defmodule Mithril.DirectPaystackReturnTest do
     assert deep_link =~ "reference=BK-ref"
   end
 
+  test "cancel_action_url keeps the callback and marks the return as a cancel" do
+    callback =
+      "https://api.tryinstaclean.com/bookings/#{@booking_id}?scheme=instaclean"
+
+    assert DirectPaystackReturn.cancel_action_url(callback) ==
+             "https://api.tryinstaclean.com/bookings/#{@booking_id}?outcome=cancel&scheme=instaclean"
+  end
+
+  test "resolve_from_query opens the payment cancel screen" do
+    deep_link =
+      DirectPaystackReturn.resolve_from_query(@booking_id, %{
+        "scheme" => "instaclean",
+        "outcome" => "cancel",
+        "trxref" => "BK-ref"
+      })
+
+    assert deep_link ==
+             "instaclean://payment/cancel?booking_id=#{URI.encode(@booking_id)}"
+  end
+
   test "redirect_html escapes and embeds the deep link" do
     target = "instaclean://booking-status?bookingId=abc&source=payment"
     html = DirectPaystackReturn.redirect_html(target)

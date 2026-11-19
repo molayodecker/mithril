@@ -45,6 +45,19 @@ defmodule MithrilWeb.DirectPaystackReturnControllerTest do
     refute body =~ "javascript://"
   end
 
+  test "GET /bookings/:id with outcome=cancel deep-links to payment cancel" do
+    conn =
+      get(
+        build_conn(),
+        "/bookings/#{@booking_id}?scheme=instaclean&outcome=cancel"
+      )
+
+    body = response(conn, 200)
+    assert body =~ "instaclean://payment/cancel?booking_id=#{@booking_id}"
+    assert body =~ "Payment cancelled"
+    refute body =~ "booking-status"
+  end
+
   test "GET /bookings/:id rejects invalid ids" do
     conn = get(build_conn(), "/bookings/not-a-uuid")
     assert response(conn, 400) =~ "Invalid booking ID"
