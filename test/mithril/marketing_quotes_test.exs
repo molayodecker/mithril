@@ -54,4 +54,38 @@ defmodule Mithril.MarketingQuotesTest do
     conn = post(build_conn(), "/direct/quotes", %{})
     assert json_response(conn, 422) == %{"ok" => false, "error" => "invalid_quote"}
   end
+  test "accepts emailed quote when WhatsApp is unavailable" do
+    previous = Application.get_env(:mithril, :twilio_http)
+    Application.put_env(:mithril, :twilio_http, {:error, :twilio_unavailable})
+
+    on_exit(fn ->
+      if is_nil(previous),
+        do: Application.delete_env(:mithril, :twilio_http),
+        else: Application.put_env(:mithril, :twilio_http, previous)
+    end)
+
+    assert {:ok, :accepted} =
+             MarketingQuotes.submit(%{
+               "name" => "Ama",
+               "phone" => "0240000000",
+               "serviceType" => "Deep cleaning",
+               "location" => "East Legon"
+             })
+
+    assert [_email] = Application.get_env(:mithril, :test_resend_messages)
+  end
+
+  test "limits public quote requests per peer IP" do
+    ip = {10, 23, 45, 67}
+    params = %{"company_website" => "bot.example"}
+
+    for _ <- 1..5 do
+      conn = build_conn() |> Map.put(:remote_ip, ip) |> post("/direct/quotes", params)
+      assert json_response(conn, 200) == %{"ok" => true}
+    end
+
+    conn = build_conn() |> Map.put(:remote_ip, ip) |> post("/direct/quotes", params)
+    assert json_response(conn, 429) == %{"ok" => false, "error" => "rate_limited"}
+  end
+
 end
