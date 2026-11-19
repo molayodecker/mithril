@@ -10,6 +10,7 @@ defmodule Mithril.DirectDispatch do
   require Logger
 
   alias Mithril.Auth
+  alias Mithril.DbUuid
   alias Mithril.DirectBookings
   alias Mithril.Notifications
   alias Mithril.Repo
@@ -812,37 +813,28 @@ defmodule Mithril.DirectDispatch do
 
   @doc false
   def insert_booking_origin(booking_id, customer_id, created_by_user_id, source, admin_note) do
-    with {:ok, booking_uuid} <- uuid_param(booking_id),
-         {:ok, customer_uuid} <- uuid_param(customer_id),
-         {:ok, admin_uuid} <- uuid_param(created_by_user_id) do
-      case Repo.query(
-             """
-             INSERT INTO public.direct_booking_origins (
-               booking_id, customer_id, created_by_user_id, source,
-               consent_confirmed, admin_note
-             ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, true, NULLIF($5::text, ''))
-             ON CONFLICT (booking_id) DO NOTHING
-             RETURNING booking_id
-             """,
-             [booking_uuid, customer_uuid, admin_uuid, source, admin_note]
-           ) do
-        {:ok, %{num_rows: 1}} -> {:ok, true}
-        {:ok, %{num_rows: 0}} -> {:ok, false}
-        {:error, error} -> {:error, error}
-      end
-    else
-      :error -> {:error, :invalid_request}
+    case Repo.query(
+           """
+           INSERT INTO public.direct_booking_origins (
+             booking_id, customer_id, created_by_user_id, source,
+             consent_confirmed, admin_note
+           ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, true, NULLIF($5::text, ''))
+           ON CONFLICT (booking_id) DO NOTHING
+           RETURNING booking_id
+           """,
+           [
+             DbUuid.dump!(booking_id),
+             DbUuid.dump!(customer_id),
+             DbUuid.dump!(created_by_user_id),
+             source,
+             admin_note
+           ]
+         ) do
+      {:ok, %{num_rows: 1}} -> {:ok, true}
+      {:ok, %{num_rows: 0}} -> {:ok, false}
+      {:error, error} -> {:error, error}
     end
   end
-
-  # Booking reads return id::text. Postgres uuid parameters need the raw 16 bytes.
-  defp uuid_param(<<_::128>> = value), do: {:ok, value}
-
-  defp uuid_param(value) when is_binary(value) do
-    value |> String.trim() |> Ecto.UUID.dump()
-  end
-
-  defp uuid_param(_), do: :error
 
   defp maybe_put_admin_idempotency_key(params, nil, _date, _index), do: params
 
