@@ -10,6 +10,7 @@ defmodule Mithril.DirectDispatch do
   require Logger
 
   alias Mithril.Auth
+  alias Mithril.DbUuid
   alias Mithril.DirectBookings
   alias Mithril.Notifications
   alias Mithril.Repo
@@ -810,17 +811,24 @@ defmodule Mithril.DirectDispatch do
   defp booking_notify_date(%{"scheduledDate" => date}) when is_binary(date), do: date
   defp booking_notify_date(_), do: nil
 
-  defp insert_booking_origin(booking_id, customer_uuid, admin_uid, source, admin_note) do
+  @doc false
+  def insert_booking_origin(booking_id, customer_id, created_by_user_id, source, admin_note) do
     case Repo.query(
            """
            INSERT INTO public.direct_booking_origins (
              booking_id, customer_id, created_by_user_id, source,
              consent_confirmed, admin_note
-           ) VALUES ($1::uuid, $2, $3, $4, true, NULLIF($5::text, ''))
+           ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, true, NULLIF($5::text, ''))
            ON CONFLICT (booking_id) DO NOTHING
            RETURNING booking_id
            """,
-           [booking_id, customer_uuid, admin_uid, source, admin_note]
+           [
+             DbUuid.dump!(booking_id),
+             DbUuid.dump!(customer_id),
+             DbUuid.dump!(created_by_user_id),
+             source,
+             admin_note
+           ]
          ) do
       {:ok, %{num_rows: 1}} -> {:ok, true}
       {:ok, %{num_rows: 0}} -> {:ok, false}
