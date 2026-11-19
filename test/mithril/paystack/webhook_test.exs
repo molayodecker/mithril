@@ -134,6 +134,90 @@ defmodule Mithril.Paystack.WebhookTest do
     assert {:error, :amount_mismatch} = Webhook.handle(raw, sign(raw))
   end
 
+  test "does not mark the edited booking paid from the original checkout amount" do
+    original_amount = 30_000
+    updated_amount = 45_000
+    discount = 5_000
+    {original_id, reference} = insert_pending_booking!(original_amount)
+
+    Repo.query!(
+      """
+      UPDATE public.bookings
+      SET promotion_slug = 'welcome_risk_free_mobile_v1',
+          promotion_discount_minor = $2
+      WHERE id = $1
+      """,
+      [Ecto.UUID.dump!(original_id), discount]
+    )
+
+    [[customer_id]] =
+      Repo.query!("SELECT customer_id FROM public.bookings WHERE id = $1", [
+        Ecto.UUID.dump!(original_id)
+      ]).rows
+
+    replacement_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.bookings (
+        id, customer_id, status, payment_status, final_amount_minor, currency,
+        promotion_slug, promotion_discount_minor
+      ) VALUES ($1, $2, 'pending', 'pending', $3, 'GHS', 'welcome_risk_free_mobile_v1', $4)
+      """,
+      [Ecto.UUID.dump!(replacement_id), customer_id, updated_amount, discount]
+    )
+
+    Repo.query!(
+      """
+      UPDATE public.bookings
+      SET status = 'cancelled', reference = NULL
+      WHERE id = $1
+      """,
+      [Ecto.UUID.dump!(original_id)]
+    )
+
+    Mithril.Paystack.Test.put_attempt(reference, %{
+      status: "success",
+      reference: reference,
+      amount: original_amount,
+      currency: "GHS"
+    })
+
+    original_charge = charge_success(reference, original_amount)
+    updated_charge = charge_success(reference, updated_amount)
+
+    try do
+      assert {:ok, %{refunded: true, settled: false}} =
+               Webhook.handle(original_charge, sign(original_charge))
+
+      assert {:error, :amount_mismatch} =
+               Webhook.handle(updated_charge, sign(updated_charge))
+
+      assert [["cancelled", "pending", ^discount]] =
+               Repo.query!(
+                 """
+                 SELECT status, payment_status, promotion_discount_minor
+                 FROM public.bookings WHERE id = $1
+                 """,
+                 [Ecto.UUID.dump!(original_id)]
+               ).rows
+
+      assert [["pending", "pending", ^updated_amount, ^discount]] =
+               Repo.query!(
+                 """
+                 SELECT status, payment_status, final_amount_minor, promotion_discount_minor
+                 FROM public.bookings WHERE id = $1
+                 """,
+                 [Ecto.UUID.dump!(replacement_id)]
+               ).rows
+
+      assert [[0]] =
+               Repo.query!("SELECT count(*) FROM public.bookings WHERE payment_status = 'paid'").rows
+    after
+      Mithril.Paystack.Test.forget_attempt(reference)
+    end
+  end
+
   test "refunds a successful charge after the booking was cancelled" do
     {booking_id, reference} = insert_pending_booking!(20_000)
 
@@ -748,6 +832,8 @@ defmodule Mithril.Paystack.WebhookTest do
       scheduled_date date,
       final_amount_minor bigint NOT NULL,
       currency text NOT NULL DEFAULT 'GHS',
+      promotion_slug text,
+      promotion_discount_minor integer NOT NULL DEFAULT 0,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     )
