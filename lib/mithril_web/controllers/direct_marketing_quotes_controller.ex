@@ -12,7 +12,9 @@ defmodule MithrilWeb.DirectMarketingQuotesController do
     key = {:marketing_quote, conn.remote_ip}
 
     case RateLimiter.check(key, @max_submissions_per_minute, 60_000) do
-      :ok -> submit_quote(conn, params)
+      :ok ->
+        submit_quote(conn, params)
+
       {:error, :rate_limited} ->
         conn |> put_status(429) |> json(%{ok: false, error: "rate_limited"})
     end
