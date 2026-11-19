@@ -586,6 +586,36 @@ defmodule Mithril.DirectDispatchTest do
              DirectDispatch.visit_hours(2, 3, 6)
   end
 
+  test "rejects an extra-task id that is not a catalog key" do
+    assert {:error, :invalid_request} =
+             DirectDispatch.create_admin_booking(Ecto.UUID.generate(), %{
+               "customerUserId" => Ecto.UUID.generate(),
+               "source" => "phone",
+               "consentConfirmed" => true,
+               "extraTaskIds" => ["windows", "not an id"]
+             })
+  end
+
+  test "sums hours for known extra tasks and rejects an unknown id" do
+    Repo.query!("""
+    CREATE TABLE IF NOT EXISTS public.extra_tasks (
+      id text PRIMARY KEY,
+      label text NOT NULL,
+      hours numeric NOT NULL
+    )
+    """)
+
+    Repo.query!("""
+    INSERT INTO public.extra_tasks (id, label, hours)
+    VALUES ('inside-windows', 'Inside windows', 0.5), ('oven', 'Oven', 1)
+    ON CONFLICT (id) DO UPDATE SET hours = EXCLUDED.hours, label = EXCLUDED.label
+    """)
+
+    assert {:ok, extra} = DirectDispatch.extra_task_hours(["inside-windows", "oven"])
+    assert Decimal.equal?(extra, Decimal.new("1.5"))
+    assert {:error, :unknown_extra_task} = DirectDispatch.extra_task_hours(["missing-task"])
+  end
+
   defp insert_user!(email, phone) do
     user_id = Ecto.UUID.generate()
 

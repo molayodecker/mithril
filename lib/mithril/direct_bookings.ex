@@ -1821,7 +1821,127 @@ defmodule Mithril.DirectBookings do
     end
   end
 
+  # Reprice an unpaid visit after staff change the extra tasks. The stored
+  # promotion is applied again so the edit does not drop the discount.
+  def reprice_unpaid_booking(booking_id) do
+    with {:ok, bid} <- dump_uuid(booking_id),
+         {:ok, booking} <- load_reprice_booking(bid),
+         input <- reprice_input(booking),
+         {:ok, pricing} <- compute_pricing(input),
+         :ok <- validate_timeslot(input, pricing),
+         :ok <- validate_cleaner_availability(input, pricing, bid) do
+      update_unpaid_pricing(booking_id, pricing)
+    end
+  end
+
+  def preserve_promotion_charge(final_minor, discount_minor) do
+    final = amount_minor(final_minor) || 0
+    discount = amount_minor(discount_minor) || 0
+    max(final - max(discount, 0), 0)
+  end
+
+  defp load_reprice_booking(bid) do
+    case Repo.query(
+           """
+           SELECT service_id,
+                  cleaner_id,
+                  scheduled_date,
+                  scheduled_time,
+                  duration_hours,
+                  COALESCE(NULLIF(btrim(timezone), ''), 'Africa/Accra'),
+                  extra_task_ids,
+                  status::text,
+                  payment_status::text,
+                  subscription_id
+           FROM public.bookings
+           WHERE id = $1
+           FOR UPDATE
+           """,
+           [bid]
+         ) do
+      {:ok,
+       %{
+         rows: [
+           [
+             service_id,
+             cleaner_id,
+             scheduled_date,
+             scheduled_time,
+             duration_hours,
+             timezone,
+             extra_task_ids,
+             status,
+             payment_status,
+             subscription_id
+           ]
+         ]
+       }} ->
+        cond do
+          not is_nil(subscription_id) ->
+            {:error, :not_cancellable}
+
+          status not in ["pending", "confirmed"] ->
+            {:error, :not_cancellable}
+
+          is_binary(payment_status) and payment_status not in ["pending", "failed"] ->
+            {:error, :already_paid}
+
+          true ->
+            {:ok,
+             %{
+               service_id: service_id,
+               cleaner_id: cleaner_id,
+               scheduled_date: scheduled_date,
+               scheduled_time: scheduled_time,
+               duration_hours: decimal_number(duration_hours),
+               timezone: timezone,
+               extra_task_ids: normalize_extra_task_ids(extra_task_ids)
+             }}
+        end
+
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp reprice_input(booking) do
+    %{
+      service_id: booking.service_id,
+      cleaner_id: booking.cleaner_id,
+      scheduled_date: booking.scheduled_date,
+      scheduled_time: booking.scheduled_time,
+      duration_hours: booking.duration_hours,
+      timezone: booking.timezone,
+      extra_task_ids: booking.extra_task_ids
+    }
+  end
+
+  defp stored_promotion_discount(booking_id) do
+    case Repo.query(
+           """
+           SELECT COALESCE(promotion_discount_minor, 0)
+           FROM public.bookings
+           WHERE id = $1
+           """,
+           [dump!(booking_id)]
+         ) do
+      {:ok, %{rows: [[discount]]}} -> {:ok, discount}
+      {:ok, %{rows: []}} -> {:error, :not_found}
+      {:error, error} -> database_error(error)
+    end
+  end
+
   defp update_unpaid_pricing(booking_id, pricing) do
+    with {:ok, discount} <- stored_promotion_discount(booking_id) do
+      charged = preserve_promotion_charge(pricing["finalAmountMinor"], discount)
+      write_unpaid_pricing(booking_id, Map.put(pricing, "finalAmountMinor", charged))
+    end
+  end
+
+  defp write_unpaid_pricing(booking_id, pricing) do
     case Repo.query(
            """
            UPDATE public.bookings

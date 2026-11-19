@@ -64,6 +64,8 @@ defmodule MithrilWeb.Plugs.DirectOpsAuthorization do
   def permissions_for(["customers"], "GET"), do: ["users", "dispatch"]
   def permissions_for(["bookings"], "POST"), do: ["bookings", "dispatch"]
   def permissions_for(["visit-hours"], "GET"), do: ["bookings", "dispatch"]
+  def permissions_for(["extra-tasks"], "GET"), do: ["bookings", "dispatch"]
+  def permissions_for(["bookings", _id, "edit"], "POST"), do: ["bookings", "dispatch"]
 
   def permissions_for(rest, method) do
     case permission_for(rest, method) do

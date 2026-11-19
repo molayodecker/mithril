@@ -12,6 +12,7 @@ defmodule MithrilWeb.DirectAdminBookingsController do
     CashPayoutResponse,
     MutationOkResponse,
     NotifyResponse,
+    EditBookingRequest,
     ResetHoldRequest,
     UpdateStatusRequest
   }
@@ -152,6 +153,25 @@ defmodule MithrilWeb.DirectAdminBookingsController do
 
   def reschedule(conn, %{"id" => id} = params) do
     respond(conn, DirectAdminBookings.reschedule(user_id(conn), id, params))
+  end
+
+  operation(:edit,
+    operation_id: "direct.editAdminBooking",
+    summary: "Edit an unpaid booking without dropping its promotional discount",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Booking ID"
+      ]
+    ],
+    request_body: {"Booking edits", "application/json", EditBookingRequest, required: true},
+    responses: [ok: {"Updated booking", "application/json", AdminBooking}]
+  )
+
+  def edit(conn, %{"id" => id} = params) do
+    respond(conn, DirectAdminBookings.update_booking(user_id(conn), id, params))
   end
 
   operation(:reset_hold,

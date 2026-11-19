@@ -11,6 +11,7 @@ defmodule Mithril.DirectAdminBookings do
   alias Mithril.DirectAdminActor
   alias Mithril.DirectBookingCancels
   alias Mithril.DirectBookings
+  alias Mithril.DirectDispatch
   alias Mithril.DirectWorkerLoans
   alias Mithril.Notifications
   alias Mithril.Repo
@@ -167,6 +168,31 @@ defmodule Mithril.DirectAdminBookings do
          {:ok, customer_id} <- booking_customer_id(bid) do
       case DirectBookings.reschedule(customer_id, booking_id, params) do
         {:ok, _} -> fetch_booking(bid)
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      :error -> {:error, :invalid_request}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def update_booking(user_id, booking_id, params) when is_map(params) do
+    with {:ok, admin_uid} <- dump_uuid(user_id),
+         {:ok, bid} <- dump_uuid(booking_id),
+         :ok <- require_admin(admin_uid),
+         {:ok, changes} <- edit_changes(params) do
+      Repo.transaction(fn ->
+        with {:ok, current} <- lock_editable_visit(bid),
+             {:ok, next} <- next_visit(current, changes),
+             :ok <- write_visit(bid, next),
+             :ok <- maybe_reprice(booking_id, next) do
+          :ok
+        else
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end)
+      |> case do
+        {:ok, :ok} -> fetch_booking(bid)
         {:error, reason} -> {:error, reason}
       end
     else
@@ -429,6 +455,10 @@ defmodule Mithril.DirectAdminBookings do
       'timezone', b.timezone,
       'address', b.address,
       'specialInstructions', b.special_instructions,
+      'serviceCategory', st.category::text,
+      'extraTaskIds', COALESCE(b.extra_task_ids, '{}'::text[]),
+      'promotionDiscountMinor', COALESCE(b.promotion_discount_minor, 0),
+      'promotionSlug', b.promotion_slug,
       'amountMinor', ROUND(COALESCE(b.final_amount_minor::numeric, b.total_price::numeric, 0))::bigint,
       'cleanerEarningsMinor', ROUND(COALESCE(b.cleaner_earnings_minor::numeric, 0))::bigint,
       'currency', COALESCE(b.currency, 'GHS'),
@@ -948,6 +978,254 @@ defmodule Mithril.DirectAdminBookings do
   defp normalize_transaction({:ok, value}), do: {:ok, value}
   defp normalize_transaction({:error, {:database, error}}), do: database_error(error)
   defp normalize_transaction({:error, reason}), do: {:error, reason}
+
+  defp edit_changes(params) do
+    address? = Map.has_key?(params, "address")
+    notes? = Map.has_key?(params, "specialInstructions")
+    tasks? = Map.has_key?(params, "extraTaskIds")
+
+    if not address? and not notes? and not tasks? do
+      {:error, :invalid_request}
+    else
+      with {:ok, address} <- optional_edit_address(params, address?),
+           {:ok, notes} <- optional_edit_notes(params, notes?),
+           {:ok, tasks} <- optional_edit_tasks(params, tasks?) do
+        {:ok, %{address: address, notes: notes, tasks: tasks}}
+      end
+    end
+  end
+
+  defp optional_edit_address(_params, false), do: {:ok, :unchanged}
+
+  defp optional_edit_address(params, true) do
+    case params["address"] do
+      address when is_binary(address) ->
+        trimmed = String.trim(address)
+
+        if trimmed != "" and String.length(trimmed) <= 500 do
+          {:ok, trimmed}
+        else
+          {:error, :invalid_request}
+        end
+
+      _ ->
+        {:error, :invalid_request}
+    end
+  end
+
+  defp optional_edit_notes(_params, false), do: {:ok, :unchanged}
+
+  defp optional_edit_notes(params, true) do
+    case params["specialInstructions"] do
+      nil ->
+        {:ok, nil}
+
+      notes when is_binary(notes) ->
+        trimmed = String.trim(notes)
+
+        if String.length(trimmed) <= 2000 do
+          notes =
+            if trimmed == "" do
+              nil
+            else
+              trimmed
+            end
+
+          {:ok, notes}
+        else
+          {:error, :invalid_request}
+        end
+
+      _ ->
+        {:error, :invalid_request}
+    end
+  end
+
+  defp optional_edit_tasks(_params, false), do: {:ok, :unchanged}
+
+  defp optional_edit_tasks(params, true) do
+    DirectDispatch.normalize_extra_task_ids(params["extraTaskIds"])
+  end
+
+  defp lock_editable_visit(bid) do
+    case Repo.query(
+           """
+           SELECT b.duration_hours,
+                  COALESCE(b.extra_task_hours_total, 0),
+                  COALESCE(b.extra_task_ids, '{}'::text[]),
+                  b.status::text,
+                  b.payment_status::text,
+                  b.subscription_id,
+                  st.category::text
+           FROM public.bookings b
+           JOIN public.service_types st ON st.id = b.service_id
+           WHERE b.id = $1
+           FOR UPDATE OF b
+           """,
+           [bid]
+         ) do
+      {:ok,
+       %{
+         rows: [
+           [duration, extra_hours, extra_ids, status, payment, subscription, category]
+         ]
+       }} ->
+        cond do
+          not is_nil(subscription) ->
+            {:error, :not_cancellable}
+
+          status not in ["pending", "confirmed"] ->
+            {:error, :not_cancellable}
+
+          is_binary(payment) and payment not in ["pending", "failed"] ->
+            {:error, :already_paid}
+
+          true ->
+            {:ok,
+             %{
+               duration_hours: duration,
+               extra_task_hours: extra_hours,
+               extra_task_ids: extra_ids || [],
+               category: category || ""
+             }}
+        end
+
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp next_visit(current, changes) do
+    with {:ok, tasks, duration} <- next_tasks(current, changes.tasks) do
+      {:ok, %{address: changes.address, notes: changes.notes, tasks: tasks, duration: duration}}
+    end
+  end
+
+  defp next_tasks(_current, :unchanged), do: {:ok, :unchanged, :unchanged}
+
+  defp next_tasks(current, ids) do
+    if cleaning_category?(current.category) do
+      with {:ok, extra_hours} <- DirectDispatch.extra_task_hours(ids) do
+        base = Decimal.sub(decimal(current.duration_hours), decimal(current.extra_task_hours))
+        total = Decimal.add(base, extra_hours)
+
+        cond do
+          Decimal.compare(base, 0) == :lt ->
+            {:error, :invalid_request}
+
+          Decimal.compare(total, 0) != :gt ->
+            {:error, :invalid_request}
+
+          Decimal.compare(total, Decimal.new(24)) == :gt ->
+            {:error, :invalid_request}
+
+          true ->
+            {:ok, ids, total}
+        end
+      end
+    else
+      if ids == [] do
+        {:ok, :unchanged, :unchanged}
+      else
+        {:error, :invalid_request}
+      end
+    end
+  end
+
+  defp cleaning_category?(category) when is_binary(category) do
+    String.contains?(String.downcase(category), "clean")
+  end
+
+  defp cleaning_category?(_), do: false
+
+  defp write_visit(bid, next) do
+    with :ok <- write_address(bid, next.address),
+         :ok <- write_notes(bid, next.notes) do
+      write_tasks(bid, next.tasks, next.duration)
+    end
+  end
+
+  defp write_address(_bid, :unchanged), do: :ok
+
+  defp write_address(bid, address) do
+    case Repo.query(
+           """
+           UPDATE public.bookings
+           SET address = $2, updated_at = now()
+           WHERE id = $1
+           RETURNING id
+           """,
+           [bid, address]
+         ) do
+      {:ok, %{rows: [[_id]]}} -> :ok
+      {:ok, %{rows: []}} -> {:error, :not_found}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp write_notes(_bid, :unchanged), do: :ok
+
+  defp write_notes(bid, notes) do
+    case Repo.query(
+           """
+           UPDATE public.bookings
+           SET special_instructions = $2, updated_at = now()
+           WHERE id = $1
+           RETURNING id
+           """,
+           [bid, notes]
+         ) do
+      {:ok, %{rows: [[_id]]}} -> :ok
+      {:ok, %{rows: []}} -> {:error, :not_found}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp write_tasks(_bid, :unchanged, _duration), do: :ok
+
+  defp write_tasks(bid, ids, duration) do
+    case Repo.query(
+           """
+           UPDATE public.bookings
+           SET extra_task_ids = $2::text[],
+               duration_hours = $3::numeric,
+               duration_final = $3::numeric,
+               updated_at = now()
+           WHERE id = $1
+           RETURNING id
+           """,
+           [bid, ids, duration]
+         ) do
+      {:ok, %{rows: [[_id]]}} -> :ok
+      {:ok, %{rows: []}} -> {:error, :not_found}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp maybe_reprice(_booking_id, %{tasks: :unchanged}), do: :ok
+
+  defp maybe_reprice(booking_id, _next) do
+    case DirectBookings.reprice_unpaid_booking(booking_id) do
+      :ok -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp decimal(%Decimal{} = value), do: value
+  defp decimal(value) when is_integer(value), do: Decimal.new(value)
+  defp decimal(value) when is_float(value), do: Decimal.from_float(value)
+
+  defp decimal(value) when is_binary(value) do
+    case Decimal.parse(value) do
+      {parsed, ""} -> parsed
+      _ -> Decimal.new(0)
+    end
+  end
+
+  defp decimal(_), do: Decimal.new(0)
 
   defp require_admin(uid) do
     if Auth.staff_uuid?(uid), do: :ok, else: {:error, :forbidden}

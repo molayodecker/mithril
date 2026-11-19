@@ -34,6 +34,13 @@ defmodule Mithril.DirectBookingsTest do
     assert {:error, :invalid_user} = DirectBookings.create_customer_booking("not-a-uuid", %{})
   end
 
+  test "repricing keeps the promotional discount and never charges a negative total" do
+    assert DirectBookings.preserve_promotion_charge(10_000, 3_600) == 6_400
+    assert DirectBookings.preserve_promotion_charge(2_000, 3_600) == 0
+    assert DirectBookings.preserve_promotion_charge(10_000, 0) == 10_000
+    assert DirectBookings.preserve_promotion_charge(nil, nil) == 0
+  end
+
   test "client booking create is idempotent for the same customer and intent key" do
     previous = Application.get_env(:mithril, :direct_client_bookings, false)
     Application.put_env(:mithril, :direct_client_bookings, true)

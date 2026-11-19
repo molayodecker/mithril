@@ -279,6 +279,27 @@ defmodule Mithril.DirectDispatch do
     end
   end
 
+  def list_admin_extra_tasks(user_id) do
+    with {:ok, uid} <- dump_uuid(user_id),
+         :ok <- require_admin(uid),
+         {:ok, result} <-
+           Repo.query("""
+           SELECT jsonb_build_object(
+             'id', id,
+             'label', label,
+             'hours', hours
+           )
+           FROM public.extra_tasks
+           ORDER BY label
+           """) do
+      {:ok, %{tasks: Enum.map(result.rows, &hd/1)}}
+    else
+      :error -> {:error, :invalid_user}
+      {:error, reason} when is_atom(reason) -> {:error, reason}
+      {:error, error} -> database_error(error)
+    end
+  end
+
   def admin_visit_hours(user_id, params) when is_map(params) do
     with {:ok, uid} <- dump_uuid(user_id),
          :ok <- require_admin(uid),
@@ -314,7 +335,8 @@ defmodule Mithril.DirectDispatch do
          :ok <- require_admin(admin_uid),
          :ok <- ensure_customer_exists(input.customer_uuid),
          {:ok, dates} <- expand_booking_dates(params),
-         {:ok, params} <- apply_room_visit(params) do
+         {:ok, params} <- apply_room_visit(params),
+         {:ok, params} <- apply_extra_tasks(params) do
       Repo.transaction(fn ->
         with :ok <- lock_admin_booking_series(input.customer_uuid, input.idempotency_key),
              {:ok, existing} <-
@@ -338,7 +360,8 @@ defmodule Mithril.DirectDispatch do
                       "homeSize",
                       "address",
                       "specialInstructions",
-                      "timezone"
+                      "timezone",
+                      "extraTaskIds"
                     ])
                     |> Map.put("scheduledDate", date)
                     |> maybe_put_admin_idempotency_key(input.idempotency_key, date, index)
@@ -1032,6 +1055,102 @@ defmodule Mithril.DirectDispatch do
   defp iso_date(%Date{} = date), do: {:ok, date}
   defp iso_date(_), do: :error
 
+  defp apply_extra_tasks(params) do
+    with {:ok, ids} <- optional_extra_task_ids(params["extraTaskIds"]) do
+      if ids == [] do
+        {:ok, Map.delete(params, "extraTaskIds")}
+      else
+        case extra_task_hours(ids) do
+          {:ok, extra_hours} ->
+            duration = to_decimal(params["durationHours"])
+            total = Decimal.add(duration, extra_hours)
+
+            {:ok,
+             params
+             |> Map.put("extraTaskIds", ids)
+             |> Map.put("durationHours", decimal_to_number(total))}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+      end
+    end
+  end
+
+  def extra_task_hours(ids) when is_list(ids) do
+    case Repo.query(
+           """
+           SELECT id, hours
+           FROM public.extra_tasks
+           WHERE id = ANY($1::text[])
+           """,
+           [ids]
+         ) do
+      {:ok, %{rows: rows}} ->
+        found = Map.new(rows, fn [id, hours] -> {id, hours} end)
+
+        if Enum.all?(ids, &Map.has_key?(found, &1)) do
+          total =
+            Enum.reduce(ids, Decimal.new(0), fn id, sum ->
+              Decimal.add(sum, to_decimal(found[id]))
+            end)
+
+          {:ok, total}
+        else
+          {:error, :unknown_extra_task}
+        end
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  def normalize_extra_task_ids(ids), do: optional_extra_task_ids(ids)
+
+  defp optional_extra_task_ids(nil), do: {:ok, []}
+  defp optional_extra_task_ids([]), do: {:ok, []}
+
+  defp optional_extra_task_ids(ids) when is_list(ids) do
+    normalized =
+      ids
+      |> Enum.map(fn
+        id when is_binary(id) -> String.trim(id)
+        _ -> ""
+      end)
+
+    cond do
+      length(normalized) > 32 ->
+        {:error, :invalid_request}
+
+      Enum.any?(normalized, &(not extra_task_id?(&1))) ->
+        {:error, :invalid_request}
+
+      true ->
+        {:ok, Enum.uniq(normalized)}
+    end
+  end
+
+  defp optional_extra_task_ids(_), do: {:error, :invalid_request}
+
+  defp extra_task_id?(id) when is_binary(id) do
+    byte_size(id) in 1..64 and String.match?(id, ~r/^[A-Za-z0-9_-]+$/)
+  end
+
+  defp extra_task_id?(_), do: false
+
+  defp to_decimal(%Decimal{} = value), do: value
+  defp to_decimal(value) when is_integer(value), do: Decimal.new(value)
+  defp to_decimal(value) when is_float(value), do: Decimal.from_float(value)
+
+  defp to_decimal(value) when is_binary(value) do
+    case Decimal.parse(value) do
+      {decimal, ""} -> decimal
+      _ -> Decimal.new(0)
+    end
+  end
+
+  defp to_decimal(_), do: Decimal.new(0)
+
   defp apply_room_visit(params) do
     case room_pair(params) do
       :absent ->
@@ -1108,6 +1227,7 @@ defmodule Mithril.DirectDispatch do
     with true <- params["consentConfirmed"] == true,
          {:ok, customer_uuid} <- dump_uuid(params["customerUserId"]),
          {:ok, source} <- admin_source(params["source"] || "admin"),
+         {:ok, _extra_task_ids} <- optional_extra_task_ids(params["extraTaskIds"]),
          {:ok, idempotency_key} <- optional_idempotency_key(params["idempotencyKey"]) do
       {:ok,
        %{

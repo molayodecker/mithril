@@ -317,11 +317,13 @@ defmodule MithrilWeb.Router do
 
     get "/admin/bookings/:id", DirectAdminBookingsController, :show
     get "/admin/visit-hours", DirectDispatchController, :admin_visit_hours
+    get "/admin/extra-tasks", DirectDispatchController, :list_admin_extra_tasks
     post "/admin/bookings", DirectDispatchController, :create_admin_booking
     post "/admin/bookings/:id/assign", DirectAdminBookingsController, :assign
     post "/admin/bookings/:id/status", DirectAdminBookingsController, :update_status
     post "/admin/bookings/:id/cancel", DirectAdminBookingsController, :cancel
     post "/admin/bookings/:id/reschedule", DirectAdminBookingsController, :reschedule
+    post "/admin/bookings/:id/edit", DirectAdminBookingsController, :edit
     post "/admin/bookings/:id/reset-hold", DirectAdminBookingsController, :reset_hold
     post "/admin/bookings/:id/cash-payout", DirectAdminBookingsController, :cash_payout
     post "/admin/bookings/:id/notify-cleaner", DirectAdminBookingsController, :notify_cleaner

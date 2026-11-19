@@ -10,6 +10,7 @@ defmodule MithrilWeb.DirectDispatchController do
     AdminAssignServiceRequestRequest,
     AdminAssistedBookingRequest,
     AdminAssistedBookingResponse,
+    AdminExtraTaskList,
     AdminVisitHours,
     AdminCustomerListResponse,
     AdminServiceRequestListResponse,
@@ -115,6 +116,16 @@ defmodule MithrilWeb.DirectDispatchController do
 
   def admin_visit_hours(conn, params) do
     respond(conn, DirectDispatch.admin_visit_hours(user_id(conn), params))
+  end
+
+  operation(:list_admin_extra_tasks,
+    operation_id: "direct.listAdminExtraTasks",
+    summary: "List cleaning extra tasks for concierge booking",
+    responses: [ok: {"Extra tasks", "application/json", AdminExtraTaskList}]
+  )
+
+  def list_admin_extra_tasks(conn, _params) do
+    respond(conn, DirectDispatch.list_admin_extra_tasks(user_id(conn)))
   end
 
   operation(:create_admin_booking,
