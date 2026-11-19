@@ -36,7 +36,7 @@ defmodule MithrilWeb.Plugs.DirectOpsAuthorization do
         cond do
           permissions == [] and "reviewer" in roles -> conn
           reviewer_whatsapp_send?(roles, rest, conn.method) -> conn
-          permission_for(rest, conn.method) in permissions -> conn
+          Enum.any?(permissions_for(rest, conn.method), &(&1 in permissions)) -> conn
           true -> reject(conn)
         end
 
@@ -57,6 +57,18 @@ defmodule MithrilWeb.Plugs.DirectOpsAuthorization do
   defp whatsapp_send_path?(["whatsapp" | _], _method), do: true
   defp whatsapp_send_path?(["contracts", _, "worker-rating"], "POST"), do: true
   defp whatsapp_send_path?(_rest, _method), do: false
+
+  # Concierge books on a customer's behalf. The bookings desk can still create
+  # the same booking, and the users desk can still search the same customers.
+  def permissions_for(["customers"], "GET"), do: ["users", "dispatch"]
+  def permissions_for(["bookings"], "POST"), do: ["bookings", "dispatch"]
+
+  def permissions_for(rest, method) do
+    case permission_for(rest, method) do
+      nil -> []
+      permission -> [permission]
+    end
+  end
 
   # Administrative role changes and financial transfers are admin-only.
   defp permission_for(["team" | _], _), do: nil
