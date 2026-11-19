@@ -47,17 +47,29 @@ defmodule Mithril.DirectContracts.WorkerRating do
   def send_due(limit \\ 20) when is_integer(limit) and limit > 0 do
     case system_admin() do
       {:ok, admin_id} ->
-        case due_contract_ids(limit) do
+        case due_contract_ids() do
           {:ok, ids} ->
-            Enum.each(ids, fn contract_id ->
-              case send(admin_id, contract_id, %{}, :automatic) do
-                {:ok, _} ->
-                  :ok
+            # Failed recipients do not consume the successful-send quota. Walk the
+            # complete due set so permanently unreachable numbers cannot starve
+            # newer clients behind the first batch.
+            Enum.reduce_while(ids, 0, fn contract_id, sent ->
+              if sent >= limit do
+                {:halt, sent}
+              else
+                case send(admin_id, contract_id, %{}, :automatic) do
+                  {:ok, _} ->
+                    {:cont, sent + 1}
 
-                {:error, reason} ->
-                  Logger.error(
-                    "Contract worker rating was not sent for #{contract_id}: #{inspect(reason)}"
-                  )
+                  {:error, :not_due} ->
+                    {:cont, sent}
+
+                  {:error, reason} ->
+                    Logger.error(
+                      "Contract worker rating was not sent for #{contract_id}: #{inspect(reason)}"
+                    )
+
+                    {:cont, sent}
+                end
               end
             end)
 
@@ -230,6 +242,12 @@ defmodule Mithril.DirectContracts.WorkerRating do
 
   defp persist(contract_uid, token, phone, workers, admin_uid, source) do
     case Repo.transaction(fn ->
+           # Serialize manual and automatic sends for this contract. An automatic
+           # request must be due at the moment it is inserted, not just when the
+           # sweep selected its candidate list.
+           lock_contract!(contract_uid)
+           if source == :automatic, do: require_due!(contract_uid)
+
            case Repo.query(
                   """
                   INSERT INTO public.direct_contract_rating_requests
@@ -265,6 +283,41 @@ defmodule Mithril.DirectContracts.WorkerRating do
     end
   end
 
+  defp lock_contract!(contract_uid) do
+    case Repo.query(
+           "SELECT id FROM public.direct_contracts WHERE id = $1 FOR UPDATE",
+           [contract_uid]
+         ) do
+      {:ok, %{rows: [[_]]}} -> :ok
+      {:ok, %{rows: []}} -> Repo.rollback(:not_found)
+      {:error, error} -> Repo.rollback(error)
+    end
+  end
+
+  defp require_due!(contract_uid) do
+    case Repo.query(
+           """
+           SELECT 1
+           FROM public.direct_contracts c
+           WHERE c.id = $1
+             AND c.status = 'active'
+             AND COALESCE(c.start_on, (c.created_at AT TIME ZONE 'Africa/Accra')::date)
+                 <= ((now() AT TIME ZONE 'Africa/Accra')::date - interval '3 months')::date
+             AND NOT EXISTS (
+               SELECT 1 FROM public.direct_contract_rating_requests r
+               WHERE r.contract_id = c.id
+                 AND (r.sent_at AT TIME ZONE 'Africa/Accra')::date
+                     > ((now() AT TIME ZONE 'Africa/Accra')::date - interval '3 months')::date
+             )
+           """,
+           [contract_uid]
+         ) do
+      {:ok, %{rows: [[1]]}} -> :ok
+      {:ok, %{rows: []}} -> Repo.rollback(:not_due)
+      {:error, error} -> Repo.rollback(error)
+    end
+  end
+
   defp delete_request(request_id) do
     case Repo.query("DELETE FROM public.direct_contract_rating_requests WHERE id = $1", [
            request_id
@@ -277,7 +330,7 @@ defmodule Mithril.DirectContracts.WorkerRating do
     end
   end
 
-  defp due_contract_ids(limit) do
+  defp due_contract_ids do
     case Repo.query(
            """
            SELECT c.id::text
@@ -297,10 +350,9 @@ defmodule Mithril.DirectContracts.WorkerRating do
                  AND (r.sent_at AT TIME ZONE 'Africa/Accra')::date
                      > ((now() AT TIME ZONE 'Africa/Accra')::date - interval '3 months')::date
              )
-           ORDER BY c.created_at
-           LIMIT $1
+           ORDER BY c.created_at, c.id
            """,
-           [limit]
+           []
          ) do
       {:ok, %{rows: rows}} -> {:ok, Enum.map(rows, &hd/1)}
       {:error, error} -> database_error(error)
@@ -434,7 +486,7 @@ defmodule Mithril.DirectContracts.WorkerRating do
     end
   end
 
-  defp parse_ratings(list) when is_list(list) and list != [] and length(list) <= 20 do
+  defp parse_ratings(list) when is_list(list) and list != [] do
     Enum.reduce_while(list, {:ok, []}, fn item, {:ok, acc} ->
       case parse_rating(item) do
         {:ok, rating} -> {:cont, {:ok, [rating | acc]}}
