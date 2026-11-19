@@ -17,6 +17,7 @@ defmodule Mithril.DirectContracts do
   alias Mithril.WhatsApp.WorkerAddedTemplate
   alias Mithril.WhatsApp.InvoiceTemplate
   alias Mithril.DirectContracts.Letter
+  alias Mithril.DirectContracts.WorkerRating
   alias Mithril.Repo
 
   def list(user_id, month_param) do
@@ -464,6 +465,12 @@ defmodule Mithril.DirectContracts do
             {:error, reason}
         end
       end
+    end
+  end
+
+  def send_worker_rating(user_id, contract_id, params) when is_map(params) do
+    with :ok <- require_rating_sender(user_id) do
+      WorkerRating.send(user_id, contract_id, params, :manual)
     end
   end
 
@@ -3026,6 +3033,12 @@ defmodule Mithril.DirectContracts do
     Logger.error("Direct contract database error: #{inspect(error)}")
     {:error, :database_unavailable}
   end
+
+  defp require_rating_sender(user_id) when is_binary(user_id) do
+    if Auth.reviewer?(user_id), do: :ok, else: require_admin(user_id)
+  end
+
+  defp require_rating_sender(_), do: {:error, :forbidden}
 
   defp require_admin(user_id) when is_binary(user_id) do
     cond do

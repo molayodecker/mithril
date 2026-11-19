@@ -150,6 +150,8 @@ defmodule MithrilWeb.Router do
     post "/billing-invoices/:token/decision", DirectAdminBillingController, :decide
     post "/billing-invoices/:token/location", DirectAdminBillingController, :share_location
     get "/contract-invoices/:token", DirectAdminContractsController, :public_show
+    get "/contract-ratings/:token", DirectAdminContractsController, :public_rating
+    post "/contract-ratings/:token", DirectAdminContractsController, :submit_rating
     get "/contract-letters/:token", DirectAdminContractsController, :public_letter
     post "/contract-letters/:token/sign", DirectAdminContractsController, :sign_public_letter
     get "/worker-letters/:token", DirectAdminContractsController, :public_worker_letter
@@ -305,6 +307,7 @@ defmodule MithrilWeb.Router do
     post "/admin/contracts/:id/letters/save", DirectAdminContractsController, :save_letter
     post "/admin/contracts/:id/letters", DirectAdminContractsController, :send_letter
     post "/admin/contracts/:id/google-review", DirectAdminContractsController, :send_google_review
+    post "/admin/contracts/:id/worker-rating", DirectAdminContractsController, :send_worker_rating
     post "/admin/contracts/:id/sign", DirectAdminContractsController, :sign
 
     get "/admin/bookings/:id/payment-diagnostics",
