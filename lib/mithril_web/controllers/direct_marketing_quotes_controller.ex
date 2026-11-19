@@ -30,7 +30,6 @@ defmodule MithrilWeb.DirectMarketingQuotesController do
 
       {:error, :email_failed} ->
         conn |> put_status(502) |> json(%{ok: false, error: "email_failed"})
-
     end
   end
 end
