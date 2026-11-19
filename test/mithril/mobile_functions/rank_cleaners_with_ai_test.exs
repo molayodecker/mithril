@@ -1,7 +1,10 @@
 defmodule Mithril.MobileFunctions.RankCleanersWithAiTest do
   use ExUnit.Case, async: false
 
+  alias Ecto.Adapters.SQL.Sandbox
   alias Mithril.MobileFunctions.RankCleanersWithAi
+  alias Mithril.Repo
+  alias Mithril.Transport.Ranking
 
   @cleaners [
     %{"id" => "a", "match_score" => 1, "distance" => 4},
@@ -225,6 +228,54 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAiTest do
              })
   end
 
+  test "passes an HH:MM slot to nearby cleaner lookup as a time struct" do
+    install_nearby_time_probe!()
+    Application.delete_env(:mithril, :ai_match_candidate_loader)
+
+    cleaner_id = Ecto.UUID.generate()
+    date = Date.utc_today() |> Date.add(1) |> Date.to_iso8601()
+
+    assert {:ok, body} =
+             RankCleanersWithAi.call(nil, %{
+               "cleaners" => [%{"id" => cleaner_id, "match_score" => 1, "distance" => 1}],
+               "bookingDraft" => %{
+                 "bookingDate" => date,
+                 "slotTime24h" => "06:00",
+                 "latitude" => 5.6,
+                 "longitude" => -0.2,
+                 "serviceId" => 1,
+                 "durationHours" => 2
+               }
+             })
+
+    refute body.reason in [
+             "candidate_lookup_failed",
+             "missing_service",
+             "invalid_booking_time",
+             "invalid_candidate_ids"
+           ]
+
+    assert_recorded_slot!(~T[06:00:00])
+  end
+
+  test "destination ranking passes an HH:MM slot as a time struct" do
+    install_nearby_time_probe!()
+    date = Date.utc_today() |> Date.add(1) |> Date.to_iso8601()
+
+    assert {:ok, body} =
+             Ranking.for_destination(Ecto.UUID.generate(), %{
+               "lat" => 5.65,
+               "lng" => -0.18,
+               "scheduled_date" => date,
+               "start_time" => "06:00",
+               "duration_hours" => 2
+             })
+
+    assert body.provider == "locationiq"
+
+    assert_recorded_slot!(~T[06:00:00])
+  end
+
   test "deterministic fallback preserves authoritative availability order without faking distance" do
     enable_settings()
     Application.delete_env(:mithril, :openai_api_key)
@@ -266,6 +317,62 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAiTest do
     assert {:ok, body} = RankCleanersWithAi.call(nil, %{"cleaners" => @cleaners})
     assert body.reason == "missing_openai_key"
     assert Enum.map(body.cleaners, & &1.cleaner_id) == ["first", "second"]
+  end
+
+  defp assert_recorded_slot!(expected) do
+    assert [[recorded]] = Repo.query!("SELECT start_time FROM public.test_nearby_slot_calls").rows
+    assert Time.compare(recorded, expected) == :eq
+  end
+
+  defp install_nearby_time_probe! do
+    :ok = Sandbox.checkout(Repo)
+
+    [[database]] = Repo.query!("SELECT current_database()").rows
+
+    unless database == "mithril_test" do
+      raise "Refusing to install nearby cleaner fixtures outside mithril_test, got #{inspect(database)}"
+    end
+
+    Repo.query!("DROP TABLE IF EXISTS public.service_types CASCADE")
+
+    Repo.query!("""
+    CREATE TABLE public.service_types (
+      id integer PRIMARY KEY,
+      specialty_slug text NOT NULL,
+      active boolean NOT NULL DEFAULT true
+    )
+    """)
+
+    Repo.query!(
+      "INSERT INTO public.service_types (id, specialty_slug, active) VALUES (1, 'regular_cleaning', true)"
+    )
+
+    Repo.query!("DROP TABLE IF EXISTS public.test_nearby_slot_calls")
+
+    Repo.query!("""
+    CREATE TABLE public.test_nearby_slot_calls (
+      start_time time NOT NULL
+    )
+    """)
+
+    Repo.query!("""
+    DROP FUNCTION IF EXISTS public.get_nearby_available_cleaners(
+      double precision, double precision, integer, date, time, integer
+    )
+    """)
+
+    Repo.query!("""
+    CREATE FUNCTION public.get_nearby_available_cleaners(
+      double precision, double precision, integer, date, time, integer
+    ) RETURNS TABLE(id uuid)
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      INSERT INTO public.test_nearby_slot_calls(start_time) VALUES ($5);
+      RETURN;
+    END;
+    $$
+    """)
   end
 
   defp enable_settings do
