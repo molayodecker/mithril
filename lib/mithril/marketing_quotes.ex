@@ -7,8 +7,14 @@ defmodule Mithril.MarketingQuotes do
   alias Mithril.WhatsApp.Recruitment.Outbound
 
   @business_whatsapp "whatsapp:+233559100642"
-  @default_template_sid "HX6f269261c31ade38a05104965e15c256"
+  # v1 (instaclean_quote_request_v1) ended on a placeholder, so Meta rejected it.
+  # v2 keeps every field in the middle and finishes with fixed text.
+  @default_template_sid "HXa0978459e7aa47c062989f299beb1364"
   @approval_ttl_ms 300_000
+
+  def template_body do
+    "Hello, Instaclean received a new quote request from {{1}}. Their phone number is {{2}}. The service they asked for is {{3}}, and the location is {{4}}. Extra notes from the customer: {{5}}. Please follow up with them from the Instaclean inbox."
+  end
 
   def submit(params) when is_map(params) do
     if text(params, "company_website", "companyWebsite", 200) != "" do

@@ -19,6 +19,16 @@ defmodule Mithril.MarketingQuotesTest do
     :ok
   end
 
+  test "quote template keeps placeholders in the middle and ends with fixed text" do
+    body = String.trim(MarketingQuotes.template_body())
+
+    refute String.match?(body, ~r/^\{\{\d+\}\}/)
+    refute String.match?(body, ~r/\{\{\d+\}\}[[:space:]]*$/)
+    assert String.ends_with?(body, "Please follow up with them from the Instaclean inbox.")
+    assert body =~ "{{1}}"
+    assert body =~ "{{5}}"
+  end
+
   test "emails support and accepts a quote without a template" do
     assert {:ok, :accepted} =
              MarketingQuotes.submit(%{
