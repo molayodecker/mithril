@@ -279,12 +279,42 @@ defmodule Mithril.DirectDispatch do
     end
   end
 
+  def admin_visit_hours(user_id, params) when is_map(params) do
+    with {:ok, uid} <- dump_uuid(user_id),
+         :ok <- require_admin(uid),
+         {:ok, bedrooms, bathrooms} <- room_pair(params),
+         {:ok, service_id} <- optional_service_id(params["serviceId"]) do
+      visit_hours(bedrooms, bathrooms, service_id)
+    else
+      :absent -> {:error, :invalid_request}
+      :error -> {:error, :invalid_request}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def visit_hours(bedrooms, bathrooms, service_id \\ nil) do
+    case Repo.query(
+           """
+           SELECT duration_hours, home_size
+           FROM public.direct_visit_hours($1, $2, $3)
+           """,
+           [bedrooms, bathrooms, service_id]
+         ) do
+      {:ok, %{rows: [[hours, home_size]]}} ->
+        {:ok, %{durationHours: decimal_to_number(hours), homeSize: home_size}}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
   def create_admin_booking(user_id, params) when is_map(params) do
     with {:ok, admin_uid} <- dump_uuid(user_id),
          {:ok, input} <- validate_admin_booking(params),
          :ok <- require_admin(admin_uid),
          :ok <- ensure_customer_exists(input.customer_uuid),
-         {:ok, dates} <- expand_booking_dates(params) do
+         {:ok, dates} <- expand_booking_dates(params),
+         {:ok, params} <- apply_room_visit(params) do
       Repo.transaction(fn ->
         with :ok <- lock_admin_booking_series(input.customer_uuid, input.idempotency_key),
              {:ok, existing} <-
@@ -305,6 +335,7 @@ defmodule Mithril.DirectDispatch do
                       "cleanerId",
                       "scheduledTime",
                       "durationHours",
+                      "homeSize",
                       "address",
                       "specialInstructions",
                       "timezone"
@@ -1000,6 +1031,78 @@ defmodule Mithril.DirectDispatch do
   defp iso_date(value) when is_binary(value), do: Date.from_iso8601(String.trim(value))
   defp iso_date(%Date{} = date), do: {:ok, date}
   defp iso_date(_), do: :error
+
+  defp apply_room_visit(params) do
+    case room_pair(params) do
+      :absent ->
+        if is_number(params["durationHours"]) and params["durationHours"] > 0,
+          do: {:ok, params},
+          else: {:error, :invalid_request}
+
+      {:ok, bedrooms, bathrooms} ->
+        with {:ok, service_id} <- optional_service_id(params["serviceId"]),
+             {:ok, visit} <- visit_hours(bedrooms, bathrooms, service_id) do
+          {:ok,
+           params
+           |> Map.put("durationHours", visit.durationHours)
+           |> Map.put("homeSize", visit.homeSize)}
+        else
+          :error -> {:error, :invalid_request}
+          {:error, reason} -> {:error, reason}
+        end
+
+      :error ->
+        {:error, :invalid_request}
+    end
+  end
+
+  defp room_pair(params) do
+    bedrooms = params["bedrooms"]
+    bathrooms = params["bathrooms"]
+
+    if blank_room?(bedrooms) and blank_room?(bathrooms) do
+      :absent
+    else
+      with {:ok, bedrooms} <- room_count(bedrooms),
+           {:ok, bathrooms} <- room_count(bathrooms) do
+        {:ok, bedrooms, bathrooms}
+      else
+        _ -> :error
+      end
+    end
+  end
+
+  defp blank_room?(nil), do: true
+  defp blank_room?(""), do: true
+  defp blank_room?(_), do: false
+
+  defp room_count(value) when is_integer(value), do: {:ok, value}
+
+  defp room_count(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {count, ""} -> {:ok, count}
+      _ -> :error
+    end
+  end
+
+  defp room_count(_), do: :error
+
+  defp optional_service_id(nil), do: {:ok, nil}
+  defp optional_service_id(""), do: {:ok, nil}
+  defp optional_service_id(value) when is_integer(value) and value > 0, do: {:ok, value}
+
+  defp optional_service_id(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {id, ""} when id > 0 -> {:ok, id}
+      _ -> :error
+    end
+  end
+
+  defp optional_service_id(_), do: :error
+
+  defp decimal_to_number(%Decimal{} = value), do: Decimal.to_float(value)
+  defp decimal_to_number(value) when is_integer(value), do: value / 1
+  defp decimal_to_number(value) when is_float(value), do: value
 
   defp validate_admin_booking(params) do
     with true <- params["consentConfirmed"] == true,

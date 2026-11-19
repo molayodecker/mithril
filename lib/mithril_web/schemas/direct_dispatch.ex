@@ -184,7 +184,35 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
           type: :string,
           pattern: "^([01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?$"
         },
-        durationHours: %Schema{type: :number, minimum: 0.5},
+        bedrooms: %Schema{
+          type: :integer,
+          minimum: 1,
+          maximum: 10,
+          nullable: true,
+          description:
+            "When set with bathrooms, the database computes durationHours and homeSize."
+        },
+        bathrooms: %Schema{
+          type: :integer,
+          minimum: 1,
+          maximum: 10,
+          nullable: true,
+          description: "When set with bedrooms, the database computes durationHours and homeSize."
+        },
+        durationHours: %Schema{
+          type: :number,
+          minimum: 0.5,
+          nullable: true,
+          description:
+            "Used only when bedrooms and bathrooms are omitted. Room counts replace this value."
+        },
+        homeSize: %Schema{
+          type: :string,
+          nullable: true,
+          maxLength: 200,
+          description:
+            "Legacy room summary. Replaced by the database when bedrooms and bathrooms are sent."
+        },
         address: %Schema{type: :string, minLength: 3, maxLength: 500},
         specialInstructions: %Schema{type: :string, maxLength: 4000, nullable: true},
         timezone: %Schema{type: :string, default: "Africa/Accra"},
@@ -229,10 +257,25 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
         :cleanerId,
         :scheduledDate,
         :scheduledTime,
-        :durationHours,
         :address,
         :consentConfirmed
       ]
+    })
+  end
+
+  defmodule AdminVisitHours do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminVisitHours",
+      type: :object,
+      description: "Visit length computed by direct_visit_hours.",
+      properties: %{
+        durationHours: %Schema{type: :number, minimum: 0.5},
+        homeSize: %Schema{type: :string}
+      },
+      required: [:durationHours, :homeSize]
     })
   end
 

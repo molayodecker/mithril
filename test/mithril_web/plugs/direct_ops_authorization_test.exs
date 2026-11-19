@@ -31,8 +31,13 @@ defmodule MithrilWeb.Plugs.DirectOpsAuthorizationTest do
            )
   end
 
-  test "concierge can search customers and create a booking" do
+  test "concierge can search customers, preview visit length, and create a booking" do
     assert DirectOpsAuthorization.permissions_for(["customers"], "GET") == ["users", "dispatch"]
+
+    assert DirectOpsAuthorization.permissions_for(["visit-hours"], "GET") == [
+             "bookings",
+             "dispatch"
+           ]
 
     assert DirectOpsAuthorization.permissions_for(["bookings"], "POST") == [
              "bookings",

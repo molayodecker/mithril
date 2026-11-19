@@ -315,6 +315,7 @@ defmodule MithrilWeb.Router do
         :payment_diagnostics
 
     get "/admin/bookings/:id", DirectAdminBookingsController, :show
+    get "/admin/visit-hours", DirectDispatchController, :admin_visit_hours
     post "/admin/bookings", DirectDispatchController, :create_admin_booking
     post "/admin/bookings/:id/assign", DirectAdminBookingsController, :assign
     post "/admin/bookings/:id/status", DirectAdminBookingsController, :update_status

@@ -10,6 +10,7 @@ defmodule MithrilWeb.DirectDispatchController do
     AdminAssignServiceRequestRequest,
     AdminAssistedBookingRequest,
     AdminAssistedBookingResponse,
+    AdminVisitHours,
     AdminCustomerListResponse,
     AdminServiceRequestListResponse,
     AdminServiceRequestMutationResponse,
@@ -86,6 +87,34 @@ defmodule MithrilWeb.DirectDispatchController do
     respond(conn, DirectDispatch.list_admin_customers(user_id(conn), params["q"]), fn customers ->
       %{customers: customers}
     end)
+  end
+
+  operation(:admin_visit_hours,
+    operation_id: "direct.adminVisitHours",
+    summary: "Billable visit length from bedrooms, bathrooms, and the service limits",
+    parameters: [
+      bedrooms: [
+        in: :query,
+        schema: %Schema{type: :integer, minimum: 1, maximum: 10},
+        required: true
+      ],
+      bathrooms: [
+        in: :query,
+        schema: %Schema{type: :integer, minimum: 1, maximum: 10},
+        required: true
+      ],
+      serviceId: [
+        in: :query,
+        schema: %Schema{type: :integer, minimum: 1},
+        required: false,
+        description: "Service whose minimum, maximum, and step replace the defaults"
+      ]
+    ],
+    responses: [ok: {"Visit hours", "application/json", AdminVisitHours}]
+  )
+
+  def admin_visit_hours(conn, params) do
+    respond(conn, DirectDispatch.admin_visit_hours(user_id(conn), params))
   end
 
   operation(:create_admin_booking,

@@ -527,6 +527,65 @@ defmodule Mithril.DirectDispatchTest do
              })
   end
 
+  test "visit hours are calculated in the database from bedrooms and bathrooms" do
+    Repo.query!("DROP TABLE IF EXISTS public.service_types CASCADE")
+
+    Repo.query!("""
+    CREATE TABLE public.service_types (
+      id integer PRIMARY KEY,
+      minimum_duration_hours numeric,
+      maximum_duration_hours numeric,
+      duration_increment_hours numeric
+    )
+    """)
+
+    sql =
+      File.read!(
+        Path.expand("../../priv/repo/sql/direct/20261119143000_direct_visit_hours.sql", __DIR__)
+      )
+
+    Repo.query!(sql)
+
+    Repo.query!("""
+    INSERT INTO public.service_types (
+      id, minimum_duration_hours, maximum_duration_hours, duration_increment_hours
+    ) VALUES
+      (1, 3, 10, 0.5),
+      (2, 2, 5, 0.5),
+      (3, 3.5, 10, 0.5),
+      (4, 3.2, 10, 0.5),
+      (5, 2, 3.25, 0.5),
+      (6, 2, 10, 0.25)
+    """)
+
+    assert {:ok, %{durationHours: 3.5, homeSize: "2 bed, 3 bath"}} =
+             DirectDispatch.visit_hours(2, 3)
+
+    assert {:ok, %{durationHours: 8.5, homeSize: "10 bed, 10 bath"}} =
+             DirectDispatch.visit_hours(10, 10)
+
+    assert {:ok, %{durationHours: 3.0, homeSize: "1 bed, 1 bath"}} =
+             DirectDispatch.visit_hours(1, 1, 1)
+
+    assert {:ok, %{durationHours: 5.0, homeSize: "10 bed, 10 bath"}} =
+             DirectDispatch.visit_hours(10, 10, 2)
+
+    assert {:ok, %{durationHours: 8.5, homeSize: "10 bed, 10 bath"}} =
+             DirectDispatch.visit_hours(10, 10, 3)
+
+    assert {:ok, %{durationHours: 4.5, homeSize: "1 bed, 10 bath"}} =
+             DirectDispatch.visit_hours(0, 99)
+
+    assert {:ok, %{durationHours: 3.2, homeSize: "1 bed, 1 bath"}} =
+             DirectDispatch.visit_hours(1, 1, 4)
+
+    assert {:ok, %{durationHours: 3.25, homeSize: "10 bed, 10 bath"}} =
+             DirectDispatch.visit_hours(10, 10, 5)
+
+    assert {:ok, %{durationHours: 3.5, homeSize: "2 bed, 3 bath"}} =
+             DirectDispatch.visit_hours(2, 3, 6)
+  end
+
   defp insert_user!(email, phone) do
     user_id = Ecto.UUID.generate()
 
