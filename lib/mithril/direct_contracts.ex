@@ -17,6 +17,7 @@ defmodule Mithril.DirectContracts do
   alias Mithril.WhatsApp.WorkerAddedTemplate
   alias Mithril.WhatsApp.InvoiceTemplate
   alias Mithril.DirectContracts.Letter
+  alias Mithril.DirectContracts.WorkerRating
   alias Mithril.Repo
 
   def list(user_id, month_param) do
@@ -464,6 +465,12 @@ defmodule Mithril.DirectContracts do
             {:error, reason}
         end
       end
+    end
+  end
+
+  def send_worker_rating(user_id, contract_id, params) when is_map(params) do
+    with :ok <- require_admin(user_id) do
+      WorkerRating.send(user_id, contract_id, params, :manual)
     end
   end
 

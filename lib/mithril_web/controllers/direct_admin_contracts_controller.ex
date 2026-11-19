@@ -29,6 +29,14 @@ defmodule MithrilWeb.DirectAdminContractsController do
   }
 
   alias MithrilWeb.Schemas.DirectAdminGoogleReview.{Request, Result}
+
+  alias MithrilWeb.Schemas.DirectContractWorkerRating.{
+    AdminRequest,
+    AdminResult,
+    Public,
+    SubmitRequest
+  }
+
   alias OpenApiSpex.Schema
 
   tags(["direct-admin-contracts"])
@@ -264,6 +272,20 @@ defmodule MithrilWeb.DirectAdminContractsController do
     respond(conn, DirectContracts.send_google_review(user_id(conn), id, params))
   end
 
+  operation(:send_worker_rating,
+    operation_id: "direct.sendAdminContractWorkerRating",
+    summary: "Ask the contract client to rate their worker on WhatsApp",
+    parameters: [
+      id: [in: :path, schema: %Schema{type: :string, format: :uuid}, required: true]
+    ],
+    request_body: {"Rating request", "application/json", AdminRequest, required: true},
+    responses: [ok: {"Rating request", "application/json", AdminResult}]
+  )
+
+  def send_worker_rating(conn, %{"id" => id} = params) do
+    respond(conn, DirectContracts.send_worker_rating(user_id(conn), id, params))
+  end
+
   operation(:sign,
     operation_id: "direct.signAdminContractLetter",
     summary: "Sign a service agreement for Instaclean",
@@ -356,6 +378,33 @@ defmodule MithrilWeb.DirectAdminContractsController do
     respond(conn, DirectContracts.public_worker_letter(token))
   end
 
+  operation(:public_rating,
+    operation_id: "direct.showContractWorkerRating",
+    summary: "Read a contract worker rating request by its public token",
+    parameters: [
+      token: [in: :path, schema: %Schema{type: :string}, required: true]
+    ],
+    responses: [ok: {"Rating", "application/json", Public}]
+  )
+
+  def public_rating(conn, %{"token" => token}) do
+    respond(conn, Mithril.DirectContracts.WorkerRating.show(token))
+  end
+
+  operation(:submit_rating,
+    operation_id: "direct.submitContractWorkerRating",
+    summary: "Save the client's rating for each worker on a contract",
+    parameters: [
+      token: [in: :path, schema: %Schema{type: :string}, required: true]
+    ],
+    request_body: {"Ratings", "application/json", SubmitRequest, required: true},
+    responses: [ok: {"Rating", "application/json", Public}]
+  )
+
+  def submit_rating(conn, %{"token" => token} = params) do
+    respond(conn, Mithril.DirectContracts.WorkerRating.submit(token, params))
+  end
+
   defp user_id(conn), do: conn.assigns.instaclean_user_id
 
   defp respond(conn, {:ok, payload}) do
@@ -381,6 +430,8 @@ defmodule MithrilWeb.DirectAdminContractsController do
   defp error_response(:invalid_phone), do: {422, "invalid_phone"}
   defp error_response(:missing_email), do: {422, "missing_email"}
   defp error_response(:missing_phone), do: {422, "missing_phone"}
+  defp error_response(:no_worker), do: {422, "no_worker"}
+  defp error_response(:already_rated), do: {409, "already_rated"}
   defp error_response(:advance_not_due), do: {409, "advance_not_due"}
   defp error_response(:advance_already_paid), do: {409, "advance_already_paid"}
   defp error_response(:assignment_ended), do: {409, "assignment_ended"}

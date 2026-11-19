@@ -69,7 +69,8 @@ defmodule Mithril.Cron.Jobs do
   def mithril_only_jobs do
     [
       {"0 * * * *", Mithril.Workers.BookingReminderSweep, []},
-      {"0 6 * * *", Mithril.Workers.ContractAdvanceSweep, []}
+      {"0 6 * * *", Mithril.Workers.ContractAdvanceSweep, []},
+      {"15 6 * * *", Mithril.Workers.ContractWorkerRatingSweep, []}
     ]
   end
 
