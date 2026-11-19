@@ -1,6 +1,8 @@
 defmodule Mithril.MarketingQuotes do
   @moduledoc false
 
+  require Logger
+
   alias Mithril.Notifications.Resend
   alias Mithril.WhatsApp.Recruitment.Outbound
 
@@ -13,8 +15,15 @@ defmodule Mithril.MarketingQuotes do
       {:ok, :accepted}
     else
       with {:ok, quote} <- cast(params),
-           :ok <- deliver_email(quote),
-           :ok <- deliver_whatsapp(quote) do
+           :ok <- deliver_email(quote) do
+        # Email is the primary lead notification. Once received by support,
+        # a WhatsApp outage must not make the client retry the same quote.
+        case deliver_whatsapp(quote) do
+          :ok -> :ok
+          {:error, reason} ->
+            Logger.warning("Marketing quote WhatsApp notification failed: #{inspect(reason)}")
+        end
+
         {:ok, :accepted}
       end
     end
