@@ -2040,6 +2040,7 @@ defmodule Mithril.DirectBookingsTest do
       address text,
       special_instructions text,
       final_amount_minor bigint,
+      promotion_discount_minor integer DEFAULT 0,
       total_price numeric,
       currency text NOT NULL DEFAULT 'GHS',
       timezone text,
