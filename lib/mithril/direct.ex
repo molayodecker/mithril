@@ -1022,6 +1022,10 @@ defmodule Mithril.Direct do
           [cid, status, uid, notes]
         )
 
+        if action_type == "training" do
+          Mithril.WorkerTraining.assign_for_health_case(cid, uid)
+        end
+
         %{message: "Action recorded"}
       end)
       |> normalize_transaction()

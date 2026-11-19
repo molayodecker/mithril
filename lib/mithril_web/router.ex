@@ -165,6 +165,7 @@ defmodule MithrilWeb.Router do
     get "/booking-categories", DirectBookingController, :list_categories
     get "/booking-cleaners", DirectBookingController, :list_cleaners
     post "/booking-price", DirectBookingController, :preview_price
+    post "/quotes", DirectMarketingQuotesController, :create
   end
 
   scope "/direct", MithrilWeb do
