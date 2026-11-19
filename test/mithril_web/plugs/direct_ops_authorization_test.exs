@@ -33,19 +33,24 @@ defmodule MithrilWeb.Plugs.DirectOpsAuthorizationTest do
 
   test "concierge can search customers and create a booking" do
     assert DirectOpsAuthorization.permissions_for(["customers"], "GET") == ["users", "dispatch"]
-    assert DirectOpsAuthorization.permissions_for(["bookings"], "POST") == ["bookings", "dispatch"]
+assert DirectOpsAuthorization.permissions_for(["bookings"], "POST") == [
+             "bookings",
+             "dispatch"
+           ]
   end
 
   test "booking desk reads and mutations stay on the bookings permission" do
     assert DirectOpsAuthorization.permissions_for(["bookings"], "GET") == ["bookings"]
 
-    assert DirectOpsAuthorization.permissions_for(["bookings", "booking-id", "cancel"], "POST") == [
-             "bookings"
-           ]
+    assert DirectOpsAuthorization.permissions_for(["bookings", "booking-id", "cancel"], "POST") ==
+             [
+               "bookings"
+             ]
 
-    assert DirectOpsAuthorization.permissions_for(["bookings", "booking-id", "invoice"], "GET") == [
-             "billing"
-           ]
+    assert DirectOpsAuthorization.permissions_for(["bookings", "booking-id", "invoice"], "GET") ==
+             [
+               "billing"
+             ]
   end
 
   test "placement and roster lists stay on their own desks" do
