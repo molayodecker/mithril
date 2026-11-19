@@ -722,6 +722,119 @@ defmodule MithrilWeb.Schemas.MobileCalls do
     )
   end
 
+  defmodule TrainingAssignment do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileTrainingAssignment",
+      type: :object,
+      properties: %{
+        id: %Schema{type: :string, format: :uuid},
+        courseKey: %Schema{type: :string},
+        title: %Schema{type: :string},
+        summary: %Schema{type: :string},
+        reason: %Schema{type: :string, enum: ["performance", "employer"]},
+        status: %Schema{type: :string, enum: ["assigned", "completed"]},
+        assignedAt: %Schema{type: :string, format: :"date-time"},
+        completedAt: %Schema{type: :string, format: :"date-time", nullable: true}
+      },
+      required: [:id, :courseKey, :title, :summary, :reason, :status, :assignedAt]
+    })
+  end
+
+  defmodule TrainingListResponse do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileTrainingListResponse",
+      type: :object,
+      properties: %{
+        data: %Schema{
+          type: :object,
+          properties: %{
+            assignments: %Schema{
+              type: :array,
+              items: MithrilWeb.Schemas.MobileCalls.TrainingAssignment
+            }
+          },
+          required: [:assignments]
+        }
+      },
+      required: [:data]
+    })
+  end
+
+  defmodule TrainingAssignmentResponse do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileTrainingAssignmentResponse",
+      type: :object,
+      properties: %{
+        data: %Schema{
+          type: :object,
+          properties: %{
+            assignment: MithrilWeb.Schemas.MobileCalls.TrainingAssignment
+          },
+          required: [:assignment]
+        }
+      },
+      required: [:data]
+    })
+  end
+
+  defmodule CompleteTrainingRequest do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileCompleteTrainingRequest",
+      type: :object,
+      properties: %{
+        id: %Schema{type: :string, format: :uuid}
+      },
+      required: [:id]
+    })
+  end
+
+  defmodule RecommendTrainingRequest do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileRecommendTrainingRequest",
+      type: :object,
+      properties: %{
+        workerUserId: %Schema{type: :string, format: :uuid},
+        courseKey: %Schema{
+          type: :string,
+          enum: ["job-quality", "punctuality", "customer-care", "safety"]
+        }
+      },
+      required: [:workerUserId, :courseKey]
+    })
+  end
+
+  def operation({:user_action, "list-my-training"}) do
+    post("mobile.listMyTraining", "Training assigned to the signed-in worker",
+      response: TrainingListResponse
+    )
+  end
+
+  def operation({:user_action, "complete-my-training"}) do
+    post("mobile.completeMyTraining", "Mark one of the signed-in worker's courses complete",
+      request: CompleteTrainingRequest,
+      response: TrainingAssignmentResponse
+    )
+  end
+
+  def operation({:user_action, "recommend-worker-training"}) do
+    post(
+      "mobile.recommendWorkerTraining",
+      "Recommend a catalog course for a co-worker on the signed-in lead's team",
+      request: RecommendTrainingRequest,
+      response: TrainingAssignmentResponse
+    )
+  end
+
   def operation({:user_rpc, "replace_cleaner_weekday_blocks"}) do
     post(
       "mobile.replaceCleanerWeekdayBlocks",

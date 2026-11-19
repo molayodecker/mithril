@@ -24,6 +24,7 @@ defmodule Mithril.MobileFunctions do
   alias Mithril.MobileFunctions.Timezone
   alias Mithril.MobileFunctions.UberTransportationReleaseGate
   alias Mithril.MobileFunctions.UberTripEstimate
+  alias Mithril.WorkerTraining
 
   @spec invoke(String.t(), String.t(), map()) :: {:ok, map()} | {:error, term()}
   def invoke(_user_id, name, _body)
@@ -119,6 +120,15 @@ defmodule Mithril.MobileFunctions do
 
   def invoke(user_id, "request-data-export", body) when is_map(body),
     do: RequestDataExport.call(user_id, body)
+
+  def invoke(user_id, "list-my-training", body) when is_map(body),
+    do: WorkerTraining.list(user_id)
+
+  def invoke(user_id, "complete-my-training", body) when is_map(body),
+    do: WorkerTraining.complete(user_id, body)
+
+  def invoke(user_id, "recommend-worker-training", body) when is_map(body),
+    do: WorkerTraining.recommend(user_id, body)
 
   def invoke(_user_id, _name, _body), do: {:error, :unknown_function}
 end
