@@ -810,23 +810,39 @@ defmodule Mithril.DirectDispatch do
   defp booking_notify_date(%{"scheduledDate" => date}) when is_binary(date), do: date
   defp booking_notify_date(_), do: nil
 
-  defp insert_booking_origin(booking_id, customer_uuid, admin_uid, source, admin_note) do
-    case Repo.query(
-           """
-           INSERT INTO public.direct_booking_origins (
-             booking_id, customer_id, created_by_user_id, source,
-             consent_confirmed, admin_note
-           ) VALUES ($1::uuid, $2, $3, $4, true, NULLIF($5::text, ''))
-           ON CONFLICT (booking_id) DO NOTHING
-           RETURNING booking_id
-           """,
-           [booking_id, customer_uuid, admin_uid, source, admin_note]
-         ) do
-      {:ok, %{num_rows: 1}} -> {:ok, true}
-      {:ok, %{num_rows: 0}} -> {:ok, false}
-      {:error, error} -> {:error, error}
+  @doc false
+  def insert_booking_origin(booking_id, customer_id, created_by_user_id, source, admin_note) do
+    with {:ok, booking_uuid} <- uuid_param(booking_id),
+         {:ok, customer_uuid} <- uuid_param(customer_id),
+         {:ok, admin_uuid} <- uuid_param(created_by_user_id) do
+      case Repo.query(
+             """
+             INSERT INTO public.direct_booking_origins (
+               booking_id, customer_id, created_by_user_id, source,
+               consent_confirmed, admin_note
+             ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, true, NULLIF($5::text, ''))
+             ON CONFLICT (booking_id) DO NOTHING
+             RETURNING booking_id
+             """,
+             [booking_uuid, customer_uuid, admin_uuid, source, admin_note]
+           ) do
+        {:ok, %{num_rows: 1}} -> {:ok, true}
+        {:ok, %{num_rows: 0}} -> {:ok, false}
+        {:error, error} -> {:error, error}
+      end
+    else
+      :error -> {:error, :invalid_request}
     end
   end
+
+  # Booking reads return id::text. Postgres uuid parameters need the raw 16 bytes.
+  defp uuid_param(<<_::128>> = value), do: {:ok, value}
+
+  defp uuid_param(value) when is_binary(value) do
+    value |> String.trim() |> Ecto.UUID.dump()
+  end
+
+  defp uuid_param(_), do: :error
 
   defp maybe_put_admin_idempotency_key(params, nil, _date, _index), do: params
 

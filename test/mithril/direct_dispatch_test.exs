@@ -378,6 +378,26 @@ defmodule Mithril.DirectDispatchTest do
              })
   end
 
+  test "records a text booking id on the booking origin" do
+    customer_id = insert_user!("origin-customer@tryinstaclean.com", "+233555000311")
+    admin_id = insert_user!("origin-admin@tryinstaclean.com", "+233555000312")
+    booking_id = Ecto.UUID.generate()
+    {:ok, customer_uuid} = Ecto.UUID.dump(customer_id)
+    {:ok, admin_uuid} = Ecto.UUID.dump(admin_id)
+
+    assert {:ok, true} =
+             DirectDispatch.insert_booking_origin(
+               booking_id,
+               customer_uuid,
+               admin_uuid,
+               "phone",
+               "Booked from concierge"
+             )
+
+    assert %{rows: [[^booking_id]]} =
+             Repo.query!("SELECT booking_id::text FROM public.direct_booking_origins")
+  end
+
   test "reviewers can book for a customer the same way admins can" do
     reviewer_id = insert_user!("reviewer@tryinstaclean.com", "+233555000111")
     grant_role!(reviewer_id, "reviewer")
