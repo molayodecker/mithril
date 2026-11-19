@@ -5,6 +5,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
 
   alias Mithril.RateLimiter
   alias Mithril.Repo
+  alias Mithril.SqlTime
   alias Mithril.Transport.Ranking
   alias Mithril.Transport.ReviewSelections
 
@@ -545,29 +546,12 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
 
   defp parse_booking_date(_), do: {:fallback, "invalid_booking_date"}
 
-  # Mobile slots arrive as `HH:MM`. `Time.from_iso8601/1` requires seconds.
-  defp parse_booking_time(%Time{} = time), do: {:ok, time}
-
-  defp parse_booking_time(value) when is_binary(value) do
-    trimmed = String.trim(value)
-
-    case Time.from_iso8601(trimmed) do
-      {:ok, time} ->
-        {:ok, time}
-
-      {:error, _} ->
-        if String.match?(trimmed, ~r/^\d{2}:\d{2}$/) do
-          case Time.from_iso8601(trimmed <> ":00") do
-            {:ok, time} -> {:ok, time}
-            {:error, _} -> {:fallback, "invalid_booking_time"}
-          end
-        else
-          {:fallback, "invalid_booking_time"}
-        end
+  defp parse_booking_time(value) do
+    case SqlTime.parse(value) do
+      {:ok, time} -> {:ok, time}
+      {:error, _} -> {:fallback, "invalid_booking_time"}
     end
   end
-
-  defp parse_booking_time(_), do: {:fallback, "invalid_booking_time"}
 
   defp validate_requested_ids(requested, requested_uuid_ids) do
     if requested != [] and length(requested_uuid_ids) == length(requested) do
