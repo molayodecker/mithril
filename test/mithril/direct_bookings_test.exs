@@ -1776,7 +1776,7 @@ defmodule Mithril.DirectBookingsTest do
                [Ecto.UUID.dump!(booking_id)]
              ).rows
 
-    assert [["failed", "Booking repriced during reschedule"]] =
+    assert [["failed", "Booking price changed"]] =
              Repo.query!(
                "SELECT status, failure_reason FROM public.payment_attempts WHERE booking_id = $1",
                [Ecto.UUID.dump!(booking_id)]
