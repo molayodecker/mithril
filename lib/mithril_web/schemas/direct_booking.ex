@@ -17,6 +17,7 @@ defmodule MithrilWeb.Schemas.DirectBooking do
         durationIncrementHours: %Schema{type: :number},
         specialtySlug: %Schema{type: :string, nullable: true},
         category: %Schema{type: :string},
+        categoryId: %Schema{type: :integer, nullable: true},
         description: %Schema{type: :string, nullable: true},
         features: %Schema{type: :array, items: %Schema{type: :string}, nullable: true},
         weight: %Schema{type: :integer, minimum: 0}

@@ -31,6 +31,7 @@ defmodule Mithril.DirectBookings do
            'id', id,
            'name', name,
            'category', category::text,
+           'categoryId', category_id,
            'description', description,
            'features', COALESCE(to_jsonb(features), '[]'::jsonb),
            'priceGhs', price,
