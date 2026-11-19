@@ -59,6 +59,7 @@ defmodule Mithril.DirectAdminBookingsTest do
       id integer PRIMARY KEY,
       name text NOT NULL,
       specialty_slug text NOT NULL,
+      category text NOT NULL DEFAULT 'cleaning',
       active boolean NOT NULL DEFAULT true
     )
     """)
@@ -78,6 +79,9 @@ defmodule Mithril.DirectAdminBookingsTest do
       timezone_name text,
       address text,
       special_instructions text,
+      extra_task_ids text[],
+      promotion_discount_minor integer DEFAULT 0,
+      promotion_slug text,
       total_price numeric,
       final_amount_minor integer,
       cleaner_earnings_minor integer,

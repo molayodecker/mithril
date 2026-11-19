@@ -249,7 +249,15 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
           description:
             "When true, notify the customer and assigned professional after create. Uncheck when they already confirmed on the same call or WhatsApp thread."
         },
-        adminNote: %Schema{type: :string, maxLength: 2000, nullable: true}
+        adminNote: %Schema{type: :string, maxLength: 2000, nullable: true},
+        extraTaskIds: %Schema{
+          type: :array,
+          items: %Schema{type: :string, minLength: 1, maxLength: 64},
+          maxItems: 32,
+          nullable: true,
+          description:
+            "Cleaning extra tasks. Catalog hours are added to the room visit before pricing."
+        }
       },
       required: [
         :customerUserId,
@@ -260,6 +268,36 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
         :address,
         :consentConfirmed
       ]
+    })
+  end
+
+  defmodule AdminExtraTask do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminExtraTask",
+      type: :object,
+      properties: %{
+        id: %Schema{type: :string},
+        label: %Schema{type: :string},
+        hours: %Schema{type: :number, minimum: 0}
+      },
+      required: [:id, :label, :hours]
+    })
+  end
+
+  defmodule AdminExtraTaskList do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminExtraTaskList",
+      type: :object,
+      properties: %{
+        tasks: %Schema{type: :array, items: AdminExtraTask}
+      },
+      required: [:tasks]
     })
   end
 

@@ -43,6 +43,16 @@ defmodule MithrilWeb.Plugs.DirectOpsAuthorizationTest do
              "bookings",
              "dispatch"
            ]
+
+    assert DirectOpsAuthorization.permissions_for(["extra-tasks"], "GET") == [
+             "bookings",
+             "dispatch"
+           ]
+
+    assert DirectOpsAuthorization.permissions_for(["bookings", "booking-id", "edit"], "POST") == [
+             "bookings",
+             "dispatch"
+           ]
   end
 
   test "booking desk reads and mutations stay on the bookings permission" do

@@ -34,6 +34,13 @@ defmodule Mithril.DirectBookingsTest do
     assert {:error, :invalid_user} = DirectBookings.create_customer_booking("not-a-uuid", %{})
   end
 
+  test "repricing keeps the promotional discount and never charges a negative total" do
+    assert DirectBookings.preserve_promotion_charge(10_000, 3_600) == 6_400
+    assert DirectBookings.preserve_promotion_charge(2_000, 3_600) == 0
+    assert DirectBookings.preserve_promotion_charge(10_000, 0) == 10_000
+    assert DirectBookings.preserve_promotion_charge(nil, nil) == 0
+  end
+
   test "client booking create is idempotent for the same customer and intent key" do
     previous = Application.get_env(:mithril, :direct_client_bookings, false)
     Application.put_env(:mithril, :direct_client_bookings, true)
@@ -1769,7 +1776,7 @@ defmodule Mithril.DirectBookingsTest do
                [Ecto.UUID.dump!(booking_id)]
              ).rows
 
-    assert [["failed", "Booking repriced during reschedule"]] =
+    assert [["failed", "Booking price changed"]] =
              Repo.query!(
                "SELECT status, failure_reason FROM public.payment_attempts WHERE booking_id = $1",
                [Ecto.UUID.dump!(booking_id)]
@@ -2033,6 +2040,7 @@ defmodule Mithril.DirectBookingsTest do
       address text,
       special_instructions text,
       final_amount_minor bigint,
+      promotion_discount_minor integer DEFAULT 0,
       total_price numeric,
       currency text NOT NULL DEFAULT 'GHS',
       timezone text,

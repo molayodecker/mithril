@@ -38,6 +38,10 @@ defmodule MithrilWeb.Schemas.DirectAdminBooking do
         timezone: %Schema{type: :string, nullable: true},
         address: %Schema{type: :string, nullable: true},
         specialInstructions: %Schema{type: :string, nullable: true},
+        serviceCategory: %Schema{type: :string, nullable: true},
+        extraTaskIds: %Schema{type: :array, items: %Schema{type: :string}, nullable: true},
+        promotionDiscountMinor: %Schema{type: :integer, nullable: true},
+        promotionSlug: %Schema{type: :string, nullable: true},
         amountMinor: %Schema{type: :integer},
         cleanerEarningsMinor: %Schema{type: :integer},
         currency: %Schema{type: :string},
@@ -125,6 +129,28 @@ defmodule MithrilWeb.Schemas.DirectAdminBooking do
         }
       },
       required: [:status]
+    })
+  end
+
+  defmodule EditBookingRequest do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminEditBookingRequest",
+      type: :object,
+      description:
+        "Update an unpaid booking. Extra-task hours are added to the room visit, then the existing promotional discount is applied again.",
+      properties: %{
+        address: %Schema{type: :string, minLength: 1, maxLength: 500},
+        specialInstructions: %Schema{type: :string, maxLength: 2000, nullable: true},
+        extraTaskIds: %Schema{
+          type: :array,
+          items: %Schema{type: :string, minLength: 1, maxLength: 64},
+          maxItems: 32,
+          nullable: true
+        }
+      }
     })
   end
 
