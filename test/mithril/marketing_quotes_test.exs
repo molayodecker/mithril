@@ -54,6 +54,7 @@ defmodule Mithril.MarketingQuotesTest do
     conn = post(build_conn(), "/direct/quotes", %{})
     assert json_response(conn, 422) == %{"ok" => false, "error" => "invalid_quote"}
   end
+
   test "accepts emailed quote when WhatsApp is unavailable" do
     previous = Application.get_env(:mithril, :twilio_http)
     Application.put_env(:mithril, :twilio_http, {:error, :twilio_unavailable})
@@ -87,5 +88,4 @@ defmodule Mithril.MarketingQuotesTest do
     conn = build_conn() |> Map.put(:remote_ip, ip) |> post("/direct/quotes", params)
     assert json_response(conn, 429) == %{"ok" => false, "error" => "rate_limited"}
   end
-
 end
