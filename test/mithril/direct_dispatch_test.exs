@@ -532,7 +532,10 @@ defmodule Mithril.DirectDispatchTest do
     ) VALUES
       (1, 3, 10, 0.5),
       (2, 2, 5, 0.5),
-      (3, 3.5, 10, 0.5)
+      (3, 3.5, 10, 0.5),
+      (4, 3.2, 10, 0.5),
+      (5, 2, 3.25, 0.5),
+      (6, 2, 10, 0.25)
     """)
 
     assert {:ok, %{durationHours: 3.5, homeSize: "2 bed, 3 bath"}} =
@@ -552,6 +555,15 @@ defmodule Mithril.DirectDispatchTest do
 
     assert {:ok, %{durationHours: 4.5, homeSize: "1 bed, 10 bath"}} =
              DirectDispatch.visit_hours(0, 99)
+
+    assert {:ok, %{durationHours: 3.2, homeSize: "1 bed, 1 bath"}} =
+             DirectDispatch.visit_hours(1, 1, 4)
+
+    assert {:ok, %{durationHours: 3.25, homeSize: "10 bed, 10 bath"}} =
+             DirectDispatch.visit_hours(10, 10, 5)
+
+    assert {:ok, %{durationHours: 3.5, homeSize: "2 bed, 3 bath"}} =
+             DirectDispatch.visit_hours(2, 3, 6)
   end
 
   defp insert_user!(email, phone) do
