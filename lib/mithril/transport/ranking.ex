@@ -92,20 +92,39 @@ defmodule Mithril.Transport.Ranking do
         {:error, {:status, 400, %{error: "duration_hours must be an integer between 1 and 24"}}}
 
       true ->
-        # Postgrex encodes `$4::date` parameters only from `%Date{}` structs,
-        # so parse the validated string before it reaches the query.
-        case Date.from_iso8601(scheduled_date) do
-          {:ok, date} ->
-            {:ok,
-             %{
-               scheduled_date: date,
-               start_time: start_time,
-               duration_hours: normalize_duration(duration_hours)
-             }}
+        # Postgrex encodes `$4::date` from `%Date{}` and `$5::time` from `%Time{}`.
+        with {:ok, date} <- Date.from_iso8601(scheduled_date),
+             {:ok, time} <- clock_time(start_time) do
+          {:ok,
+           %{
+             scheduled_date: date,
+             start_time: time,
+             duration_hours: normalize_duration(duration_hours)
+           }}
+        else
+          {:error, :invalid_time} ->
+            {:error, {:status, 400, %{error: "start_time is out of range"}}}
 
-          {:error, _} ->
+          _ ->
             {:error, {:status, 400, %{error: "scheduled_date must be YYYY-MM-DD"}}}
         end
+    end
+  end
+
+  defp clock_time(value) do
+    case Regex.run(@time_regex, value) do
+      [_, hour, minute] ->
+        Time.new(String.to_integer(hour), String.to_integer(minute), 0)
+
+      [_, hour, minute, second] ->
+        Time.new(String.to_integer(hour), String.to_integer(minute), String.to_integer(second))
+
+      _ ->
+        {:error, :invalid_time}
+    end
+    |> case do
+      {:ok, time} -> {:ok, time}
+      _ -> {:error, :invalid_time}
     end
   end
 

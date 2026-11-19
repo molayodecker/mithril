@@ -5,6 +5,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
 
   alias Mithril.RateLimiter
   alias Mithril.Repo
+  alias Mithril.SqlTime
   alias Mithril.Transport.Ranking
   alias Mithril.Transport.ReviewSelections
 
@@ -505,6 +506,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
 
     with :ok <- validate_requested_ids(requested, requested_uuid_ids),
          {:ok, booking_date} <- parse_booking_date(scheduled_date),
+         {:ok, booking_time} <- parse_booking_time(start_time),
          {:ok, specialty_slug} <- service_specialty(service_id),
          {:ok, %{rows: rows}} <-
            Repo.query(
@@ -512,7 +514,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
              SELECT id
              FROM public.get_nearby_available_cleaners($1, $2, $3, $4::date, $5::time, $6)
              """,
-             [latitude, longitude, radius, booking_date, start_time, duration_hours]
+             [latitude, longitude, radius, booking_date, booking_time, duration_hours]
            ) do
       ids =
         rows
@@ -532,7 +534,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
     end
   end
 
-  # Postgrex encodes `$4::date` parameters only from `%Date{}` structs.
+  # Postgrex encodes `$4::date` only from `%Date{}` and `$5::time` only from `%Time{}`.
   defp parse_booking_date(%Date{} = date), do: {:ok, date}
 
   defp parse_booking_date(value) when is_binary(value) do
@@ -543,6 +545,13 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
   end
 
   defp parse_booking_date(_), do: {:fallback, "invalid_booking_date"}
+
+  defp parse_booking_time(value) do
+    case SqlTime.parse(value) do
+      {:ok, time} -> {:ok, time}
+      {:error, _} -> {:fallback, "invalid_booking_time"}
+    end
+  end
 
   defp validate_requested_ids(requested, requested_uuid_ids) do
     if requested != [] and length(requested_uuid_ids) == length(requested) do

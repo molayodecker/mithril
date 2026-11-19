@@ -89,20 +89,18 @@ defmodule Mithril.MobileFunctions.CreateJobAndNotify do
     end
   end
 
+  # Postgrex encodes the nearby-cleaner `$5::time` parameter only from `%Time{}`.
   defp build_start_time(hour_text, minute_text, second_text) do
     hour = String.to_integer(hour_text)
     minute = String.to_integer(minute_text)
     second = if second_text in [nil, ""], do: 0, else: String.to_integer(second_text)
 
-    if hour > 23 or minute > 59 or second > 59 do
-      {:error, {:status, 400, %{error: "start_time is out of range"}}}
-    else
-      {:ok,
-       String.pad_leading(Integer.to_string(hour), 2, "0") <>
-         ":" <>
-         String.pad_leading(Integer.to_string(minute), 2, "0") <>
-         ":" <>
-         String.pad_leading(Integer.to_string(second), 2, "0")}
+    case Time.new(hour, minute, second) do
+      {:ok, time} ->
+        {:ok, time}
+
+      {:error, _} ->
+        {:error, {:status, 400, %{error: "start_time is out of range"}}}
     end
   end
 

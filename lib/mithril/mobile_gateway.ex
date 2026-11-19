@@ -8,6 +8,7 @@ defmodule Mithril.MobileGateway do
   alias Mithril.MobileQuery
   alias Mithril.MobileRpc
   alias Mithril.Repo
+  alias Mithril.SqlTime
 
   @functions MapSet.new(~w(
     booking-checkout-options
@@ -404,7 +405,7 @@ defmodule Mithril.MobileGateway do
 
   defp normalize_rpc_value(type, value)
        when type in ["time", "time without time zone"] and is_binary(value) do
-    case parse_sql_time(value) do
+    case SqlTime.parse(value) do
       {:ok, time} -> {:ok, time}
       _ -> {:error, :invalid_args}
     end
@@ -439,21 +440,6 @@ defmodule Mithril.MobileGateway do
 
   defp normalize_rpc_value(nil, _value), do: {:error, :invalid_args}
   defp normalize_rpc_value(_type, value), do: {:ok, value}
-
-  # Postgres accepts `09:00` for `time`; Elixir's ISO parser requires seconds.
-  defp parse_sql_time(value) do
-    case Time.from_iso8601(value) do
-      {:ok, time} ->
-        {:ok, time}
-
-      _ ->
-        if String.match?(value, ~r/^\d{2}:\d{2}$/) do
-          Time.from_iso8601(value <> ":00")
-        else
-          {:error, :invalid_format}
-        end
-    end
-  end
 
   defp query(sql, params, decode?) do
     case Repo.query(sql, params) do
