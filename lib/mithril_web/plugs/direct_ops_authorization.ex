@@ -60,8 +60,10 @@ defmodule MithrilWeb.Plugs.DirectOpsAuthorization do
 
   # Concierge books on a customer's behalf. The bookings desk can still create
   # the same booking, and the users desk can still search the same customers.
+  # Visit length is part of that booking, so both desks can preview it.
   def permissions_for(["customers"], "GET"), do: ["users", "dispatch"]
   def permissions_for(["bookings"], "POST"), do: ["bookings", "dispatch"]
+  def permissions_for(["visit-hours"], "GET"), do: ["bookings", "dispatch"]
 
   def permissions_for(rest, method) do
     case permission_for(rest, method) do
