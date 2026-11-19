@@ -457,8 +457,12 @@ defmodule Mithril.MobileGateway do
 
   defp query(sql, params, decode?) do
     case Repo.query(sql, params) do
-      {:ok, %{rows: rows}} when decode? -> {:ok, decode_rows(rows)}
-      {:ok, _result} -> {:ok, nil}
+      {:ok, %{rows: rows}} when decode? ->
+        {:ok, decode_rows(rows)}
+
+      {:ok, _result} ->
+        {:ok, nil}
+
       {:error, %Postgrex.Error{} = error} ->
         Logger.warning(
           "mobile_rpc_database_error code=#{inspect(error.postgres[:code])} message=#{error.postgres[:message]}"
