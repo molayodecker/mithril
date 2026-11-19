@@ -372,12 +372,25 @@ END;
 $$;
 
 
-REVOKE ALL ON FUNCTION public.compute_booking_pricing_with_promotion(
-  integer, numeric, date, text, uuid, text, text, boolean, boolean, text, uuid, text, double precision, double precision, text[], uuid, uuid, text, numeric, uuid
-) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.compute_booking_pricing_with_promotion(
-  integer, numeric, date, text, uuid, text, text, boolean, boolean, text, uuid, text, double precision, double precision, text[], uuid, uuid, text, numeric, uuid
-) TO authenticated, service_role;
+DO $$
+BEGIN
+  EXECUTE $grant$
+    REVOKE ALL ON FUNCTION public.compute_booking_pricing_with_promotion(
+      integer, numeric, date, text, uuid, text, text, boolean, boolean, text, uuid, text, double precision, double precision, text[], uuid, uuid, text, numeric, uuid
+    ) FROM PUBLIC, anon
+  $grant$;
+  EXECUTE $grant$
+    GRANT EXECUTE ON FUNCTION public.compute_booking_pricing_with_promotion(
+      integer, numeric, date, text, uuid, text, text, boolean, boolean, text, uuid, text, double precision, double precision, text[], uuid, uuid, text, numeric, uuid
+    ) TO authenticated, service_role
+  $grant$;
+EXCEPTION
+  WHEN OTHERS THEN
+    IF SQLERRM NOT LIKE '%MPG system roles%' THEN
+      RAISE;
+    END IF;
+    RAISE NOTICE 'skipping promo pricing grants: %', SQLERRM;
+END $$;
 
 COMMENT ON FUNCTION public.compute_booking_pricing_with_promotion(
   integer, numeric, date, text, uuid, text, text, boolean, boolean, text, uuid, text, double precision, double precision, text[], uuid, uuid, text, numeric, uuid
