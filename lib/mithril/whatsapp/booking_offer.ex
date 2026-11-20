@@ -1,7 +1,6 @@
 defmodule Mithril.WhatsApp.BookingOffer do
   @moduledoc false
 
-  alias Mithril.Auth
   alias Mithril.Auth.Phone
   alias Mithril.DirectAdminWhatsApp
   alias Mithril.DirectBookings
@@ -18,7 +17,9 @@ defmodule Mithril.WhatsApp.BookingOffer do
   def inbound_reply(params) when is_map(params) do
     phone = inbound_phone(params)
 
-    if is_binary(phone) and open_offer?(phone) do
+    message_sid = Parse.string_param(params, "MessageSid")
+
+    if is_binary(phone) and (stored_reply(message_sid) != nil or open_offer?(phone)) do
       {:reply,
        reply_for(
          phone,
@@ -59,8 +60,8 @@ defmodule Mithril.WhatsApp.BookingOffer do
          {:ok, customer} <- load_customer(input.customer_id),
          {:ok, service_name} <- load_service(input.service_id),
          :ok <- no_open_offer(customer.phone),
-         {:ok, offer} <- insert_offer(admin_id, customer, service_name, input),
          {:ok, sid} <- content_sid(),
+         {:ok, offer} <- insert_offer(admin_id, customer, service_name, input),
          :ok <- send_offer(admin_id, offer, sid) do
       {:ok, public_offer(offer)}
     else
@@ -100,7 +101,8 @@ defmodule Mithril.WhatsApp.BookingOffer do
          {:ok, time} <- iso_time(params["scheduledTime"] || params[:scheduledTime]),
          :ok <- future_slot(date, today()),
          {:ok, offer} <- load_by_id(offer_id),
-         {:ok, updated, facts} <- apply_choice(offer, {:schedule, date, time}, today()) do
+         {:ok, updated, facts} <-
+           apply_choice(offer, {:schedule, Date.to_iso8601(date), time}, today()) do
       {:ok, Map.put(public_offer(updated), :reply, phrase(updated, "", facts))}
     else
       :error -> {:error, :invalid_request}
@@ -180,7 +182,8 @@ defmodule Mithril.WhatsApp.BookingOffer do
 
   defp reply_for(phone, body, payload, message_sid) do
     with nil <- stored_reply(message_sid),
-         {:ok, offer} <- load_latest(phone) do
+         {:ok, offer} <- load_latest(phone),
+         true <- offer.status in ["offered", "awaiting_time"] do
       decision = decide(offer, body, payload, today())
 
       case apply_choice(offer, decision, today()) do
@@ -299,7 +302,14 @@ defmodule Mithril.WhatsApp.BookingOffer do
 
     case first_booking(offer, cleaners, date, time) do
       {:ok, booking_id, cleaner_id, cleaner_name, booked_date, booked_time} ->
-        case save_assignment(offer, booking_id, cleaner_id, cleaner_name, booked_date, booked_time) do
+        case save_assignment(
+               offer,
+               booking_id,
+               cleaner_id,
+               cleaner_name,
+               booked_date,
+               booked_time
+             ) do
           {:ok, updated} ->
             {:ok, updated,
              %{
@@ -337,19 +347,37 @@ defmodule Mithril.WhatsApp.BookingOffer do
       "specialInstructions" => "WhatsApp booking at #{money(offer.amount_minor, offer.currency)}."
     }
 
-    case DirectBookings.create_booking(offer.customer_id, params) do
+    case Repo.transaction(fn ->
+           case DirectBookings.create_booking(offer.customer_id, params) do
+             {:ok, result} ->
+               booking_id = text_uuid(Map.get(result, :id) || Map.get(result, "id"))
+
+               if booking_id do
+                 case set_customer_price(booking_id, offer.amount_minor) do
+                   :ok -> result
+                   {:error, reason} -> Repo.rollback(reason)
+                 end
+               else
+                 Repo.rollback(:database_unavailable)
+               end
+
+             {:error, reason} ->
+               Repo.rollback(reason)
+           end
+         end) do
       {:ok, result} ->
         case text_uuid(Map.get(result, :id) || Map.get(result, "id")) do
           nil ->
             {:error, :database_unavailable}
 
           booking_id ->
-            with :ok <- set_customer_price(booking_id, offer.amount_minor),
-                 {:ok, stored_cleaner, stored_date, stored_time} <- booking_facts(booking_id) do
-              {:ok, booking_id, stored_cleaner, cleaner_name(stored_cleaner), stored_date, stored_time}
-            else
-              {:error, reason} -> {:error, reason}
-              :error -> {:error, :database_unavailable}
+            case booking_facts(booking_id) do
+              {:ok, stored_cleaner, stored_date, stored_time} ->
+                {:ok, booking_id, stored_cleaner, cleaner_name(stored_cleaner), stored_date,
+                 stored_time}
+
+              :error ->
+                {:error, :database_unavailable}
             end
         end
 
@@ -413,7 +441,6 @@ defmodule Mithril.WhatsApp.BookingOffer do
              AND cd.hourly_rate > 0
              AND st.specialty_slug = ANY(COALESCE(cd.specialties, ARRAY[]::text[]))
            ORDER BY COALESCE(cd.rating, 0) DESC, cd.user_id
-           LIMIT 5
            """,
            [service_id]
          ) do
@@ -571,7 +598,7 @@ defmodule Mithril.WhatsApp.BookingOffer do
   end
 
   defp slot_index(text) do
-    case Regex.run(~r/^\s*([123])\b/, String.trim(text)) do
+    case Regex.run(~r/^\s*([123])(?:\s*(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)|\s+at\s+\d{1,2}:\d{2}|\s*\.?\s*)$/i, String.trim(text)) do
       [_, digit] -> String.to_integer(digit)
       _ -> nil
     end
@@ -663,27 +690,18 @@ defmodule Mithril.WhatsApp.BookingOffer do
 
   defp parse_time(text) do
     cond do
-      clock = Regex.run(~r/\b([01]?\d|2[0-3]):([0-5]\d)\b/, text) ->
-        hour = String.to_integer(Enum.at(clock, 1))
-        minute = Enum.at(clock, 2)
-
-        if hour <= 23 do
-          pad_time(hour, minute)
-        else
-          nil
-        end
-
-      ampm = Regex.run(~r/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/, text) ->
+      ampm = Regex.run(~r/\b(\d{1,2})(?::([0-5]\d))?\s*(am|pm)\b/, text) ->
         hour = String.to_integer(Enum.at(ampm, 1))
         minute = Enum.at(ampm, 2) || "00"
         suffix = Enum.at(ampm, 3)
-        adjusted = to_24(hour, suffix)
 
-        if adjusted do
-          pad_time(adjusted, minute)
-        else
-          nil
+        case to_24(hour, suffix) do
+          nil -> nil
+          adjusted -> pad_time(adjusted, minute)
         end
+
+      clock = Regex.run(~r/\b([01]?\d|2[0-3]):([0-5]\d)\b/, text) ->
+        pad_time(String.to_integer(Enum.at(clock, 1)), Enum.at(clock, 2))
 
       true ->
         nil
@@ -1153,13 +1171,7 @@ defmodule Mithril.WhatsApp.BookingOffer do
     Parse.string_param(params, "ButtonPayload") || Parse.string_param(params, "ButtonResponse")
   end
 
-  defp require_admin(admin_id) do
-    if Auth.staff_uuid?(admin_id) do
-      :ok
-    else
-      {:error, :forbidden}
-    end
-  end
+  defp require_admin(admin_id), do: DirectAdminWhatsApp.require_admin(admin_id)
 
   defp clock(time) do
     value =
