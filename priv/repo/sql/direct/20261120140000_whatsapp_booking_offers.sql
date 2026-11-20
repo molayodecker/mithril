@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_booking_offers (
   booking_id uuid,
   cleaner_id uuid,
   cleaner_name text,
+  slot_base_date date,
   scheduled_date date,
   scheduled_time time,
   created_by uuid,
@@ -37,3 +38,7 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_booking_offer_messages (
   reply text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Existing installs may already have the table from an earlier deployment.
+ALTER TABLE public.whatsapp_booking_offers
+  ADD COLUMN IF NOT EXISTS slot_base_date date;
