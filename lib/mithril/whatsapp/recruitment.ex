@@ -7,6 +7,7 @@ defmodule Mithril.WhatsApp.Recruitment do
   require Logger
 
   alias Mithril.DirectAdminWhatsApp
+  alias Mithril.WhatsApp.BookingOffer
   alias Mithril.WhatsApp.ChefWebhook
   alias Mithril.WhatsApp.JobOffer
   alias Mithril.WhatsApp.Recruitment.Conversation
@@ -36,14 +37,24 @@ defmodule Mithril.WhatsApp.Recruitment do
             {:ok, Twiml.xml({:plain, text})}
 
           :pass ->
-            body = params |> Map.get("Body", "") |> to_string() |> String.trim()
+            case BookingOffer.inbound_reply(params) do
+              {:reply, text} ->
+                {:ok, Twiml.xml({:plain, text})}
 
-            if String.upcase(body) == "CHEF" do
-              {:ok, ChefWebhook.recruitment_redirect_twiml()}
-            else
-              {:ok, Conversation.handle(params)}
+              :pass ->
+                recruitment_reply(params)
             end
         end
+    end
+  end
+
+  defp recruitment_reply(params) do
+    body = params |> Map.get("Body", "") |> to_string() |> String.trim()
+
+    if String.upcase(body) == "CHEF" do
+      {:ok, ChefWebhook.recruitment_redirect_twiml()}
+    else
+      {:ok, Conversation.handle(params)}
     end
   end
 

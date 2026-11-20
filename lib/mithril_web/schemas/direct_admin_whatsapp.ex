@@ -82,6 +82,85 @@ defmodule MithrilWeb.Schemas.DirectAdminWhatsApp do
     })
   end
 
+  defmodule BookingOfferRequest do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminWhatsAppBookingOfferRequest",
+      type: :object,
+      properties: %{
+        customerUserId: %Schema{type: :string, format: :uuid},
+        serviceId: %Schema{type: :integer, minimum: 1},
+        amountMinor: %Schema{type: :integer, minimum: 100},
+        address: %Schema{type: :string, minLength: 3, maxLength: 500},
+        latitude: %Schema{type: :number, nullable: true},
+        longitude: %Schema{type: :number, nullable: true},
+        durationHours: %Schema{type: :number, nullable: true, minimum: 1, maximum: 24}
+      },
+      required: [:customerUserId, :serviceId, :amountMinor, :address]
+    })
+  end
+
+  defmodule BookingOfferScheduleRequest do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminWhatsAppBookingOfferScheduleRequest",
+      type: :object,
+      properties: %{
+        scheduledDate: %Schema{type: :string, format: :date},
+        scheduledTime: %Schema{type: :string}
+      },
+      required: [:scheduledDate, :scheduledTime]
+    })
+  end
+
+  defmodule BookingOfferSlot do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminWhatsAppBookingOfferSlot",
+      type: :object,
+      properties: %{
+        index: %Schema{type: :integer},
+        date: %Schema{type: :string},
+        time: %Schema{type: :string},
+        label: %Schema{type: :string}
+      }
+    })
+  end
+
+  defmodule BookingOfferResponse do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminWhatsAppBookingOffer",
+      type: :object,
+      properties: %{
+        offerId: %Schema{type: :string, format: :uuid},
+        status: %Schema{type: :string},
+        customerUserId: %Schema{type: :string, format: :uuid},
+        phoneE164: %Schema{type: :string},
+        serviceId: %Schema{type: :integer},
+        serviceName: %Schema{type: :string},
+        amountMinor: %Schema{type: :integer},
+        currency: %Schema{type: :string},
+        address: %Schema{type: :string},
+        bookingId: %Schema{type: :string, format: :uuid, nullable: true},
+        cleanerName: %Schema{type: :string, nullable: true},
+        scheduledDate: %Schema{type: :string, nullable: true},
+        scheduledTime: %Schema{type: :string, nullable: true},
+        reply: %Schema{type: :string, nullable: true},
+        slots: %Schema{type: :array, items: BookingOfferSlot}
+      },
+      required: [:offerId, :status, :amountMinor, :currency]
+    })
+  end
+
   defmodule MutationResponse do
     require OpenApiSpex
     alias OpenApiSpex.Schema
