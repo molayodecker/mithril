@@ -7,6 +7,7 @@ defmodule MithrilWeb.Plugs.Pay2OwnAuth do
   import Plug.Conn
 
   @header "x-pay2own-token"
+  @dev_fallback if(Mix.env() == :dev, do: "pay2own-local-dev", else: "")
 
   def init(opts), do: opts
 
@@ -29,7 +30,7 @@ defmodule MithrilWeb.Plugs.Pay2OwnAuth do
   defp configured_token do
     case Application.get_env(:mithril, :pay2own_intake_token) do
       token when is_binary(token) and token != "" -> token
-      _ -> if Mix.env() == :dev, do: "pay2own-local-dev", else: ""
+      _ -> @dev_fallback
     end
   end
 
