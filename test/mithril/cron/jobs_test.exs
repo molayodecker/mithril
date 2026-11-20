@@ -22,7 +22,13 @@ defmodule Mithril.Cron.JobsTest do
     assert length(Jobs.scheduled_job_names()) == 13
 
     crontab = Jobs.oban_crontab()
-    assert length(crontab) == 25
+    assert length(crontab) ==
+             length(Jobs.sql_job_names()) + length(Jobs.scheduled_job_names()) +
+               length(Jobs.mithril_only_jobs())
+
+    assert Enum.any?(crontab, fn {_schedule, worker, _opts} ->
+             worker == Mithril.Workers.WorkerIdPassPushSweep
+           end)
 
     assert Enum.any?(crontab, fn {_schedule, worker, _opts} ->
              worker == ScheduledJob
