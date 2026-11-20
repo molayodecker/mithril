@@ -81,10 +81,12 @@ defmodule Mithril.WorkerId do
   def presentation(row) when is_map(row) do
     cleaner_status = text(row[:cleaner_status] || row["cleaner_status"])
     user_status = text(row[:user_status] || row["user_status"])
+
     verification = %{
       "review_answer" => row[:review_answer] || row["review_answer"],
       "kyc_status" => row[:kyc_status] || row["kyc_status"]
     }
+
     suspended = cleaner_status == "suspended" or user_status == "suspended"
     inactive = cleaner_status == "inactive" or user_status == "inactive"
     cleared = IdentityVerification.kyc_row_verified?(verification)
