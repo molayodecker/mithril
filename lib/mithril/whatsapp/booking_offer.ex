@@ -634,7 +634,10 @@ defmodule Mithril.WhatsApp.BookingOffer do
   end
 
   defp slot_index(text) do
-    case Regex.run(~r/^\s*([123])(?:\s*(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)|\s+at\s+\d{1,2}:\d{2}|\s*\.?\s*)$/i, String.trim(text)) do
+    case Regex.run(
+           ~r/^\s*([123])(?:\s*(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)|\s+at\s+\d{1,2}:\d{2}|\s*\.?\s*)$/i,
+           String.trim(text)
+         ) do
       [_, digit] -> String.to_integer(digit)
       _ -> nil
     end
