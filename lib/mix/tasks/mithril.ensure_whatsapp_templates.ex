@@ -22,6 +22,7 @@ defmodule Mix.Tasks.Mithril.EnsureWhatsappTemplates do
   alias Mithril.WhatsApp.InvoiceTemplate
   alias Mithril.WhatsApp.JobOfferTemplate
   alias Mithril.WhatsApp.PaymentTemplate
+  alias Mithril.WhatsApp.SessionFollowUpTemplate
   alias Mithril.WhatsApp.WorkerAddedTemplate
 
   @impl Mix.Task
@@ -31,6 +32,7 @@ defmodule Mix.Tasks.Mithril.EnsureWhatsappTemplates do
     results =
       [
         {"payment_request", PaymentTemplate.ensure()},
+        {"session_follow_up", SessionFollowUpTemplate.ensure()},
         {"job_offer", JobOfferTemplate.ensure()},
         {"invoice", InvoiceTemplate.ensure()},
         {"contract_letter", ContractLetterTemplate.ensure()},

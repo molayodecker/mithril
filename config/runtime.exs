@@ -390,6 +390,7 @@ for {env_key, config_key} <- [
       {"TWILIO_TEMPLATE_GOOGLE_REVIEW", :twilio_template_google_review},
       {"TWILIO_TEMPLATE_CONTRACT_WORKER_RATING", :twilio_template_contract_worker_rating},
       {"TWILIO_TEMPLATE_JOB_OFFER", :twilio_template_job_offer},
+      {"TWILIO_TEMPLATE_SESSION_FOLLOW_UP", :twilio_template_session_follow_up},
       {"TWILIO_TEMPLATE_WORKER_ADDED", :twilio_template_worker_added},
       {"TWILIO_TEMPLATE_ACCOUNT_COMPLETION", :twilio_template_account_completion}
     ] do

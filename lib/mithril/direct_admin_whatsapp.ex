@@ -8,6 +8,7 @@ defmodule Mithril.DirectAdminWhatsApp do
   alias Mithril.Auth.SMS
   alias Mithril.Repo
   alias Mithril.WhatsApp.Recruitment.Outbound
+  alias Mithril.WhatsApp.SessionFollowUpTemplate
 
   @admin_default ["+233559100642"]
 
@@ -123,8 +124,8 @@ defmodule Mithril.DirectAdminWhatsApp do
            admin_from(
              params["businessPhoneE164"] || params[:businessPhoneE164] || last_business(e164)
            ),
-         :ok <- deliver_whatsapp(e164, from, body) do
-      audit_outbound(e164, body, admin_uid, from)
+         {:ok, sent_body} <- deliver_for_session(e164, from, body) do
+      audit_outbound(e164, sent_body, admin_uid, from)
     else
       :error -> {:error, :invalid_request}
       {:error, reason} -> {:error, reason}
@@ -164,6 +165,73 @@ defmodule Mithril.DirectAdminWhatsApp do
     else
       :error -> {:error, :invalid_request}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp deliver_for_session(e164, from, body) do
+    if SessionFollowUpTemplate.within_window?(last_inbound_at(e164), DateTime.utc_now()) do
+      with :ok <- deliver_whatsapp(e164, from, body) do
+        {:ok, body}
+      end
+    else
+      deliver_follow_up(e164, from, body)
+    end
+  end
+
+  defp deliver_follow_up(e164, from, body) do
+    name = customer_first_name(e164)
+    rendered = SessionFollowUpTemplate.render(name, body)
+
+    with {:ok, sid} <- SessionFollowUpTemplate.content_sid(),
+         :ok <- deliver_content(e164, from, sid, SessionFollowUpTemplate.variables(name, body)) do
+      {:ok, rendered}
+    else
+      {:error, :template_not_created} -> {:error, :session_template_unavailable}
+      {:error, :template_not_persisted} -> {:error, :session_template_unavailable}
+      {:error, :template_storage_unavailable} -> {:error, :session_template_unavailable}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp last_inbound_at(e164) do
+    case Repo.query(
+           """
+           SELECT created_at
+           FROM public.whatsapp_inbox_messages
+           WHERE phone_e164 = $1 AND direction = 'inbound'
+           ORDER BY created_at DESC
+           LIMIT 1
+           """,
+           [e164]
+         ) do
+      {:ok, %{rows: [[%DateTime{} = at]]}} ->
+        DateTime.truncate(at, :second)
+
+      {:ok, %{rows: [[%NaiveDateTime{} = at]]}} ->
+        at |> DateTime.from_naive!("Etc/UTC") |> DateTime.truncate(:second)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp customer_first_name(e164) do
+    case Repo.query(
+           """
+           SELECT split_part(
+             COALESCE(NULLIF(btrim(p.fullname), ''), NULLIF(btrim(p.firstname), ''), 'there'),
+             ' ',
+             1
+           )
+           FROM public.users u
+           LEFT JOIN public.profiles p ON p.id = u.id
+           WHERE u.phone = ANY($1::text[])
+           LIMIT 1
+           """,
+           [phone_variants(e164)]
+         ) do
+      {:ok, %{rows: [[name]]}} when is_binary(name) and name != "" -> name
+      _ -> "there"
     end
   end
 
