@@ -17,7 +17,7 @@ defmodule Mithril.DirectAdminWhatsApp do
       {:ok, business} ->
         if admin_destination?(business) do
           with {:ok, e164} <- normalize_phone(params["From"] || params[:From]),
-               {:ok, body} <- required_body(params["Body"] || params[:Body]),
+               {:ok, body} <- inbound_body(params),
                {:ok, thread_user} <- resolve_user_id(e164) do
             insert_inbound(e164, body, thread_user, business)
           end
@@ -182,7 +182,8 @@ defmodule Mithril.DirectAdminWhatsApp do
     name = customer_first_name(e164)
     rendered = SessionFollowUpTemplate.render(name, body)
 
-    with {:ok, sid} <- SessionFollowUpTemplate.content_sid(),
+    with :ok <- SessionFollowUpTemplate.validate_message(body),
+         {:ok, sid} <- SessionFollowUpTemplate.content_sid(),
          :ok <- deliver_content(e164, from, sid, SessionFollowUpTemplate.variables(name, body)) do
       {:ok, rendered}
     else
@@ -384,6 +385,25 @@ defmodule Mithril.DirectAdminWhatsApp do
       if String.starts_with?(digits, "233"), do: "0" <> String.slice(digits, 3..-1//1), else: nil
 
     [e164, "+" <> digits, digits, local] |> Enum.reject(&is_nil/1) |> Enum.uniq()
+  end
+
+  # WhatsApp media-only messages open the same customer service window as text.
+  # Preserve a human-readable inbox entry even when Twilio sends an empty Body.
+  defp inbound_body(params) do
+    case required_body(params["Body"] || params[:Body]) do
+      {:ok, text} ->
+        {:ok, text}
+
+      {:error, :invalid_request} ->
+        count = params["NumMedia"] || params[:NumMedia]
+
+        if (is_integer(count) and count > 0) or
+             (is_binary(count) and Regex.match?(~r/^[1-9][0-9]*$/, count)) do
+          {:ok, "[Media message]"}
+        else
+          {:error, :invalid_request}
+        end
+    end
   end
 
   defp required_body(value) when is_binary(value) do
