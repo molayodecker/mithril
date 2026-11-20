@@ -2201,7 +2201,8 @@ defmodule Mithril.Auth do
   defp password_set?(hash) when is_binary(hash) and hash != "", do: true
   defp password_set?(_), do: false
 
-  defp phone_lookup_variants(e164) do
+  @doc false
+  def phone_lookup_variants(e164) do
     digits = String.replace_prefix(e164, "+", "")
 
     variants = [e164, digits]
