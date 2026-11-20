@@ -9,6 +9,7 @@ defmodule Mithril.WorkerId do
   """
 
   alias Mithril.DbUuid
+  alias Mithril.IdentityVerification
   alias Mithril.Repo
 
   require Logger
@@ -80,11 +81,13 @@ defmodule Mithril.WorkerId do
   def presentation(row) when is_map(row) do
     cleaner_status = text(row[:cleaner_status] || row["cleaner_status"])
     user_status = text(row[:user_status] || row["user_status"])
-    review = text(row[:review_answer] || row["review_answer"]) |> String.upcase()
-    kyc = text(row[:kyc_status] || row["kyc_status"]) |> String.downcase()
+    verification = %{
+      "review_answer" => row[:review_answer] || row["review_answer"],
+      "kyc_status" => row[:kyc_status] || row["kyc_status"]
+    }
     suspended = cleaner_status == "suspended" or user_status == "suspended"
     inactive = cleaner_status == "inactive" or user_status == "inactive"
-    cleared = review == "GREEN" or kyc in ["verified", "approved"]
+    cleared = IdentityVerification.kyc_row_verified?(verification)
 
     active =
       not suspended and not inactive and cleaner_status == "active" and
@@ -161,6 +164,13 @@ defmodule Mithril.WorkerId do
       SELECT review_answer, kyc_status
       FROM public.kyc_profiles
       WHERE user_id = cd.user_id
+        AND NOT (
+          lower(coalesce(kyc_status, '')) IN ('not_started', '')
+          AND nullif(btrim(coalesce(review_answer, '')), '') IS NULL
+          AND nullif(btrim(coalesce(sumsub_applicant_id::text, '')), '') IS NULL
+          AND nullif(btrim(coalesce(last_event_type, '')), '') IS NULL
+          AND submitted_at IS NULL
+        )
       ORDER BY updated_at DESC NULLS LAST
       LIMIT 1
     ) k ON true
