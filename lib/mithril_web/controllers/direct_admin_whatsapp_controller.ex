@@ -3,6 +3,13 @@ defmodule MithrilWeb.DirectAdminWhatsAppController do
   use OpenApiSpex.ControllerSpecs
 
   alias Mithril.DirectAdminWhatsApp
+  alias Mithril.WhatsApp.BookingOffer
+
+  alias MithrilWeb.Schemas.DirectAdminWhatsApp.{
+    BookingOfferRequest,
+    BookingOfferResponse,
+    BookingOfferScheduleRequest
+  }
 
   alias MithrilWeb.Schemas.DirectAdminWhatsApp.{
     MessageListResponse,
@@ -71,6 +78,57 @@ defmodule MithrilWeb.DirectAdminWhatsAppController do
 
   def sms(conn, params) do
     respond(conn, DirectAdminWhatsApp.send_sms(user_id(conn), params))
+  end
+
+  operation(:booking_offer,
+    operation_id: "direct.startAdminWhatsAppBookingOffer",
+    summary: "Send a priced WhatsApp booking offer",
+    request_body: {"Booking offer", "application/json", BookingOfferRequest},
+    responses: [ok: {"Offer", "application/json", BookingOfferResponse}]
+  )
+
+  def booking_offer(conn, params) do
+    respond(conn, BookingOffer.start(user_id(conn), params))
+  end
+
+  operation(:booking_offer_show,
+    operation_id: "direct.getAdminWhatsAppBookingOffer",
+    summary: "Read the latest WhatsApp booking offer for a phone",
+    parameters: [
+      phone: [in: :query, schema: %Schema{type: :string}, required: true]
+    ],
+    responses: [ok: {"Offer", "application/json", BookingOfferResponse}]
+  )
+
+  def booking_offer_show(conn, params) do
+    respond(conn, BookingOffer.fetch(user_id(conn), params["phone"]))
+  end
+
+  operation(:booking_offer_accept,
+    operation_id: "direct.acceptAdminWhatsAppBookingOffer",
+    summary: "Mark a WhatsApp booking offer accepted and return time options",
+    parameters: [
+      id: [in: :path, schema: %Schema{type: :string, format: :uuid}, required: true]
+    ],
+    responses: [ok: {"Offer", "application/json", BookingOfferResponse}]
+  )
+
+  def booking_offer_accept(conn, %{"id" => id}) do
+    respond(conn, BookingOffer.accept(user_id(conn), id))
+  end
+
+  operation(:booking_offer_schedule,
+    operation_id: "direct.scheduleAdminWhatsAppBookingOffer",
+    summary: "Create the booking at the chosen time and assign the nearest cleaner",
+    parameters: [
+      id: [in: :path, schema: %Schema{type: :string, format: :uuid}, required: true]
+    ],
+    request_body: {"Schedule", "application/json", BookingOfferScheduleRequest},
+    responses: [ok: {"Offer", "application/json", BookingOfferResponse}]
+  )
+
+  def booking_offer_schedule(conn, %{"id" => id} = params) do
+    respond(conn, BookingOffer.schedule(user_id(conn), id, params))
   end
 
   defp user_id(conn), do: conn.assigns.instaclean_user_id

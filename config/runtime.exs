@@ -425,7 +425,19 @@ config :mithril,
       "TWILIO_JOB_OFFER_WEBHOOK_URL_ALIAS",
       "https://api.tryinstaclean.com/functions/v1/job-offer"
     ),
-  twilio_job_offer_autocreate: config_env() != :test
+  twilio_job_offer_autocreate: config_env() != :test,
+  twilio_booking_offer_webhook_url:
+    System.get_env(
+      "TWILIO_BOOKING_OFFER_WEBHOOK_URL",
+      "https://api.tryinstaclean.com/whatsapp/booking-offer"
+    ),
+  twilio_booking_offer_webhook_url_alias:
+    System.get_env(
+      "TWILIO_BOOKING_OFFER_WEBHOOK_URL_ALIAS",
+      "https://api.tryinstaclean.com/functions/v1/booking-offer"
+    ),
+  twilio_booking_offer_content_sid: System.get_env("TWILIO_BOOKING_OFFER_CONTENT_SID"),
+  booking_offer_model: System.get_env("OPENAI_BOOKING_OFFER_MODEL", "gpt-4.1-mini")
 
 if chef_whatsapp_from = System.get_env("TWILIO_CHEF_WHATSAPP_FROM") do
   config :mithril, :twilio_chef_whatsapp_from, chef_whatsapp_from

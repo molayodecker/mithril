@@ -84,6 +84,9 @@ defmodule MithrilWeb.Router do
     post "/whatsapp/job-offer", WhatsAppJobOfferController, :receive_message
     post "/functions/v1/job-offer", WhatsAppJobOfferController, :receive_message
 
+    post "/whatsapp/booking-offer", WhatsAppBookingOfferController, :receive_message
+    post "/functions/v1/booking-offer", WhatsAppBookingOfferController, :receive_message
+
     get "/whatsapp/join-as-cleaner-bot", WhatsAppRecruitmentController, :serve
     post "/whatsapp/join-as-cleaner-bot", WhatsAppRecruitmentController, :serve
     options "/whatsapp/join-as-cleaner-bot", WhatsAppRecruitmentController, :serve
@@ -272,6 +275,10 @@ defmodule MithrilWeb.Router do
     get "/admin/whatsapp/messages", DirectAdminWhatsAppController, :messages
     post "/admin/whatsapp/send", DirectAdminWhatsAppController, :send
     post "/admin/whatsapp/sms", DirectAdminWhatsAppController, :sms
+    post "/admin/whatsapp/booking-offers", DirectAdminWhatsAppController, :booking_offer
+    get "/admin/whatsapp/booking-offers", DirectAdminWhatsAppController, :booking_offer_show
+    post "/admin/whatsapp/booking-offers/:id/accept", DirectAdminWhatsAppController, :booking_offer_accept
+    post "/admin/whatsapp/booking-offers/:id/schedule", DirectAdminWhatsAppController, :booking_offer_schedule
     get "/admin/dispatch-map", DirectAdminDispatchMapController, :show
     get "/admin/live-jobs", DirectAdminLiveJobsController, :index
     get "/admin/bookings", DirectAdminBookingsController, :index
