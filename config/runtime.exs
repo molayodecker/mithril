@@ -361,6 +361,10 @@ if send_notification_token = System.get_env("SEND_NOTIFICATION_TOKEN") do
   config :mithril, :send_notification_token, send_notification_token
 end
 
+if pay2own_token = System.get_env("PAY2OWN_INTAKE_TOKEN") do
+  config :mithril, :pay2own_intake_token, pay2own_token
+end
+
 if whatsapp_from = System.get_env("TWILIO_WHATSAPP_FROM") do
   config :mithril, :twilio_whatsapp_from, whatsapp_from
 end
