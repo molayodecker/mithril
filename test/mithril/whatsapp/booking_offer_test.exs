@@ -50,6 +50,25 @@ defmodule Mithril.WhatsApp.BookingOfferTest do
     assert BookingOffer.choice("offered", "2", "", @today) == :unknown
   end
 
+  test "AM/PM clock values are not misread as morning times" do
+    assert BookingOffer.choice("awaiting_time", "tomorrow at 2:30pm", "", @today) ==
+             {:schedule, "2026-11-21", "14:30"}
+
+    assert BookingOffer.choice("awaiting_time", "tomorrow at 12:30am", "", @today) ==
+             {:schedule, "2026-11-21", "00:30"}
+
+    assert BookingOffer.choice("awaiting_time", "tomorrow at 12:30pm", "", @today) ==
+             {:schedule, "2026-11-21", "12:30"}
+  end
+
+  test "explicit day numbers are not treated as menu selections" do
+    assert BookingOffer.choice("awaiting_time", "1 Dec at 2pm", "", @today) ==
+             {:schedule, "2026-12-01", "14:00"}
+
+    assert BookingOffer.choice("awaiting_time", "2 Dec at 2pm", "", @today) ==
+             {:schedule, "2026-12-02", "14:00"}
+  end
+
   test "open ai can read a spoken choice and cannot book a past day" do
     Application.put_env(:mithril, :booking_offer_complete, fn _prompt ->
       {:ok, %{"action" => "schedule", "date" => "2026-11-22", "time" => "15:00"}}
