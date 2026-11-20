@@ -36,6 +36,22 @@ defmodule Mithril.WhatsApp.SessionFollowUpTemplate do
     DateTime.diff(now, last_inbound, :second) < @window_seconds
   end
 
+  @doc """
+  Validates the complete staff message against the template variable limit.
+  Never silently truncate a message the staff typed.
+  """
+  def validate_message(message) when is_binary(message) do
+    normalized = normalize_message(message)
+
+    if normalized != "" and String.length(normalized) <= 1024 do
+      :ok
+    else
+      {:error, :invalid_request}
+    end
+  end
+
+  def validate_message(_), do: {:error, :invalid_request}
+
   def variables(name, message) do
     %{"1" => clip_name(name), "2" => clip_message(message)}
   end
@@ -77,10 +93,7 @@ defmodule Mithril.WhatsApp.SessionFollowUpTemplate do
 
   defp clip_message(value) when is_binary(value) do
     message =
-      value
-      |> String.replace(~r/\s+/, " ")
-      |> String.trim()
-      |> String.slice(0, 1024)
+      normalize_message(value)
 
     if message == "" do
       "We wanted to follow up with you."
@@ -90,4 +103,10 @@ defmodule Mithril.WhatsApp.SessionFollowUpTemplate do
   end
 
   defp clip_message(_), do: "We wanted to follow up with you."
+
+  defp normalize_message(value) do
+    value
+    |> String.replace(~r/\s+/, " ")
+    |> String.trim()
+  end
 end
