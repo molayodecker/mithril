@@ -14,6 +14,7 @@ defmodule Mithril.Pay2OwnTest do
   setup do
     :ok = Sandbox.checkout(Repo)
     {:ok, id} = Ecto.UUID.dump(@cleaner)
+
     Repo.query!("""
     CREATE TABLE IF NOT EXISTS public.users (
       id uuid PRIMARY KEY,
@@ -92,6 +93,7 @@ defmodule Mithril.Pay2OwnTest do
 
   test "a missing configured token returns 503 instead of running Mix at runtime" do
     Application.delete_env(:mithril, :pay2own_intake_token)
+
     assert json_response(post_lookup(%{"phone" => "0241110000"}), 503) ==
              %{"error" => "not_configured"}
   end
