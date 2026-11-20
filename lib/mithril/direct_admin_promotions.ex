@@ -6,6 +6,34 @@ defmodule Mithril.DirectAdminPromotions do
   alias Mithril.Auth
   alias Mithril.Repo
 
+  def list_offers(user_id) do
+    with {:ok, uid} <- dump_uuid(user_id),
+         :ok <- require_staff(uid) do
+      case Repo.query("""
+           SELECT jsonb_build_object(
+             'slug', p.slug,
+             'headline', p.headline,
+             'type', p.type,
+             'value', p.value,
+             'channel', p.channel,
+             'requiresNewCustomer', p.requires_new_customer,
+             'maxDurationHours', p.max_duration_hours
+           )
+           FROM public.promotions p
+           WHERE p.active IS TRUE
+             AND (p.valid_from IS NULL OR p.valid_from <= timezone('utc', now()))
+             AND (p.valid_to IS NULL OR p.valid_to >= timezone('utc', now()))
+           ORDER BY p.headline
+           """) do
+        {:ok, result} -> {:ok, Enum.map(result.rows, &first_row/1)}
+        {:error, error} -> database_error(error)
+      end
+    else
+      :error -> {:error, :invalid_user}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   def list_codes(user_id) do
     with {:ok, uid} <- dump_uuid(user_id),
          :ok <- require_staff(uid) do

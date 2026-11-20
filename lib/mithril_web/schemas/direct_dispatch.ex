@@ -257,6 +257,13 @@ defmodule MithrilWeb.Schemas.DirectDispatch do
           nullable: true,
           description:
             "Cleaning extra tasks. Catalog hours are added to the room visit before pricing."
+        },
+        promotionSlug: %Schema{
+          type: :string,
+          nullable: true,
+          maxLength: 80,
+          description:
+            "Optional active promotion. Checked against this customer and applied to the first visit."
         }
       },
       required: [

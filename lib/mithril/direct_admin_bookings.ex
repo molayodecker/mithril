@@ -1,7 +1,7 @@
 defmodule Mithril.DirectAdminBookings do
   @moduledoc """
   Staff booking desk: list, inspect, assign, status, cancel, reschedule,
-  exclusive-hold reset, cash payout, and outreach nudges.
+  promotions, exclusive-hold reset, cash payout, and outreach nudges.
   """
 
   require Logger
@@ -78,6 +78,18 @@ defmodule Mithril.DirectAdminBookings do
       fetch_booking(bid)
     else
       :error -> {:error, :invalid_user}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def apply_promotion(user_id, booking_id, params) when is_map(params) do
+    with {:ok, uid} <- dump_uuid(user_id),
+         {:ok, bid} <- dump_uuid(booking_id),
+         :ok <- require_admin(uid),
+         {:ok, :ok} <- DirectDispatch.apply_booking_promotion(bid, params) do
+      fetch_booking(bid)
+    else
+      :error -> {:error, :invalid_request}
       {:error, reason} -> {:error, reason}
     end
   end

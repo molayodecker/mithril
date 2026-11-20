@@ -28,6 +28,40 @@ defmodule MithrilWeb.Schemas.DirectAdminPromotions do
     })
   end
 
+  defmodule Offer do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminPromotion",
+      type: :object,
+      description: "An active promotion concierge can attach to a booking.",
+      properties: %{
+        slug: %Schema{type: :string},
+        headline: %Schema{type: :string},
+        type: %Schema{type: :string},
+        value: %Schema{type: :number},
+        channel: %Schema{type: :string},
+        requiresNewCustomer: %Schema{type: :boolean},
+        maxDurationHours: %Schema{type: :number, nullable: true}
+      },
+      required: [:slug, :headline, :type, :value, :channel, :requiresNewCustomer]
+    })
+  end
+
+  defmodule OfferList do
+    require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectAdminPromotions.Offer
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminPromotionList",
+      type: :object,
+      properties: %{promotions: %Schema{type: :array, items: Offer}},
+      required: [:promotions]
+    })
+  end
+
   defmodule ListResponse do
     require OpenApiSpex
     alias MithrilWeb.Schemas.DirectAdminPromotions.PromotionCode

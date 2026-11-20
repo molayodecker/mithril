@@ -368,20 +368,26 @@ defmodule Mithril.DirectDispatch do
 
                   case DirectBookings.create_booking(input.customer_user_id, booking_params) do
                     {:ok, booking} ->
-                      case insert_booking_origin(
-                             booking.id,
-                             input.customer_uuid,
-                             admin_uid,
-                             input.source,
-                             input.admin_note
-                           ) do
-                        {:ok, _origin_created?} ->
-                          Map.merge(booking, %{
-                            scheduledDate: date,
-                            customerUserId: input.customer_user_id,
-                            source: input.source,
-                            createdByAdmin: true
-                          })
+                      with {:ok, _origin_created?} <-
+                             insert_booking_origin(
+                               booking.id,
+                               input.customer_uuid,
+                               admin_uid,
+                               input.source,
+                               input.admin_note
+                             ),
+                           {:ok, priced} <- maybe_apply_promotion(booking, input, index) do
+                        booking
+                        |> Map.merge(priced)
+                        |> Map.merge(%{
+                          scheduledDate: date,
+                          customerUserId: input.customer_user_id,
+                          source: input.source,
+                          createdByAdmin: true
+                        })
+                      else
+                        {:error, reason} when is_atom(reason) ->
+                          Repo.rollback(reason)
 
                         {:error, error} ->
                           Repo.rollback({:database, error})
@@ -1228,20 +1234,381 @@ defmodule Mithril.DirectDispatch do
          {:ok, customer_uuid} <- dump_uuid(params["customerUserId"]),
          {:ok, source} <- admin_source(params["source"] || "admin"),
          {:ok, _extra_task_ids} <- optional_extra_task_ids(params["extraTaskIds"]),
-         {:ok, idempotency_key} <- optional_idempotency_key(params["idempotencyKey"]) do
+         {:ok, idempotency_key} <- optional_idempotency_key(params["idempotencyKey"]),
+         {:ok, promotion_slug} <- optional_promotion_slug(params["promotionSlug"]) do
       {:ok,
        %{
          customer_uuid: customer_uuid,
          customer_user_id: params["customerUserId"],
          source: source,
          admin_note: optional_text(params["adminNote"], 2_000),
-         idempotency_key: idempotency_key
+         idempotency_key: idempotency_key,
+         promotion_slug: promotion_slug
        }}
     else
       false -> {:error, :consent_required}
       _ -> {:error, :invalid_request}
     end
   end
+
+  @promotion_errors ~w(
+    promotion_inactive
+    existing_customer
+    already_used
+    not_eligible_service
+    outside_service_area
+    recurring_not_eligible
+    promotion_exhausted
+    unsupported_redemption_limit
+  )a
+
+  @doc false
+  def apply_booking_promotion(booking_id, params) when is_map(params) do
+    with {:ok, slug} <- required_promotion_slug(params["promotionSlug"] || params[:promotionSlug]) do
+      Repo.transaction(fn ->
+        with {:ok, customer_id} <- lock_booking_for_promotion(booking_id),
+             {:ok, _priced} <- apply_promotion(booking_id, customer_id, slug) do
+          :ok
+        else
+          {:error, reason} when is_atom(reason) -> Repo.rollback(reason)
+          {:error, error} -> Repo.rollback({:database, error})
+        end
+      end)
+      |> normalize_transaction()
+    else
+      :error -> {:error, :invalid_request}
+    end
+  end
+
+  @doc false
+  def promotion_apply_gate(booking) do
+    discount =
+      case booking.promotion_discount_minor do
+        %Decimal{} = value ->
+          value |> Decimal.round(0) |> Decimal.to_integer() |> max(0)
+
+        value ->
+          non_negative_integer(value)
+      end
+
+    cond do
+      booking.payment_status != "pending" ->
+        {:error, :booking_paid}
+
+      booking.status not in ["pending", "confirmed"] ->
+        {:error, :promotion_closed}
+
+      booking.promotion_id != nil or discount > 0 ->
+        {:error, :promotion_already_applied}
+
+      Map.get(booking, :checkout_open, false) ->
+        {:error, :checkout_already_initialized}
+
+      true ->
+        :ok
+    end
+  end
+
+  @doc false
+  def promotion_discount_minor(promo, booking) do
+    final_minor = non_negative_integer(booking.final_amount_minor)
+
+    case promo.type do
+      "free_hours" -> free_hours_discount(promo, booking)
+      "percent_off" -> percent_discount(promo, final_minor)
+      "fixed_credit_minor" -> fixed_discount(promo, final_minor)
+      _ -> 0
+    end
+  end
+
+  defp maybe_apply_promotion(_booking, %{promotion_slug: nil}, _index), do: {:ok, %{}}
+
+  defp maybe_apply_promotion(_booking, %{promotion_slug: slug}, index)
+       when is_binary(slug) and index > 0,
+       do: {:ok, %{}}
+
+  defp maybe_apply_promotion(booking, %{promotion_slug: slug, customer_uuid: customer_id}, 0)
+       when is_binary(slug) do
+    apply_promotion(booking.id, customer_id, slug)
+  end
+
+  defp lock_booking_for_promotion(booking_id) do
+    case Repo.query(
+           """
+           SELECT
+             customer_id,
+             payment_status,
+             status::text,
+             promotion_id,
+             COALESCE(promotion_discount_minor, 0),
+             (
+               NULLIF(BTRIM(COALESCE(reference, '')), '') IS NOT NULL
+               OR EXISTS (
+                 SELECT 1 FROM public.payment_attempts pa
+                 WHERE pa.booking_id = bookings.id
+                   AND pa.status IN ('initializing', 'ready', 'paid')
+               )
+             ) AS checkout_open
+           FROM public.bookings
+           WHERE id = $1::uuid
+           FOR UPDATE
+           """,
+           [DbUuid.dump!(booking_id)]
+         ) do
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:ok,
+       %{rows: [[customer_id, payment_status, status, promotion_id, discount, checkout_open]]}} ->
+        case promotion_apply_gate(%{
+               payment_status: payment_status,
+               status: status,
+               promotion_id: promotion_id,
+               promotion_discount_minor: discount,
+               checkout_open: checkout_open
+             }) do
+          :ok -> {:ok, customer_id}
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp apply_promotion(booking_id, customer_id, slug) do
+    case Repo.query(
+           """
+           SELECT
+             COALESCE(elig.eligible, false),
+             elig.reason,
+             p.id,
+             p.slug,
+             p.type,
+             p.value,
+             p.max_duration_hours,
+             b.duration_hours,
+             COALESCE(b.extra_task_hours_total, 0),
+             b.work_rate_ghs_per_hour,
+             b.cleaner_earnings_minor,
+             b.final_amount_minor
+           FROM public.bookings b
+           JOIN public.promotions p
+             ON p.slug = $3
+            AND p.active IS TRUE
+            AND (p.valid_from IS NULL OR p.valid_from <= timezone('utc', now()))
+            AND (p.valid_to IS NULL OR p.valid_to >= timezone('utc', now()))
+           CROSS JOIN LATERAL (
+             SELECT
+               (result ->> 'eligible')::boolean AS eligible,
+               result ->> 'reason' AS reason
+             FROM (
+               SELECT public._promotion_eligibility_core(
+                 b.customer_id,
+                 p.slug,
+                 CASE WHEN p.channel IN ('mobile', 'web') THEN p.channel ELSE 'web' END,
+                 b.service_id,
+                 NULL,
+                 NULL,
+                 b.extra_task_ids,
+                 false,
+                 b.id,
+                 NULL
+               ) AS result
+             ) raw
+           ) elig
+           WHERE b.id = $1::uuid
+             AND b.customer_id = $2::uuid
+             AND b.payment_status = 'pending'
+           """,
+           [DbUuid.dump!(booking_id), DbUuid.dump!(customer_id), slug]
+         ) do
+      {:ok, %{rows: []}} ->
+        {:error, :promotion_unavailable}
+
+      {:ok, %{rows: [[false, reason | _]]}} ->
+        {:error, promotion_error(reason)}
+
+      {:ok,
+       %{
+         rows: [
+           [
+             true,
+             _reason,
+             promotion_id,
+             promotion_slug,
+             type,
+             value,
+             max_duration_hours,
+             duration_hours,
+             extra_task_hours,
+             work_rate,
+             labor_minor,
+             final_minor
+           ]
+         ]
+       }} ->
+        discount =
+          promotion_discount_minor(
+            %{type: type, value: value, max_duration_hours: max_duration_hours},
+            %{
+              duration_hours: duration_hours,
+              extra_task_hours: extra_task_hours,
+              work_rate: work_rate,
+              labor_minor: labor_minor,
+              final_amount_minor: final_minor
+            }
+          )
+
+        with {:ok, amount_minor} <-
+               save_booking_promotion(booking_id, promotion_id, promotion_slug, discount),
+             :ok <- reserve_promotion(customer_id, promotion_id, booking_id, discount) do
+          {:ok, %{amountMinor: amount_minor}}
+        end
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp save_booking_promotion(booking_id, promotion_id, promotion_slug, discount) do
+    case Repo.query(
+           """
+           UPDATE public.bookings
+           SET promotion_id = $2::uuid,
+               promotion_slug = $3,
+               promotion_discount_minor = $4,
+               final_amount_minor = GREATEST(0, final_amount_minor - $4),
+               total_price = GREATEST(0, final_amount_minor - $4)
+           WHERE id = $1::uuid
+             AND payment_status = 'pending'
+             AND promotion_id IS NULL
+             AND COALESCE(promotion_discount_minor, 0) = 0
+           RETURNING final_amount_minor
+           """,
+           [DbUuid.dump!(booking_id), DbUuid.dump!(promotion_id), promotion_slug, discount]
+         ) do
+      {:ok, %{rows: [[amount_minor]]}} -> {:ok, amount_minor}
+      {:ok, %{rows: []}} -> {:error, :promotion_unavailable}
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp reserve_promotion(customer_id, promotion_id, booking_id, discount) do
+    case Repo.query(
+           """
+           INSERT INTO public.promotion_redemptions (
+             user_id, promotion_id, booking_id, discount_minor, status, reserved_at, expires_at
+           ) VALUES (
+             $1::uuid, $2::uuid, $3::uuid, $4, 'reserved', timezone('utc', now()), NULL
+           )
+           ON CONFLICT (user_id, promotion_id) DO UPDATE
+           SET status = 'reserved',
+               booking_id = EXCLUDED.booking_id,
+               discount_minor = EXCLUDED.discount_minor,
+               reserved_at = timezone('utc', now()),
+               expires_at = NULL
+           WHERE promotion_redemptions.status = 'released'
+           RETURNING id
+           """,
+           [
+             DbUuid.dump!(customer_id),
+             DbUuid.dump!(promotion_id),
+             DbUuid.dump!(booking_id),
+             discount
+           ]
+         ) do
+      {:ok, %{rows: [[_id]]}} -> :ok
+      {:ok, %{rows: []}} -> {:error, :already_used}
+      {:error, error} -> {:error, error}
+    end
+  end
+
+  defp promotion_error(reason) when is_binary(reason) do
+    Enum.find(@promotion_errors, :promotion_unavailable, &(Atom.to_string(&1) == reason))
+  end
+
+  defp promotion_error(_reason), do: :promotion_unavailable
+
+  defp free_hours_discount(promo, booking) do
+    value = decimal(promo.value)
+    max_hours = decimal(promo.max_duration_hours || promo.value)
+
+    base_hours =
+      Decimal.max(
+        Decimal.sub(decimal(booking.duration_hours), decimal(booking.extra_task_hours)),
+        Decimal.new(0)
+      )
+
+    free_hours = Enum.reduce([value, max_hours, base_hours], &Decimal.min/2)
+
+    promo_labor =
+      free_hours
+      |> Decimal.mult(decimal(booking.work_rate))
+      |> Decimal.mult(100)
+      |> Decimal.round(0)
+      |> Decimal.to_integer()
+
+    min(max(promo_labor, 0), non_negative_integer(booking.labor_minor))
+  end
+
+  defp percent_discount(promo, final_minor) do
+    value = decimal(promo.value)
+
+    cond do
+      Decimal.compare(value, 0) != :gt ->
+        0
+
+      Decimal.compare(value, 100) == :gt ->
+        0
+
+      true ->
+        discount =
+          final_minor
+          |> Decimal.new()
+          |> Decimal.mult(value)
+          |> Decimal.div(100)
+          |> Decimal.round(0)
+          |> Decimal.to_integer()
+
+        min(max(discount, 0), final_minor)
+    end
+  end
+
+  defp fixed_discount(promo, final_minor) do
+    credit = promo.value |> decimal() |> Decimal.round(0) |> Decimal.to_integer()
+    min(max(credit, 0), final_minor)
+  end
+
+  defp decimal(%Decimal{} = value), do: value
+  defp decimal(value) when is_integer(value), do: Decimal.new(value)
+  defp decimal(value) when is_float(value), do: Decimal.from_float(value)
+  defp decimal(nil), do: Decimal.new(0)
+
+  defp non_negative_integer(value) when is_integer(value) and value >= 0, do: value
+  defp non_negative_integer(_value), do: 0
+
+  defp required_promotion_slug(value) do
+    case optional_promotion_slug(value) do
+      {:ok, slug} when is_binary(slug) -> {:ok, slug}
+      _ -> :error
+    end
+  end
+
+  defp optional_promotion_slug(nil), do: {:ok, nil}
+  defp optional_promotion_slug(""), do: {:ok, nil}
+
+  defp optional_promotion_slug(value) when is_binary(value) do
+    slug = String.trim(value)
+
+    if slug =~ ~r/^[a-z0-9][a-z0-9_-]{0,79}$/ do
+      {:ok, slug}
+    else
+      :error
+    end
+  end
+
+  defp optional_promotion_slug(_value), do: :error
 
   defp optional_idempotency_key(nil), do: {:ok, nil}
 
