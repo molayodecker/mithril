@@ -1301,6 +1301,9 @@ defmodule Mithril.DirectDispatch do
       booking.promotion_id != nil or discount > 0 ->
         {:error, :promotion_already_applied}
 
+      Map.get(booking, :checkout_open, false) ->
+        {:error, :checkout_already_initialized}
+
       true ->
         :ok
     end
@@ -1337,7 +1340,15 @@ defmodule Mithril.DirectDispatch do
              payment_status,
              status::text,
              promotion_id,
-             COALESCE(promotion_discount_minor, 0)
+             COALESCE(promotion_discount_minor, 0),
+             (
+               NULLIF(BTRIM(COALESCE(reference, '')), '') IS NOT NULL
+               OR EXISTS (
+                 SELECT 1 FROM public.payment_attempts pa
+                 WHERE pa.booking_id = bookings.id
+                   AND pa.status IN ('initializing', 'ready', 'paid')
+               )
+             ) AS checkout_open
            FROM public.bookings
            WHERE id = $1::uuid
            FOR UPDATE
@@ -1347,12 +1358,13 @@ defmodule Mithril.DirectDispatch do
       {:ok, %{rows: []}} ->
         {:error, :not_found}
 
-      {:ok, %{rows: [[customer_id, payment_status, status, promotion_id, discount]]}} ->
+      {:ok, %{rows: [[customer_id, payment_status, status, promotion_id, discount, checkout_open]]}} ->
         case promotion_apply_gate(%{
                payment_status: payment_status,
                status: status,
                promotion_id: promotion_id,
-               promotion_discount_minor: discount
+               promotion_discount_minor: discount,
+               checkout_open: checkout_open
              }) do
           :ok -> {:ok, customer_id}
           {:error, reason} -> {:error, reason}
