@@ -2,9 +2,10 @@ defmodule Mithril.WorkerTraining do
   @moduledoc """
   Worker training assignments.
 
-  Instaclean assigns `job-quality` when operations records a health action of
-  `training`. A team lead assigns a catalog course for someone on their team.
-  The worker lists and completes only their own rows.
+  Operations assigns a catalog course when they record a health action of
+  `training`. That row is what Instaclean Pro lists for the worker. A team
+  lead assigns a catalog course for someone on their team. The worker lists
+  and completes only their own rows.
   """
 
   alias Mithril.DbUuid
@@ -33,7 +34,32 @@ defmodule Mithril.WorkerTraining do
     }
   }
 
-  @performance_course "job-quality"
+  @spec known_course_key(term()) :: {:ok, String.t()} | {:error, :unknown_course}
+  def known_course_key(key) when is_binary(key) do
+    key = String.trim(key)
+
+    if Map.has_key?(@courses, key) do
+      {:ok, key}
+    else
+      {:error, :unknown_course}
+    end
+  end
+
+  def known_course_key(_key), do: {:error, :unknown_course}
+
+  @spec course_title!(String.t()) :: String.t()
+  def course_title!(course_key) when is_binary(course_key) do
+    Map.fetch!(@courses, course_key)["title"]
+  end
+
+  @spec note_with_course(String.t(), String.t() | nil) :: String.t()
+  def note_with_course(course_key, nil) when is_binary(course_key) do
+    course_title!(course_key)
+  end
+
+  def note_with_course(course_key, notes) when is_binary(course_key) and is_binary(notes) do
+    "#{course_title!(course_key)}. #{notes}"
+  end
 
   @spec list(String.t()) :: {:ok, map()} | {:error, term()}
   def list(user_id) when is_binary(user_id) do
@@ -77,35 +103,88 @@ defmodule Mithril.WorkerTraining do
   def recommend(_lead_user_id, _body), do: {:error, :bad_request}
 
   @doc """
-  Assigns the performance course for a health case. Skips when the table is
-  not applied yet so an older database can still record the health action.
+  Assigns a catalog course for a health case so Instaclean Pro can list it.
+  A second send of the same open course leaves the existing row in place.
   Runs inside the caller's transaction.
   """
-  @spec assign_for_health_case(binary(), binary()) :: :ok
-  def assign_for_health_case(case_id, assigned_by)
-      when is_binary(case_id) and is_binary(assigned_by) do
+  @spec assign_for_health_case(binary(), binary(), String.t()) :: :ok
+  def assign_for_health_case(case_id, assigned_by, course_key)
+      when is_binary(case_id) and is_binary(assigned_by) and is_binary(course_key) do
+    case known_course_key(course_key) do
+      {:ok, course_key} ->
+        assign_known_course(case_id, assigned_by, course_key)
+
+      {:error, :unknown_course} ->
+        Repo.rollback(:unknown_course)
+    end
+  end
+
+  defp assign_known_course(case_id, assigned_by, course_key) do
     case Repo.query("SELECT to_regclass('public.worker_training_assignments')") do
       {:ok, %{rows: [[nil]]}} ->
-        :ok
+        Repo.rollback(:training_unavailable)
 
       {:ok, %{rows: [[_table]]}} ->
-        case Repo.query(
-               """
-               INSERT INTO public.worker_training_assignments (
-                 worker_user_id, course_key, reason, health_case_id, assigned_by_user_id
-               )
-               SELECT c.cleaner_id, $3, 'performance', c.id, $2
-               FROM public.cleaner_operations_cases c
-               WHERE c.id = $1
-                 AND c.cleaner_id IS NOT NULL
-               ON CONFLICT (worker_user_id, course_key) WHERE status = 'assigned'
-               DO NOTHING
-               """,
-               [case_id, assigned_by, @performance_course]
-             ) do
-          {:ok, _} -> :ok
-          {:error, error} -> Repo.rollback({:database, error})
-        end
+        insert_health_assignment(case_id, assigned_by, course_key)
+
+      {:error, error} ->
+        Repo.rollback({:database, error})
+    end
+  end
+
+  defp insert_health_assignment(case_id, assigned_by, course_key) do
+    case Repo.query(
+           """
+           INSERT INTO public.worker_training_assignments (
+             worker_user_id, course_key, reason, health_case_id, assigned_by_user_id
+           )
+           SELECT c.cleaner_id, $3, 'performance', c.id, $2
+           FROM public.cleaner_operations_cases c
+           WHERE c.id = $1
+             AND c.cleaner_id IS NOT NULL
+           ON CONFLICT (worker_user_id, course_key) WHERE status = 'assigned'
+           DO NOTHING
+           """,
+           [case_id, assigned_by, course_key]
+         ) do
+      {:ok, %{num_rows: rows}} when rows > 0 ->
+        :ok
+
+      {:ok, %{num_rows: 0}} ->
+        confirm_open_assignment(case_id, course_key)
+
+      {:error, error} ->
+        Repo.rollback({:database, error})
+    end
+  end
+
+  defp confirm_open_assignment(case_id, course_key) do
+    case Repo.query(
+           """
+           SELECT c.cleaner_id IS NOT NULL,
+                  EXISTS (
+                    SELECT 1
+                    FROM public.worker_training_assignments a
+                    WHERE a.worker_user_id = c.cleaner_id
+                      AND a.course_key = $2
+                      AND a.status = 'assigned'
+                  )
+           FROM public.cleaner_operations_cases c
+           WHERE c.id = $1
+           """,
+           [case_id, course_key]
+         ) do
+      {:ok, %{rows: [[true, true]]}} ->
+        :ok
+
+      {:ok, %{rows: [[false, _assigned]]}} ->
+        Repo.rollback(:worker_missing)
+
+      {:ok, %{rows: []}} ->
+        Repo.rollback(:not_found)
+
+      {:ok, %{rows: [[true, false]]}} ->
+        Repo.rollback(:training_not_saved)
 
       {:error, error} ->
         Repo.rollback({:database, error})
@@ -254,18 +333,15 @@ defmodule Mithril.WorkerTraining do
     }
   end
 
-  defp fetch_course_key(key) when is_binary(key) do
-    key = String.trim(key)
+  defp fetch_course_key(key) do
+    case known_course_key(key) do
+      {:ok, course_key} ->
+        {:ok, course_key}
 
-    if Map.has_key?(@courses, key) do
-      {:ok, key}
-    else
-      invalid("unknown_course", "Choose one of the training courses.")
+      {:error, :unknown_course} ->
+        invalid("unknown_course", "Choose one of the training courses.")
     end
   end
-
-  defp fetch_course_key(_key),
-    do: invalid("unknown_course", "Choose one of the training courses.")
 
   defp ensure_other_worker(lead_user_id, worker_id) do
     if DbUuid.equal?(lead_user_id, worker_id) do

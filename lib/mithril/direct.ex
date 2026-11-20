@@ -984,7 +984,15 @@ defmodule Mithril.Direct do
     with {:ok, uid} <- dump_uuid(user_id),
          {:ok, cid} <- dump_uuid(case_id),
          :ok <- require_admin(uid),
-         {:ok, action_type, notes, next_status} <- parse_health_action(params) do
+         {:ok, action_type, notes, next_status} <- parse_health_action(params),
+         {:ok, course_key} <- training_course(action_type, params) do
+      stored_notes =
+        if course_key do
+          Mithril.WorkerTraining.note_with_course(course_key, notes)
+        else
+          notes
+        end
+
       Repo.transaction(fn ->
         [_id, current_status] =
           one_row_or_rollback(
@@ -1005,7 +1013,7 @@ defmodule Mithril.Direct do
           INSERT INTO public.cleaner_case_actions (case_id, action_type, notes, created_by)
           VALUES ($1, $2, $3, $4)
           """,
-          [cid, action_type, notes, uid]
+          [cid, action_type, stored_notes, uid]
         )
 
         with_query_or_rollback(
@@ -1019,14 +1027,14 @@ defmodule Mithril.Direct do
             resolution_notes = CASE WHEN $2 IN ('resolved', 'dismissed') THEN $4 ELSE resolution_notes END
           WHERE id = $1
           """,
-          [cid, status, uid, notes]
+          [cid, status, uid, stored_notes]
         )
 
-        if action_type == "training" do
-          Mithril.WorkerTraining.assign_for_health_case(cid, uid)
+        if course_key do
+          Mithril.WorkerTraining.assign_for_health_case(cid, uid, course_key)
         end
 
-        %{message: "Action recorded"}
+        %{message: health_action_message(course_key)}
       end)
       |> normalize_transaction()
     else
@@ -2255,6 +2263,20 @@ defmodule Mithril.Direct do
     require_id_before_payment
     require_id_before_dispatch
   )
+
+  defp training_course("training", params) do
+    Mithril.WorkerTraining.known_course_key(params["courseKey"])
+  end
+
+  defp training_course(_action_type, _params) do
+    {:ok, nil}
+  end
+
+  defp health_action_message(nil), do: "Action recorded"
+
+  defp health_action_message(course_key) when is_binary(course_key) do
+    "#{Mithril.WorkerTraining.course_title!(course_key)} is on the worker's Instaclean Pro training list."
+  end
 
   defp parse_health_action(params) do
     action = params["actionType"]
