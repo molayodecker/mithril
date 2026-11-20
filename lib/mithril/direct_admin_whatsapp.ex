@@ -390,19 +390,19 @@ defmodule Mithril.DirectAdminWhatsApp do
   # WhatsApp media-only messages open the same customer service window as text.
   # Preserve a human-readable inbox entry even when Twilio sends an empty Body.
   defp inbound_body(params) do
-    case required_body(params["Body"] || params[:Body]) do
-      {:ok, text} ->
-        {:ok, text}
+    body = params["Body"] || params[:Body]
 
-      {:error, :invalid_request} ->
-        count = params["NumMedia"] || params[:NumMedia]
+    if is_binary(body) and String.trim(body) != "" do
+      required_body(body)
+    else
+      count = params["NumMedia"] || params[:NumMedia]
 
-        if (is_integer(count) and count > 0) or
-             (is_binary(count) and Regex.match?(~r/^[1-9][0-9]*$/, count)) do
-          {:ok, "[Media message]"}
-        else
-          {:error, :invalid_request}
-        end
+      if (is_integer(count) and count > 0) or
+           (is_binary(count) and Regex.match?(~r/^[1-9][0-9]*$/, count)) do
+        {:ok, "[Media message]"}
+      else
+        {:error, :invalid_request}
+      end
     end
   end
 
