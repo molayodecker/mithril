@@ -277,8 +277,12 @@ defmodule MithrilWeb.Router do
     post "/admin/whatsapp/sms", DirectAdminWhatsAppController, :sms
     post "/admin/whatsapp/booking-offers", DirectAdminWhatsAppController, :booking_offer
     get "/admin/whatsapp/booking-offers", DirectAdminWhatsAppController, :booking_offer_show
-    post "/admin/whatsapp/booking-offers/:id/accept", DirectAdminWhatsAppController, :booking_offer_accept
-    post "/admin/whatsapp/booking-offers/:id/schedule", DirectAdminWhatsAppController, :booking_offer_schedule
+    post "/admin/whatsapp/booking-offers/:id/accept",
+         DirectAdminWhatsAppController,
+         :booking_offer_accept
+    post "/admin/whatsapp/booking-offers/:id/schedule",
+         DirectAdminWhatsAppController,
+         :booking_offer_schedule
     get "/admin/dispatch-map", DirectAdminDispatchMapController, :show
     get "/admin/live-jobs", DirectAdminLiveJobsController, :index
     get "/admin/bookings", DirectAdminBookingsController, :index
