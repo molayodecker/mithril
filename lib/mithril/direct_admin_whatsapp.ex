@@ -356,7 +356,8 @@ defmodule Mithril.DirectAdminWhatsApp do
     |> String.trim()
   end
 
-  defp require_admin(uid) do
+  @doc false
+  def require_admin(uid) do
     if Auth.staff_uuid?(uid), do: :ok, else: {:error, :forbidden}
   end
 
