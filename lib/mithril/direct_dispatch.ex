@@ -1358,7 +1358,8 @@ defmodule Mithril.DirectDispatch do
       {:ok, %{rows: []}} ->
         {:error, :not_found}
 
-      {:ok, %{rows: [[customer_id, payment_status, status, promotion_id, discount, checkout_open]]}} ->
+      {:ok,
+       %{rows: [[customer_id, payment_status, status, promotion_id, discount, checkout_open]]}} ->
         case promotion_apply_gate(%{
                payment_status: payment_status,
                status: status,
