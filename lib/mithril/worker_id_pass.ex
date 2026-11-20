@@ -2,9 +2,10 @@ defmodule Mithril.WorkerIdPass do
   @moduledoc """
   Signed Apple Wallet pass for a worker ID.
 
-  The barcode is the public verify page. When the worker is suspended, the
-  rebuilt pass is voided and phones that registered the pass are asked to
-  refresh it. Signing certificates stay in server environment variables.
+  The barcode is the public verify page. When the worker or account status
+  changes, a database trigger voids a suspended pass, advances its update
+  cursor, and asks registered phones to refresh. Signing certificates stay
+  in server environment variables.
   This is not Apple Pay and does not use a merchant id.
   """
 
@@ -561,12 +562,31 @@ defmodule Mithril.WorkerIdPass do
       {:ok, %{status: status}} when status in 200..299 ->
         :ok
 
+      # Apple retires the token. Drop it so one dead phone cannot keep the
+      # refresh pending after every live device has accepted the update.
+      {:ok, %{status: 410}} ->
+        forget_push_token(token)
+
       {:ok, %{status: status}} ->
         Logger.warning("worker id pass update push was not accepted: #{status}")
         {:error, :push_failed}
 
       {:error, reason} ->
         Logger.warning("worker id pass update push failed: #{inspect(reason)}")
+        {:error, :push_failed}
+    end
+  end
+
+  defp forget_push_token(token) do
+    case Repo.query(
+           "DELETE FROM public.worker_id_pass_registrations WHERE push_token = $1",
+           [token]
+         ) do
+      {:ok, _} ->
+        :ok
+
+      {:error, _error} ->
+        Logger.warning("worker id pass could not retire a rejected push token")
         {:error, :push_failed}
     end
   end

@@ -40,11 +40,15 @@ CREATE INDEX IF NOT EXISTS worker_id_pass_downloads_expires_idx
 ALTER TABLE public.worker_id_passes
   ADD COLUMN IF NOT EXISTS push_pending boolean NOT NULL DEFAULT false;
 
--- Status changes are durable even if the API process is down. The minute
--- sweep delivers APNs notifications and keeps failed pushes pending.
+-- Status changes are durable even if the API process is down. The trigger
+-- runs as the table owner so a restricted writer can suspend an account
+-- without also holding UPDATE on the pass row. A notification wakes a
+-- running API immediately; the minute sweep retries until Apple accepts.
 CREATE OR REPLACE FUNCTION public.queue_worker_id_status_refresh()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
 AS $$
 BEGIN
   IF NEW.status IS DISTINCT FROM OLD.status THEN
@@ -58,6 +62,10 @@ BEGIN
         push_pending = true,
         updated_at = GREATEST(clock_timestamp(), p.updated_at + interval '1 microsecond')
     WHERE p.user_id = NEW.id;
+
+    IF FOUND THEN
+      PERFORM pg_notify('worker_id_pass_push', '');
+    END IF;
   END IF;
 
   RETURN NEW;
@@ -68,6 +76,8 @@ $$;
 CREATE OR REPLACE FUNCTION public.queue_cleaner_worker_id_status_refresh()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
 AS $$
 BEGIN
   IF NEW.status IS DISTINCT FROM OLD.status THEN
@@ -80,6 +90,10 @@ BEGIN
         push_pending = true,
         updated_at = GREATEST(clock_timestamp(), p.updated_at + interval '1 microsecond')
     WHERE p.user_id = NEW.user_id;
+
+    IF FOUND THEN
+      PERFORM pg_notify('worker_id_pass_push', '');
+    END IF;
   END IF;
 
   RETURN NEW;
