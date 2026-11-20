@@ -160,7 +160,7 @@ defmodule Mithril.WorkerIdTest do
       |> Enum.map(fn {:ok, path} -> path end)
 
     assert Enum.uniq(paths) |> length() == 1
-    assert File.read!(hd(paths)) == pem <> "\\n"
+    assert File.read!(hd(paths)) == pem <> "\n"
     assert Bitwise.band(File.stat!(hd(paths)).mode, 0o777) == 0o600
   end
 
