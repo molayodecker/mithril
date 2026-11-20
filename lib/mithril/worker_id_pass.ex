@@ -115,7 +115,7 @@ defmodule Mithril.WorkerIdPass do
   @spec serials(String.t(), String.t(), String.t() | nil) ::
           {:ok, map()} | :none | {:error, :unavailable}
   def serials(device, pass_type, since) do
-    since_unix =
+    since_microseconds =
       case Integer.parse(to_string(since || "0")) do
         {value, ""} when value >= 0 -> value
         _ -> 0
@@ -136,14 +136,14 @@ defmodule Mithril.WorkerIdPass do
 
       {:ok, %{rows: rows}} ->
         updated =
-          Enum.filter(rows, fn [_serial, updated_at] -> unix(updated_at) > since_unix end)
+          Enum.filter(rows, fn [_serial, updated_at] -> cursor_microseconds(updated_at) > since_microseconds end)
 
         if updated == [] do
           :none
         else
           last =
             rows
-            |> Enum.map(fn [_serial, updated_at] -> unix(updated_at) end)
+            |> Enum.map(fn [_serial, updated_at] -> cursor_microseconds(updated_at) end)
             |> Enum.max()
 
           serial_numbers = Enum.map(updated, fn [serial, _updated] -> serial end)
@@ -153,6 +153,43 @@ defmodule Mithril.WorkerIdPass do
       {:error, error} ->
         Logger.error("worker id pass list failed: #{Exception.message(error)}")
         {:error, :unavailable}
+    end
+  end
+
+  @doc """
+  Flush durable Wallet refresh requests created by the status-change triggers.
+  A failed or unconfigured APNs push remains pending for the next sweep.
+  """
+  @spec flush_pending_pushes() :: :ok | {:error, term()}
+  def flush_pending_pushes do
+    case Repo.query("""
+         SELECT serial_number, updated_at
+         FROM public.worker_id_passes
+         WHERE push_pending IS TRUE
+         ORDER BY updated_at
+         LIMIT 100
+         """) do
+      {:ok, %{rows: rows}} ->
+        Enum.each(rows, fn [serial, updated_at] ->
+          if push_serial(serial) == :ok do
+            case Repo.query("""
+                 UPDATE public.worker_id_passes
+                 SET push_pending = false
+                 WHERE serial_number = $1 AND updated_at = $2
+                 """, [serial, updated_at]) do
+              {:ok, _} -> :ok
+              {:error, error} -> Logger.warning("wallet push acknowledgment failed: #{inspect(error)}")
+            end
+          end
+        end)
+
+        :ok
+
+      {:error, %Postgrex.Error{postgres: %{code: :undefined_table}}} ->
+        :ok
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
@@ -452,7 +489,9 @@ defmodule Mithril.WorkerIdPass do
     case Repo.query(
            """
            UPDATE public.worker_id_passes
-           SET voided = $2, updated_at = now()
+           SET voided = $2,
+               updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond'),
+               push_pending = true
            WHERE user_id = $1
            RETURNING serial_number
            """,
@@ -478,7 +517,7 @@ defmodule Mithril.WorkerIdPass do
         |> push_tokens()
 
       _ ->
-        :ok
+        {:error, :unavailable}
     end
   end
 
@@ -486,8 +525,12 @@ defmodule Mithril.WorkerIdPass do
 
   defp push_tokens(tokens) do
     case apns_jwt() do
-      {:ok, jwt} -> Enum.each(tokens, &push_one(&1, jwt))
-      :unconfigured -> :skipped
+      {:ok, jwt} ->
+        outcomes = Enum.map(tokens, &push_one(&1, jwt))
+        if Enum.all?(outcomes, &(&1 == :ok)), do: :ok, else: {:error, :push_failed}
+
+      :unconfigured ->
+        {:error, :push_not_configured}
     end
   end
 
@@ -512,9 +555,11 @@ defmodule Mithril.WorkerIdPass do
 
       {:ok, %{status: status}} ->
         Logger.warning("worker id pass update push was not accepted: #{status}")
+        {:error, :push_failed}
 
       {:error, reason} ->
         Logger.warning("worker id pass update push failed: #{inspect(reason)}")
+        {:error, :push_failed}
     end
   end
 
@@ -555,9 +600,17 @@ defmodule Mithril.WorkerIdPass do
         dir = Path.join(System.tmp_dir!(), "instaclean-wallet")
         File.mkdir_p!(dir)
         File.chmod!(dir, 0o700)
-        path = Path.join(dir, filename)
-        File.write!(path, String.trim(value) <> "\n")
-        File.chmod!(path, 0o600)
+        contents = String.trim(value) <> "\n"
+        digest = :crypto.hash(:sha256, contents) |> Base.encode16(case: :lower)
+        path = Path.join(dir, "#{digest}-#{filename}")
+
+        unless File.regular?(path) do
+          temporary = Path.join(dir, "#{digest}-#{System.unique_integer([:positive])}.tmp")
+          File.write!(temporary, contents)
+          File.chmod!(temporary, 0o600)
+          File.rename!(temporary, path)
+        end
+
         path
 
       true ->
@@ -616,12 +669,13 @@ defmodule Mithril.WorkerIdPass do
     :crypto.hash(:sha, bytes) |> Base.encode16(case: :lower)
   end
 
-  defp unix(%DateTime{} = value), do: DateTime.to_unix(value)
+  @doc false
+  def cursor_microseconds(%DateTime{} = value), do: DateTime.to_unix(value, :microsecond)
 
-  defp unix(%NaiveDateTime{} = value),
-    do: value |> DateTime.from_naive!("Etc/UTC") |> DateTime.to_unix()
+  def cursor_microseconds(%NaiveDateTime{} = value),
+    do: value |> DateTime.from_naive!("Etc/UTC") |> DateTime.to_unix(:microsecond)
 
-  defp unix(_value), do: 0
+  def cursor_microseconds(_value), do: 0
 
   defp blank_to_nil(nil), do: nil
 
