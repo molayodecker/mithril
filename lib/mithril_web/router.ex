@@ -12,6 +12,10 @@ defmodule MithrilWeb.Router do
     plug MithrilWeb.Plugs.ParityAuth
   end
 
+  pipeline :pay2own do
+    plug MithrilWeb.Plugs.Pay2OwnAuth
+  end
+
   pipeline :direct_gateway do
     plug MithrilWeb.Plugs.DirectGatewayAuth
     plug MithrilWeb.Plugs.DirectOpsAuthorization
@@ -59,6 +63,12 @@ defmodule MithrilWeb.Router do
       display_operation_id: true
 
     get "/docs/redoc", MithrilWeb.OpenApiDocsController, :redoc
+  end
+
+  scope "/pay2own", MithrilWeb do
+    pipe_through [:api, :pay2own]
+
+    post "/workers/lookup", Pay2OwnWorkerController, :lookup
   end
 
   scope "/", MithrilWeb do
