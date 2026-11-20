@@ -37,6 +37,8 @@ defmodule Mithril.MobileGateway do
     list-my-training
     complete-my-training
     recommend-worker-training
+    my-worker-id
+    worker-id-pass
     send-notification
     send-app-notification
     sumsub-config/token

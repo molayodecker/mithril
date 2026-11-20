@@ -826,6 +826,70 @@ defmodule MithrilWeb.Schemas.MobileCalls do
     )
   end
 
+  defmodule WorkerIdCardResponse do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileWorkerIdCardResponse",
+      type: :object,
+      properties: %{
+        data: %Schema{
+          type: :object,
+          properties: %{
+            name: %Schema{type: :string},
+            role: %Schema{type: :string},
+            idNumber: %Schema{type: :string},
+            memberSince: %Schema{type: :string, nullable: true},
+            backgroundCleared: %Schema{type: :boolean},
+            active: %Schema{type: :boolean},
+            statusLabel: %Schema{type: :string},
+            verifyUrl: %Schema{type: :string},
+            photoUrl: %Schema{type: :string, nullable: true}
+          },
+          required: [
+            :name,
+            :role,
+            :idNumber,
+            :backgroundCleared,
+            :active,
+            :statusLabel,
+            :verifyUrl
+          ]
+        }
+      },
+      required: [:data]
+    })
+  end
+
+  defmodule WorkerIdPassResponse do
+    require OpenApiSpex
+
+    OpenApiSpex.schema(%{
+      title: "MobileWorkerIdPassResponse",
+      type: :object,
+      properties: %{
+        data: %Schema{
+          type: :object,
+          properties: %{
+            url: %Schema{type: :string}
+          },
+          required: [:url]
+        }
+      },
+      required: [:data]
+    })
+  end
+
+  def operation({:user_action, "my-worker-id"}) do
+    post("mobile.myWorkerId", "Signed-in worker's public ID card", response: WorkerIdCardResponse)
+  end
+
+  def operation({:user_action, "worker-id-pass"}) do
+    post("mobile.workerIdPass", "Short-lived Apple Wallet pass download for the signed-in worker",
+      response: WorkerIdPassResponse
+    )
+  end
+
   def operation({:user_action, "recommend-worker-training"}) do
     post(
       "mobile.recommendWorkerTraining",

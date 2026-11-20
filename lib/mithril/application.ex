@@ -12,6 +12,11 @@ defmodule Mithril.Application do
         metrics_server_child() ++
         [
           Mithril.Repo,
+          {Finch,
+           name: Mithril.ApnsFinch,
+           pools: %{
+             "https://api.push.apple.com" => [protocols: [:http2], count: 1]
+           }},
           Mithril.Schema.Check,
           Mithril.RateLimiter,
           {Phoenix.PubSub, name: Mithril.PubSub},
