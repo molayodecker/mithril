@@ -153,7 +153,10 @@ defmodule Mithril.WorkerIdTest do
       |> Task.async_stream(
         fn _ ->
           WorkerIdPass.materialize_secret(pem, "shared-pass-test.pem")
-        end, max_concurrency: 12, timeout: 10_000)
+        end,
+        max_concurrency: 12,
+        timeout: 10_000
+      )
       |> Enum.map(fn {:ok, path} -> path end)
 
     assert Enum.uniq(paths) |> length() == 1
