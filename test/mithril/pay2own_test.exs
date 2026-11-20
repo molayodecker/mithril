@@ -14,6 +14,13 @@ defmodule Mithril.Pay2OwnTest do
   setup do
     :ok = Sandbox.checkout(Repo)
     {:ok, id} = Ecto.UUID.dump(@cleaner)
+    Repo.query!("""
+    CREATE TABLE IF NOT EXISTS public.users (
+      id uuid PRIMARY KEY,
+      phone text
+    )
+    """)
+
     Repo.query!("ALTER TABLE public.users ADD COLUMN IF NOT EXISTS phone text")
 
     Repo.query!("""
@@ -53,15 +60,40 @@ defmodule Mithril.Pay2OwnTest do
 
   test "a cleaner phone is an account and an unknown phone is not" do
     found = json_response(post_lookup(%{"phone" => "0241110000"}), 200)
-    assert found["account"] == true
+    assert found == %{"account" => true}
 
     missing = json_response(post_lookup(%{"phone" => "0240000000"}), 200)
-    assert missing["account"] == false
+    assert missing == %{"account" => false}
   end
 
   test "a cleaner id is an account" do
     body = json_response(post_lookup(%{"workerId" => @cleaner}), 200)
-    assert body["account"] == true
+    assert body == %{"account" => true}
+  end
+
+  test "a longer international number cannot match a stored local Ghana number" do
+    Repo.query!("UPDATE public.users SET phone = '0241110000' WHERE id::text = $1", [@cleaner])
+
+    assert json_response(post_lookup(%{"phone" => "+2332411100009"}), 200) ==
+             %{"account" => false}
+
+    assert json_response(post_lookup(%{"phone" => "0241110000"}), 200) ==
+             %{"account" => true}
+  end
+
+  test "a wrong token is unauthorized without revealing account presence" do
+    conn =
+      build_conn()
+      |> put_req_header("x-pay2own-token", "incorrect-token")
+      |> post("/pay2own/workers/lookup", %{"phone" => "0241110000"})
+
+    assert json_response(conn, 401) == %{"error" => "unauthorized"}
+  end
+
+  test "a missing configured token returns 503 instead of running Mix at runtime" do
+    Application.delete_env(:mithril, :pay2own_intake_token)
+    assert json_response(post_lookup(%{"phone" => "0241110000"}), 503) ==
+             %{"error" => "not_configured"}
   end
 
   test "the lookup token is required" do
