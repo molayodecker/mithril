@@ -22,6 +22,7 @@ defmodule Mithril.DirectDispatchTest do
           "cleaner_data",
           "profiles",
           "user_roles",
+          "payment_attempts",
           "bookings",
           "users"
         ] do
@@ -80,7 +81,18 @@ defmodule Mithril.DirectDispatchTest do
       duration_hours numeric NOT NULL,
       timezone text,
       status text NOT NULL DEFAULT 'pending',
-      payment_status text NOT NULL DEFAULT 'paid'
+      payment_status text NOT NULL DEFAULT 'paid',
+      reference text,
+      promotion_id uuid,
+      promotion_discount_minor bigint DEFAULT 0
+    )
+    """)
+
+    Repo.query!("""
+    CREATE TABLE public.payment_attempts (
+      id uuid PRIMARY KEY,
+      booking_id uuid NOT NULL REFERENCES public.bookings(id),
+      status text NOT NULL
     )
     """)
 
@@ -621,7 +633,8 @@ defmodule Mithril.DirectDispatchTest do
       payment_status: "pending",
       status: "confirmed",
       promotion_id: nil,
-      promotion_discount_minor: 0
+      promotion_discount_minor: 0,
+      checkout_open: false
     }
 
     assert :ok == DirectDispatch.promotion_apply_gate(open)
@@ -637,6 +650,59 @@ defmodule Mithril.DirectDispatchTest do
 
     assert {:error, :promotion_already_applied} ==
              DirectDispatch.promotion_apply_gate(%{open | promotion_discount_minor: 10_000})
+
+    assert {:error, :checkout_already_initialized} ==
+             DirectDispatch.promotion_apply_gate(%{open | checkout_open: true})
+  end
+
+  test "promotion repricing refuses an initialized payment attempt even with no booking reference" do
+    customer_id = insert_user!("promotion-checkout@example.com", "+233500000088")
+    booking_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.bookings (
+        id, customer_id, service_id, address, scheduled_date, scheduled_time,
+        duration_hours, status, payment_status
+      ) VALUES ($1, $2, 1, 'Accra', CURRENT_DATE + 2, '10:00', 2, 'confirmed', 'pending')
+      """,
+      [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(customer_id)]
+    )
+
+    Repo.query!(
+      "INSERT INTO public.payment_attempts (id, booking_id, status) VALUES ($1, $2, 'ready')",
+      [Ecto.UUID.dump!(Ecto.UUID.generate()), Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:error, :checkout_already_initialized} ==
+             DirectDispatch.apply_booking_promotion(booking_id, %{"promotionSlug" => "welcome"})
+
+    [[payment_status, promotion_id]] =
+      Repo.query!(
+        "SELECT payment_status, promotion_id FROM public.bookings WHERE id = $1",
+        [Ecto.UUID.dump!(booking_id)]
+      ).rows
+
+    assert payment_status == "pending"
+    assert promotion_id == nil
+  end
+
+  test "promotion repricing refuses a retained booking payment reference" do
+    customer_id = insert_user!("promotion-reference@example.com", "+233500000087")
+    booking_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.bookings (
+        id, customer_id, service_id, address, scheduled_date, scheduled_time,
+        duration_hours, status, payment_status, reference
+      ) VALUES ($1, $2, 1, 'Accra', CURRENT_DATE + 2, '10:00', 2, 'confirmed', 'pending', 'old-checkout')
+      """,
+      [Ecto.UUID.dump!(booking_id), Ecto.UUID.dump!(customer_id)]
+    )
+
+    assert {:error, :checkout_already_initialized} ==
+             DirectDispatch.apply_booking_promotion(booking_id, %{"promotionSlug" => "welcome"})
   end
 
   test "a first-time offer covers two hours of the visit" do
