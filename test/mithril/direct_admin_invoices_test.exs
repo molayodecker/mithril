@@ -4,6 +4,7 @@ defmodule Mithril.DirectAdminInvoicesTest do
   import Phoenix.ConnTest
 
   alias Mithril.DirectAdminInvoices
+  alias Mithril.DirectAdminWhatsApp
   alias Mithril.DirectAdminMoneyFixtures, as: Fixtures
   alias Mithril.Repo
   alias Mithril.WhatsApp.InvoiceTemplate
@@ -296,6 +297,7 @@ defmodule Mithril.DirectAdminInvoicesTest do
     admin_id = Fixtures.insert_user!("admin")
     booking_id = Fixtures.insert_booking!(Fixtures.insert_user!())
     assert {:ok, _} = DirectAdminInvoices.upsert(admin_id, booking_id, sample_invoice())
+    seed_recent_whatsapp_reply!()
 
     assert {:ok, %{"ok" => true, "channel" => "whatsapp", "sent" => true}} =
              DirectAdminInvoices.send(admin_id, booking_id, %{"channel" => "whatsapp"})
@@ -308,6 +310,31 @@ defmodule Mithril.DirectAdminInvoicesTest do
 
     assert body =~ "Total due: GHS 4,800.00"
     assert body =~ shown["viewUrl"]
+  end
+
+  test "a media-only customer reply also opens the WhatsApp session window" do
+    Application.put_env(:mithril, :twilio_whatsapp_admin_from, @admin_from)
+    Application.put_env(:mithril, :twilio_http, :noop)
+
+    assert :ok =
+             DirectAdminWhatsApp.record_inbound_from_webhook(%{
+               "To" => "whatsapp:" <> @admin_from,
+               "From" => "whatsapp:+233241234567",
+               "Body" => "",
+               "NumMedia" => "1"
+             })
+
+    assert [["[Media message]"]] =
+             Repo.query!(
+               "SELECT body FROM public.whatsapp_inbox_messages WHERE direction = 'inbound'"
+             ).rows
+
+    admin_id = Fixtures.insert_user!("admin")
+    booking_id = Fixtures.insert_booking!(Fixtures.insert_user!())
+    assert {:ok, _} = DirectAdminInvoices.upsert(admin_id, booking_id, sample_invoice())
+
+    assert {:ok, %{"ok" => true, "channel" => "whatsapp", "sent" => true}} =
+             DirectAdminInvoices.send(admin_id, booking_id, %{"channel" => "whatsapp"})
   end
 
   test "a configured invoice template still records the readable invoice message" do
@@ -355,6 +382,7 @@ defmodule Mithril.DirectAdminInvoicesTest do
 
     Application.put_env(:mithril, :twilio_whatsapp_admin_from, @admin_from)
     Application.put_env(:mithril, :twilio_http, {:error, :twilio_failed})
+    seed_recent_whatsapp_reply!()
 
     assert {:error, :sms_delivery_failed} =
              DirectAdminInvoices.send(admin_id, booking_id, %{"channel" => "whatsapp"})
@@ -524,6 +552,17 @@ defmodule Mithril.DirectAdminInvoicesTest do
     put_or_delete(:resend_req_options, previous.req)
     put_or_delete(:twilio_template_invoice, previous.invoice_template)
     put_or_delete(:direct_public_url, previous.public_url)
+  end
+
+  defp seed_recent_whatsapp_reply! do
+    Repo.query!(
+      """
+      INSERT INTO public.whatsapp_inbox_messages
+        (direction, phone_e164, body, business_phone_e164, created_at)
+      VALUES ('inbound', $1, 'Hello', $2, now())
+      """,
+      ["+233241234567", @admin_from]
+    )
   end
 
   defp put_or_delete(key, nil), do: Application.delete_env(:mithril, key)
