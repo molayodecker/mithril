@@ -22,6 +22,7 @@ defmodule Mithril.Cron.JobsTest do
     assert length(Jobs.scheduled_job_names()) == 13
 
     crontab = Jobs.oban_crontab()
+
     assert length(crontab) ==
              length(Jobs.sql_job_names()) + length(Jobs.scheduled_job_names()) +
                length(Jobs.mithril_only_jobs())
