@@ -199,7 +199,7 @@ defmodule Mithril.WhatsApp.BookingOffer do
               event: error_event(reason, offer.status),
               service: offer.service_name,
               amount: money(offer.amount_minor, offer.currency),
-              slots: visit_slots(today())
+              slots: offer_slots(offer)
             })
 
           remember_reply(message_sid, phone, text)
@@ -219,14 +219,33 @@ defmodule Mithril.WhatsApp.BookingOffer do
   end
 
   defp decide(offer, body, payload, today) do
-    case choice(offer.status, body, payload, today) do
-      :unknown -> model_choice(offer, body, today)
-      chosen -> chosen
+    selection = if offer.status == "awaiting_time", do: slot_index(to_string(body)), else: nil
+
+    if selection do
+      reference = offer[:slot_base_date] || today
+      slot = Enum.at(visit_slots(reference), selection - 1)
+
+      case Date.from_iso8601(slot.date) do
+        {:ok, date} ->
+          if Date.compare(date, today) == :gt do
+            {:schedule, slot.date, parse_time(String.downcase(to_string(body))) || slot.time}
+          else
+            :refresh_slots
+          end
+
+        _ ->
+          :refresh_slots
+      end
+    else
+      case choice(offer.status, body, payload, today) do
+        :unknown -> model_choice(offer, body, today)
+        chosen -> chosen
+      end
     end
   end
 
   defp model_choice(offer, body, today) do
-    slots = visit_slots(today)
+    slots = visit_slots(offer[:slot_base_date] || today)
 
     prompt = """
     The customer is booking an Instaclean visit on WhatsApp.
@@ -261,7 +280,7 @@ defmodule Mithril.WhatsApp.BookingOffer do
 
   defp apply_choice(offer, :book, today) do
     if offer.status == "offered" do
-      case mark_awaiting(offer.id) do
+      case mark_awaiting(offer.id, today) do
         {:ok, updated} ->
           {:ok, updated,
            %{
@@ -279,11 +298,28 @@ defmodule Mithril.WhatsApp.BookingOffer do
     end
   end
 
-  defp apply_choice(offer, {:schedule, date, time}, _today) do
-    if offer.status == "awaiting_time" do
-      assign_nearest(offer, date, time)
+  defp apply_choice(offer, {:schedule, date, time}, today) do
+    with true <- offer.status == "awaiting_time",
+         {:ok, chosen_date} <- iso_date(date),
+         :ok <- future_slot(chosen_date, today),
+         {:ok, chosen_time} <- iso_time(time),
+         :ok <- daytime(chosen_time) do
+      assign_nearest(offer, Date.to_iso8601(chosen_date), chosen_time)
     else
-      {:error, :needs_book}
+      false -> {:error, :needs_book}
+      _ -> {:error, :invalid_slot}
+    end
+  end
+
+  defp apply_choice(offer, :refresh_slots, today) do
+    with {:ok, updated} <- refresh_slots(offer.id, today) do
+      {:ok, updated,
+       %{
+         event: "awaiting_time",
+         service: updated.service_name,
+         amount: money(updated.amount_minor, updated.currency),
+         slots: visit_slots(today)
+       }}
     end
   end
 
@@ -939,15 +975,31 @@ defmodule Mithril.WhatsApp.BookingOffer do
     }
   end
 
-  defp mark_awaiting(offer_id) do
+  defp mark_awaiting(offer_id, today) do
     case Repo.query(
            """
            UPDATE public.whatsapp_booking_offers
-           SET status = 'awaiting_time', updated_at = now()
+           SET status = 'awaiting_time', slot_base_date = $2::date, updated_at = now()
            WHERE id = $1 AND status = 'offered'
            RETURNING id::text
            """,
-           [dump!(offer_id)]
+           [dump!(offer_id), today]
+         ) do
+      {:ok, %{rows: [[_]]}} -> load_by_id(offer_id)
+      {:ok, _} -> {:error, :offer_closed}
+      {:error, _} -> {:error, :database_unavailable}
+    end
+  end
+
+  defp refresh_slots(offer_id, today) do
+    case Repo.query(
+           """
+           UPDATE public.whatsapp_booking_offers
+           SET slot_base_date = $2::date, updated_at = now()
+           WHERE id = $1 AND status = 'awaiting_time'
+           RETURNING id::text
+           """,
+           [dump!(offer_id), today]
          ) do
       {:ok, %{rows: [[_]]}} -> load_by_id(offer_id)
       {:ok, _} -> {:error, :offer_closed}
@@ -1000,7 +1052,8 @@ defmodule Mithril.WhatsApp.BookingOffer do
              """
              SELECT id::text, customer_id::text, phone, service_id, service_name, amount_minor,
                     currency, address, latitude, longitude, duration_hours, status,
-                    booking_id::text, cleaner_name, scheduled_date::text, to_char(scheduled_time, 'HH24:MI')
+                    booking_id::text, cleaner_name, scheduled_date::text, to_char(scheduled_time, 'HH24:MI'),
+                    slot_base_date::text
              FROM public.whatsapp_booking_offers
              WHERE id = $1
              """,
@@ -1031,7 +1084,8 @@ defmodule Mithril.WhatsApp.BookingOffer do
          booking_id,
          cleaner_name,
          scheduled_date,
-         scheduled_time
+         scheduled_time,
+         slot_base_date
        ]) do
     %{
       id: id,
@@ -1050,9 +1104,19 @@ defmodule Mithril.WhatsApp.BookingOffer do
       booking_id: booking_id,
       cleaner_name: cleaner_name,
       scheduled_date: scheduled_date,
-      scheduled_time: scheduled_time
+      scheduled_time: scheduled_time,
+      slot_base_date: parse_slot_base_date(slot_base_date)
     }
   end
+
+  defp parse_slot_base_date(value) when is_binary(value) do
+    case Date.from_iso8601(value) do
+      {:ok, date} -> date
+      _ -> nil
+    end
+  end
+
+  defp parse_slot_base_date(_), do: nil
 
   defp public_offer(offer) do
     %{
@@ -1187,8 +1251,8 @@ defmodule Mithril.WhatsApp.BookingOffer do
   defp clarify_event("awaiting_time"), do: "clarify"
   defp clarify_event(_status), do: "prompt_book"
 
-  defp offer_slots(%{status: "awaiting_time"}) do
-    visit_slots(today())
+  defp offer_slots(%{status: "awaiting_time"} = offer) do
+    visit_slots(offer[:slot_base_date] || today())
   end
 
   defp offer_slots(_offer), do: []
