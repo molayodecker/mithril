@@ -12,11 +12,19 @@ defmodule Mithril.Application do
         metrics_server_child() ++
         [
           Mithril.Repo,
+          {Finch,
+           name: Mithril.ApnsFinch,
+           pools: %{
+             "https://api.push.apple.com" => [protocols: [:http2], count: 1]
+           }},
           Mithril.Schema.Check,
           Mithril.RateLimiter,
           {Phoenix.PubSub, name: Mithril.PubSub},
           MithrilWeb.Endpoint
-        ] ++ oban_child() ++ outbox_child() ++ recruitment_store_child()
+        ] ++
+        oban_child() ++
+        outbox_child() ++
+        worker_id_pass_listener_child() ++ recruitment_store_child()
 
     Supervisor.start_link(children, strategy: :one_for_one, name: Mithril.Supervisor)
   end
@@ -71,6 +79,14 @@ defmodule Mithril.Application do
   defp outbox_child do
     if Application.get_env(:mithril, :outbox_dispatcher, true) do
       [Mithril.Outbox.Dispatcher]
+    else
+      []
+    end
+  end
+
+  defp worker_id_pass_listener_child do
+    if Application.get_env(:mithril, :worker_id_pass_listener, true) do
+      [Mithril.WorkerIdPass.PushListener]
     else
       []
     end

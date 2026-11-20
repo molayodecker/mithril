@@ -70,7 +70,8 @@ defmodule Mithril.Cron.Jobs do
     [
       {"0 * * * *", Mithril.Workers.BookingReminderSweep, []},
       {"0 6 * * *", Mithril.Workers.ContractAdvanceSweep, []},
-      {"15 6 * * *", Mithril.Workers.ContractWorkerRatingSweep, []}
+      {"15 6 * * *", Mithril.Workers.ContractWorkerRatingSweep, []},
+      {"* * * * *", Mithril.Workers.WorkerIdPassPushSweep, []}
     ]
   end
 

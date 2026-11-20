@@ -367,6 +367,32 @@ defmodule MithrilWeb.Router do
          :update_admin_service_request
   end
 
+  scope "/", MithrilWeb do
+    pipe_through :api
+
+    get "/public/worker-ids/:code", WorkerIdController, :show
+    post "/internal/worker-ids/sync", WorkerIdController, :sync
+  end
+
+  scope "/", MithrilWeb do
+    get "/public/worker-ids/:code/pass", WorkerIdController, :download
+
+    post "/wallet/v1/devices/:device_library_id/registrations/:pass_type_id/:serial",
+         WalletPassController,
+         :register
+
+    delete "/wallet/v1/devices/:device_library_id/registrations/:pass_type_id/:serial",
+           WalletPassController,
+           :unregister
+
+    get "/wallet/v1/devices/:device_library_id/registrations/:pass_type_id",
+        WalletPassController,
+        :serials
+
+    get "/wallet/v1/passes/:pass_type_id/:serial", WalletPassController, :show
+    post "/wallet/v1/log", WalletPassController, :log
+  end
+
   scope "/mobile", MithrilWeb do
     pipe_through [:mobile_guest]
 
