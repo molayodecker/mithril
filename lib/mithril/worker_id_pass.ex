@@ -136,7 +136,9 @@ defmodule Mithril.WorkerIdPass do
 
       {:ok, %{rows: rows}} ->
         updated =
-          Enum.filter(rows, fn [_serial, updated_at] -> cursor_microseconds(updated_at) > since_microseconds end)
+          Enum.filter(rows, fn [_serial, updated_at] ->
+            cursor_microseconds(updated_at) > since_microseconds
+          end)
 
         if updated == [] do
           :none
@@ -172,13 +174,19 @@ defmodule Mithril.WorkerIdPass do
       {:ok, %{rows: rows}} ->
         Enum.each(rows, fn [serial, updated_at] ->
           if push_serial(serial) == :ok do
-            case Repo.query("""
-                 UPDATE public.worker_id_passes
-                 SET push_pending = false
-                 WHERE serial_number = $1 AND updated_at = $2
-                 """, [serial, updated_at]) do
-              {:ok, _} -> :ok
-              {:error, error} -> Logger.warning("wallet push acknowledgment failed: #{inspect(error)}")
+            case Repo.query(
+                   """
+                   UPDATE public.worker_id_passes
+                   SET push_pending = false
+                   WHERE serial_number = $1 AND updated_at = $2
+                   """,
+                   [serial, updated_at]
+                 ) do
+              {:ok, _} ->
+                :ok
+
+              {:error, error} ->
+                Logger.warning("wallet push acknowledgment failed: #{inspect(error)}")
             end
           end
         end)
