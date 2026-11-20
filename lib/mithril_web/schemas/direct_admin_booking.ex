@@ -101,6 +101,26 @@ defmodule MithrilWeb.Schemas.DirectAdminBooking do
     })
   end
 
+  defmodule ApplyPromotionRequest do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminApplyBookingPromotionRequest",
+      type: :object,
+      properties: %{
+        promotionSlug: %Schema{
+          type: :string,
+          minLength: 1,
+          maxLength: 80,
+          description:
+            "Active promotion. Checked against this customer before the visit total changes."
+        }
+      },
+      required: [:promotionSlug]
+    })
+  end
+
   defmodule AssignCleanerRequest do
     require OpenApiSpex
     alias OpenApiSpex.Schema

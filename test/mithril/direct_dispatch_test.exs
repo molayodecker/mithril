@@ -616,6 +616,61 @@ defmodule Mithril.DirectDispatchTest do
     assert {:error, :unknown_extra_task} = DirectDispatch.extra_task_hours(["missing-task"])
   end
 
+  test "an unpaid open booking can take one promotion" do
+    open = %{
+      payment_status: "pending",
+      status: "confirmed",
+      promotion_id: nil,
+      promotion_discount_minor: 0
+    }
+
+    assert :ok == DirectDispatch.promotion_apply_gate(open)
+
+    assert {:error, :booking_paid} ==
+             DirectDispatch.promotion_apply_gate(%{open | payment_status: "paid"})
+
+    assert {:error, :promotion_closed} ==
+             DirectDispatch.promotion_apply_gate(%{open | status: "completed"})
+
+    assert {:error, :promotion_already_applied} ==
+             DirectDispatch.promotion_apply_gate(%{open | promotion_id: Ecto.UUID.generate()})
+
+    assert {:error, :promotion_already_applied} ==
+             DirectDispatch.promotion_apply_gate(%{open | promotion_discount_minor: 10_000})
+  end
+
+  test "a first-time offer covers two hours of the visit" do
+    discount =
+      DirectDispatch.promotion_discount_minor(
+        %{type: "free_hours", value: Decimal.new("2"), max_duration_hours: Decimal.new("2")},
+        %{
+          duration_hours: Decimal.new("2.5"),
+          extra_task_hours: Decimal.new("0"),
+          work_rate: Decimal.new("50"),
+          labor_minor: 12_500,
+          final_amount_minor: 16_475
+        }
+      )
+
+    assert discount == 10_000
+  end
+
+  test "a percent promotion is taken from the visit total" do
+    discount =
+      DirectDispatch.promotion_discount_minor(
+        %{type: "percent_off", value: Decimal.new("25"), max_duration_hours: nil},
+        %{
+          duration_hours: Decimal.new("2.5"),
+          extra_task_hours: Decimal.new("0"),
+          work_rate: Decimal.new("50"),
+          labor_minor: 12_500,
+          final_amount_minor: 16_475
+        }
+      )
+
+    assert discount == 4_119
+  end
+
   defp insert_user!(email, phone) do
     user_id = Ecto.UUID.generate()
 

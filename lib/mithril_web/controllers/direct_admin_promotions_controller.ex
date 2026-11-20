@@ -4,6 +4,7 @@ defmodule MithrilWeb.DirectAdminPromotionsController do
 
   alias Mithril.DirectAdminPromotions
   alias MithrilWeb.Schemas.DirectAdminPromotions.ListResponse
+  alias MithrilWeb.Schemas.DirectAdminPromotions.OfferList
 
   tags(["direct-admin-promotions"])
 
@@ -15,6 +16,18 @@ defmodule MithrilWeb.DirectAdminPromotionsController do
 
   def index(conn, _params) do
     respond(conn, DirectAdminPromotions.list_codes(user_id(conn)), fn codes -> %{codes: codes} end)
+  end
+
+  operation(:offers,
+    operation_id: "direct.listAdminPromotions",
+    summary: "List active promotions concierge can attach to a booking",
+    responses: [ok: {"Active promotions", "application/json", OfferList}]
+  )
+
+  def offers(conn, _params) do
+    respond(conn, DirectAdminPromotions.list_offers(user_id(conn)), fn promotions ->
+      %{promotions: promotions}
+    end)
   end
 
   defp user_id(conn), do: conn.assigns.instaclean_user_id

@@ -243,6 +243,7 @@ defmodule MithrilWeb.Router do
     get "/admin/services/:id", DirectAdminServicesController, :show
     post "/admin/services/:id", DirectAdminServicesController, :update
     get "/admin/promotion-codes", DirectAdminPromotionsController, :index
+    get "/admin/promotions", DirectAdminPromotionsController, :offers
     get "/admin/reports/summary", DirectAdminReportsController, :summary
     get "/admin/service-areas", DirectAdminServiceAreasController, :index
     get "/admin/payouts", DirectAdminPayoutsController, :index
@@ -324,6 +325,7 @@ defmodule MithrilWeb.Router do
     post "/admin/bookings/:id/cancel", DirectAdminBookingsController, :cancel
     post "/admin/bookings/:id/reschedule", DirectAdminBookingsController, :reschedule
     post "/admin/bookings/:id/edit", DirectAdminBookingsController, :edit
+    post "/admin/bookings/:id/promotion", DirectAdminBookingsController, :apply_promotion
     post "/admin/bookings/:id/reset-hold", DirectAdminBookingsController, :reset_hold
     post "/admin/bookings/:id/cash-payout", DirectAdminBookingsController, :cash_payout
     post "/admin/bookings/:id/notify-cleaner", DirectAdminBookingsController, :notify_cleaner

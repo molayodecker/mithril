@@ -7,6 +7,7 @@ defmodule MithrilWeb.DirectAdminBookingsController do
   alias MithrilWeb.Schemas.DirectAdminBooking.{
     AdminBooking,
     AdminBookingListResponse,
+    ApplyPromotionRequest,
     AssignCleanerRequest,
     CashPayoutRequest,
     CashPayoutResponse,
@@ -172,6 +173,25 @@ defmodule MithrilWeb.DirectAdminBookingsController do
 
   def edit(conn, %{"id" => id} = params) do
     respond(conn, DirectAdminBookings.update_booking(user_id(conn), id, params))
+  end
+
+  operation(:apply_promotion,
+    operation_id: "direct.applyAdminBookingPromotion",
+    summary: "Add a promotion to an unpaid booking",
+    parameters: [
+      id: [
+        in: :path,
+        schema: %Schema{type: :string, format: :uuid},
+        required: true,
+        description: "Booking ID"
+      ]
+    ],
+    request_body: {"Promotion", "application/json", ApplyPromotionRequest, required: true},
+    responses: [ok: {"Updated booking", "application/json", AdminBooking}]
+  )
+
+  def apply_promotion(conn, %{"id" => id} = params) do
+    respond(conn, DirectAdminBookings.apply_promotion(user_id(conn), id, params))
   end
 
   operation(:reset_hold,
