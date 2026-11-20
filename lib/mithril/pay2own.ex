@@ -5,6 +5,7 @@ defmodule Mithril.Pay2Own do
   Pay2Own stores the order slip itself. This module only answers the lookup.
   """
 
+  alias Mithril.Auth
   alias Mithril.Auth.Phone
   alias Mithril.Repo
 
@@ -39,20 +40,8 @@ defmodule Mithril.Pay2Own do
 
   defp phone_variants(value) do
     case Phone.normalize(to_string(value || "")) do
-      {:ok, e164} ->
-        digits = String.trim_leading(e164, "+")
-
-        local =
-          if String.starts_with?(digits, "233") and String.length(digits) >= 12 do
-            "0" <> String.slice(digits, 3, 9)
-          end
-
-        [e164, "+" <> digits, digits, local]
-        |> Enum.reject(&(&1 in [nil, ""]))
-        |> Enum.uniq()
-
-      :error ->
-        []
+      {:ok, e164} -> Auth.phone_lookup_variants(e164)
+      :error -> []
     end
   end
 
