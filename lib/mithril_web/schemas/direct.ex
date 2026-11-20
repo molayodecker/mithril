@@ -1026,6 +1026,13 @@ defmodule MithrilWeb.Schemas.Direct do
           type: :string,
           enum: ~w(monitor coaching training warning investigation resolved dismissed)
         },
+        courseKey: %Schema{
+          type: :string,
+          nullable: true,
+          enum: ~w(job-quality punctuality customer-care safety),
+          description:
+            "Catalog course assigned when actionType is training. Instaclean Pro lists it for the worker."
+        },
         notes: %Schema{type: :string, nullable: true}
       },
       required: [:actionType]

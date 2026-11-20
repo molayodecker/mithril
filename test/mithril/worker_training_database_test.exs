@@ -118,13 +118,48 @@ defmodule Mithril.WorkerTrainingDatabaseTest do
       [dump!(case_id), dump!(worker_id)]
     )
 
-    assert :ok = WorkerTraining.assign_for_health_case(dump!(case_id), dump!(admin_id))
-    assert :ok = WorkerTraining.assign_for_health_case(dump!(case_id), dump!(admin_id))
+    assert :ok =
+             WorkerTraining.assign_for_health_case(dump!(case_id), dump!(admin_id), "job-quality")
+
+    assert :ok =
+             WorkerTraining.assign_for_health_case(dump!(case_id), dump!(admin_id), "job-quality")
 
     assert {:ok, %{"assignments" => [assignment]}} = WorkerTraining.list(worker_id)
     assert assignment["courseKey"] == "job-quality"
     assert assignment["reason"] == "performance"
     assert assignment["status"] == "assigned"
+    assert assignment["title"] == "Job quality"
+  end
+
+  test "operations can send a chosen course, and a case without a worker is rejected" do
+    worker_id = insert_user!()
+    admin_id = insert_user!()
+    case_id = Ecto.UUID.generate()
+    empty_case_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_operations_cases (id, cleaner_id, status)
+      VALUES ($1, $2, 'open'), ($3, NULL, 'open')
+      """,
+      [dump!(case_id), dump!(worker_id), dump!(empty_case_id)]
+    )
+
+    assert :ok = WorkerTraining.assign_for_health_case(dump!(case_id), dump!(admin_id), "safety")
+
+    assert {:ok, %{"assignments" => [assignment]}} = WorkerTraining.list(worker_id)
+    assert assignment["courseKey"] == "safety"
+    assert assignment["title"] == "Safety on the job"
+    assert assignment["reason"] == "performance"
+
+    assert {:error, :worker_missing} =
+             Repo.transaction(fn ->
+               WorkerTraining.assign_for_health_case(
+                 dump!(empty_case_id),
+                 dump!(admin_id),
+                 "punctuality"
+               )
+             end)
   end
 
   defp install_training_sql! do
