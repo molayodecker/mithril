@@ -134,6 +134,32 @@ defmodule Mithril.WorkerIdTest do
     File.rm_rf!(dir)
   end
 
+  test "wallet update cursor preserves two changes in the same second" do
+    earlier = ~U[2026-11-20 10:00:00.100000Z]
+    later = ~U[2026-11-20 10:00:00.200000Z]
+
+    assert WorkerIdPass.cursor_microseconds(later) >
+             WorkerIdPass.cursor_microseconds(earlier)
+
+    assert WorkerIdPass.cursor_microseconds(later) -
+             WorkerIdPass.cursor_microseconds(earlier) == 100_000
+  end
+
+  test "repeated PEM materialization never truncates a shared file" do
+    pem = "-----BEGIN CERTIFICATE-----\\nZmFrZQ==\\n-----END CERTIFICATE-----"
+
+    paths =
+      1..12
+      |> Task.async_stream(fn _ ->
+        WorkerIdPass.materialize_secret(pem, "shared-pass-test.pem")
+      end, max_concurrency: 12, timeout: 10_000)
+      |> Enum.map(fn {:ok, path} -> path end)
+
+    assert Enum.uniq(paths) |> length() == 1
+    assert File.read!(hd(paths)) == pem <> "\\n"
+    assert Bitwise.band(File.stat!(hd(paths)).mode, 0o777) == 0o600
+  end
+
   test "the sync secret is compared in full and missing config does not authorize" do
     refute WorkerIdPass.authorized_sync?(nil)
     refute WorkerIdPass.authorized_sync?("Bearer short")
