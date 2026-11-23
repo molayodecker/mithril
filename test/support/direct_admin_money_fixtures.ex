@@ -64,7 +64,15 @@ defmodule Mithril.DirectAdminMoneyFixtures do
     Repo.query!("""
     CREATE TABLE public.bookings (
       id uuid PRIMARY KEY,
-      customer_id uuid NOT NULL
+      customer_id uuid NOT NULL,
+      status text NOT NULL DEFAULT 'pending',
+      payment_status text NOT NULL DEFAULT 'pending',
+      payment_method text,
+      final_amount_minor integer,
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      cancelled_by uuid,
+      cancellation_reason_code text,
+      cancellation_reason text
     )
     """)
 

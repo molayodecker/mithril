@@ -589,6 +589,87 @@ defmodule Mithril.DirectPaymentRequestsTest do
     assert json_response(conn, 200)["status"] == "paid"
   end
 
+  test "paying a booking payment link marks that booking paid" do
+    admin_id = Fixtures.insert_user!("admin")
+    customer_id = Fixtures.insert_user!()
+    booking_id = Fixtures.insert_booking!(customer_id)
+
+    Repo.query!(
+      """
+      UPDATE public.bookings
+      SET status = 'pending', payment_status = 'pending', final_amount_minor = 15000
+      WHERE id = $1
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:ok, created} =
+             DirectPaymentRequests.create(
+               admin_id,
+               request(%{
+                 "idempotencyKey" => Ecto.UUID.generate(),
+                 "customerUserId" => customer_id,
+                 "bookingId" => booking_id,
+                 "amountMinor" => 15_000
+               })
+             )
+
+    assert created["bookingId"] == booking_id
+
+    Repo.query!(
+      """
+      UPDATE public.bookings
+      SET status = 'cancelled',
+          cancelled_by = NULL,
+          cancellation_reason_code = NULL,
+          cancellation_reason = NULL
+      WHERE id = $1
+      """,
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:ok, checkout} = DirectPaymentRequests.checkout(created["publicToken"], %{})
+
+    assert {:ok, %{settled: true}} =
+             DirectPaymentRequests.settle_charge(%{
+               reference: checkout["reference"],
+               status: "success",
+               amount_minor: 15_000,
+               currency: "GHS"
+             })
+
+    assert [[status, payment_status]] =
+             Repo.query!(
+               "SELECT status::text, payment_status FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(booking_id)]
+             ).rows
+
+    assert status == "pending"
+    assert payment_status == "paid"
+  end
+
+  test "a booking payment link must match the booking total" do
+    admin_id = Fixtures.insert_user!("admin")
+    customer_id = Fixtures.insert_user!()
+    booking_id = Fixtures.insert_booking!(customer_id)
+
+    Repo.query!(
+      "UPDATE public.bookings SET payment_status = 'pending', final_amount_minor = 15000 WHERE id = $1",
+      [Ecto.UUID.dump!(booking_id)]
+    )
+
+    assert {:error, :amount_mismatch} =
+             DirectPaymentRequests.create(
+               admin_id,
+               request(%{
+                 "idempotencyKey" => Ecto.UUID.generate(),
+                 "customerUserId" => customer_id,
+                 "bookingId" => booking_id,
+                 "amountMinor" => 12_000
+               })
+             )
+  end
+
   test "an unknown paystack reference is not a payment request" do
     assert :unknown =
              DirectPaymentRequests.settle_charge(%{

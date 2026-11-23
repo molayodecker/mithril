@@ -13,6 +13,7 @@ defmodule MithrilWeb.Schemas.DirectPaymentRequest do
         publicToken: %Schema{type: :string},
         payUrl: %Schema{type: :string},
         customerUserId: %Schema{type: :string, format: :uuid, nullable: true},
+        bookingId: %Schema{type: :string, format: :uuid, nullable: true},
         customerName: %Schema{type: :string},
         phone: %Schema{type: :string},
         email: %Schema{type: :string, nullable: true},
@@ -78,6 +79,13 @@ defmodule MithrilWeb.Schemas.DirectPaymentRequest do
         description: %Schema{type: :string, minLength: 1, maxLength: 160},
         amountMinor: %Schema{type: :integer, minimum: 100, maximum: 2_147_483_647},
         customerUserId: %Schema{type: :string, format: :uuid, nullable: true},
+        bookingId: %Schema{
+          type: :string,
+          format: :uuid,
+          nullable: true,
+          description:
+            "When set, a successful payment marks this booking paid. The amount must match the booking total."
+        },
         email: %Schema{type: :string, maxLength: 200, nullable: true},
         idempotencyKey: %Schema{type: :string, format: :uuid},
         remindIfUnpaid: %Schema{

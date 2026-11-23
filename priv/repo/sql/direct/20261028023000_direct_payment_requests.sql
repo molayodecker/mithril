@@ -70,6 +70,14 @@ ALTER TABLE public.direct_payment_requests
 ALTER TABLE public.direct_payment_requests
   ADD COLUMN IF NOT EXISTS reminder_sms_fallback_claimed_at timestamptz;
 
+-- A payment link sent from a booking settles that booking when the customer pays.
+ALTER TABLE public.direct_payment_requests
+  ADD COLUMN IF NOT EXISTS booking_id uuid;
+
+CREATE INDEX IF NOT EXISTS direct_payment_requests_booking_id_idx
+  ON public.direct_payment_requests (booking_id)
+  WHERE booking_id IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS direct_payment_requests_created_at_idx
   ON public.direct_payment_requests (created_at DESC);
 
