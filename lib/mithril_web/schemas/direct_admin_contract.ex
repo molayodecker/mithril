@@ -285,6 +285,10 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
         preamble: %Schema{type: :string},
         workers: %Schema{type: :array, items: LetterWorker},
         clauses: %Schema{type: :array, items: LetterClause},
+        customWording: %Schema{
+          type: :boolean,
+          description: "True when this agreement uses edited wording"
+        },
         providerSignature: %Schema{oneOf: [LetterSignature], nullable: true},
         counterpartySignature: %Schema{oneOf: [LetterSignature], nullable: true},
         letterhead: %Schema{
@@ -304,6 +308,33 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
         :workers,
         :clauses
       ]
+    })
+  end
+
+  defmodule LetterWording do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminContractLetterWording",
+      type: :object,
+      properties: %{
+        preamble: %Schema{type: :string, maxLength: 4000},
+        clauses: %Schema{
+          type: :array,
+          minItems: 1,
+          maxItems: 24,
+          items: %Schema{
+            type: :object,
+            properties: %{
+              title: %Schema{type: :string, maxLength: 120},
+              body: %Schema{type: :string, maxLength: 4000}
+            },
+            required: [:title, :body]
+          }
+        }
+      },
+      required: [:preamble, :clauses]
     })
   end
 
@@ -420,7 +451,18 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
         monthlyFeeMinor: %Schema{type: :integer, minimum: 1},
         placementId: %Schema{type: :string, format: :uuid, nullable: true},
         startOn: %Schema{type: :string, format: :date, nullable: true},
-        includeInvoices: %Schema{type: :boolean, nullable: true}
+        includeInvoices: %Schema{type: :boolean, nullable: true},
+        letterNote: %Schema{
+          type: :string,
+          nullable: true,
+          maxLength: 500,
+          description: "One extra sentence added to the service agreement"
+        },
+        letterContent: %Schema{
+          oneOf: [LetterWording],
+          nullable: true,
+          description: "Edited letter wording. Null restores the standard wording."
+        }
       },
       required: [:name, :kind, :monthlyFeeMinor]
     })
