@@ -99,10 +99,9 @@ defmodule Mithril.DirectContracts do
          {:ok, start_on} <- optional_date(param(params, "startOn")),
          {:ok, include_invoices} <- optional_boolean(param(params, "includeInvoices")),
          {:ok, note_action} <- letter_note_update(params),
-         {:ok, content_action} <- letter_content_update(params) do
-      {letter_note, letter_content} =
-        Letter.resolve_wording(nil, nil, note_action, content_action)
-
+         {:ok, content_action} <- letter_content_update(params),
+         {:ok, {letter_note, letter_content}} <-
+           Letter.resolve_wording(nil, nil, note_action, content_action) do
       case Repo.transaction(fn ->
              %{rows: [[client_uid]]} =
                fetch!(
@@ -186,12 +185,15 @@ defmodule Mithril.DirectContracts do
                    ).rows
 
                  {note, content} =
-                   Letter.resolve_wording(
-                     current_note,
-                     current_content,
-                     note_action,
-                     content_action
-                   )
+                   case Letter.resolve_wording(
+                          current_note,
+                          current_content,
+                          note_action,
+                          content_action
+                        ) do
+                     {:ok, wording} -> wording
+                     {:error, reason} -> Repo.rollback(reason)
+                   end
 
                  fetch!(
                    """
