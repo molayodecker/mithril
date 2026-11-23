@@ -15,6 +15,36 @@ defmodule Mithril.DirectContractsTest do
     :ok
   end
 
+  test "a note cannot overflow saved custom wording" do
+    clauses =
+      for i <- 1..24 do
+        %{"title" => "Clause #{i}", "body" => "Agreed term #{i}"}
+      end
+
+    content = %{"preamble" => "Custom agreement", "clauses" => clauses}
+
+    assert {:error, :invalid_request} =
+             Letter.resolve_wording(nil, content, {:set, "Breakfast included"}, :keep)
+
+    assert {:ok, {nil, ^content}} =
+             Letter.resolve_wording(nil, content, :keep, :keep)
+  end
+
+  test "an additional term longer than storage limit is rejected" do
+    content = %{
+      "preamble" => "Custom agreement",
+      "clauses" => [%{"title" => "Additional term", "body" => String.duplicate("x", 501)}]
+    }
+
+    assert {:error, :invalid_request} =
+             Letter.resolve_wording(nil, nil, :keep, {:set, content})
+
+    accepted = put_in(content, ["clauses", Access.at(0), "body"], String.duplicate("x", 500))
+
+    assert {:ok, {note, _}} = Letter.resolve_wording(nil, nil, :keep, {:set, accepted})
+    assert String.length(note) == 500
+  end
+
   test "the service agreement can leave out invoices" do
     contract = %{
       created_at: ~U[2026-01-02 08:00:00Z],
