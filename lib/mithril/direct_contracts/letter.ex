@@ -29,8 +29,10 @@ defmodule Mithril.DirectContracts.Letter do
         Enum.map(workers, fn worker ->
           %{"roleLabel" => worker.role_label, "workerName" => worker.worker_name}
         end),
-      "clauses" => clauses(long_date(start), fee, include_invoices?(contract))
+      "clauses" =>
+        clauses(long_date(start), fee, include_invoices?(contract), letter_note(contract))
     }
+    |> apply_saved_wording(Map.get(contract, :letter_content))
   end
 
   def worker_letter(contract, worker) do
@@ -63,7 +65,7 @@ defmodule Mithril.DirectContracts.Letter do
     "This letter is between InstacleanPro Limited (\"Instaclean\"), of 148 West Legon Road, Gulf Estate, Accra, and #{client_name} (\"the Client\")."
   end
 
-  def clauses(start_label, fee_label, include_invoices \\ true) do
+  def clauses(start_label, fee_label, include_invoices \\ true, letter_note \\ nil) do
     [
       {"Service",
        "Instaclean provides the workers named in this letter, in the roles stated, for service at the Client's premises. The engagement starts on #{start_label}."},
@@ -73,7 +75,11 @@ defmodule Mithril.DirectContracts.Letter do
        "The Client pays Instaclean a monthly service fee of #{fee_label}. That amount is the full fee for the service in this letter for each month the letter is in force."}
     ]
     |> then(fn items ->
-      if include_invoices, do: items ++ [invoice_item()], else: items
+      if include_invoices do
+        items ++ [invoice_item()]
+      else
+        items
+      end
     end)
     |> Kernel.++([
       {"Worker pay",
@@ -89,9 +95,10 @@ defmodule Mithril.DirectContracts.Letter do
       {"Care and loss",
        "Instaclean selects and supplies the workers with reasonable care. Instaclean's liability for any loss or damage is limited to one month's fees paid by the Client. This limit does not apply to death or personal injury caused by negligence, or to fraud."},
       {"Law",
-       "The laws of the Republic of Ghana govern this letter. The courts of Accra have jurisdiction."},
-      {"The whole agreement", whole_agreement(include_invoices)}
+       "The laws of the Republic of Ghana govern this letter. The courts of Accra have jurisdiction."}
     ])
+    |> Kernel.++(note_items(letter_note))
+    |> Kernel.++([{"The whole agreement", whole_agreement(include_invoices)}])
     |> Enum.with_index(1)
     |> Enum.map(fn {{title, body}, number} -> clause(number, title, body) end)
   end
@@ -111,6 +118,234 @@ defmodule Mithril.DirectContracts.Letter do
 
   defp include_invoices?(%{include_invoices: false}), do: false
   defp include_invoices?(_), do: true
+
+  defp letter_note(%{letter_note: note}) when is_binary(note), do: note
+  defp letter_note(_), do: nil
+
+  # One sentence an operator added for this contract. It sits before the
+  # whole-agreement clause so it is part of the letter the client signs.
+  defp note_items(note) when is_binary(note) do
+    case note |> String.replace(~r/\s+/u, " ") |> String.trim() do
+      "" -> []
+      text -> [{"Additional term", text}]
+    end
+  end
+
+  defp note_items(_), do: []
+
+  def apply_saved_wording(preview, content) do
+    case stored_wording(content) do
+      nil ->
+        Map.put(preview, "customWording", false)
+
+      wording ->
+        preview
+        |> Map.put("preamble", wording["preamble"])
+        |> Map.put("clauses", number_clauses(wording["clauses"]))
+        |> Map.put("customWording", true)
+    end
+  end
+
+  # Keep an edited letter and the extra sentence in agreement when either one changes.
+  def resolve_wording(current_note, current_content, note_action, content_action) do
+    content =
+      case content_action do
+        :keep -> stored_wording(current_content)
+        {:set, nil} -> nil
+        {:set, wording} -> wording
+      end
+
+    note =
+      case note_action do
+        :keep -> squish_note(current_note)
+        {:set, value} -> squish_note(value)
+      end
+
+    result =
+      cond do
+        content_action != :keep and is_map(content) ->
+          {additional_note(content), content}
+
+        content_action == {:set, nil} ->
+          {note, nil}
+
+        is_map(content) and note_action != :keep ->
+          case replace_additional_term(content, note) do
+            {:ok, updated} -> {note, updated}
+            :error -> :error
+          end
+
+        true ->
+          {note, content}
+      end
+
+    case result do
+      {next_note, next_content} ->
+        if valid_resolved_wording?(next_note, next_content) do
+          {:ok, {next_note, next_content}}
+        else
+          {:error, :invalid_request}
+        end
+
+      :error ->
+        {:error, :invalid_request}
+    end
+  end
+
+  defp valid_resolved_wording?(note, content) do
+    (is_nil(note) or (is_binary(note) and String.length(note) <= 500)) and
+      (is_nil(content) or match?({:ok, _}, normalize_wording(content)))
+  end
+
+  def stored_wording(nil), do: nil
+
+  def stored_wording(value) when is_binary(value) do
+    case Jason.decode(value) do
+      {:ok, decoded} -> stored_wording(decoded)
+      _ -> nil
+    end
+  end
+
+  def stored_wording(value) when is_map(value) do
+    case normalize_wording(value) do
+      {:ok, wording} ->
+        %{
+          "preamble" => wording.preamble,
+          "clauses" => Enum.map(wording.clauses, &Map.take(&1, ["title", "body"]))
+        }
+
+      :error ->
+        nil
+    end
+  end
+
+  def stored_wording(_), do: nil
+
+  def normalize_wording(%{"preamble" => preamble, "clauses" => clauses})
+      when is_binary(preamble) and is_list(clauses) do
+    with {:ok, preamble} <- wording_text(preamble, 4_000),
+         {:ok, clauses} <- wording_clauses(clauses) do
+      {:ok, %{preamble: preamble, clauses: clauses}}
+    else
+      _ -> :error
+    end
+  end
+
+  def normalize_wording(%{preamble: preamble, clauses: clauses}) do
+    normalize_wording(%{"preamble" => preamble, "clauses" => clauses})
+  end
+
+  def normalize_wording(_), do: :error
+
+  def replace_additional_term(%{"clauses" => clauses} = content, note) when is_list(clauses) do
+    next =
+      clauses
+      |> Enum.map(&clause_fields/1)
+      |> Enum.reject(&is_nil/1)
+      |> put_term(squish_note(note))
+
+    if next == [] do
+      :error
+    else
+      {:ok, %{content | "clauses" => next}}
+    end
+  end
+
+  def replace_additional_term(_, _), do: :error
+
+  defp additional_note(%{"clauses" => clauses}) when is_list(clauses) do
+    Enum.find_value(clauses, fn clause ->
+      case clause_fields(clause) do
+        %{"title" => "Additional term", "body" => body} -> body
+        _ -> nil
+      end
+    end)
+  end
+
+  defp additional_note(_), do: nil
+
+  defp put_term(clauses, nil) do
+    Enum.reject(clauses, &(&1["title"] == "Additional term"))
+  end
+
+  defp put_term(clauses, text) do
+    without = Enum.reject(clauses, &(&1["title"] == "Additional term"))
+    item = %{"title" => "Additional term", "body" => text}
+
+    case Enum.find_index(without, &(&1["title"] == "The whole agreement")) do
+      nil -> without ++ [item]
+      index -> List.insert_at(without, index, item)
+    end
+  end
+
+  defp wording_clauses(clauses) when length(clauses) in 1..24 do
+    clauses
+    |> Enum.reduce_while({:ok, []}, fn clause, {:ok, acc} ->
+      case wording_clause(clause) do
+        {:ok, item} -> {:cont, {:ok, [item | acc]}}
+        :error -> {:halt, :error}
+      end
+    end)
+    |> case do
+      {:ok, items} -> {:ok, number_clauses(Enum.reverse(items))}
+      :error -> :error
+    end
+  end
+
+  defp wording_clauses(_), do: :error
+
+  defp wording_clause(clause) do
+    case clause_fields(clause) do
+      %{"title" => title, "body" => body} ->
+        with {:ok, title} <- wording_text(title, 120),
+             {:ok, body} <- wording_text(body, 4_000) do
+          {:ok, %{"title" => title, "body" => body}}
+        else
+          _ -> :error
+        end
+
+      _ ->
+        :error
+    end
+  end
+
+  defp clause_fields(%{"title" => title, "body" => body})
+       when is_binary(title) and is_binary(body) do
+    %{"title" => title, "body" => body}
+  end
+
+  defp clause_fields(%{title: title, body: body}) when is_binary(title) and is_binary(body) do
+    %{"title" => title, "body" => body}
+  end
+
+  defp clause_fields(_), do: nil
+
+  defp wording_text(value, max) when is_binary(value) do
+    trimmed = String.trim(value)
+
+    cond do
+      trimmed == "" -> :error
+      String.length(trimmed) > max -> :error
+      true -> {:ok, trimmed}
+    end
+  end
+
+  defp squish_note(nil), do: nil
+
+  defp squish_note(value) when is_binary(value) do
+    case value |> String.replace(~r/\s+/u, " ") |> String.trim() do
+      "" -> nil
+      text -> text
+    end
+  end
+
+  defp squish_note(_), do: nil
+
+  defp number_clauses(clauses) do
+    clauses
+    |> Enum.with_index(1)
+    |> Enum.map(fn {clause, number} -> Map.put(clause, "number", number) end)
+  end
 
   def worker_preamble(worker_name) do
     "This letter is between InstacleanPro Limited (\"Instaclean\"), of 148 West Legon Road, Gulf Estate, Accra, and #{worker_name} (\"the Worker\")."
