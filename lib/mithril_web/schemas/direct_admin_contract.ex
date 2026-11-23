@@ -290,7 +290,13 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
           description: "True when this agreement uses edited wording"
         },
         providerSignature: %Schema{oneOf: [LetterSignature], nullable: true},
-        counterpartySignature: %Schema{oneOf: [LetterSignature], nullable: true}
+        counterpartySignature: %Schema{oneOf: [LetterSignature], nullable: true},
+        letterhead: %Schema{
+          type: :string,
+          nullable: true,
+          maxLength: 180,
+          description: "Line under the Instaclean name on this letter"
+        }
       },
       required: [
         :issuedOn,
@@ -780,7 +786,13 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
         workers: %Schema{type: :array, items: LetterWorker},
         clauses: %Schema{type: :array, items: LetterClause},
         providerSignature: %Schema{oneOf: [LetterSignature], nullable: true},
-        counterpartySignature: %Schema{oneOf: [LetterSignature], nullable: true}
+        counterpartySignature: %Schema{oneOf: [LetterSignature], nullable: true},
+        letterhead: %Schema{
+          type: :string,
+          nullable: true,
+          maxLength: 180,
+          description: "Line under the Instaclean name on this letter"
+        }
       },
       required: [
         :letterNo,
@@ -793,6 +805,55 @@ defmodule MithrilWeb.Schemas.DirectAdminContract do
         :workers,
         :clauses
       ]
+    })
+  end
+
+  defmodule Letterhead do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminLetterhead",
+      type: :object,
+      properties: %{
+        letterhead: %Schema{
+          type: :string,
+          nullable: true,
+          maxLength: 180,
+          description: "Line under the Instaclean name"
+        },
+        fromName: %Schema{
+          type: :string,
+          nullable: true,
+          maxLength: 120,
+          description: "Name in the From address"
+        },
+        fromAddress: %Schema{
+          type: :string,
+          nullable: true,
+          maxLength: 500,
+          description: "From address"
+        },
+        clientName: %Schema{
+          type: :string,
+          nullable: true,
+          maxLength: 120,
+          description: "Name in the Client address"
+        },
+        clientAddress: %Schema{
+          type: :string,
+          nullable: true,
+          maxLength: 500,
+          description: "Client address"
+        },
+        body: %Schema{
+          type: :string,
+          nullable: true,
+          maxLength: 4000,
+          description: "Letter text"
+        }
+      },
+      required: [:letterhead, :fromName, :fromAddress, :clientName, :clientAddress, :body]
     })
   end
 

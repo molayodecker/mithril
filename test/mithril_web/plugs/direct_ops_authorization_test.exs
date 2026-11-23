@@ -31,6 +31,10 @@ defmodule MithrilWeb.Plugs.DirectOpsAuthorizationTest do
            )
   end
 
+  test "the office letter uses the contracts desk" do
+    assert DirectOpsAuthorization.permissions_for(["letterhead"], "POST") == ["contracts"]
+  end
+
   test "concierge can search customers, preview visit length, and create a booking" do
     assert DirectOpsAuthorization.permissions_for(["customers"], "GET") == ["users", "dispatch"]
 

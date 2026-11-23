@@ -1418,6 +1418,62 @@ defmodule Mithril.DirectContractsTest do
     refute additional_term(cleared)
   end
 
+  test "a letterhead line is shown on the agreement" do
+    admin_id = Fixtures.insert_user!("admin")
+
+    assert {:ok, %{"letterhead" => nil}} = DirectContracts.letterhead(admin_id)
+
+    assert {:error, :invalid_request} =
+             DirectContracts.save_letterhead(admin_id, %{
+               "letterhead" => String.duplicate("a", 181)
+             })
+
+    assert {:ok,
+            %{
+              "letterhead" => "Accra office",
+              "fromName" => "InstacleanPro Limited",
+              "fromAddress" => "148 West Legon Road\nGulf Estate, Accra",
+              "clientName" => "Ama Mensah",
+              "clientAddress" => "East Legon",
+              "body" => "Please confirm the start date."
+            }} =
+             DirectContracts.save_letterhead(admin_id, %{
+               "letterhead" => "  Accra   office  ",
+               "fromName" => " InstacleanPro Limited ",
+               "fromAddress" => "148 West Legon Road\n  Gulf Estate, Accra  ",
+               "clientName" => "Ama Mensah",
+               "clientAddress" => "East Legon",
+               "body" => "Please confirm the start date."
+             })
+
+    assert {:ok, loaded} = DirectContracts.letterhead(admin_id)
+    assert loaded["clientName"] == "Ama Mensah"
+    assert loaded["body"] == "Please confirm the start date."
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Letterhead Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000
+             })
+
+    assert {:ok, shown} = DirectContracts.show(admin_id, contract_id, nil)
+    assert shown["letterPreview"]["letterhead"] == "Accra office"
+
+    assert {:ok, %{"letterhead" => nil, "fromName" => nil, "body" => nil}} =
+             DirectContracts.save_letterhead(admin_id, %{
+               "letterhead" => "   ",
+               "fromName" => nil,
+               "fromAddress" => nil,
+               "clientName" => nil,
+               "clientAddress" => nil,
+               "body" => nil
+             })
+
+    assert {:ok, cleared} = DirectContracts.show(admin_id, contract_id, nil)
+    assert cleared["letterPreview"]["letterhead"] == nil
+  end
+
   test "saving a contract letter assigns a number without sending it" do
     admin_id = Fixtures.insert_user!("admin")
     worker_id = named_worker!("Ama Owusu")
@@ -1503,6 +1559,8 @@ defmodule Mithril.DirectContractsTest do
     install_sql!("../../priv/repo/sql/direct/20261103170000_direct_contract_include_invoices.sql")
     install_sql!("../../priv/repo/sql/direct/20261123170000_direct_contract_letter_note.sql")
     install_sql!("../../priv/repo/sql/direct/20261123180000_direct_contract_letter_content.sql")
+    install_sql!("../../priv/repo/sql/direct/20261123190000_direct_letterhead.sql")
+    install_sql!("../../priv/repo/sql/direct/20261123200000_direct_letter_draft.sql")
     install_sql!("../../priv/repo/sql/direct/20261103180000_direct_contract_signatures.sql")
     install_sql!("../../priv/repo/sql/direct/20261103160000_direct_contract_invoice_delivery.sql")
   end
