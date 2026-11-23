@@ -35,6 +35,43 @@ defmodule Mithril.DirectContractsTest do
     refute whole["body"] =~ "invoices issued"
   end
 
+  test "an extra sentence is inserted before the whole agreement" do
+    contract = %{
+      created_at: ~U[2026-01-02 08:00:00Z],
+      name: "Client",
+      monthly_fee_minor: 400_000,
+      currency: "GHS",
+      billing_contact: nil,
+      phone: nil,
+      email: nil,
+      letter_note: "  The worker also cooks breakfast.  "
+    }
+
+    preview = Letter.preview(contract, [])
+    titles = Enum.map(preview["clauses"], & &1["title"])
+    note = Enum.find(preview["clauses"], &(&1["title"] == "Additional term"))
+
+    assert Enum.at(titles, -2) == "Additional term"
+    assert List.last(titles) == "The whole agreement"
+    assert note["body"] == "The worker also cooks breakfast."
+
+    blank = Letter.preview(%{contract | letter_note: "   "}, [])
+    refute Enum.any?(blank["clauses"], &(&1["title"] == "Additional term"))
+
+    worker = %{
+      started_at: ~D[2026-10-15],
+      worker_name: "Ama Owusu",
+      role_label: "Househelp",
+      phone: nil,
+      email: nil,
+      monthly_pay_minor: 120_000,
+      weekly_advance_minor: 0
+    }
+
+    engagement = Letter.worker_letter(contract, worker)
+    refute Enum.any?(engagement["clauses"], &(&1["title"] == "Additional term"))
+  end
+
   test "the service agreement uses the chosen start date" do
     contract = %{
       created_at: ~U[2026-01-02 08:00:00Z],
@@ -1201,6 +1238,156 @@ defmodule Mithril.DirectContractsTest do
              DirectContracts.remove_assignment(admin_id, contract_id, assignment_id)
   end
 
+  test "edited wording replaces the standard letter and can be cleared" do
+    admin_id = Fixtures.insert_user!("admin")
+    worker_id = named_worker!("Ama Owusu")
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Edited Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000,
+               "letterNote" => "The worker also cooks breakfast."
+             })
+
+    wording = %{
+      "preamble" => "This letter is for the Edited Client household.",
+      "clauses" => [
+        %{"title" => "Service", "body" => "Instaclean provides one cook."},
+        %{"title" => "Fee", "body" => "The Client pays the agreed monthly fee."},
+        %{"title" => "The whole agreement", "body" => "This letter is the whole agreement."}
+      ]
+    }
+
+    assert {:ok, _} =
+             DirectContracts.update_client(admin_id, contract_id, %{
+               "name" => "Edited Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000,
+               "letterContent" => wording
+             })
+
+    assert {:ok, edited} = DirectContracts.show(admin_id, contract_id, nil)
+    assert edited["letterPreview"]["customWording"] == true
+
+    assert edited["letterPreview"]["preamble"] ==
+             "This letter is for the Edited Client household."
+
+    assert Enum.map(edited["letterPreview"]["clauses"], & &1["title"]) == [
+             "Service",
+             "Fee",
+             "The whole agreement"
+           ]
+
+    assert {:ok, _} =
+             DirectContracts.update_client(admin_id, contract_id, %{
+               "name" => "Edited Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000,
+               "letterNote" => "Breakfast is included on weekdays."
+             })
+
+    assert {:ok, noted} = DirectContracts.show(admin_id, contract_id, nil)
+
+    assert Enum.map(noted["letterPreview"]["clauses"], & &1["title"]) == [
+             "Service",
+             "Fee",
+             "Additional term",
+             "The whole agreement"
+           ]
+
+    assert additional_term(noted) == "Breakfast is included on weekdays."
+
+    assert {:ok, _} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerId" => worker_id,
+               "roleLabel" => "Cook",
+               "monthlyPayMinor" => 80_000,
+               "clientRateMinor" => 100_000,
+               "advanceMode" => "manual"
+             })
+
+    assert {:ok, %{"viewUrl" => view_url}} = DirectContracts.save_letter(admin_id, contract_id)
+    token = view_url |> String.split("/") |> List.last()
+    assert {:ok, letter} = DirectContracts.public_letter(token)
+    assert letter["preamble"] == "This letter is for the Edited Client household."
+    assert Enum.any?(letter["clauses"], &(&1["body"] == "Instaclean provides one cook."))
+
+    assert {:ok, _} =
+             DirectContracts.update_client(admin_id, contract_id, %{
+               "name" => "Edited Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000,
+               "letterContent" => nil
+             })
+
+    assert {:ok, restored} = DirectContracts.show(admin_id, contract_id, nil)
+    assert restored["letterPreview"]["customWording"] == false
+    assert additional_term(restored) == "Breakfast is included on weekdays."
+    assert Enum.any?(restored["letterPreview"]["clauses"], &(&1["title"] == "Service"))
+  end
+
+  test "an extra sentence is stored on the agreement and the saved letter" do
+    admin_id = Fixtures.insert_user!("admin")
+    worker_id = named_worker!("Ama Owusu")
+    sentence = "The worker also cooks breakfast."
+
+    assert {:error, :invalid_request} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Note Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000,
+               "letterNote" => String.duplicate("a", 501)
+             })
+
+    assert {:ok, %{"id" => contract_id}} =
+             DirectContracts.create(admin_id, %{
+               "name" => "Note Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 100_000,
+               "letterNote" => "  #{sentence}  "
+             })
+
+    assert {:ok, created} = DirectContracts.show(admin_id, contract_id, nil)
+    assert additional_term(created) == sentence
+
+    assert {:ok, _} =
+             DirectContracts.update_client(admin_id, contract_id, %{
+               "name" => "Note Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 120_000
+             })
+
+    assert {:ok, kept} = DirectContracts.show(admin_id, contract_id, nil)
+    assert kept["letterPreview"]["monthlyFeeMinor"] == 120_000
+    assert additional_term(kept) == sentence
+
+    assert {:ok, _} =
+             DirectContracts.add_assignment(admin_id, contract_id, %{
+               "workerId" => worker_id,
+               "roleLabel" => "Househelp",
+               "monthlyPayMinor" => 80_000,
+               "clientRateMinor" => 120_000,
+               "advanceMode" => "manual"
+             })
+
+    assert {:ok, %{"viewUrl" => view_url}} = DirectContracts.save_letter(admin_id, contract_id)
+    token = view_url |> String.split("/") |> List.last()
+    assert {:ok, letter} = DirectContracts.public_letter(token)
+    assert Enum.find(letter["clauses"], &(&1["title"] == "Additional term"))["body"] == sentence
+
+    assert {:ok, _} =
+             DirectContracts.update_client(admin_id, contract_id, %{
+               "name" => "Note Client",
+               "kind" => "person",
+               "monthlyFeeMinor" => 120_000,
+               "letterNote" => "   "
+             })
+
+    assert {:ok, cleared} = DirectContracts.show(admin_id, contract_id, nil)
+    refute additional_term(cleared)
+  end
+
   test "saving a contract letter assigns a number without sending it" do
     admin_id = Fixtures.insert_user!("admin")
     worker_id = named_worker!("Ama Owusu")
@@ -1242,6 +1429,13 @@ defmodule Mithril.DirectContractsTest do
              DirectContracts.save_letter(admin_id, contract_id)
   end
 
+  defp additional_term(detail) do
+    case Enum.find(detail["letterPreview"]["clauses"], &(&1["title"] == "Additional term")) do
+      nil -> nil
+      clause -> clause["body"]
+    end
+  end
+
   defp normalize_automatic(:ok), do: {:ok, %{"paidCount" => 0, "totalMinor" => 0}}
   defp normalize_automatic(other), do: other
 
@@ -1277,6 +1471,8 @@ defmodule Mithril.DirectContractsTest do
     install_sql!("../../priv/repo/sql/direct/20261101150000_direct_contract_letter_sending.sql")
     install_sql!("../../priv/repo/sql/direct/20261103150000_direct_contract_start_on.sql")
     install_sql!("../../priv/repo/sql/direct/20261103170000_direct_contract_include_invoices.sql")
+    install_sql!("../../priv/repo/sql/direct/20261123170000_direct_contract_letter_note.sql")
+    install_sql!("../../priv/repo/sql/direct/20261123180000_direct_contract_letter_content.sql")
     install_sql!("../../priv/repo/sql/direct/20261103180000_direct_contract_signatures.sql")
     install_sql!("../../priv/repo/sql/direct/20261103160000_direct_contract_invoice_delivery.sql")
   end
