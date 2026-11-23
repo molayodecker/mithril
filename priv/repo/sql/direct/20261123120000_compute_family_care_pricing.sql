@@ -383,7 +383,9 @@ BEGIN
   IF v_platform_bps <= 0 OR v_payable_minor <= 0 THEN
     v_platform_fee_major := 0;
   ELSE
-    v_platform_fee_major := (round(v_payable_minor * v_platform_bps / 10000.0) / 100.0)::numeric;
+    -- Cast before multiply. Both operands are integers, so a large monthly
+    -- total overflows int4 before the division can promote the product.
+    v_platform_fee_major := (round(v_payable_minor::numeric * v_platform_bps / 10000.0) / 100.0)::numeric;
   END IF;
 
   v_cleaner_earnings_minor := public.cleaner_earnings_subunit_from_booking(
