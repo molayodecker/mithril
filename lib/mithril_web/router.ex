@@ -302,6 +302,8 @@ defmodule MithrilWeb.Router do
     get "/admin/cleaners", DirectOperationsController, :list_admin_cleaners
     get "/admin/cleaners/:id/wallet", DirectAdminWalletsController, :show
     post "/admin/cleaners/:id/wallet-credit", DirectAdminWalletsController, :credit
+    get "/admin/letterhead", DirectAdminContractsController, :show_letterhead
+    post "/admin/letterhead", DirectAdminContractsController, :save_letterhead
     get "/admin/contracts", DirectAdminContractsController, :index
     post "/admin/contracts", DirectAdminContractsController, :create
     get "/admin/contracts/workers", DirectAdminContractsController, :workers

@@ -762,9 +762,49 @@ defmodule Mithril.DirectContracts do
     end
   end
 
+  def letterhead(user_id) do
+    with :ok <- require_admin(user_id) do
+      {:ok, stored_letter()}
+    end
+  end
+
+  def save_letterhead(user_id, params) when is_map(params) do
+    with :ok <- require_admin(user_id),
+         {:ok, letter} <- letter_draft(params) do
+      case Repo.query(
+             """
+             INSERT INTO public.direct_letter_settings (
+               id, letterhead, from_name, from_address, client_name, client_address, body, updated_at
+             )
+             VALUES (TRUE, $1, $2, $3, $4, $5, $6, now())
+             ON CONFLICT (id) DO UPDATE
+             SET letterhead = EXCLUDED.letterhead,
+                 from_name = EXCLUDED.from_name,
+                 from_address = EXCLUDED.from_address,
+                 client_name = EXCLUDED.client_name,
+                 client_address = EXCLUDED.client_address,
+                 body = EXCLUDED.body,
+                 updated_at = now()
+             """,
+             [
+               letter["letterhead"],
+               letter["fromName"],
+               letter["fromAddress"],
+               letter["clientName"],
+               letter["clientAddress"],
+               letter["body"]
+             ]
+           ) do
+        {:ok, _} -> {:ok, letter}
+        {:error, error} -> map_pg(error)
+      end
+    end
+  end
+
   defp letter_preview(contract) do
     contract
     |> Letter.preview(active_letter_workers(contract.id))
+    |> Map.put("letterhead", letterhead_text())
     |> Map.put(
       "providerSignature",
       signature_map(
@@ -2395,7 +2435,8 @@ defmodule Mithril.DirectContracts do
       "active" => active == true,
       "providerSignature" => signature_map(provider_name, provider_signed_at, provider_signature),
       "counterpartySignature" =>
-        signature_map(client_name_signed, client_signed_at, client_signature)
+        signature_map(client_name_signed, client_signed_at, client_signature),
+      "letterhead" => letterhead_text()
     }
   end
 
@@ -2442,7 +2483,8 @@ defmodule Mithril.DirectContracts do
       "active" => active == true,
       "providerSignature" => signature_map(provider_name, provider_signed_at, provider_signature),
       "counterpartySignature" =>
-        signature_map(worker_signed_name, worker_signed_at, worker_signature)
+        signature_map(worker_signed_name, worker_signed_at, worker_signature),
+      "letterhead" => letterhead_text()
     }
   end
 
@@ -3032,6 +3074,160 @@ defmodule Mithril.DirectContracts do
   defp map_pg(error) do
     Logger.error("Direct contract database error: #{inspect(error)}")
     {:error, :database_unavailable}
+  end
+
+  defp stored_letter do
+    case Repo.query(
+           """
+           SELECT letterhead, from_name, from_address, client_name, client_address, body
+           FROM public.direct_letter_settings
+           WHERE id IS TRUE
+           """,
+           []
+         ) do
+      {:ok, %{rows: [row]}} -> office_letter_row(row)
+      _ -> empty_letter()
+    end
+  end
+
+  defp empty_letter do
+    %{
+      "letterhead" => nil,
+      "fromName" => nil,
+      "fromAddress" => nil,
+      "clientName" => nil,
+      "clientAddress" => nil,
+      "body" => nil
+    }
+  end
+
+  defp office_letter_row([letterhead, from_name, from_address, client_name, client_address, body]) do
+    %{
+      "letterhead" => present_line(letterhead),
+      "fromName" => present_line(from_name),
+      "fromAddress" => present_block(from_address),
+      "clientName" => present_line(client_name),
+      "clientAddress" => present_block(client_address),
+      "body" => present_block(body)
+    }
+  end
+
+  defp letter_draft(params) do
+    with {:ok, letterhead} <- letterhead_value(params),
+         {:ok, from_name} <- optional_line(params, "fromName", 120),
+         {:ok, from_address} <- optional_block(params, "fromAddress", 500),
+         {:ok, client_name} <- optional_line(params, "clientName", 120),
+         {:ok, client_address} <- optional_block(params, "clientAddress", 500),
+         {:ok, body} <- optional_block(params, "body", 4000) do
+      {:ok,
+       %{
+         "letterhead" => letterhead,
+         "fromName" => from_name,
+         "fromAddress" => from_address,
+         "clientName" => client_name,
+         "clientAddress" => client_address,
+         "body" => body
+       }}
+    end
+  end
+
+  defp optional_line(params, key, max) do
+    if Map.has_key?(params, key) or Map.has_key?(params, String.to_atom(key)) do
+      case param(params, key) do
+        nil -> {:ok, nil}
+        text when is_binary(text) -> bounded_text(present_line(text, max))
+        _ -> {:error, :invalid_request}
+      end
+    else
+      {:error, :invalid_request}
+    end
+  end
+
+  defp optional_block(params, key, max) do
+    if Map.has_key?(params, key) or Map.has_key?(params, String.to_atom(key)) do
+      case param(params, key) do
+        nil -> {:ok, nil}
+        text when is_binary(text) -> bounded_text(present_block(text, max))
+        _ -> {:error, :invalid_request}
+      end
+    else
+      {:error, :invalid_request}
+    end
+  end
+
+  defp bounded_text(:error), do: {:error, :invalid_request}
+  defp bounded_text(value), do: {:ok, value}
+
+  defp present_line(text, max \\ 180)
+
+  defp present_line(text, max) when is_binary(text) do
+    line = text |> String.replace(~r/\s+/u, " ") |> String.trim()
+
+    cond do
+      line == "" -> nil
+      String.length(line) > max -> :error
+      true -> line
+    end
+  end
+
+  defp present_line(_, _), do: nil
+
+  defp present_block(text, max \\ 4000)
+
+  defp present_block(text, max) when is_binary(text) do
+    block =
+      text
+      |> String.replace(~r/\r\n?/u, "\n")
+      |> String.split("\n")
+      |> Enum.map_join("\n", fn line ->
+        line |> String.replace(~r/[ \t]+/u, " ") |> String.trim()
+      end)
+      |> String.trim()
+      |> String.replace(~r/\n{3,}/u, "\n\n")
+
+    cond do
+      block == "" -> nil
+      String.length(block) > max -> :error
+      true -> block
+    end
+  end
+
+  defp present_block(_, _), do: nil
+
+  defp letterhead_text do
+    case Repo.query("SELECT letterhead FROM public.direct_letter_settings WHERE id IS TRUE", []) do
+      {:ok, %{rows: [[text]]}} when is_binary(text) ->
+        case text |> String.replace(~r/\s+/u, " ") |> String.trim() do
+          "" -> nil
+          line -> line
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp letterhead_value(params) do
+    if Map.has_key?(params, "letterhead") or Map.has_key?(params, :letterhead) do
+      case param(params, "letterhead") do
+        nil ->
+          {:ok, nil}
+
+        text when is_binary(text) ->
+          line = text |> String.replace(~r/\s+/u, " ") |> String.trim()
+
+          cond do
+            line == "" -> {:ok, nil}
+            String.length(line) > 180 -> {:error, :invalid_request}
+            true -> {:ok, line}
+          end
+
+        _ ->
+          {:error, :invalid_request}
+      end
+    else
+      {:error, :invalid_request}
+    end
   end
 
   defp require_rating_sender(user_id) when is_binary(user_id) do

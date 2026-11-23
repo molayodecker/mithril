@@ -15,6 +15,7 @@ defmodule MithrilWeb.DirectAdminContractsController do
     InvoiceResult,
     LetterList,
     LetterRequest,
+    Letterhead,
     LetterResult,
     LetterSignRequest,
     List,
@@ -52,6 +53,27 @@ defmodule MithrilWeb.DirectAdminContractsController do
 
   def index(conn, params) do
     respond(conn, DirectContracts.list(user_id(conn), params["month"]))
+  end
+
+  operation(:show_letterhead,
+    operation_id: "direct.showAdminLetterhead",
+    summary: "Read the office letter",
+    responses: [ok: {"Letterhead", "application/json", Letterhead}]
+  )
+
+  def show_letterhead(conn, _params) do
+    respond(conn, DirectContracts.letterhead(user_id(conn)))
+  end
+
+  operation(:save_letterhead,
+    operation_id: "direct.saveAdminLetterhead",
+    summary: "Save the office letter",
+    request_body: {"Letterhead", "application/json", Letterhead, required: true},
+    responses: [ok: {"Letterhead", "application/json", Letterhead}]
+  )
+
+  def save_letterhead(conn, params) do
+    respond(conn, DirectContracts.save_letterhead(user_id(conn), params))
   end
 
   operation(:show,
