@@ -161,22 +161,40 @@ defmodule Mithril.DirectContracts.Letter do
         {:set, value} -> squish_note(value)
       end
 
-    cond do
-      content_action != :keep and is_map(content) ->
-        {additional_note(content), content}
+    result =
+      cond do
+        content_action != :keep and is_map(content) ->
+          {additional_note(content), content}
 
-      content_action == {:set, nil} ->
-        {note, nil}
+        content_action == {:set, nil} ->
+          {note, nil}
 
-      is_map(content) and note_action != :keep ->
-        case replace_additional_term(content, note) do
-          {:ok, updated} -> {note, updated}
-          :empty -> {nil, nil}
+        is_map(content) and note_action != :keep ->
+          case replace_additional_term(content, note) do
+            {:ok, updated} -> {note, updated}
+            :error -> :error
+          end
+
+        true ->
+          {note, content}
+      end
+
+    case result do
+      {next_note, next_content} ->
+        if valid_resolved_wording?(next_note, next_content) do
+          {:ok, {next_note, next_content}}
+        else
+          {:error, :invalid_request}
         end
 
-      true ->
-        {note, content}
+      :error ->
+        {:error, :invalid_request}
     end
+  end
+
+  defp valid_resolved_wording?(note, content) do
+    (is_nil(note) or (is_binary(note) and String.length(note) <= 500)) and
+      (is_nil(content) or match?({:ok, _}, normalize_wording(content)))
   end
 
   def stored_wording(nil), do: nil
@@ -227,13 +245,13 @@ defmodule Mithril.DirectContracts.Letter do
       |> put_term(squish_note(note))
 
     if next == [] do
-      :empty
+      :error
     else
       {:ok, %{content | "clauses" => next}}
     end
   end
 
-  def replace_additional_term(_, _), do: :empty
+  def replace_additional_term(_, _), do: :error
 
   defp additional_note(%{"clauses" => clauses}) when is_list(clauses) do
     Enum.find_value(clauses, fn clause ->
