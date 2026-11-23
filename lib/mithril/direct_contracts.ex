@@ -764,7 +764,7 @@ defmodule Mithril.DirectContracts do
 
   def letterhead(user_id) do
     with :ok <- require_admin(user_id) do
-      {:ok, stored_letter()}
+      stored_letter()
     end
   end
 
@@ -3085,8 +3085,9 @@ defmodule Mithril.DirectContracts do
            """,
            []
          ) do
-      {:ok, %{rows: [row]}} -> office_letter_row(row)
-      _ -> empty_letter()
+      {:ok, %{rows: [row]}} -> {:ok, office_letter_row(row)}
+      {:ok, %{rows: []}} -> {:ok, empty_letter()}
+      {:error, error} -> map_pg(error)
     end
   end
 
@@ -3113,7 +3114,7 @@ defmodule Mithril.DirectContracts do
   end
 
   defp letter_draft(params) do
-    with {:ok, letterhead} <- letterhead_value(params),
+    with {:ok, letterhead} <- optional_line(params, "letterhead", 180),
          {:ok, from_name} <- optional_line(params, "fromName", 120),
          {:ok, from_address} <- optional_block(params, "fromAddress", 500),
          {:ok, client_name} <- optional_line(params, "clientName", 120),
@@ -3204,29 +3205,6 @@ defmodule Mithril.DirectContracts do
 
       _ ->
         nil
-    end
-  end
-
-  defp letterhead_value(params) do
-    if Map.has_key?(params, "letterhead") or Map.has_key?(params, :letterhead) do
-      case param(params, "letterhead") do
-        nil ->
-          {:ok, nil}
-
-        text when is_binary(text) ->
-          line = text |> String.replace(~r/\s+/u, " ") |> String.trim()
-
-          cond do
-            line == "" -> {:ok, nil}
-            String.length(line) > 180 -> {:error, :invalid_request}
-            true -> {:ok, line}
-          end
-
-        _ ->
-          {:error, :invalid_request}
-      end
-    else
-      {:error, :invalid_request}
     end
   end
 
