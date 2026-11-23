@@ -21,7 +21,7 @@ defmodule Mithril.DirectPaymentRequests do
   alias Mithril.Workers.PaymentRequestReminder
 
   @columns ~w(
-    id public_token customer_user_id customer_name phone_e164 email description
+    id public_token customer_user_id booking_id customer_name phone_e164 email description
     amount_minor currency status channel paystack_reference authorization_url
     delivery_error idempotency_key delivery_claimed_at twilio_message_sid
     sms_fallback_claimed_at sent_at remind_if_unpaid reminders_sent reminder_sent_at
@@ -66,8 +66,10 @@ defmodule Mithril.DirectPaymentRequests do
          :ok <- require_admin(admin_uid),
          {:ok, input} <- validate(params),
          {:ok, customer_id, email} <-
-           resolve_customer(input.customer_user_id, input.phone, input.email) do
-      insert_and_send(admin_uid, %{input | customer_user_id: customer_id, email: email})
+           resolve_customer(input.customer_user_id, input.phone, input.email),
+         input = %{input | customer_user_id: customer_id, email: email},
+         :ok <- ensure_booking_link(input) do
+      insert_and_send(admin_uid, input)
     else
       :error -> {:error, :invalid_request}
       {:error, reason} -> {:error, reason}
@@ -546,6 +548,7 @@ defmodule Mithril.DirectPaymentRequests do
       dump!(id),
       token,
       dump_optional(input.customer_user_id),
+      dump_optional(input.booking_id),
       input.customer_name,
       input.phone,
       input.email,
@@ -560,11 +563,11 @@ defmodule Mithril.DirectPaymentRequests do
     case Repo.query(
            """
            INSERT INTO public.direct_payment_requests (
-             id, public_token, customer_user_id, customer_name, phone_e164, email,
+             id, public_token, customer_user_id, booking_id, customer_name, phone_e164, email,
              description, amount_minor, paystack_reference, created_by, idempotency_key,
              remind_if_unpaid
            ) VALUES (
-             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
            )
            RETURNING #{Enum.join(@columns, ", ")}
            """,
@@ -1327,6 +1330,81 @@ defmodule Mithril.DirectPaymentRequests do
     )
   end
 
+  defp ensure_booking_link(%{booking_id: nil}), do: :ok
+
+  defp ensure_booking_link(input) do
+    case Repo.query(
+           """
+           SELECT customer_id::text, status::text, payment_status::text, final_amount_minor
+           FROM public.bookings
+           WHERE id = $1::uuid
+           """,
+           [dump!(input.booking_id)]
+         ) do
+      {:ok, %{rows: [[customer_id, status, payment_status, amount]]}} ->
+        cond do
+          input.customer_user_id != nil and customer_id != input.customer_user_id ->
+            {:error, :invalid_request}
+
+          status == "cancelled" ->
+            {:error, :invalid_request}
+
+          payment_status == "paid" ->
+            {:error, :already_paid}
+
+          amount != input.amount_minor ->
+            {:error, :amount_mismatch}
+
+          true ->
+            :ok
+        end
+
+      {:ok, %{rows: []}} ->
+        {:error, :not_found}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp settle_linked_booking(%{"booking_id" => nil}), do: :ok
+
+  defp settle_linked_booking(row) do
+    booking_id = uuid_string(row["booking_id"])
+
+    if is_binary(booking_id) do
+      case Repo.query(
+             """
+             UPDATE public.bookings
+             SET payment_status = 'paid',
+                 payment_method = 'paystack',
+                 status = CASE
+                   WHEN status::text = 'cancelled'
+                    AND cancelled_by IS NULL
+                    AND cancellation_reason_code IS NULL
+                    AND NULLIF(btrim(COALESCE(cancellation_reason, '')), '') IS NULL
+                   THEN 'pending'
+                   ELSE status
+                 END,
+                 updated_at = now()
+             WHERE id = $1::uuid
+               AND final_amount_minor = $2
+               AND payment_status::text IN ('pending', 'failed')
+             """,
+             [dump!(booking_id), row["amount_minor"]]
+           ) do
+        {:ok, _} ->
+          :ok
+
+        {:error, error} ->
+          Logger.warning("payment request booking settle failed #{inspect(error)}")
+          :ok
+      end
+    else
+      :ok
+    end
+  end
+
   defp mark_paid(id) do
     case Repo.query(
            """
@@ -1338,12 +1416,18 @@ defmodule Mithril.DirectPaymentRequests do
            [id]
          ) do
       {:ok, %{rows: [row]}} ->
-        {:ok, row_map(row)}
+        row = row_map(row)
+        settle_linked_booking(row)
+        {:ok, row}
 
       {:ok, %{rows: []}} ->
         case fetch_id(id) do
-          {:ok, %{"status" => "paid"} = row} -> {:ok, row}
-          _ -> {:error, :payment_conflict}
+          {:ok, %{"status" => "paid"} = row} ->
+            settle_linked_booking(row)
+            {:ok, row}
+
+          _ ->
+            {:error, :payment_conflict}
         end
 
       {:error, error} ->
@@ -1409,6 +1493,7 @@ defmodule Mithril.DirectPaymentRequests do
          {:ok, description} <- required_text(params["description"] || params[:description], 160),
          {:ok, amount} <- amount(params["amountMinor"] || params[:amountMinor]),
          {:ok, customer_id} <- optional_uuid(params["customerUserId"] || params[:customerUserId]),
+         {:ok, booking_id} <- optional_uuid(params["bookingId"] || params[:bookingId]),
          {:ok, email} <- optional_email(params["email"] || params[:email]),
          {:ok, key} <- required_uuid(params["idempotencyKey"] || params[:idempotencyKey]),
          {:ok, remind} <- optional_flag(flag_value(params, "remindIfUnpaid")) do
@@ -1419,6 +1504,7 @@ defmodule Mithril.DirectPaymentRequests do
          description: description,
          amount_minor: amount,
          customer_user_id: customer_id,
+         booking_id: booking_id,
          email: email,
          idempotency_key: key,
          remind_if_unpaid: remind
@@ -1538,6 +1624,7 @@ defmodule Mithril.DirectPaymentRequests do
       "publicToken" => row["public_token"],
       "payUrl" => pay_url(row["public_token"]),
       "customerUserId" => uuid_string(row["customer_user_id"]),
+      "bookingId" => uuid_string(row["booking_id"]),
       "customerName" => row["customer_name"],
       "phone" => row["phone_e164"],
       "email" => row["email"],
