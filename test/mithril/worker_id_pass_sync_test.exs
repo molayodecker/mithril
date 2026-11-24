@@ -344,13 +344,24 @@ defmodule Mithril.WorkerIdPassSyncTest do
   defp cursor(value), do: WorkerIdPass.cursor_microseconds(value)
 
   defp without_apns(fun) do
-    previous = System.get_env("APPLE_PASS_APNS_KEY_PATH")
-    System.delete_env("APPLE_PASS_APNS_KEY_PATH")
+    names = ~w(
+      APPLE_PASS_APNS_KEY_PATH
+      APPLE_PASS_APNS_KEY_ID
+      APPLE_PASS_CERTIFICATE_PATH
+      APPLE_PASS_KEY_PATH
+      APPLE_PASS_KEY_PASSPHRASE
+    )
+
+    previous = Map.new(names, &{&1, System.get_env(&1)})
+    Enum.each(names, &System.delete_env/1)
 
     try do
       fun.()
     after
-      if previous, do: System.put_env("APPLE_PASS_APNS_KEY_PATH", previous)
+      Enum.each(previous, fn
+        {name, nil} -> System.delete_env(name)
+        {name, value} -> System.put_env(name, value)
+      end)
     end
   end
 

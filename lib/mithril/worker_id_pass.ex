@@ -4,7 +4,8 @@ defmodule Mithril.WorkerIdPass do
 
   The barcode is the public verify page. When the worker or account status
   changes, a database trigger voids a suspended pass, advances its update
-  cursor, and asks registered phones to refresh. Signing certificates stay
+  cursor, and asks registered phones to refresh. The refresh uses the same
+  Pass Type ID certificate that signs the pass. Signing certificates stay
   in server environment variables.
   This is not Apple Pay and does not use a merchant id.
   """
@@ -533,28 +534,23 @@ defmodule Mithril.WorkerIdPass do
   defp push_tokens([]), do: :ok
 
   defp push_tokens(tokens) do
-    case apns_jwt() do
-      {:ok, jwt} ->
-        outcomes = Enum.map(tokens, &push_one(&1, jwt))
-        if Enum.all?(outcomes, &(&1 == :ok)), do: :ok, else: {:error, :push_failed}
-
+    case apns_auth() do
       :unconfigured ->
         {:error, :push_not_configured}
+
+      auth ->
+        outcomes = Enum.map(tokens, &push_one(&1, auth))
+        if Enum.all?(outcomes, &(&1 == :ok)), do: :ok, else: {:error, :push_failed}
     end
   end
 
-  defp push_one(token, jwt) do
+  defp push_one(token, auth) do
     url = "https://api.push.apple.com/3/device/#{token}"
 
     result =
       Req.post(url,
         finch: Mithril.ApnsFinch,
-        headers: [
-          {"authorization", "bearer " <> jwt},
-          {"apns-topic", pass_type_id()},
-          {"apns-push-type", "background"},
-          {"apns-priority", "5"}
-        ],
+        headers: apns_headers(auth),
         body: "{}"
       )
 
@@ -588,6 +584,58 @@ defmodule Mithril.WorkerIdPass do
       {:error, _error} ->
         Logger.warning("worker id pass could not retire a rejected push token")
         {:error, :push_failed}
+    end
+  end
+
+  @doc false
+  def apns_auth do
+    if apns_transport_opts() != [] do
+      :certificate
+    else
+      case apns_jwt() do
+        {:ok, jwt} -> {:token, jwt}
+        :unconfigured -> :unconfigured
+      end
+    end
+  end
+
+  @doc false
+  def apns_headers(:certificate) do
+    [
+      {"apns-topic", pass_type_id()},
+      {"apns-push-type", "background"},
+      {"apns-priority", "5"}
+    ]
+  end
+
+  def apns_headers({:token, jwt}) when is_binary(jwt) do
+    [{"authorization", "bearer " <> jwt} | apns_headers(:certificate)]
+  end
+
+  @doc false
+  def apns_pool_config do
+    base = [protocols: [:http2], count: 1]
+
+    case apns_transport_opts() do
+      [] -> base
+      opts -> Keyword.put(base, :conn_opts, transport_opts: opts)
+    end
+  end
+
+  @doc false
+  def apns_transport_opts do
+    cert = certificate_path()
+    key = key_path()
+
+    if File.regular?(cert) and File.regular?(key) do
+      opts = [certfile: String.to_charlist(cert), keyfile: String.to_charlist(key)]
+
+      case passphrase() do
+        nil -> opts
+        passphrase -> Keyword.put(opts, :password, String.to_charlist(passphrase))
+      end
+    else
+      []
     end
   end
 
@@ -657,8 +705,10 @@ defmodule Mithril.WorkerIdPass do
     end
   end
 
+  defp passphrase, do: System.get_env("APPLE_PASS_KEY_PASSPHRASE") |> blank_to_nil()
+
   defp passphrase_args do
-    case System.get_env("APPLE_PASS_KEY_PASSPHRASE") |> blank_to_nil() do
+    case passphrase() do
       nil -> []
       passphrase -> ["-passin", "pass:" <> passphrase]
     end
