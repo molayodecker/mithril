@@ -254,7 +254,6 @@ defmodule Mithril.WorkerIdPass do
       "teamIdentifier" => team_id(),
       "organizationName" => "Instaclean",
       "description" => "Instaclean Worker ID",
-      "logoText" => "Instaclean",
       "foregroundColor" => "rgb(255, 255, 255)",
       "backgroundColor" => "rgb(13, 24, 89)",
       "labelColor" => "rgb(249, 213, 35)",
@@ -297,23 +296,23 @@ defmodule Mithril.WorkerIdPass do
     with :ok <- ensure_configured() do
       document = pass_document(card, authentication_token)
       pass_json = Jason.encode!(document)
-      icon = png(29, 29, {249, 213, 35})
-      logo = png(160, 50, {249, 213, 35})
+      images = pass_assets()
 
       manifest =
-        Jason.encode!(%{
-          "pass.json" => sha1(pass_json),
-          "icon.png" => sha1(icon),
-          "logo.png" => sha1(logo)
-        })
+        images
+        |> Map.new(fn {name, bytes} -> {name, sha1(bytes)} end)
+        |> Map.put("pass.json", sha1(pass_json))
+        |> Jason.encode!()
 
       with {:ok, signature} <- sign_manifest(manifest) do
+        image_files =
+          Enum.map(images, fn {name, bytes} -> {String.to_charlist(name), bytes} end)
+
         files = [
           {~c"pass.json", pass_json},
-          {~c"icon.png", icon},
-          {~c"logo.png", logo},
           {~c"manifest.json", manifest},
           {~c"signature", signature}
+          | image_files
         ]
 
         case :zip.create(~c"worker-id.pkpass", files, [:memory]) do
@@ -776,20 +775,15 @@ defmodule Mithril.WorkerIdPass do
     if trimmed == "", do: nil, else: trimmed
   end
 
-  defp png(width, height, {red, green, blue}) do
-    pixel = <<red, green, blue>>
-    row = <<0>> <> for(_ <- 1..width, into: <<>>, do: pixel)
-    raw = for(_ <- 1..height, into: <<>>, do: row)
-    compressed = :zlib.compress(raw)
+  # logoText is omitted on purpose. Wallet draws that string beside logo.png,
+  # which is what produced the yellow bar plus the word Instaclean.
+  @pass_image_names ~w(icon.png icon@2x.png icon@3x.png logo.png logo@2x.png logo@3x.png)
 
-    ihdr = <<width::32, height::32, 8, 2, 0, 0, 0>>
-
-    <<137, 80, 78, 71, 13, 10, 26, 10>> <>
-      chunk("IHDR", ihdr) <> chunk("IDAT", compressed) <> chunk("IEND", <<>>)
-  end
-
-  defp chunk(type, data) do
-    crc = :erlang.crc32(type <> data)
-    <<byte_size(data)::32, type::binary, data::binary, crc::32>>
+  @doc false
+  def pass_assets do
+    Map.new(@pass_image_names, fn name ->
+      path = :mithril |> :code.priv_dir() |> Path.join("wallet/#{name}")
+      {name, File.read!(path)}
+    end)
   end
 end
