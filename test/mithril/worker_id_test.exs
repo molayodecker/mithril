@@ -92,11 +92,35 @@ defmodule Mithril.WorkerIdTest do
 
     pass = WorkerIdPass.pass_document(card, "pass-auth-token-value")
     refute Map.has_key?(pass, "voided")
+    refute Map.has_key?(pass, "logoText")
 
     assert pass["generic"]["secondaryFields"]
            |> Enum.find(&(&1["key"] == "status"))
            |> Map.get("value") ==
              "Active"
+  end
+
+  test "the pass header uses the wordmark instead of a solid logo block" do
+    assets = WorkerIdPass.pass_assets()
+
+    assert Enum.sort(Map.keys(assets)) == [
+             "icon.png",
+             "icon@2x.png",
+             "icon@3x.png",
+             "logo.png",
+             "logo@2x.png",
+             "logo@3x.png"
+           ]
+
+    assert <<_png_header::binary-size(16), logo_width::32, logo_height::32, _rest::binary>> =
+             assets["logo.png"]
+
+    assert logo_width > logo_height
+
+    assert <<_icon_header::binary-size(16), icon_width::32, icon_height::32, _icon_rest::binary>> =
+             assets["icon.png"]
+
+    assert icon_width == icon_height
   end
 
   test "a review that is not cleared stays pending" do
