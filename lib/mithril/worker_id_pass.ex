@@ -4,8 +4,10 @@ defmodule Mithril.WorkerIdPass do
 
   The barcode is the public verify page. When the worker or account status
   changes, a database trigger voids a suspended pass, advances its update
-  cursor, and asks registered phones to refresh. Signing certificates stay
-  in server environment variables.
+  cursor, and asks registered phones to refresh. A configured APNs key
+  signs that refresh. Otherwise the refresh uses the same Pass Type ID
+  certificate that signs the pass. Signing secrets stay in server
+  environment variables.
   This is not Apple Pay and does not use a merchant id.
   """
 
@@ -533,28 +535,23 @@ defmodule Mithril.WorkerIdPass do
   defp push_tokens([]), do: :ok
 
   defp push_tokens(tokens) do
-    case apns_jwt() do
-      {:ok, jwt} ->
-        outcomes = Enum.map(tokens, &push_one(&1, jwt))
-        if Enum.all?(outcomes, &(&1 == :ok)), do: :ok, else: {:error, :push_failed}
-
+    case apns_auth() do
       :unconfigured ->
         {:error, :push_not_configured}
+
+      auth ->
+        outcomes = Enum.map(tokens, &push_one(&1, auth))
+        if Enum.all?(outcomes, &(&1 == :ok)), do: :ok, else: {:error, :push_failed}
     end
   end
 
-  defp push_one(token, jwt) do
+  defp push_one(token, auth) do
     url = "https://api.push.apple.com/3/device/#{token}"
 
     result =
       Req.post(url,
         finch: Mithril.ApnsFinch,
-        headers: [
-          {"authorization", "bearer " <> jwt},
-          {"apns-topic", pass_type_id()},
-          {"apns-push-type", "background"},
-          {"apns-priority", "5"}
-        ],
+        headers: apns_headers(auth),
         body: "{}"
       )
 
@@ -591,11 +588,76 @@ defmodule Mithril.WorkerIdPass do
     end
   end
 
-  defp apns_jwt do
-    key_path = System.get_env("APPLE_PASS_APNS_KEY_PATH") |> blank_to_nil()
-    key_id = System.get_env("APPLE_PASS_APNS_KEY_ID") |> blank_to_nil()
+  @doc false
+  def apns_auth do
+    case apns_jwt() do
+      {:ok, jwt} ->
+        {:token, jwt}
 
-    if key_path && key_id && File.regular?(key_path) do
+      :unconfigured ->
+        if apns_transport_opts() != [], do: :certificate, else: :unconfigured
+    end
+  end
+
+  @doc false
+  def apns_headers(:certificate) do
+    [
+      {"apns-topic", pass_type_id()},
+      {"apns-push-type", "background"},
+      {"apns-priority", "5"}
+    ]
+  end
+
+  def apns_headers({:token, jwt}) when is_binary(jwt) do
+    [{"authorization", "bearer " <> jwt} | apns_headers(:certificate)]
+  end
+
+  @doc false
+  def apns_pool_config do
+    base = [protocols: [:http2], count: 1]
+
+    # A bearer token authenticates the request. The pass certificate stays off
+    # that connection so Apple does not treat the two credentials as one session.
+    if token_configured?() do
+      base
+    else
+      case apns_transport_opts() do
+        [] -> base
+        opts -> Keyword.put(base, :conn_opts, transport_opts: opts)
+      end
+    end
+  end
+
+  @doc false
+  def apns_transport_opts do
+    cert = certificate_path()
+    key = key_path()
+
+    if File.regular?(cert) and File.regular?(key) do
+      opts = [certfile: String.to_charlist(cert), keyfile: String.to_charlist(key)]
+
+      case passphrase() do
+        nil -> opts
+        passphrase -> Keyword.put(opts, :password, String.to_charlist(passphrase))
+      end
+    else
+      []
+    end
+  end
+
+  defp token_configured? do
+    key_id = System.get_env("APPLE_PASS_APNS_KEY_ID") |> blank_to_nil()
+    key_path = apns_key_file()
+    is_binary(key_id) and key_path != "" and File.regular?(key_path)
+  end
+
+  defp apns_key_file, do: secret_file("APPLE_PASS_APNS_KEY_PATH", "apns.p8")
+
+  defp apns_jwt do
+    key_id = System.get_env("APPLE_PASS_APNS_KEY_ID") |> blank_to_nil()
+    key_path = apns_key_file()
+
+    if is_binary(key_id) and key_path != "" and File.regular?(key_path) do
       pem = File.read!(key_path)
       signer = Joken.Signer.create("ES256", %{"pem" => pem}, %{"kid" => key_id})
       claims = %{"iss" => team_id(), "iat" => System.system_time(:second)}
@@ -657,8 +719,10 @@ defmodule Mithril.WorkerIdPass do
     end
   end
 
+  defp passphrase, do: System.get_env("APPLE_PASS_KEY_PASSPHRASE") |> blank_to_nil()
+
   defp passphrase_args do
-    case System.get_env("APPLE_PASS_KEY_PASSPHRASE") |> blank_to_nil() do
+    case passphrase() do
       nil -> []
       passphrase -> ["-passin", "pass:" <> passphrase]
     end

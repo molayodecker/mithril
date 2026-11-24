@@ -15,7 +15,7 @@ defmodule Mithril.Application do
           {Finch,
            name: Mithril.ApnsFinch,
            pools: %{
-             "https://api.push.apple.com" => [protocols: [:http2], count: 1]
+             "https://api.push.apple.com" => Mithril.WorkerIdPass.apns_pool_config()
            }},
           Mithril.Schema.Check,
           Mithril.RateLimiter,
