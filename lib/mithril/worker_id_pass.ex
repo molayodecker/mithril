@@ -4,9 +4,10 @@ defmodule Mithril.WorkerIdPass do
 
   The barcode is the public verify page. When the worker or account status
   changes, a database trigger voids a suspended pass, advances its update
-  cursor, and asks registered phones to refresh. The refresh uses the same
-  Pass Type ID certificate that signs the pass. Signing certificates stay
-  in server environment variables.
+  cursor, and asks registered phones to refresh. A configured APNs key
+  signs that refresh. Otherwise the refresh uses the same Pass Type ID
+  certificate that signs the pass. Signing secrets stay in server
+  environment variables.
   This is not Apple Pay and does not use a merchant id.
   """
 
@@ -589,13 +590,12 @@ defmodule Mithril.WorkerIdPass do
 
   @doc false
   def apns_auth do
-    if apns_transport_opts() != [] do
-      :certificate
-    else
-      case apns_jwt() do
-        {:ok, jwt} -> {:token, jwt}
-        :unconfigured -> :unconfigured
-      end
+    case apns_jwt() do
+      {:ok, jwt} ->
+        {:token, jwt}
+
+      :unconfigured ->
+        if apns_transport_opts() != [], do: :certificate, else: :unconfigured
     end
   end
 
@@ -616,9 +616,15 @@ defmodule Mithril.WorkerIdPass do
   def apns_pool_config do
     base = [protocols: [:http2], count: 1]
 
-    case apns_transport_opts() do
-      [] -> base
-      opts -> Keyword.put(base, :conn_opts, transport_opts: opts)
+    # A bearer token authenticates the request. The pass certificate stays off
+    # that connection so Apple does not treat the two credentials as one session.
+    if token_configured?() do
+      base
+    else
+      case apns_transport_opts() do
+        [] -> base
+        opts -> Keyword.put(base, :conn_opts, transport_opts: opts)
+      end
     end
   end
 
@@ -639,11 +645,19 @@ defmodule Mithril.WorkerIdPass do
     end
   end
 
-  defp apns_jwt do
-    key_path = System.get_env("APPLE_PASS_APNS_KEY_PATH") |> blank_to_nil()
+  defp token_configured? do
     key_id = System.get_env("APPLE_PASS_APNS_KEY_ID") |> blank_to_nil()
+    key_path = apns_key_file()
+    is_binary(key_id) and key_path != "" and File.regular?(key_path)
+  end
 
-    if key_path && key_id && File.regular?(key_path) do
+  defp apns_key_file, do: secret_file("APPLE_PASS_APNS_KEY_PATH", "apns.p8")
+
+  defp apns_jwt do
+    key_id = System.get_env("APPLE_PASS_APNS_KEY_ID") |> blank_to_nil()
+    key_path = apns_key_file()
+
+    if is_binary(key_id) and key_path != "" and File.regular?(key_path) do
       pem = File.read!(key_path)
       signer = Joken.Signer.create("ES256", %{"pem" => pem}, %{"kid" => key_id})
       claims = %{"iss" => team_id(), "iat" => System.system_time(:second)}

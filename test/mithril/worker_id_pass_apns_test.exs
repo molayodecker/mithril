@@ -66,6 +66,35 @@ defmodule Mithril.WorkerIdPassApnsTest do
     assert pool[:conn_opts][:transport_opts] == transport_opts
   end
 
+  test "a configured APNs key signs the refresh even when the pass certificate exists" do
+    {pem, 0} =
+      System.cmd("openssl", [
+        "genpkey",
+        "-algorithm",
+        "EC",
+        "-pkeyopt",
+        "ec_paramgen_curve:P-256"
+      ])
+
+    directory = Path.join(System.tmp_dir!(), "wallet-apns-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(directory)
+    certificate = Path.join(directory, "pass.pem")
+    key = Path.join(directory, "pass.key")
+    File.write!(certificate, "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n")
+    File.write!(key, "-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----\n")
+
+    System.put_env("APPLE_PASS_CERTIFICATE_PATH", certificate)
+    System.put_env("APPLE_PASS_KEY_PATH", key)
+    System.put_env("APPLE_PASS_APNS_KEY_ID", "TESTKEY123")
+    System.put_env("APPLE_PASS_APNS_KEY_PATH", pem)
+
+    assert {:token, jwt} = Mithril.WorkerIdPass.apns_auth()
+    headers = Mithril.WorkerIdPass.apns_headers({:token, jwt})
+    assert hd(headers) == {"authorization", "bearer " <> jwt}
+    assert {"apns-topic", "pass.com.tryinstaclean.workerid"} in headers
+    refute Keyword.has_key?(Mithril.WorkerIdPass.apns_pool_config(), :conn_opts)
+  end
+
   test "PEM text in the pass certificate variables is written before the push connection opens" do
     System.put_env(
       "APPLE_PASS_CERTIFICATE_PATH",
