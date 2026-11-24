@@ -285,6 +285,7 @@ defmodule MithrilWeb.Router do
     get "/admin/whatsapp/messages", DirectAdminWhatsAppController, :messages
     post "/admin/whatsapp/send", DirectAdminWhatsAppController, :send
     post "/admin/whatsapp/sms", DirectAdminWhatsAppController, :sms
+    post "/admin/whatsapp/customers", DirectAdminWhatsAppController, :create_customer
     post "/admin/whatsapp/booking-offers", DirectAdminWhatsAppController, :booking_offer
     get "/admin/whatsapp/booking-offers", DirectAdminWhatsAppController, :booking_offer_show
 
