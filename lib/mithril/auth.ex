@@ -2347,7 +2347,8 @@ defmodule Mithril.Auth do
 
   defp coord_float(_), do: nil
 
-  defp seed_oauth_profile(user_id, identity) do
+  @doc false
+  def seed_oauth_profile(user_id, identity) do
     {first_name, last_name, fullname} = oauth_name_parts(identity)
     avatar_url = blank_to_nil(identity[:picture])
 
