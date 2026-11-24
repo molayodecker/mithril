@@ -448,22 +448,34 @@ defmodule Mithril.DirectAdminWhatsApp do
   defp required_name(_), do: {:error, :invalid_request}
 
   defp open_customer(e164, name) do
-    case find_customer(e164) do
-      {:ok, user_id, existing_name} ->
-        finish_existing_customer(user_id, existing_name, e164, name)
+    Repo.transaction(fn ->
+      result =
+        case find_customer(e164) do
+          {:ok, user_id, existing_name} ->
+            finish_existing_customer(user_id, existing_name, e164, name)
 
-      {:error, :not_found} ->
-        create_phone_customer(e164, name)
+          {:error, :not_found} ->
+            create_phone_customer(e164, name)
 
-      {:error, reason} ->
-        {:error, reason}
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      case result do
+        {:ok, customer} -> customer
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, customer} -> {:ok, customer}
+      {:error, reason} -> {:error, reason}
     end
   end
 
   defp create_phone_customer(e164, name) do
     case Auth.ensure_phone_account(e164) do
       {:ok, %{user_id: user_id}} ->
-        with :ok <- remember_customer_name(user_id, name),
+        with :ok <- Auth.seed_oauth_profile(user_id, %{name: name}),
              :ok <- link_inbox_customer(e164, user_id) do
           {:ok, customer_payload(user_id, name, e164, true)}
         end
@@ -493,7 +505,7 @@ defmodule Mithril.DirectAdminWhatsApp do
         existing_name
       end
 
-    with :ok <- remember_customer_name(user_id, saved_name),
+    with :ok <- Auth.seed_oauth_profile(user_id, %{name: saved_name}),
          :ok <- link_inbox_customer(e164, user_id) do
       {:ok, customer_payload(user_id, saved_name, e164, false)}
     end
@@ -522,31 +534,6 @@ defmodule Mithril.DirectAdminWhatsApp do
     end
   end
 
-  defp remember_customer_name(user_id, name) do
-    {first, last, full} = customer_name_parts(name)
-
-    case dump_uuid(user_id) do
-      {:ok, dumped} ->
-        case Repo.query(
-               """
-               INSERT INTO public.profiles (id, user_id, firstname, lastname, fullname)
-               VALUES ($1::uuid, $1::uuid, $2, $3, $4)
-               ON CONFLICT (id) DO UPDATE
-               SET firstname = COALESCE(NULLIF(btrim(public.profiles.firstname), ''), EXCLUDED.firstname),
-                   lastname = COALESCE(NULLIF(btrim(public.profiles.lastname), ''), EXCLUDED.lastname),
-                   fullname = COALESCE(NULLIF(btrim(public.profiles.fullname), ''), EXCLUDED.fullname)
-               """,
-               [dumped, first, last, full]
-             ) do
-          {:ok, _} -> :ok
-          {:error, error} -> database_error(error)
-        end
-
-      :error ->
-        {:error, :invalid_request}
-    end
-  end
-
   defp link_inbox_customer(e164, user_id) do
     case dump_uuid(user_id) do
       {:ok, dumped} ->
@@ -562,19 +549,11 @@ defmodule Mithril.DirectAdminWhatsApp do
             :ok
 
           {:error, error} ->
-            Logger.error("WhatsApp customer created but inbox link failed: #{inspect(error)}")
-            :ok
+            database_error(error)
         end
 
       :error ->
-        :ok
-    end
-  end
-
-  defp customer_name_parts(name) do
-    case String.split(name, ~r/\s+/, parts: 2) do
-      [first, last] -> {first, last, String.trim("#{first} #{last}")}
-      [only] -> {only, "", only}
+        {:error, :invalid_request}
     end
   end
 
