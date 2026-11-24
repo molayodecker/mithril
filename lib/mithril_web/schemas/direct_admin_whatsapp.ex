@@ -161,6 +161,38 @@ defmodule MithrilWeb.Schemas.DirectAdminWhatsApp do
     })
   end
 
+  defmodule CustomerRequest do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminWhatsAppCustomerRequest",
+      type: :object,
+      properties: %{
+        phoneE164: %Schema{type: :string},
+        name: %Schema{type: :string, minLength: 1, maxLength: 80}
+      },
+      required: [:phoneE164, :name]
+    })
+  end
+
+  defmodule CustomerResponse do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminWhatsAppCustomer",
+      type: :object,
+      properties: %{
+        userId: %Schema{type: :string, format: :uuid},
+        name: %Schema{type: :string},
+        phoneE164: %Schema{type: :string},
+        created: %Schema{type: :boolean}
+      },
+      required: [:userId, :name, :phoneE164, :created]
+    })
+  end
+
   defmodule MutationResponse do
     require OpenApiSpex
     alias OpenApiSpex.Schema

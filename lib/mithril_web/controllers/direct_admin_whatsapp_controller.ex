@@ -12,6 +12,8 @@ defmodule MithrilWeb.DirectAdminWhatsAppController do
   }
 
   alias MithrilWeb.Schemas.DirectAdminWhatsApp.{
+    CustomerRequest,
+    CustomerResponse,
     MessageListResponse,
     MutationResponse,
     SendRequest,
@@ -78,6 +80,17 @@ defmodule MithrilWeb.DirectAdminWhatsAppController do
 
   def sms(conn, params) do
     respond(conn, DirectAdminWhatsApp.send_sms(user_id(conn), params))
+  end
+
+  operation(:create_customer,
+    operation_id: "direct.createAdminWhatsAppCustomer",
+    summary: "Create a customer account for a WhatsApp number",
+    request_body: {"Customer", "application/json", CustomerRequest},
+    responses: [ok: {"Customer", "application/json", CustomerResponse}]
+  )
+
+  def create_customer(conn, params) do
+    respond(conn, DirectAdminWhatsApp.create_customer(user_id(conn), params))
   end
 
   operation(:booking_offer,

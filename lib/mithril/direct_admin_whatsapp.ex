@@ -152,6 +152,23 @@ defmodule Mithril.DirectAdminWhatsApp do
     end
   end
 
+  @doc """
+  Creates a customer account for a WhatsApp number that is not linked yet.
+
+  An existing account for that number is returned unchanged so staff can offer a visit.
+  """
+  def create_customer(user_id, params) when is_map(params) do
+    with {:ok, e164} <- normalize_phone(params["phoneE164"] || params[:phoneE164]),
+         {:ok, name} <- required_name(params["name"] || params[:name]),
+         {:ok, admin_uid} <- dump_uuid(user_id),
+         :ok <- require_admin(admin_uid) do
+      open_customer(e164, name)
+    else
+      :error -> {:error, :invalid_request}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   def send_sms(user_id, params) when is_map(params) do
     with {:ok, uid} <- dump_uuid(user_id),
          :ok <- require_admin(uid),
@@ -417,6 +434,153 @@ defmodule Mithril.DirectAdminWhatsApp do
   end
 
   defp required_body(_), do: {:error, :invalid_request}
+
+  defp required_name(value) when is_binary(value) do
+    name = String.trim(value)
+
+    cond do
+      name == "" -> {:error, :invalid_request}
+      String.length(name) > 80 -> {:error, :invalid_request}
+      true -> {:ok, name}
+    end
+  end
+
+  defp required_name(_), do: {:error, :invalid_request}
+
+  defp open_customer(e164, name) do
+    case find_customer(e164) do
+      {:ok, user_id, existing_name} ->
+        finish_existing_customer(user_id, existing_name, e164, name)
+
+      {:error, :not_found} ->
+        create_phone_customer(e164, name)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp create_phone_customer(e164, name) do
+    case Auth.ensure_phone_account(e164) do
+      {:ok, %{user_id: user_id}} ->
+        with :ok <- remember_customer_name(user_id, name),
+             :ok <- link_inbox_customer(e164, user_id) do
+          {:ok, customer_payload(user_id, name, e164, true)}
+        end
+
+      {:error, :phone_taken} ->
+        case find_customer(e164) do
+          {:ok, user_id, existing_name} ->
+            finish_existing_customer(user_id, existing_name, e164, name)
+
+          {:error, :not_found} ->
+            {:error, :phone_taken}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp finish_existing_customer(user_id, existing_name, e164, name) do
+    saved_name =
+      if existing_name == "" do
+        name
+      else
+        existing_name
+      end
+
+    with :ok <- remember_customer_name(user_id, saved_name),
+         :ok <- link_inbox_customer(e164, user_id) do
+      {:ok, customer_payload(user_id, saved_name, e164, false)}
+    end
+  end
+
+  defp find_customer(e164) do
+    case Repo.query(
+           """
+           SELECT u.id::text,
+                  COALESCE(
+                    NULLIF(btrim(p.fullname), ''),
+                    NULLIF(btrim(concat_ws(' ', p.firstname, p.lastname)), ''),
+                    ''
+                  )
+           FROM public.users u
+           LEFT JOIN public.mithril_auth_accounts a ON a.user_id = u.id
+           LEFT JOIN public.profiles p ON p.id = u.id
+           WHERE u.phone = ANY($1::text[]) OR a.phone = ANY($1::text[])
+           LIMIT 1
+           """,
+           [phone_variants(e164)]
+         ) do
+      {:ok, %{rows: [[user_id, existing_name]]}} -> {:ok, user_id, existing_name}
+      {:ok, %{rows: []}} -> {:error, :not_found}
+      {:error, error} -> database_error(error)
+    end
+  end
+
+  defp remember_customer_name(user_id, name) do
+    {first, last, full} = customer_name_parts(name)
+
+    case dump_uuid(user_id) do
+      {:ok, dumped} ->
+        case Repo.query(
+               """
+               INSERT INTO public.profiles (id, user_id, firstname, lastname, fullname)
+               VALUES ($1::uuid, $1::uuid, $2, $3, $4)
+               ON CONFLICT (id) DO UPDATE
+               SET firstname = COALESCE(NULLIF(btrim(public.profiles.firstname), ''), EXCLUDED.firstname),
+                   lastname = COALESCE(NULLIF(btrim(public.profiles.lastname), ''), EXCLUDED.lastname),
+                   fullname = COALESCE(NULLIF(btrim(public.profiles.fullname), ''), EXCLUDED.fullname)
+               """,
+               [dumped, first, last, full]
+             ) do
+          {:ok, _} -> :ok
+          {:error, error} -> database_error(error)
+        end
+
+      :error ->
+        {:error, :invalid_request}
+    end
+  end
+
+  defp link_inbox_customer(e164, user_id) do
+    case dump_uuid(user_id) do
+      {:ok, dumped} ->
+        case Repo.query(
+               """
+               UPDATE public.whatsapp_inbox_messages
+               SET user_id = $2::uuid
+               WHERE phone_e164 = $1 AND user_id IS NULL
+               """,
+               [e164, dumped]
+             ) do
+          {:ok, _} ->
+            :ok
+
+          {:error, error} ->
+            Logger.error("WhatsApp customer created but inbox link failed: #{inspect(error)}")
+            :ok
+        end
+
+      :error ->
+        :ok
+    end
+  end
+
+  defp customer_name_parts(name) do
+    case String.split(name, ~r/\s+/, parts: 2) do
+      [first, last] -> {first, last, String.trim("#{first} #{last}")}
+      [only] -> {only, "", only}
+    end
+  end
+
+  defp customer_payload(user_id, name, phone, created) do
+    %{"userId" => user_id, "name" => name, "phoneE164" => phone, "created" => created}
+  end
 
   defp normalize_phone(value) when is_binary(value) do
     stripped =
