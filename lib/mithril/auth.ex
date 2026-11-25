@@ -57,14 +57,11 @@ defmodule Mithril.Auth do
     request_ip =
       normalize_request_ip(Map.get(opts, "request_ip", Map.get(opts, :request_ip)))
 
-    also_whatsapp? =
-      truthy?(Map.get(opts, "also_whatsapp", Map.get(opts, :also_whatsapp, false)))
-
     with {:ok, phone} <- normalize_phone(phone),
          :ok <- ensure_sms_configured(phone),
          :ok <- ensure_otp_account(phone, should_create_user?),
          {:ok, code} <- create_otp(phone, request_ip),
-         {:ok, delivery} <- deliver_phone_otp(phone, code, also_whatsapp?) do
+         {:ok, delivery} <- deliver_phone_otp(phone, code) do
       {:ok, %{ok: true, whatsapp_sent: delivery.whatsapp_sent}}
     end
   end
@@ -924,13 +921,15 @@ defmodule Mithril.Auth do
     if SMS.deliverable?(phone), do: :ok, else: {:error, :sms_not_configured}
   end
 
-  defp deliver_phone_otp(phone, code, also_whatsapp?) do
+  # Sign-in always sends the same code by SMS and WhatsApp. A WhatsApp miss
+  # (not on WhatsApp, blocked recipient, template failure) does not fail the text.
+  defp deliver_phone_otp(phone, code) do
     case SMS.send_otp(phone, code) do
       :ok ->
-        {:ok, %{whatsapp_sent: send_whatsapp_otp(phone, code, also_whatsapp?)}}
+        {:ok, %{whatsapp_sent: send_whatsapp_otp(phone, code)}}
 
       {:error, reason} ->
-        if send_whatsapp_otp(phone, code, also_whatsapp?) do
+        if send_whatsapp_otp(phone, code) do
           {:ok, %{whatsapp_sent: true}}
         else
           {:error, reason}
@@ -938,9 +937,7 @@ defmodule Mithril.Auth do
     end
   end
 
-  defp send_whatsapp_otp(_phone, _code, false), do: false
-
-  defp send_whatsapp_otp(phone, code, true) do
+  defp send_whatsapp_otp(phone, code) do
     WhatsAppOtp.send(phone, code) == :ok
   end
 
