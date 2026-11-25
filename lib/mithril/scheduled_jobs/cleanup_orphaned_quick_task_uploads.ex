@@ -7,7 +7,8 @@ defmodule Mithril.ScheduledJobs.CleanupOrphanedQuickTaskUploads do
   alias Mithril.StorageCleanup.QuickTask
 
   @bucket "quick-task-photos"
-  @default_older_than "24 hours"
+  # Must be an interval struct: Postgrex cannot encode a plain string for `$1::interval`.
+  @default_older_than %Postgrex.Interval{secs: 86_400}
   @default_limit 200
   @default_max_pages 10
 
