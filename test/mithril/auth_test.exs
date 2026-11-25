@@ -1008,11 +1008,10 @@ defmodule Mithril.AuthTest do
     assert Mithril.Auth.WhatsAppOtp.content_sid() == "HX0c13fa64693fc800d33ee2fe82d64c75"
   end
 
-  test "phone OTP also sends the same code on WhatsApp when the client connection is weak" do
+  test "phone OTP sends the same code by text and WhatsApp" do
     Application.delete_env(:mithril, :test_last_whatsapp_otp)
 
-    assert {:ok, %{ok: true, whatsapp_sent: true}} =
-             Auth.request_otp("0244123456", %{"also_whatsapp" => true})
+    assert {:ok, %{ok: true, whatsapp_sent: true}} = Auth.request_otp("0244123456")
 
     {_phone, code} = Application.get_env(:mithril, :test_last_otp)
     assert Application.get_env(:mithril, :test_last_whatsapp_otp) == {"+233244123456", code}
