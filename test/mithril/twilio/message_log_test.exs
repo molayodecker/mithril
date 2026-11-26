@@ -107,6 +107,7 @@ defmodule Mithril.Twilio.MessageLogTest do
   test "a caller who is not staff cannot read the log" do
     assert MessageLog.list("00000000-0000-4000-8000-000000000000", %{}) == {:error, :forbidden}
   end
+
   defp grant_desk!(desk) do
     user_id = Ecto.UUID.generate()
 
