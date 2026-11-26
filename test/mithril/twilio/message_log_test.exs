@@ -1,7 +1,11 @@
 defmodule Mithril.Twilio.MessageLogTest do
   use ExUnit.Case, async: false
 
+  alias Ecto.Adapters.SQL.Sandbox
+  alias Mithril.Repo
   alias Mithril.Twilio.MessageLog
+  alias MithrilWeb.DirectAdminTwilioController
+  alias MithrilWeb.Plugs.DirectOpsAuthorization
 
   setup do
     previous = Application.get_env(:mithril, :twilio_req_options)
@@ -65,6 +69,32 @@ defmodule Mithril.Twilio.MessageLogTest do
     refute Map.has_key?(message, :uri)
   end
 
+  test "only the messaging desk grant allows scoped staff to read Twilio history" do
+    :ok = Sandbox.checkout(Repo)
+
+    Repo.query!("""
+    CREATE TABLE IF NOT EXISTS public.user_roles (
+      user_id uuid NOT NULL,
+      role_id text NOT NULL
+    )
+    """)
+
+    messaging_user = grant_desk!("whatsapp_inbox")
+    bookings_user = grant_desk!("bookings")
+
+    Req.Test.expect(MessageLog, fn conn ->
+      Req.Test.json(conn, %{"messages" => [%{"sid" => "SM123"}]})
+    end)
+
+    denied = request_messages(bookings_user)
+    assert denied.status == 403
+    assert denied.halted
+
+    allowed = request_messages(messaging_user)
+    assert allowed.status == 200
+    assert %{"messages" => [%{"sid" => "SM123"}]} = Jason.decode!(allowed.resp_body)
+  end
+
   test "rejects a page token that is not a Twilio token" do
     assert MessageLog.query_params(%{"pageToken" => "../Messages"}) ==
              {:error, :invalid_request}
@@ -76,5 +106,25 @@ defmodule Mithril.Twilio.MessageLogTest do
 
   test "a caller who is not staff cannot read the log" do
     assert MessageLog.list("00000000-0000-4000-8000-000000000000", %{}) == {:error, :forbidden}
+  end
+  defp grant_desk!(desk) do
+    user_id = Ecto.UUID.generate()
+
+    Repo.query!("INSERT INTO public.user_roles (user_id, role_id) VALUES ($1::uuid, $2)", [
+      Ecto.UUID.dump!(user_id),
+      desk
+    ])
+
+    user_id
+  end
+
+  defp request_messages(user_id) do
+    conn =
+      :get
+      |> Plug.Test.conn("/direct/admin/twilio/messages")
+      |> Plug.Conn.assign(:instaclean_user_id, user_id)
+      |> DirectOpsAuthorization.call([])
+
+    if conn.halted, do: conn, else: DirectAdminTwilioController.messages(conn, %{})
   end
 end
