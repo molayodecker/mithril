@@ -330,9 +330,6 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
     is_number(hours) and hours > 0 and hours <= 24
   end
 
-  @doc false
-  def duration_query_param(value), do: integer_hours(read_optional_number(value))
-
   defp integer_hours(value) when is_integer(value), do: clamp_hours(value)
   defp integer_hours(value) when is_float(value), do: value |> trunc() |> clamp_hours()
   defp integer_hours(_), do: nil
@@ -498,11 +495,13 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAi do
     longitude = read_optional_number(draft_value(draft, "longitude", "longitude"))
     scheduled_date = draft_value(draft, "bookingDate", "booking_date")
     start_time = draft_value(draft, "slotTime24h", "slot_time_24h")
+
     duration_hours =
       draft
       |> draft_value("durationHours", "duration_hours")
       |> read_optional_number()
       |> integer_hours()
+
     service_id = parse_positive_integer(draft_value(draft, "serviceId", "service_id"))
 
     radius =
