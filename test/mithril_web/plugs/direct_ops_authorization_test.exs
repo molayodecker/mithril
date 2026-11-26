@@ -73,6 +73,12 @@ defmodule MithrilWeb.Plugs.DirectOpsAuthorizationTest do
              ]
   end
 
+  test "Twilio message history stays on the messaging desk" do
+    assert DirectOpsAuthorization.permissions_for(["twilio", "messages"], "GET") == [
+             "whatsapp_inbox"
+           ]
+  end
+
   test "placement and roster lists stay on their own desks" do
     assert DirectOpsAuthorization.permissions_for(["candidates"], "GET") == ["placements"]
     assert DirectOpsAuthorization.permissions_for(["cleaners"], "GET") == ["cleaners_roster"]
