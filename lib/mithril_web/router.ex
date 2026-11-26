@@ -281,7 +281,6 @@ defmodule MithrilWeb.Router do
 
     post "/admin/notification-broadcast", DirectAdminNotificationsController, :broadcast
     post "/admin/notifications", DirectAdminNotificationsController, :create
-    get "/admin/twilio/messages", DirectAdminTwilioController, :messages
     get "/admin/whatsapp/threads", DirectAdminWhatsAppController, :index
     get "/admin/whatsapp/messages", DirectAdminWhatsAppController, :messages
     post "/admin/whatsapp/send", DirectAdminWhatsAppController, :send
