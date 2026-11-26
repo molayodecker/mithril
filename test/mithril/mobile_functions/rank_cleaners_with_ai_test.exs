@@ -375,6 +375,12 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAiTest do
     """)
   end
 
+  test "nearby cleaner duration is an integer Postgrex can encode" do
+    assert RankCleanersWithAi.duration_query_param(3.4899999999999998) == 3
+    assert RankCleanersWithAi.duration_query_param("3.5") == 3
+    assert RankCleanersWithAi.duration_query_param(2) == 2
+  end
+
   defp enable_settings do
     Application.put_env(:mithril, :ai_match_settings, %{
       "enabled" => true,
