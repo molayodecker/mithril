@@ -3,7 +3,7 @@ defmodule Mithril.Twilio.MessageLog do
 
   require Logger
 
-  alias Mithril.Auth
+  alias Mithril.DirectAdminWhatsApp
 
   @default_page_size 50
   @max_page_size 100
@@ -40,9 +40,8 @@ defmodule Mithril.Twilio.MessageLog do
     end
   end
 
-  defp authorize(user_id) do
-    if is_binary(user_id) and Auth.staff_uuid?(user_id), do: :ok, else: {:error, :forbidden}
-  end
+  defp authorize(user_id) when is_binary(user_id), do: DirectAdminWhatsApp.require_admin(user_id)
+  defp authorize(_user_id), do: {:error, :forbidden}
 
   defp request(sid, token, query) do
     options =
