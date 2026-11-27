@@ -9,29 +9,6 @@ environment="${ENVIRONMENT:?Set ENVIRONMENT to staging or production}"
 version="${VERSION:-}"
 commit_sha="${COMMIT_SHA:-}"
 
-resolve_tag() {
-  local tag="$1"
-  local payload object_sha object_type
-  payload="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}")"
-  read -r object_sha object_type < <(
-    printf '%s' "$payload" |
-      python3 -c 'import json,sys; o=json.load(sys.stdin)["object"]; print(o["sha"], o["type"])'
-  )
-  if [[ "$object_type" == "tag" ]]; then
-    payload="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object_sha}")"
-    read -r object_sha object_type < <(
-      printf '%s' "$payload" |
-        python3 -c 'import json,sys; o=json.load(sys.stdin)["object"]; print(o["sha"], o["type"])'
-    )
-  fi
-  object_sha="$(printf '%s' "$object_sha" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$object_type" != "commit" || ! "$object_sha" =~ ^[0-9a-f]{40}$ ]]; then
-    echo "Tag ${tag} does not point at a commit." >&2
-    exit 1
-  fi
-  printf '%s\n' "$object_sha"
-}
-
 choose() {
   local target="$1"
   local parsed kind value resolved named
@@ -43,11 +20,11 @@ choose() {
       resolved="$value"
       ;;
     version)
-      resolved="$(resolve_tag "$value")"
+      resolved="$(python3 "$root/release_tag_lines.py" "$value")"
       ;;
     staging)
       named="${value#staging/}"
-      resolved="$(resolve_tag "$value")"
+      resolved="$(python3 "$root/release_tag_lines.py" "$value")"
       if [[ "$resolved" != "$named" ]]; then
         echo "Tag ${value} points at ${resolved}, not ${named}." >&2
         exit 1

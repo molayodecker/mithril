@@ -51,6 +51,44 @@ JSON
 )"
 expect_eq "tag lines" "v0.1.2 $sha_b" "$python_lines"
 
+stub_dir="$(mktemp -d)"
+trap 'rm -rf "$stub_dir"' EXIT
+cat > "$stub_dir/gh" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "api --paginate --slurp repos/example/mithril/git/matching-refs/tags/v")
+    printf '[[{"ref":"refs/tags/v0.1.4","object":{"type":"tag","sha":"%s"}}]]\n' "$sha_b"
+    ;;
+  "api repos/example/mithril/git/ref/tags/v0.1.4")
+    printf '{"object":{"type":"tag","sha":"%s"}}\n' "$sha_b"
+    ;;
+  "api repos/example/mithril/git/tags/$sha_b")
+    printf '{"object":{"type":"commit","sha":"%s"}}\n' "$sha_a"
+    ;;
+  "api repos/example/mithril/git/ref/tags/env/"*)
+    printf '{"object":{"type":"commit","sha":"%s"}}\n' "$sha_b"
+    ;;
+  "api --method PATCH repos/example/mithril/git/refs/tags/env/production -f sha=$sha_a -F force=true" | \
+  "api --method PATCH repos/example/mithril/git/refs/tags/env/staging -f sha=$sha_a -F force=true")
+    ;;
+  *)
+    echo "Unexpected GitHub API call: $*" >&2
+    exit 1
+    ;;
+esac
+MOCK
+chmod +x "$stub_dir/gh"
+export sha_a sha_b
+export PATH="$stub_dir:$PATH" GITHUB_REPOSITORY=example/mithril GH_TOKEN=test-token
+
+expect_eq "release creation reuses annotated tag" "v0.1.4" "$(bash "$root/create_release_tag.sh" "$sha_a")"
+expect_eq "annotated tag resolves to commit" "$sha_a" "$(python3 "$root/release_tag_lines.py" v0.1.4)"
+ENVIRONMENT=production VERSION=v0.1.4 GITHUB_OUTPUT="$stub_dir/output" bash "$root/resolve_deploy_ref.sh"
+expect_eq "promotion resolves annotated release" "sha=$sha_a" "$(cat "$stub_dir/output")"
+bash "$root/move_env_tag.sh" env/production "$sha_a"
+bash "$root/move_env_tag.sh" env/staging "$sha_a"
+
 if [[ "$failures" -ne 0 ]]; then
   echo "$failures release version checks failed." >&2
   exit 1

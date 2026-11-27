@@ -14,36 +14,14 @@ fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 list_tags() {
-  local payload
-  if ! payload="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v" 2>/dev/null)"; then
-    payload="[]"
-  fi
-  printf '%s' "$payload" | python3 "$root/release_tag_lines.py"
-}
-
-ref_commit() {
-  local tag="$1"
-  local payload object_sha object_type
-  payload="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}")"
-  read -r object_sha object_type < <(
-    printf '%s' "$payload" |
-      python3 -c 'import json,sys; o=json.load(sys.stdin)["object"]; print(o["sha"], o["type"])'
-  )
-  if [[ "$object_type" == "tag" ]]; then
-    payload="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object_sha}")"
-    read -r object_sha object_type < <(
-      printf '%s' "$payload" |
-        python3 -c 'import json,sys; o=json.load(sys.stdin)["object"]; print(o["sha"], o["type"])'
-    )
-  fi
-  printf '%s %s\n' "$(printf '%s' "$object_sha" | tr '[:upper:]' '[:lower:]')" "$object_type"
+  gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v" |
+    python3 "$root/release_tag_lines.py"
 }
 
 for _ in 1 2 3 4 5; do
   tag="$(list_tags | "$root/next_release_version.sh" "$deploy_sha")"
-  if payload="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" 2>/dev/null)"; then
-    read -r existing_sha existing_type < <(ref_commit "$tag")
-    if [[ "$existing_type" == "commit" && "$existing_sha" == "$deploy_sha" ]]; then
+  if existing_sha="$(python3 "$root/release_tag_lines.py" "$tag" 2>/dev/null)"; then
+    if [[ "$existing_sha" == "$deploy_sha" ]]; then
       echo "Release ${tag} already points at ${deploy_sha}." >&2
       printf '%s\n' "$tag"
       exit 0

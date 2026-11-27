@@ -29,6 +29,11 @@ permissions:
   actions: read
   statuses: write
 
+# Keep tag recording in the same deployment queue as the Fly rollout.
+concurrency:
+  group: mithril-rollout-${{ github.event_name == 'workflow_dispatch' && inputs.environment || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && 'staging') || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   staging_after_ci:
     # Every successful CI run for a push to main deploys that exact commit

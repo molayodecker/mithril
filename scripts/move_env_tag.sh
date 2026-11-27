@@ -32,7 +32,7 @@ if current="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/${api_ref}" 2>/dev/null
     echo "${name} already points at ${sha}." >&2
     exit 0
   fi
-  gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/${api_ref}" -f sha="$sha" >/dev/null
+  gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/${api_ref}" -f sha="$sha" -F force=true >/dev/null
   echo "Moved ${name} -> ${sha}." >&2
 else
   gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \

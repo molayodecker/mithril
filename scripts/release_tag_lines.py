@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Print "<tag> <commit-sha>" lines from a GitHub matching-refs payload."""
+"""Read commit SHAs from a GitHub tag ref or matching-refs payload."""
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -17,25 +18,25 @@ def flatten(payload):
     return payload
 
 
-def commit_sha(obj):
-    sha = obj["sha"]
-    kind = obj.get("type")
-    if kind == "commit":
-        return sha
-    if kind != "tag":
-        raise SystemExit(f"unsupported git object {kind}")
+def github_object(path):
     repo = os.environ["GITHUB_REPOSITORY"]
-    raw = subprocess.check_output(
-        ["gh", "api", f"repos/{repo}/git/tags/{sha}"],
-        text=True,
-    )
-    peeled = json.loads(raw)["object"]
-    if peeled.get("type") != "commit":
-        raise SystemExit(f"annotated tag {sha} does not point at a commit")
-    return peeled["sha"]
+    raw = subprocess.check_output(["gh", "api", f"repos/{repo}/git/{path}"], text=True)
+    return json.loads(raw)["object"]
+
+
+def commit_sha(obj):
+    while obj["type"] == "tag":
+        obj = github_object(f"tags/{obj['sha']}")
+    sha = obj["sha"].lower()
+    if obj["type"] != "commit" or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise SystemExit("Tag does not point at a commit.")
+    return sha
 
 
 def main():
+    if len(sys.argv) == 2:
+        print(commit_sha(github_object(f"ref/tags/{sys.argv[1]}")))
+        return
     for ref in flatten(json.load(sys.stdin)):
         name = ref["ref"].removeprefix("refs/tags/")
         print(name, commit_sha(ref["object"]))
