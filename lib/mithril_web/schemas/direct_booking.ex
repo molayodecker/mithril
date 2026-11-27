@@ -139,7 +139,12 @@ defmodule MithrilWeb.Schemas.DirectBooking do
           items: %Schema{type: :string, maxLength: 64}
         },
         serviceDurationOptionId: %Schema{type: :string, format: :uuid, nullable: true},
-        visitDurationHours: %Schema{type: :number, minimum: 0, nullable: true}
+        visitDurationHours: %Schema{type: :number, minimum: 0, nullable: true},
+        includeBookingCover: %Schema{
+          type: :boolean,
+          default: true,
+          description: "When false, booking cover is omitted from the price. Defaults to true."
+        }
       },
       required: [:serviceId, :cleanerId, :scheduledDate, :durationHours]
     })
@@ -269,7 +274,13 @@ defmodule MithrilWeb.Schemas.DirectBooking do
         durationAdjustment: %Schema{type: :number, nullable: true},
         serviceDurationOptionId: %Schema{type: :string, format: :uuid, nullable: true},
         bookingSource: %Schema{type: :string, nullable: true, maxLength: 64},
-        visitDurationHours: %Schema{type: :number, nullable: true, minimum: 0}
+        visitDurationHours: %Schema{type: :number, nullable: true, minimum: 0},
+        includeBookingCover: %Schema{
+          type: :boolean,
+          default: true,
+          description:
+            "When false, booking cover is omitted from the price and the saved booking. Defaults to true."
+        }
       },
       required: [
         :serviceId,
@@ -353,7 +364,13 @@ defmodule MithrilWeb.Schemas.DirectBooking do
         durationAdjustment: %Schema{type: :number, nullable: true},
         serviceDurationOptionId: %Schema{type: :string, format: :uuid, nullable: true},
         bookingSource: %Schema{type: :string, nullable: true, maxLength: 64},
-        visitDurationHours: %Schema{type: :number, nullable: true, minimum: 0}
+        visitDurationHours: %Schema{type: :number, nullable: true, minimum: 0},
+        includeBookingCover: %Schema{
+          type: :boolean,
+          default: true,
+          description:
+            "When false, booking cover is omitted from the price and the saved booking. Defaults to true."
+        }
       },
       required: [
         :serviceId,
