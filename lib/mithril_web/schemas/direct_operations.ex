@@ -167,6 +167,34 @@ defmodule MithrilWeb.Schemas.DirectOperations do
     })
   end
 
+  defmodule CleanerApplicationFeedbackRequest do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminCleanerApplicationFeedbackRequest",
+      type: :object,
+      properties: %{
+        feedback: %Schema{type: :string, maxLength: 1000, nullable: true}
+      }
+    })
+  end
+
+  defmodule CleanerApplicationDecisionResponse do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectAdminCleanerApplicationDecisionResponse",
+      type: :object,
+      properties: %{
+        status: %Schema{type: :string, enum: ["rejected", "requested_info"]},
+        adminFeedback: %Schema{type: :string, nullable: true}
+      },
+      required: [:status]
+    })
+  end
+
   defmodule CleanerApprovalResponse do
     require OpenApiSpex
     alias OpenApiSpex.Schema

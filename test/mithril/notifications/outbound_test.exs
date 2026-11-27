@@ -121,6 +121,15 @@ defmodule Mithril.Notifications.OutboundTest do
     end
   end
 
+  test "application templates pass the applicant name and feedback to WhatsApp" do
+    for template <- ["application_rejected", "request_more_info"] do
+      assert Outbound.content_variables(template, %{
+               "name" => "Ama",
+               "feedback" => "Send a clearer ID photo."
+             }) == %{"1" => "Ama", "2" => "Send a clearer ID photo."}
+    end
+  end
+
   defp restore_env(key, nil), do: Application.delete_env(:mithril, key)
   defp restore_env(key, value), do: Application.put_env(:mithril, key, value)
 end

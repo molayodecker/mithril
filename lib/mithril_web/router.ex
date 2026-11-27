@@ -219,6 +219,14 @@ defmodule MithrilWeb.Router do
          DirectOperationsController,
          :approve_cleaner_application
 
+    post "/admin/cleaner-applications/:id/reject",
+         DirectOperationsController,
+         :reject_cleaner_application
+
+    post "/admin/cleaner-applications/:id/request-info",
+         DirectOperationsController,
+         :request_cleaner_application_info
+
     get "/admin/cleaner-application-drafts",
         DirectController,
         :list_admin_cleaner_application_drafts

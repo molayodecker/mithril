@@ -3,6 +3,7 @@ defmodule Mithril.DirectOperationsTest do
 
   alias Ecto.Adapters.SQL.Sandbox
   alias Mithril.DirectOperations
+  alias Mithril.MobileGateway
   alias Mithril.Repo
 
   setup do
@@ -330,6 +331,72 @@ defmodule Mithril.DirectOperationsTest do
 
     assert {:error, :application_not_found} =
              DirectOperations.approve_cleaner_application(admin_id, application_id)
+  end
+
+  test "reject and request-info update a reviewable application" do
+    reviewer_id = insert_user!("reviewer-#{System.unique_integer([:positive])}@tryinstaclean.com")
+    applicant_id = insert_user!("applicant@example.com")
+    application_id = Ecto.UUID.generate()
+
+    Repo.query!("INSERT INTO public.user_roles (user_id, role_id) VALUES ($1, 'reviewer')", [
+      Ecto.UUID.dump!(reviewer_id)
+    ])
+
+    Repo.query!("""
+    CREATE TABLE public.cleaner_applications (
+      id uuid PRIMARY KEY,
+      user_id uuid NOT NULL,
+      status text NOT NULL DEFAULT 'pending',
+      name text,
+      email text,
+      phone text,
+      admin_feedback text,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_applications (id, user_id, status, name, email, phone)
+      VALUES ($1, $2, 'pending', 'Ama Mensah', 'ama@example.com', '+233241111111')
+      """,
+      [Ecto.UUID.dump!(application_id), Ecto.UUID.dump!(applicant_id)]
+    )
+
+    assert {:error, :invalid_request} =
+             DirectOperations.request_cleaner_application_info(reviewer_id, application_id, %{
+               "feedback" => "   "
+             })
+
+    assert {:ok, %{status: "requested_info", adminFeedback: "Send a clearer ID photo."}} =
+             DirectOperations.request_cleaner_application_info(reviewer_id, application_id, %{
+               "feedback" => "  Send a clearer ID photo.  "
+             })
+
+    patch = %{
+      "table" => "cleaner_applications",
+      "action" => "update",
+      "patch" => %{"name" => "Ama A. Mensah", "status" => "approved"}
+    }
+
+    assert {:ok, _} = MobileGateway.run_query(reviewer_id, patch)
+    assert %{rows: [["requested_info", "Ama Mensah"]]} = application_state()
+
+    assert {:ok, _} = MobileGateway.run_query(applicant_id, patch)
+    assert %{rows: [["pending", "Ama A. Mensah"]]} = application_state()
+
+    assert {:ok, %{status: "rejected", adminFeedback: nil}} =
+             DirectOperations.reject_cleaner_application(reviewer_id, application_id, %{})
+
+    assert {:error, :application_not_reviewable} =
+             DirectOperations.reject_cleaner_application(reviewer_id, application_id, %{})
+
+    assert {:ok, _} = MobileGateway.run_query(applicant_id, patch)
+    assert %{rows: [["rejected", "Ama A. Mensah"]]} = application_state()
+  end
+
+  defp application_state do
+    Repo.query!("SELECT status, name FROM public.cleaner_applications")
   end
 
   defp insert_user!(email) do
