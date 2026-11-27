@@ -159,6 +159,66 @@ defmodule Mithril.DirectBookingsTest do
              ).rows
   end
 
+  test "turning booking cover off omits the cover charge from the saved price" do
+    previous = Application.get_env(:mithril, :direct_client_bookings, false)
+    Application.put_env(:mithril, :direct_client_bookings, true)
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :direct_client_bookings, previous)
+    end)
+
+    customer_id = Ecto.UUID.generate()
+    cleaner_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.users (id, email, status)
+      VALUES ($1, 'customer@example.com', 'active'),
+             ($2, 'cleaner@example.com', 'active')
+      """,
+      [Ecto.UUID.dump!(customer_id), Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_data (
+        user_id, verified, status, hourly_rate, specialties
+      ) VALUES ($1, true, 'active', 50, ARRAY['regular_cleaning'])
+      """,
+      [Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    params = %{
+      "serviceId" => 1,
+      "cleanerId" => cleaner_id,
+      "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 3)),
+      "scheduledTime" => "10:00",
+      "durationHours" => 3,
+      "address" => "Labone, Accra",
+      "timezone" => "Africa/Accra",
+      "includeBookingCover" => false
+    }
+
+    assert {:ok, quoted} = DirectBookings.preview_price(params)
+    assert quoted["finalAmountMinor"] == 18_850
+    assert quoted["bookingCoverMajor"] == 0
+    refute Map.has_key?(quoted, "includeBookingCover")
+
+    assert {:ok, created} = DirectBookings.create_customer_booking(customer_id, params)
+    assert created.amountMinor == 18_850
+
+    assert [[false, cover_amount]] =
+             Repo.query!(
+               "SELECT booking_cover, booking_cover_amount FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(created.id)]
+             ).rows
+
+    assert Decimal.compare(cover_amount, 0) == :eq
+
+    assert {:error, :invalid_request} =
+             DirectBookings.preview_price(Map.put(params, "includeBookingCover", "no"))
+  end
+
   test "recurring checkout creates one pending subscription for each Paystack interval" do
     previous = Application.get_env(:mithril, :direct_client_bookings, false)
     Application.put_env(:mithril, :direct_client_bookings, true)
@@ -2243,12 +2303,12 @@ defmodule Mithril.DirectBookingsTest do
         50::numeric,
         100::numeric,
         10::numeric,
-        5::numeric,
-        19350,
+        CASE WHEN COALESCE(p_include_booking_cover, true) THEN 5::numeric ELSE 0::numeric END,
+        CASE WHEN COALESCE(p_include_booking_cover, true) THEN 19350 ELSE 18850 END,
         0,
         0,
         CASE WHEN p_is_recurring THEN 1500 ELSE 0 END,
-        19350,
+        CASE WHEN COALESCE(p_include_booking_cover, true) THEN 19350 ELSE 18850 END,
         false,
         false,
         'customer_provided',

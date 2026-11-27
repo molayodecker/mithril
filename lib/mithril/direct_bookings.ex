@@ -139,7 +139,10 @@ defmodule Mithril.DirectBookings do
          {:ok, service} <- service_details(input.service_id),
          :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
          {:ok, pricing} <- compute_pricing(Map.merge(input, legacy)) do
-      {:ok, Map.delete(pricing, "cleanerEarningsMinor")}
+      {:ok,
+       pricing
+       |> Map.delete("cleanerEarningsMinor")
+       |> Map.delete("includeBookingCover")}
     end
   end
 
@@ -1071,7 +1074,7 @@ defmodule Mithril.DirectBookings do
              p_service_timezone => $4::text,
              p_recurrence_interval => $6::text,
              p_is_recurring => $7::boolean,
-             p_include_booking_cover => true,
+             p_include_booking_cover => $11::boolean,
              p_supplies_option => 'customer_provided'::text,
              p_cleaner_id => $5::uuid,
              p_extra_task_ids => $8::text[],
@@ -1090,11 +1093,12 @@ defmodule Mithril.DirectBookings do
              is_binary(Map.get(input, :recurrence_interval)),
              legacy_extra_task_ids_for_pricing(input),
              legacy_service_duration_option_id(input),
-             legacy_visit_duration_hours_for_pricing(input)
+             legacy_visit_duration_hours_for_pricing(input),
+             include_booking_cover?(input)
            ]
          ) do
       {:ok, %{rows: [[pricing]]}} ->
-        {:ok, pricing}
+        {:ok, Map.put(pricing, "includeBookingCover", include_booking_cover?(input))}
 
       {:ok, %{rows: []}} ->
         {:error, :pricing_unavailable}
@@ -1103,6 +1107,10 @@ defmodule Mithril.DirectBookings do
         Logger.warning("Direct booking pricing failed: #{inspect(error)}")
         {:error, :pricing_unavailable}
     end
+  end
+
+  defp include_booking_cover?(input) do
+    Map.get(input, :include_booking_cover, true) != false
   end
 
   defp service_details(service_id) do
@@ -1491,7 +1499,7 @@ defmodule Mithril.DirectBookings do
              $1, $2, $3, $4, $5::date, $6::time, $7, $7, $8,
              NULLIF($9::text, ''), $10::numeric, $11::integer, $12::integer,
              $13::integer, $14::integer, $15::integer,
-             $16, $17, $18, $19, $20, 0, true, $21, $22, $23,
+             $16, $17, $18, $19, $20, 0, $52, $21, $22, $23,
              $24::integer, $25::integer, 'pending', 'pending', $26, $27,
              $28::uuid, NULLIF($29::text, ''),
              $30, NULLIF($31::text, ''), NULLIF($32::text, ''), NULLIF($33::text, ''),
@@ -1553,7 +1561,8 @@ defmodule Mithril.DirectBookings do
              legacy_extra_task_ids_for_storage(input),
              decimal_hours(Map.get(input, :duration_adjustment, 0) || 0),
              dump_optional_uuid(Map.get(input, :service_duration_option_id)),
-             blank_to_nil(Map.get(input, :booking_source))
+             blank_to_nil(Map.get(input, :booking_source)),
+             Map.get(pricing, "includeBookingCover", true) != false
            ]
          ) do
       {:ok, %{rows: [[id]]}} ->
@@ -1586,7 +1595,8 @@ defmodule Mithril.DirectBookings do
                NULLIF(btrim(to_jsonb(b)->>'timezone'), ''),
                'Africa/Accra'
              ) AS timezone,
-             turnover_guest_checkout_at, turnover_next_checkin_at, turnover_opportunity_id, property_id
+             turnover_guest_checkout_at, turnover_next_checkin_at, turnover_opportunity_id, property_id,
+             COALESCE(b.booking_cover, true)
            FROM public.bookings b
            WHERE id = $1 AND customer_id = $2
            FOR UPDATE
@@ -1619,7 +1629,8 @@ defmodule Mithril.DirectBookings do
          turnover_guest_checkout_at,
          turnover_next_checkin_at,
          turnover_opportunity_id,
-         property_id
+         property_id,
+         booking_cover
        ]) do
     %{
       id: id,
@@ -1636,7 +1647,8 @@ defmodule Mithril.DirectBookings do
       turnover_guest_checkout_at: turnover_guest_checkout_at,
       turnover_next_checkin_at: turnover_next_checkin_at,
       turnover_opportunity_id: turnover_opportunity_id,
-      property_id: property_id
+      property_id: property_id,
+      booking_cover: booking_cover != false
     }
   end
 
@@ -1689,7 +1701,8 @@ defmodule Mithril.DirectBookings do
       scheduled_date: input.scheduled_date,
       scheduled_time: input.scheduled_time,
       duration_hours: duration_hours,
-      timezone: input.timezone || booking.timezone
+      timezone: input.timezone || booking.timezone,
+      include_booking_cover: Map.get(booking, :booking_cover, true) != false
     }
   end
 
@@ -1851,7 +1864,8 @@ defmodule Mithril.DirectBookings do
                   extra_task_ids,
                   status::text,
                   payment_status::text,
-                  subscription_id
+                  subscription_id,
+                  COALESCE(booking_cover, true)
            FROM public.bookings
            WHERE id = $1
            FOR UPDATE
@@ -1871,7 +1885,8 @@ defmodule Mithril.DirectBookings do
              extra_task_ids,
              status,
              payment_status,
-             subscription_id
+             subscription_id,
+             booking_cover
            ]
          ]
        }} ->
@@ -1894,7 +1909,8 @@ defmodule Mithril.DirectBookings do
                scheduled_time: scheduled_time,
                duration_hours: decimal_number(duration_hours),
                timezone: timezone,
-               extra_task_ids: normalize_extra_task_ids(extra_task_ids)
+               extra_task_ids: normalize_extra_task_ids(extra_task_ids),
+               include_booking_cover: booking_cover != false
              }}
         end
 
@@ -1914,7 +1930,8 @@ defmodule Mithril.DirectBookings do
       scheduled_time: booking.scheduled_time,
       duration_hours: booking.duration_hours,
       timezone: booking.timezone,
-      extra_task_ids: booking.extra_task_ids
+      extra_task_ids: booking.extra_task_ids,
+      include_booking_cover: Map.get(booking, :include_booking_cover, true) != false
     }
   end
 
@@ -1963,7 +1980,7 @@ defmodule Mithril.DirectBookings do
                is_weekend = $9,
                pricing_version = $10,
                platform_fee = $11,
-               booking_cover = true,
+               booking_cover = $17,
                booking_cover_amount = $12,
                work_rate_ghs_per_hour = $13,
                supplies_option = $14,
@@ -1989,7 +2006,8 @@ defmodule Mithril.DirectBookings do
              pricing["workRateGhsPerHour"],
              pricing["suppliesOption"] || "customer_provided",
              pricing["suppliesAllowanceMinor"] || 0,
-             pricing["cleanerEarningsMinor"]
+             pricing["cleanerEarningsMinor"],
+             Map.get(pricing, "includeBookingCover", true) != false
            ]
          ) do
       {:ok, %{rows: [[_id]]}} -> :ok
@@ -2060,7 +2078,8 @@ defmodule Mithril.DirectBookings do
          {:ok, cleaner_id} <- required_uuid(params["cleanerId"]),
          {:ok, scheduled_date} <- iso_date(params["scheduledDate"]),
          {:ok, duration_hours} <- positive_number(params["durationHours"]),
-         {:ok, recurrence_interval} <- optional_recurrence_interval(params["recurrenceInterval"]) do
+         {:ok, recurrence_interval} <- optional_recurrence_interval(params["recurrenceInterval"]),
+         {:ok, include_booking_cover} <- boolean_param(params["includeBookingCover"], true) do
       {:ok,
        %{
          service_id: service_id,
@@ -2068,7 +2087,8 @@ defmodule Mithril.DirectBookings do
          scheduled_date: scheduled_date,
          duration_hours: duration_hours,
          timezone: normalize_timezone(params["timezone"]),
-         recurrence_interval: recurrence_interval
+         recurrence_interval: recurrence_interval,
+         include_booking_cover: include_booking_cover
        }}
     else
       _ -> {:error, :invalid_request}
