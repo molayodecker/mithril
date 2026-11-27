@@ -139,7 +139,7 @@ defmodule Mithril.StripeBookingPaymentAttemptReserveTest do
 
     assert %{rows: [["YES"]]} = expires_at_nullable()
 
-    assert %{rows: [[true]]} =
+    assert %{rows: [[nil]]} =
              Repo.query!(
                "SELECT expires_at FROM public.payment_attempts WHERE id = $1",
                [Ecto.UUID.dump!(attempt_id)]
@@ -155,7 +155,7 @@ defmodule Mithril.StripeBookingPaymentAttemptReserveTest do
                [Ecto.UUID.dump!(attempt_id)]
              )
 
-    assert %{rows: [[nil]]} =
+    assert %{rows: [[true]]} =
              Repo.query!(
                """
                SELECT expires_at = now() + interval '24 hours'
