@@ -565,7 +565,7 @@ defmodule Mithril.StripeBookingPayments do
     case Repo.query(
            """
            SELECT attempt_id, created, state, reference, authorization_url, access_code,
-                  payment_status, expires_at, amount_minor, currency, request_fingerprint,
+                  payment_status, amount_minor, currency, request_fingerprint,
                   provider, stripe_payment_intent_id, stripe_client_secret
            FROM public.reserve_booking_payment_attempt($1::uuid, $2::text, $3::bigint, $4::text, 'stripe')
            """,
@@ -628,7 +628,6 @@ defmodule Mithril.StripeBookingPayments do
       _authorization_url,
       _access_code,
       payment_status,
-      _expires_at,
       amount_minor,
       currency,
       _request_fingerprint,

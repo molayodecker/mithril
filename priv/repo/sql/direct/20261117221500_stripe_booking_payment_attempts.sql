@@ -376,7 +376,10 @@ BEGIN
     stripe_payment_intent_id = v_payment_intent_id,
     stripe_client_secret = v_client_secret,
     ready_at = coalesce(pa.ready_at, now()),
-    expires_at = 'infinity'::timestamptz,
+    -- NULL means this ready checkout does not expire. `expires_at <= now()`
+    -- is not true for NULL. Do not use infinity: Postgrex rejects it, and
+    -- reserve returns this column to the client.
+    expires_at = NULL,
     updated_at = now()
   WHERE pa.id = p_attempt_id
   RETURNING * INTO v_attempt;
