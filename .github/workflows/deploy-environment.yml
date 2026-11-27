@@ -37,6 +37,10 @@ on:
         required: false
         type: boolean
         default: false
+    outputs:
+      deploy_sha:
+        description: Commit that was deployed
+        value: ${{ jobs.deploy.outputs.deploy_sha }}
 
 # Repository contents remain read-only during deployment, including production.
 permissions:
@@ -56,6 +60,8 @@ jobs:
       actions: read
       statuses: write
     environment: ${{ inputs.environment_name }}
+    outputs:
+      deploy_sha: ${{ steps.sha.outputs.sha }}
     env:
       FLY_APP: ${{ inputs.fly_app }}
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -95,8 +101,12 @@ jobs:
           fetch-depth: 0
 
       - name: Record deployment SHA
+        id: sha
         shell: bash
-        run: echo "DEPLOY_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+        run: |
+          sha="$(git rev-parse HEAD)"
+          echo "DEPLOY_SHA=$sha" >> "$GITHUB_ENV"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       - name: Confirm CI passed for this commit
         if: ${{ inputs.confirm_ci }}

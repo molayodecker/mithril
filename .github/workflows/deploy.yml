@@ -15,7 +15,11 @@ on:
           - production
         default: staging
       commit_sha:
-        description: Exact main commit SHA to deploy. Required for production; optional for staging.
+        description: Commit to deploy. A 40-character SHA, vX.Y.Z, or staging/<sha>. For production, supply this or version.
+        required: false
+        type: string
+      version:
+        description: Release or tag to deploy, such as v0.1.4 or staging/<sha>. For production, supply this or commit_sha.
         required: false
         type: string
 
@@ -53,9 +57,33 @@ jobs:
       apply_auth_schema: true
     secrets: inherit
 
+  resolve_dispatch:
+    # Manual deploys name a commit, a release, or an immutable staging tag.
+    # The resolved commit is what the environment jobs check out.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve version or tag
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          VERSION: ${{ inputs.version }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: bash scripts/resolve_deploy_ref.sh
+
   staging_manual:
-    # Manual staging deploys are allowed from main. If commit_sha is omitted,
+    # Manual staging deploys are allowed from main. If no target is given,
     # deploy the main commit from which the workflow was dispatched.
+    needs: resolve_dispatch
     if: >-
       github.event_name == 'workflow_dispatch'
       && github.ref == 'refs/heads/main'
@@ -71,7 +99,7 @@ jobs:
       fly_config: fly.staging.toml
       ready_url: https://instaclean-mithril-staging.fly.dev/ready
       openapi_url: https://instaclean-mithril-staging.fly.dev/openapi.json
-      checkout_ref: ${{ inputs.commit_sha != '' && inputs.commit_sha || github.sha }}
+      checkout_ref: ${{ needs.resolve_dispatch.outputs.sha }}
       confirm_ci: true
       require_staging_status: false
       mark_staging_status: true
@@ -79,8 +107,10 @@ jobs:
     secrets: inherit
 
   production:
-    # Production is an explicit promotion. The operator must supply the exact
-    # main commit SHA that already deployed successfully to staging.
+    # Production is an explicit promotion of a commit that already passed
+    # staging. The operator names that commit, its vX.Y.Z release, or its
+    # staging/<sha> tag. The tag is resolved before the staging check.
+    needs: resolve_dispatch
     if: >-
       github.event_name == 'workflow_dispatch'
       && github.ref == 'refs/heads/main'
@@ -96,7 +126,7 @@ jobs:
       fly_config: fly.toml
       ready_url: https://api.tryinstaclean.com/ready
       openapi_url: https://api.tryinstaclean.com/openapi.json
-      checkout_ref: ${{ inputs.commit_sha }}
+      checkout_ref: ${{ needs.resolve_dispatch.outputs.sha }}
       confirm_ci: true
       require_staging_status: true
       mark_staging_status: false
@@ -111,7 +141,7 @@ jobs:
       statuses: write
     uses: ./.github/workflows/finalize-staging.yml
     with:
-      checkout_ref: ${{ github.event.workflow_run.head_sha }}
+      checkout_ref: ${{ needs.staging_after_ci.outputs.deploy_sha }}
 
   finalize_staging_manual:
     needs: staging_manual
@@ -121,4 +151,18 @@ jobs:
       statuses: write
     uses: ./.github/workflows/finalize-staging.yml
     with:
-      checkout_ref: ${{ inputs.commit_sha != '' && inputs.commit_sha || github.sha }}
+      checkout_ref: ${{ needs.staging_manual.outputs.deploy_sha }}
+
+  record_production:
+    needs: production
+    if: ${{ needs.production.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Point env/production at the promoted commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash scripts/move_env_tag.sh env/production "${{ needs.production.outputs.deploy_sha }}"

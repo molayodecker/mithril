@@ -164,13 +164,14 @@ The charged amount is the stored booking snapshot, never a client-supplied total
 
 Every successful [CI](.github/workflows/ci.yml) run on `main` deploys that commit to **staging** (`instaclean-mithril-staging`) via the [Deploy](.github/workflows/deploy.yml) workflow.
 
-**Production** (`api.tryinstaclean.com`) is promoted manually. Use the exact `main` commit SHA that already passed CI and deployed to staging (`commit_sha` is required).
+**Production** (`api.tryinstaclean.com`) is promoted manually. Name the `vX.Y.Z` release created when that commit passed staging, its `staging/<sha>` tag, or the commit SHA.
 
 ```bash
-gh workflow run Deploy --repo molayodecker/mithril --ref main -f environment=production -f commit_sha=6aa47cff835d81b524316ded34b58d1582ea4aa6
+gh workflow run Deploy --repo molayodecker/mithril --ref main -f environment=production -f version=v0.1.4
+gh workflow run Deploy --repo molayodecker/mithril --ref main -f environment=production -f version=staging/6aa47cff835d81b524316ded34b58d1582ea4aa6
 ```
 
-Replace `commit_sha` with the SHA you are promoting (for example from the latest green CI run on `main` or the `staging/<sha>` tag written after staging deploy). Track the run in GitHub Actions → **Deploy**.
+`env/production` moves to the commit you promoted. `env/staging` moves when staging deploys. Release tags stay on the commit they were created for, so promoting an older `vX.Y.Z` is how production moves back. Track the run in GitHub Actions → **Deploy**.
 
 ## Database and backups
 

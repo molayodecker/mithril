@@ -60,9 +60,10 @@ Deploy policy:
 
 - Pull requests run CI only.
 - A successful CI run on a **push** to this repository's `main` deploys that exact commit to **staging**.
-- After staging passes `/ready` and `/openapi.json`, the workflow records a `mithril/staging` success status on that commit and creates git tag `staging/<full-commit-sha>` (idempotent on redeploy).
-- **Production** is a manual promotion from `workflow_dispatch` on `main`. Select `production` and enter the exact 40-character commit SHA that was tested in staging.
-- Production refuses a SHA that is not reachable from `main`, lacks successful push CI, or lacks a successful `mithril/staging` status.
+- After staging passes `/ready` and `/openapi.json`, the workflow records a `mithril/staging` success status on that commit and creates two immutable git tags: `staging/<full-commit-sha>` and the next `vX.Y.Z` release. It also moves `env/staging` to that commit.
+- **Production** is a manual promotion from `workflow_dispatch` on `main`. Select `production` and enter a `vX.Y.Z` release, a `staging/<sha>` tag, or the 40-character commit SHA. A successful promotion moves `env/production` to that commit.
+- `env/staging` and `env/production` only record what is currently deployed. Promote a release or a `staging/<sha>` tag to move production; those tags do not move.
+- Production still refuses a commit that is not reachable from `main`, lacks successful push CI, or lacks a successful `mithril/staging` status.
 
 Staging resources:
 
