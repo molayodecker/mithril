@@ -370,6 +370,13 @@ defmodule Mithril.StripeBookingPayments do
       }}}
   end
 
+  defp normalize_attempt(%{state: "checkout_expired"} = attempt, booking_uuid, fingerprint, snapshot) do
+    with :ok <- resolve_expired_intent(attempt),
+         {:ok, replacement} <- reserve_stripe_attempt(booking_uuid, fingerprint, snapshot) do
+      normalize_attempt(replacement, booking_uuid, fingerprint, snapshot)
+    end
+  end
+
   defp normalize_attempt(%{state: "ready"} = attempt, booking_uuid, fingerprint, snapshot) do
     case ready_usd_checkout(attempt) do
       {:ok, payload} ->
@@ -412,7 +419,13 @@ defmodule Mithril.StripeBookingPayments do
         end
       end)
 
-    {:ok, polled}
+    case polled do
+      %{state: "checkout_expired"} ->
+        normalize_attempt(polled, booking_uuid, fingerprint, snapshot)
+
+      _ ->
+        {:ok, polled}
+    end
   end
 
   defp normalize_attempt(attempt, _booking_uuid, _fingerprint, _snapshot), do: {:ok, attempt}
@@ -564,9 +577,14 @@ defmodule Mithril.StripeBookingPayments do
   defp reserve_stripe_attempt(booking_uuid, fingerprint, snapshot) do
     case Repo.query(
            """
-           SELECT attempt_id, created, state, reference, authorization_url, access_code,
+           SELECT attempt_id, created,
+                  CASE WHEN state = 'ready' AND expires_at <= now()
+                       THEN 'checkout_expired' ELSE state END,
+                  reference, authorization_url, access_code,
                   payment_status, amount_minor, currency, request_fingerprint,
-                  provider, stripe_payment_intent_id, stripe_client_secret
+                  provider, stripe_payment_intent_id,
+                  CASE WHEN state = 'ready' AND expires_at <= now()
+                       THEN NULL ELSE stripe_client_secret END
            FROM public.reserve_booking_payment_attempt($1::uuid, $2::text, $3::bigint, $4::text, 'stripe')
            """,
            [booking_uuid, fingerprint, snapshot.amount_minor, snapshot.currency]
@@ -662,6 +680,58 @@ defmodule Mithril.StripeBookingPayments do
            stripe_payment_intent_id: stripe_payment_intent_id,
            stripe_client_secret: stripe_client_secret
          }}
+    end
+  end
+
+  defp resolve_expired_intent(%{stripe_payment_intent_id: id} = attempt)
+       when is_binary(id) and id != "" do
+    case Stripe.fetch_payment_intent(id) do
+      {:ok, intent} ->
+        case intent[:status] || intent["status"] do
+          "succeeded" ->
+            case reconcile_stripe_payment_intent(id) do
+              {:ok, %{data: %{verified: true}}} -> :ok
+              {:error, _} = error -> error
+              _ -> {:error, :prepare_failed}
+            end
+
+          "canceled" ->
+            expire_canceled_attempt(attempt)
+
+          "processing" ->
+            {:error, {:status, 409, %{error: "Your previous card payment is still processing."}}}
+
+          status
+          when status in ~w(requires_payment_method requires_confirmation requires_action requires_capture) ->
+            case Stripe.cancel_payment_intent(id) do
+              :ok -> expire_canceled_attempt(attempt)
+              {:error, reason} -> {:error, {:cancel_failed, reason}}
+            end
+
+          _ ->
+            {:error, :prepare_failed}
+        end
+
+      {:error, reason} ->
+        {:error, {:cancel_failed, reason}}
+    end
+  end
+
+  defp resolve_expired_intent(_attempt), do: {:error, :prepare_failed}
+
+  defp expire_canceled_attempt(attempt) do
+    case Repo.query(
+           """
+           UPDATE public.payment_attempts
+           SET status = 'expired', stripe_client_secret = NULL,
+               failed_at = coalesce(failed_at, now()), updated_at = now()
+           WHERE id = $1 AND provider = 'stripe' AND status = 'ready'
+             AND stripe_payment_intent_id = $2 AND expires_at <= now()
+           """,
+           [attempt.attempt_id, attempt.stripe_payment_intent_id]
+         ) do
+      {:ok, _} -> :ok
+      {:error, _} -> {:error, :database_unavailable}
     end
   end
 

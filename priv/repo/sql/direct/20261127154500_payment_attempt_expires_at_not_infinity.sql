@@ -1,12 +1,5 @@
--- Ready Stripe attempts were stored with expires_at = infinity so they would
--- not expire while the customer finished checkout. Postgrex raises on that
--- value, and reserve_booking_payment_attempt returns the column, so the next
--- checkout becomes an Internal Server Error.
--- NULL does not satisfy `expires_at <= now()`, so a ready attempt still does
--- not expire.
--- Older databases declare expires_at NOT NULL. Drop that constraint before
--- replacing infinity, or the update fails and a new ready attempt cannot be
--- saved. Safe to run again.
+-- Give ready Stripe attempts 24 hours from the first successful preparation.
+-- Keep legacy infinity values out of Postgrex results.
 
 ALTER TABLE public.payment_attempts
   ALTER COLUMN expires_at DROP NOT NULL;
@@ -123,16 +116,23 @@ BEGIN
     RETURN;
   END IF;
 
+  IF v_attempt.status = 'ready' AND v_attempt.expires_at <= now() THEN
+    state := 'checkout_expired';
+    reference := v_attempt.reference;
+    stripe_payment_intent_id := v_attempt.stripe_payment_intent_id;
+    stripe_client_secret := NULL;
+    payment_status := v_payment_status;
+    RETURN NEXT;
+    RETURN;
+  END IF;
+
   UPDATE public.payment_attempts pa
   SET
     status = 'ready',
     stripe_payment_intent_id = v_payment_intent_id,
     stripe_client_secret = v_client_secret,
     ready_at = coalesce(pa.ready_at, now()),
-    -- NULL means this ready checkout does not expire. `expires_at <= now()`
-    -- is not true for NULL. Do not use infinity: Postgrex rejects it, and
-    -- reserve returns this column to the client.
-    expires_at = NULL,
+    expires_at = coalesce(pa.ready_at, now()) + interval '24 hours',
     updated_at = now()
   WHERE pa.id = p_attempt_id
   RETURNING * INTO v_attempt;
@@ -156,6 +156,16 @@ $function$;
 -- %%
 
 UPDATE public.payment_attempts
-SET expires_at = NULL,
+SET expires_at = CASE
+      WHEN provider = 'stripe' AND status = 'ready'
+        THEN coalesce(ready_at, updated_at, created_at) + interval '24 hours'
+      ELSE NULL
+    END,
+    ready_at = CASE
+      WHEN provider = 'stripe' AND status = 'ready'
+        THEN coalesce(ready_at, updated_at, created_at)
+      ELSE ready_at
+    END,
     updated_at = now()
-WHERE expires_at = 'infinity'::timestamptz;
+WHERE expires_at = 'infinity'::timestamptz
+   OR (provider = 'stripe' AND status = 'ready' AND expires_at IS NULL);
