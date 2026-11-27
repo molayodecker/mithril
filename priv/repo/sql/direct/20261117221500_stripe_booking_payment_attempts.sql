@@ -42,6 +42,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS payment_attempts_stripe_payment_intent_idx
 
 -- %%
 
+-- Existing databases created expires_at NOT NULL. The complete function below
+-- stores NULL so a ready checkout does not expire. Drop the constraint before
+-- replacing that function. Replay-safe when the column is already nullable.
+ALTER TABLE public.payment_attempts
+  ALTER COLUMN expires_at DROP NOT NULL;
+
+-- %%
+
 -- Staging already has this 5-argument overload with a provider default.
 -- CREATE OR REPLACE cannot remove that default. Drop only this signature.
 -- The 4-argument Paystack function is a different function and stays.

@@ -112,10 +112,12 @@ defmodule Mithril.StripeBookingPaymentAttemptReserveTest do
              )
   end
 
-  test "a ready Stripe attempt expires at null so reserve can decode the row" do
+  test "drops NOT NULL before clearing an infinite expiry and marking an attempt ready" do
     booking_id = Ecto.UUID.generate()
     customer_id = Ecto.UUID.generate()
     attempt_id = Ecto.UUID.generate()
+
+    assert %{rows: [["NO"]]} = expires_at_nullable()
 
     Repo.query!(
       "INSERT INTO public.bookings (id, customer_id, final_amount_minor, currency) VALUES ($1, $2, 250, 'GHS')",
@@ -126,10 +128,22 @@ defmodule Mithril.StripeBookingPaymentAttemptReserveTest do
       """
       INSERT INTO public.payment_attempts
         (id, booking_id, provider, reference, request_fingerprint, status, amount_minor, currency, expires_at)
-      VALUES ($1, $2, 'stripe', 'BK-ready', 'same-fingerprint', 'initializing', 250, 'GHS', now() + interval '5 minutes')
+      VALUES (
+        $1, $2, 'stripe', 'BK-ready', 'same-fingerprint', 'initializing', 250, 'GHS', 'infinity'
+      )
       """,
       [Ecto.UUID.dump!(attempt_id), Ecto.UUID.dump!(booking_id)]
     )
+
+    apply_expires_at_upgrade!()
+
+    assert %{rows: [["YES"]]} = expires_at_nullable()
+
+    assert %{rows: [[nil]]} =
+             Repo.query!(
+               "SELECT expires_at FROM public.payment_attempts WHERE id = $1",
+               [Ecto.UUID.dump!(attempt_id)]
+             )
 
     assert %{rows: [["ready", "BK-ready", "pi_ready_123", "pi_ready_123_secret", "pending"]]} =
              Repo.query!(
@@ -138,12 +152,6 @@ defmodule Mithril.StripeBookingPaymentAttemptReserveTest do
                  $1::uuid, 'pi_ready_123', 'pi_ready_123_secret', 'BK-ready'
                )
                """,
-               [Ecto.UUID.dump!(attempt_id)]
-             )
-
-    assert %{rows: [[nil]]} =
-             Repo.query!(
-               "SELECT expires_at FROM public.payment_attempts WHERE id = $1",
                [Ecto.UUID.dump!(attempt_id)]
              )
 
@@ -201,13 +209,38 @@ defmodule Mithril.StripeBookingPaymentAttemptReserveTest do
       access_code text,
       stripe_payment_intent_id text,
       stripe_client_secret text,
-      expires_at timestamptz,
+      expires_at timestamptz NOT NULL,
       ready_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now(),
       failed_at timestamptz
     )
     """)
+  end
+
+  defp expires_at_nullable do
+    Repo.query!("""
+    SELECT is_nullable
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'payment_attempts'
+      AND column_name = 'expires_at'
+    """)
+  end
+
+  defp apply_expires_at_upgrade! do
+    sql_path =
+      Path.join([
+        File.cwd!(),
+        "priv/repo/sql/direct/20261127154500_payment_attempt_expires_at_not_infinity.sql"
+      ])
+
+    sql_path
+    |> File.read!()
+    |> String.split("\n-- %%\n")
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.each(&Repo.query!/1)
   end
 
   defp create_reserve_function! do
