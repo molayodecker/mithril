@@ -7,6 +7,8 @@ defmodule MithrilWeb.DirectOperationsController do
   alias MithrilWeb.Schemas.DirectOperations.{
     CancelBookingRequest,
     CancellationPolicyResponse,
+    CleanerApplicationDecisionResponse,
+    CleanerApplicationFeedbackRequest,
     CleanerApprovalResponse,
     CleanerListResponse,
     PaymentDiagnosticsResponse,
@@ -114,6 +116,43 @@ defmodule MithrilWeb.DirectOperationsController do
     respond(conn, DirectOperations.approve_cleaner_application(user_id(conn), id))
   end
 
+  @application_id_parameter [
+    in: :path,
+    schema: %Schema{type: :string, format: :uuid},
+    required: true,
+    description: "Cleaner application ID"
+  ]
+
+  operation(:reject_cleaner_application,
+    operation_id: "direct.rejectCleanerApplication",
+    summary: "Decline a cleaner application",
+    parameters: [id: @application_id_parameter],
+    request_body:
+      {"Decline note", "application/json", CleanerApplicationFeedbackRequest, required: false},
+    responses: [
+      ok: {"Application decision", "application/json", CleanerApplicationDecisionResponse}
+    ]
+  )
+
+  def reject_cleaner_application(conn, %{"id" => id} = params) do
+    respond(conn, DirectOperations.reject_cleaner_application(user_id(conn), id, params))
+  end
+
+  operation(:request_cleaner_application_info,
+    operation_id: "direct.requestCleanerApplicationInfo",
+    summary: "Ask an applicant for more information",
+    parameters: [id: @application_id_parameter],
+    request_body:
+      {"Information request", "application/json", CleanerApplicationFeedbackRequest},
+    responses: [
+      ok: {"Application decision", "application/json", CleanerApplicationDecisionResponse}
+    ]
+  )
+
+  def request_cleaner_application_info(conn, %{"id" => id} = params) do
+    respond(conn, DirectOperations.request_cleaner_application_info(user_id(conn), id, params))
+  end
+
   operation(:payment_diagnostics,
     operation_id: "direct.getPaymentDiagnostics",
     summary: "Explain payment state using local attempts and Paystack verification",
@@ -146,6 +185,7 @@ defmodule MithrilWeb.DirectOperationsController do
   defp error_response(:not_found), do: {404, "not_found"}
   defp error_response(:application_not_found), do: {404, "application_not_found"}
   defp error_response(:application_user_not_found), do: {409, "application_user_not_found"}
+  defp error_response(:application_not_reviewable), do: {409, "application_not_reviewable"}
   defp error_response(:already_refunded), do: {409, "already_refunded"}
   defp error_response(:payment_not_refundable), do: {409, "payment_not_refundable"}
   defp error_response(:booking_not_cancellable), do: {409, "booking_not_cancellable"}

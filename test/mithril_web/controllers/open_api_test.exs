@@ -139,6 +139,13 @@ defmodule MithrilWeb.OpenApiTest do
     assert spec["paths"]["/direct/admin/live-jobs"]["get"]
     assert spec["paths"]["/direct/admin/cleaners"]["get"]
     assert spec["paths"]["/direct/admin/cleaner-applications/{id}/approve"]["post"]
+
+    assert spec["paths"]["/direct/admin/cleaner-applications/{id}/reject"]["post"]["operationId"] ==
+             "direct.rejectCleanerApplication"
+
+    assert spec["paths"]["/direct/admin/cleaner-applications/{id}/request-info"]["post"][
+             "operationId"
+           ] == "direct.requestCleanerApplicationInfo"
     assert spec["paths"]["/direct/admin/bookings/{id}/payment-diagnostics"]["get"]
     assert spec["components"]["schemas"]["DirectCreatePlacementRequest"]
     assert spec["components"]["schemas"]["DirectPlacementDetailResponse"]

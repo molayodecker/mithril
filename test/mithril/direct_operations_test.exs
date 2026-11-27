@@ -332,6 +332,51 @@ defmodule Mithril.DirectOperationsTest do
              DirectOperations.approve_cleaner_application(admin_id, application_id)
   end
 
+  test "reject and request-info update a reviewable application" do
+    admin_id = insert_user!("reviewer-#{System.unique_integer([:positive])}@tryinstaclean.com")
+    application_id = Ecto.UUID.generate()
+
+    Repo.query!("INSERT INTO public.user_roles (user_id, role_id) VALUES ($1, 'admin')", [
+      Ecto.UUID.dump!(admin_id)
+    ])
+
+    Repo.query!("""
+    CREATE TABLE public.cleaner_applications (
+      id uuid PRIMARY KEY,
+      status text NOT NULL DEFAULT 'pending',
+      name text,
+      email text,
+      phone text,
+      admin_feedback text,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+    """)
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_applications (id, status, name, email, phone)
+      VALUES ($1, 'pending', 'Ama Mensah', 'ama@example.com', '+233241111111')
+      """,
+      [Ecto.UUID.dump!(application_id)]
+    )
+
+    assert {:error, :invalid_request} =
+             DirectOperations.request_cleaner_application_info(admin_id, application_id, %{
+               "feedback" => "   "
+             })
+
+    assert {:ok, %{status: "requested_info", adminFeedback: "Send a clearer ID photo."}} =
+             DirectOperations.request_cleaner_application_info(admin_id, application_id, %{
+               "feedback" => "  Send a clearer ID photo.  "
+             })
+
+    assert {:ok, %{status: "rejected", adminFeedback: nil}} =
+             DirectOperations.reject_cleaner_application(admin_id, application_id, %{})
+
+    assert {:error, :application_not_reviewable} =
+             DirectOperations.reject_cleaner_application(admin_id, application_id, %{})
+  end
+
   defp insert_user!(email) do
     id = Ecto.UUID.generate()
 

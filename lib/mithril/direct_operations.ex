@@ -9,11 +9,13 @@ defmodule Mithril.DirectOperations do
   require Logger
 
   alias Mithril.AccountCompletionBonus
+  alias Mithril.Notifications.Outbound
   alias Mithril.Paystack
   alias Mithril.Repo
 
   @cancellable_statuses ~w(pending confirmed scheduled)
   @reschedulable_statuses ~w(confirmed scheduled)
+  @reviewable_application_statuses ~w(pending requested_info submitted under_review)
   @default_timezone "Africa/Accra"
 
   def cancellation_policy(user_id, booking_id) do
@@ -243,6 +245,106 @@ defmodule Mithril.DirectOperations do
       {:error, reason} -> {:error, reason}
     end
   end
+
+  def reject_cleaner_application(user_id, application_id, params) when is_map(params) do
+    decide_cleaner_application(user_id, application_id, "rejected", "application_rejected", params)
+  end
+
+  def request_cleaner_application_info(user_id, application_id, params) when is_map(params) do
+    decide_cleaner_application(
+      user_id,
+      application_id,
+      "requested_info",
+      "request_more_info",
+      params
+    )
+  end
+
+  defp decide_cleaner_application(user_id, application_id, status, template, params) do
+    with {:ok, feedback} <- decision_feedback(status, params),
+         {:ok, actor_uid} <- dump_uuid(user_id),
+         {:ok, app_id} <- dump_uuid(application_id),
+         :ok <- require_admin(actor_uid),
+         {:ok, applicant} <- update_application_decision(app_id, status, feedback) do
+      notify_applicant(applicant, template, feedback)
+      {:ok, %{status: status, adminFeedback: blank_to_nil(feedback)}}
+    else
+      :error -> {:error, :invalid_request}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp decision_feedback("requested_info", params) do
+    case optional_text(params["feedback"], 1000) do
+      "" ->
+        {:error, :invalid_request}
+
+      feedback ->
+        {:ok, feedback}
+    end
+  end
+
+  defp decision_feedback(_status, params) do
+    {:ok, optional_text(params["feedback"], 1000)}
+  end
+
+  defp update_application_decision(app_id, status, feedback) do
+    case Repo.query(
+           """
+           UPDATE public.cleaner_applications
+           SET status = $1,
+               admin_feedback = NULLIF($2, ''),
+               updated_at = now()
+           WHERE id = $3
+             AND status = ANY($4::text[])
+           RETURNING COALESCE(name, ''), COALESCE(email, ''), COALESCE(phone, '')
+           """,
+           [status, feedback, app_id, @reviewable_application_statuses]
+         ) do
+      {:ok, %{rows: [[name, email, phone]]}} ->
+        {:ok, %{name: name, email: email, phone: phone}}
+
+      {:ok, %{rows: []}} ->
+        application_decision_miss(app_id)
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp application_decision_miss(app_id) do
+    case Repo.query("SELECT status FROM public.cleaner_applications WHERE id = $1", [app_id]) do
+      {:ok, %{rows: []}} ->
+        {:error, :application_not_found}
+
+      {:ok, %{rows: [[_status]]}} ->
+        {:error, :application_not_reviewable}
+
+      {:error, error} ->
+        database_error(error)
+    end
+  end
+
+  defp notify_applicant(applicant, template, feedback) do
+    try do
+      Outbound.deliver(%{
+        "template" => template,
+        "channel" => "all",
+        "email" => applicant.email,
+        "phone" => applicant.phone,
+        "variables" => %{"name" => applicant.name, "feedback" => feedback},
+        "smsFallbackToWhatsapp" => true
+      })
+    rescue
+      exception ->
+        Logger.warning("cleaner application notice failed: #{Exception.message(exception)}")
+    end
+
+    :ok
+  end
+
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(value), do: value
 
   def payment_diagnostics(user_id, booking_id) do
     with {:ok, actor_uid} <- dump_uuid(user_id),
