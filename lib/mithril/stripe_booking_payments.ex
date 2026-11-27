@@ -370,7 +370,12 @@ defmodule Mithril.StripeBookingPayments do
       }}}
   end
 
-  defp normalize_attempt(%{state: "checkout_expired"} = attempt, booking_uuid, fingerprint, snapshot) do
+  defp normalize_attempt(
+         %{state: "checkout_expired"} = attempt,
+         booking_uuid,
+         fingerprint,
+         snapshot
+       ) do
     with :ok <- resolve_expired_intent(attempt),
          {:ok, replacement} <- reserve_stripe_attempt(booking_uuid, fingerprint, snapshot) do
       normalize_attempt(replacement, booking_uuid, fingerprint, snapshot)
