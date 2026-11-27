@@ -173,7 +173,7 @@ defmodule Mithril.MobileQueryTest do
 
     assert update_sql =~ "UPDATE public.cleaner_applications"
     assert update_sql =~ "cleaner_applications.user_id::text = "
-    assert update_sql =~ "cleaner_applications.status::text = 'pending'"
+    assert update_sql =~ "cleaner_applications.status::text IN ('pending', 'requested_info')"
     refute update_sql =~ "SET user_id"
     refute Map.has_key?(patch, "status")
     refute Map.has_key?(patch, "admin_feedback")
@@ -214,10 +214,10 @@ defmodule Mithril.MobileQueryTest do
     assert upsert_sql =~ "cleaner_application_trainings.user_id::text = $2::text"
 
     assert upsert_sql =~
-             "application_id IN (SELECT id FROM public.cleaner_applications WHERE user_id::text = $2::text AND status::text = 'pending' FOR SHARE)"
+             "application_id IN (SELECT id FROM public.cleaner_applications WHERE user_id::text = $2::text AND status::text IN ('pending', 'requested_info') FOR SHARE)"
 
     # The parent is checked for both the INSERT and ON CONFLICT UPDATE paths.
-    assert length(String.split(upsert_sql, "status::text = 'pending'")) == 3
+    assert length(String.split(upsert_sql, "status::text IN ('pending', 'requested_info')")) == 3
 
     assert user_id == "user-1"
     assert hd(rows)["user_id"] == "user-1"
@@ -234,7 +234,7 @@ defmodule Mithril.MobileQueryTest do
 
     assert delete_sql =~ "DELETE FROM public.cleaner_application_trainings"
     assert delete_sql =~ "cleaner_application_trainings.user_id::text = "
-    assert delete_sql =~ "status::text = 'pending' FOR SHARE"
+    assert delete_sql =~ "status::text IN ('pending', 'requested_info') FOR SHARE"
     assert "app-1" in delete_params
     assert "user-1" in delete_params
     assert "cook" in delete_params
