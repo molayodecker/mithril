@@ -1821,7 +1821,8 @@ defmodule Mithril.Direct do
     end
   end
 
-  defp require_admin(uid) do
+  @doc false
+  def require_admin(uid) do
     case Repo.query(
            """
            SELECT EXISTS (

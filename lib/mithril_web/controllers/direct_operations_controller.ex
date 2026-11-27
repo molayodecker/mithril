@@ -142,8 +142,7 @@ defmodule MithrilWeb.DirectOperationsController do
     operation_id: "direct.requestCleanerApplicationInfo",
     summary: "Ask an applicant for more information",
     parameters: [id: @application_id_parameter],
-    request_body:
-      {"Information request", "application/json", CleanerApplicationFeedbackRequest},
+    request_body: {"Information request", "application/json", CleanerApplicationFeedbackRequest},
     responses: [
       ok: {"Application decision", "application/json", CleanerApplicationDecisionResponse}
     ]

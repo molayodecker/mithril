@@ -454,6 +454,10 @@ defmodule Mithril.MobileQuery do
           "#{column} = (jsonb_populate_record(NULL::public.#{table}, $1::jsonb)).#{column}"
         end)
 
+      # An applicant's saved corrections requeue the application for review.
+      set_sql =
+        if table == "cleaner_applications", do: set_sql <> ", status = 'pending'", else: set_sql
+
       returning = returning_sql(table, query["returning"])
 
       sql = """

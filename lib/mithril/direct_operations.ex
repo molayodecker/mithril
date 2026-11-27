@@ -9,6 +9,7 @@ defmodule Mithril.DirectOperations do
   require Logger
 
   alias Mithril.AccountCompletionBonus
+  alias Mithril.Direct
   alias Mithril.Notifications.Outbound
   alias Mithril.Paystack
   alias Mithril.Repo
@@ -247,7 +248,13 @@ defmodule Mithril.DirectOperations do
   end
 
   def reject_cleaner_application(user_id, application_id, params) when is_map(params) do
-    decide_cleaner_application(user_id, application_id, "rejected", "application_rejected", params)
+    decide_cleaner_application(
+      user_id,
+      application_id,
+      "rejected",
+      "application_rejected",
+      params
+    )
   end
 
   def request_cleaner_application_info(user_id, application_id, params) when is_map(params) do
@@ -264,13 +271,14 @@ defmodule Mithril.DirectOperations do
     with {:ok, feedback} <- decision_feedback(status, params),
          {:ok, actor_uid} <- dump_uuid(user_id),
          {:ok, app_id} <- dump_uuid(application_id),
-         :ok <- require_admin(actor_uid),
+         :ok <- Direct.require_admin(actor_uid),
          {:ok, applicant} <- update_application_decision(app_id, status, feedback) do
       notify_applicant(applicant, template, feedback)
       {:ok, %{status: status, adminFeedback: blank_to_nil(feedback)}}
     else
       :error -> {:error, :invalid_request}
-      {:error, reason} -> {:error, reason}
+      {:error, reason} when is_atom(reason) -> {:error, reason}
+      {:error, error} -> database_error(error)
     end
   end
 

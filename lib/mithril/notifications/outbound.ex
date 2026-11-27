@@ -173,6 +173,14 @@ defmodule Mithril.Notifications.Outbound do
     }
   end
 
+  def content_variables(template, variables)
+      when template in ["application_rejected", "request_more_info"] do
+    %{
+      "1" => present(variables["name"]) || "there",
+      "2" => present(variables["feedback"]) || "Please contact Instaclean for details."
+    }
+  end
+
   def content_variables("phone_otp", variables) do
     %{"1" => present(variables["otp"]) || ""}
   end

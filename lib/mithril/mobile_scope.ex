@@ -152,7 +152,7 @@ defmodule Mithril.MobileScope do
 
       table == "cleaner_application_trainings" ->
         {:ok,
-         "AND (jsonb_populate_record(NULL::public.cleaner_application_trainings, value)).application_id IN (#{pending_application_ids(index)})"}
+         "AND (jsonb_populate_record(NULL::public.cleaner_application_trainings, value)).application_id IN (#{editable_application_ids(index)})"}
 
       true ->
         :none
@@ -170,18 +170,18 @@ defmodule Mithril.MobileScope do
       MapSet.member?(@directory_select, table) and action == "select" ->
         :open
 
-      # An applicant can edit only while review is pending. Keep this predicate in
+      # An applicant can edit while review is pending or awaiting information. Keep this predicate in
       # the UPDATE itself so an admin approval racing with a save wins atomically.
       table == "cleaner_applications" and action == "update" ->
         {:ok,
-         "cleaner_applications.user_id::text = $#{index}::text AND cleaner_applications.status::text = 'pending'"}
+         "cleaner_applications.user_id::text = $#{index}::text AND cleaner_applications.status::text IN ('pending', 'requested_info')"}
 
       table == "cleaner_applications" and action in ["insert", "upsert"] ->
         {:ok, "cleaner_applications.user_id::text = $#{index}::text"}
 
       table == "cleaner_application_trainings" and action in ["update", "upsert", "delete"] ->
         {:ok,
-         "cleaner_application_trainings.user_id::text = $#{index}::text AND cleaner_application_trainings.application_id IN (#{pending_application_ids(index)})"}
+         "cleaner_application_trainings.user_id::text = $#{index}::text AND cleaner_application_trainings.application_id IN (#{editable_application_ids(index)})"}
 
       MapSet.member?(@lifecycle, table) and action != "select" ->
         {:error, :forbidden}
@@ -317,8 +317,8 @@ defmodule Mithril.MobileScope do
   end
 
   # Lock the parent against concurrent approval while a training mutation runs.
-  defp pending_application_ids(index) do
-    "SELECT id FROM public.cleaner_applications WHERE user_id::text = $#{index}::text AND status::text = 'pending' FOR SHARE"
+  defp editable_application_ids(index) do
+    "SELECT id FROM public.cleaner_applications WHERE user_id::text = $#{index}::text AND status::text IN ('pending', 'requested_info') FOR SHARE"
   end
 
   defp booking_ids(index) do
