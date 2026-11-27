@@ -66,6 +66,21 @@ jobs:
             verify_existing_tag
           fi
 
+      - name: Check out release scripts
+        uses: actions/checkout@v4
+
+      - name: Create the immutable release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash scripts/create_release_tag.sh "$DEPLOY_SHA"
+
+      - name: Point env/staging at this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash scripts/move_env_tag.sh env/staging "$DEPLOY_SHA"
+
       - name: Mark staging deployment successful
         env:
           GH_TOKEN: ${{ github.token }}

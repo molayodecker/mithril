@@ -41,6 +41,8 @@ jobs:
         run: bash scripts/test_db_sync_merge_missing.sh
       - name: Exercise Direct worker schedule reservations
         run: bash scripts/test_direct_schedule_reservations.sh
+      - name: Exercise release versions and promotion targets
+        run: bash scripts/test_release_versions.sh
 
       - uses: erlef/setup-beam@v1
         with:
