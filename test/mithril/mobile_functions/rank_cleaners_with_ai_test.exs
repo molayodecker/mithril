@@ -228,7 +228,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAiTest do
              })
   end
 
-  test "passes an HH:MM slot to nearby cleaner lookup as a time struct" do
+  test "nearby cleaner lookup receives the parsed slot and a whole-hour duration" do
     install_nearby_time_probe!()
     Application.delete_env(:mithril, :ai_match_candidate_loader)
 
@@ -244,7 +244,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAiTest do
                  "latitude" => 5.6,
                  "longitude" => -0.2,
                  "serviceId" => 1,
-                 "durationHours" => 2
+                 "durationHours" => 3.4899999999999998
                }
              })
 
@@ -255,7 +255,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAiTest do
              "invalid_candidate_ids"
            ]
 
-    assert_recorded_slot!(~T[06:00:00])
+    assert_recorded_slot!(~T[06:00:00], 3)
   end
 
   test "destination ranking passes an HH:MM slot as a time struct" do
@@ -273,7 +273,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAiTest do
 
     assert body.provider == "locationiq"
 
-    assert_recorded_slot!(~T[06:00:00])
+    assert_recorded_slot!(~T[06:00:00], 2)
   end
 
   test "deterministic fallback preserves authoritative availability order without faking distance" do
@@ -319,9 +319,11 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAiTest do
     assert Enum.map(body.cleaners, & &1.cleaner_id) == ["first", "second"]
   end
 
-  defp assert_recorded_slot!(expected) do
-    assert [[recorded]] = Repo.query!("SELECT start_time FROM public.test_nearby_slot_calls").rows
-    assert Time.compare(recorded, expected) == :eq
+  defp assert_recorded_slot!(expected_time, expected_duration) do
+    assert [[recorded_time, ^expected_duration]] =
+             Repo.query!("SELECT start_time, duration_hours FROM public.test_nearby_slot_calls").rows
+
+    assert Time.compare(recorded_time, expected_time) == :eq
   end
 
   defp install_nearby_time_probe! do
@@ -351,7 +353,8 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAiTest do
 
     Repo.query!("""
     CREATE TABLE public.test_nearby_slot_calls (
-      start_time time NOT NULL
+      start_time time NOT NULL,
+      duration_hours integer NOT NULL
     )
     """)
 
@@ -368,7 +371,7 @@ defmodule Mithril.MobileFunctions.RankCleanersWithAiTest do
     LANGUAGE plpgsql
     AS $$
     BEGIN
-      INSERT INTO public.test_nearby_slot_calls(start_time) VALUES ($5);
+      INSERT INTO public.test_nearby_slot_calls(start_time, duration_hours) VALUES ($5, $6);
       RETURN;
     END;
     $$

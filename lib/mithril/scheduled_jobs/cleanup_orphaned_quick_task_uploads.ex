@@ -7,10 +7,14 @@ defmodule Mithril.ScheduledJobs.CleanupOrphanedQuickTaskUploads do
   alias Mithril.StorageCleanup.QuickTask
 
   @bucket "quick-task-photos"
-  # Must be an interval struct: Postgrex cannot encode a plain string for `$1::interval`.
+  # Postgrex encodes interval parameters as a struct. A text value such as
+  # "24 hours" raises before the cleanup query runs.
   @default_older_than %Postgrex.Interval{secs: 86_400}
   @default_limit 200
   @default_max_pages 10
+
+  @doc false
+  def older_than_interval, do: @default_older_than
 
   @spec run() :: :ok | {:error, term()}
   def run do
