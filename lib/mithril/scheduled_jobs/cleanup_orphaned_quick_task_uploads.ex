@@ -7,18 +7,23 @@ defmodule Mithril.ScheduledJobs.CleanupOrphanedQuickTaskUploads do
   alias Mithril.StorageCleanup.QuickTask
 
   @bucket "quick-task-photos"
-  @default_limit 200
-  @default_max_pages 10
   # Postgrex encodes interval parameters as a struct. A text value such as
   # "24 hours" raises before the cleanup query runs.
-  @older_than %Postgrex.Interval{months: 0, days: 0, secs: 24 * 60 * 60, microsecs: 0}
+  @default_older_than %Postgrex.Interval{secs: 86_400}
+  @default_limit 200
+  @default_max_pages 10
 
   @doc false
-  def older_than_interval, do: @older_than
+  def older_than_interval, do: @default_older_than
 
   @spec run() :: :ok | {:error, term()}
   def run do
-    do_pages(0, @default_max_pages, @default_limit, @older_than, 0)
+    pages = 0
+    max_pages = @default_max_pages
+    limit = @default_limit
+    older_than = @default_older_than
+
+    do_pages(pages, max_pages, limit, older_than, 0)
   end
 
   defp do_pages(pages, max_pages, _limit, _older_than, path_total) when pages >= max_pages,

@@ -90,6 +90,7 @@ defmodule MithrilWeb.Plugs.DirectOpsAuthorization do
   defp permission_for(["notification-" <> _ | _], _), do: "notifications"
   defp permission_for(["notifications" | _], _), do: "notifications"
   defp permission_for(["whatsapp" | _], _), do: "whatsapp_inbox"
+  defp permission_for(["twilio", "messages"], "GET"), do: "whatsapp_inbox"
   defp permission_for(["dispatch-map" | _], _), do: "dispatch_map"
   defp permission_for(["service-requests" | _], _), do: "dispatch"
   defp permission_for(["live-jobs" | _], _), do: "live"
