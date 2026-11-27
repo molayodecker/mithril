@@ -42,14 +42,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS payment_attempts_stripe_payment_intent_idx
 
 -- %%
 
--- Existing databases created expires_at NOT NULL. The complete function below
--- stores NULL so a ready checkout does not expire. Drop the constraint before
--- replacing that function. Replay-safe when the column is already nullable.
-ALTER TABLE public.payment_attempts
-  ALTER COLUMN expires_at DROP NOT NULL;
-
--- %%
-
 -- Staging already has this 5-argument overload with a provider default.
 -- CREATE OR REPLACE cannot remove that default. Drop only this signature.
 -- The 4-argument Paystack function is a different function and stays.
@@ -384,10 +376,7 @@ BEGIN
     stripe_payment_intent_id = v_payment_intent_id,
     stripe_client_secret = v_client_secret,
     ready_at = coalesce(pa.ready_at, now()),
-    -- NULL means this ready checkout does not expire. `expires_at <= now()`
-    -- is not true for NULL. Do not use infinity: Postgrex rejects it, and
-    -- reserve returns this column to the client.
-    expires_at = NULL,
+    expires_at = 'infinity'::timestamptz,
     updated_at = now()
   WHERE pa.id = p_attempt_id
   RETURNING * INTO v_attempt;
