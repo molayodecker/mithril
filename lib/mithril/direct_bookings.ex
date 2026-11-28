@@ -1906,10 +1906,14 @@ defmodule Mithril.DirectBookings do
   defp merge_reschedule_schedule(path, booking, input) do
     duration_hours =
       case path do
-        :paid -> booking.duration_hours
+        :paid ->
+          booking.duration_hours
+
         :unpaid when booking.pricing_version in ["family_care_v1", "pet_care_v1"] ->
           booking.duration_hours
-        :unpaid -> input.duration_hours || booking.duration_hours
+
+        :unpaid ->
+          input.duration_hours || booking.duration_hours
       end
 
     %{

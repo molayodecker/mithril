@@ -228,7 +228,9 @@ defmodule Mithril.DirectBookingsTest do
       Application.put_env(:mithril, :direct_client_bookings, previous)
     end)
 
-    Repo.query!("DROP FUNCTION IF EXISTS public.validate_booking_timeslot_24h(text, numeric, date, text)")
+    Repo.query!(
+      "DROP FUNCTION IF EXISTS public.validate_booking_timeslot_24h(text, numeric, date, text)"
+    )
 
     Repo.query!("""
     CREATE FUNCTION public.validate_booking_timeslot_24h(
@@ -302,7 +304,9 @@ defmodule Mithril.DirectBookingsTest do
       Application.put_env(:mithril, :direct_client_bookings, previous)
     end)
 
-    Repo.query!("DROP FUNCTION IF EXISTS public.validate_booking_timeslot_24h(text, numeric, date, text)")
+    Repo.query!(
+      "DROP FUNCTION IF EXISTS public.validate_booking_timeslot_24h(text, numeric, date, text)"
+    )
 
     Repo.query!("""
     CREATE FUNCTION public.validate_booking_timeslot_24h(

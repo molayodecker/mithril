@@ -539,7 +539,9 @@ if config_env() != :test do
     end
 
   if sentry_dsn do
-    config :sentry, dsn: sentry_dsn
+    # Load the sampler before Sentry validates its configuration at startup.
+    Code.ensure_loaded!(Mithril.Sentry)
+    config :sentry, dsn: sentry_dsn, traces_sampler: &Mithril.Sentry.traces_sampler/1
 
     config :opentelemetry,
       traces_exporter: :none,

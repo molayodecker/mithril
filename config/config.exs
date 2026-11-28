@@ -51,18 +51,12 @@ config :logger, :default_formatter,
 
 # The DSN, environment, and release come from the runtime environment.
 # `logs` without a level attaches crash reporting and leaves Sentry Logs off.
-# Sentry validates `{module, fun}` with function_exported?/3 before Mithril
-# starts, and that returns false until the module is loaded. A fun defers the
-# call until a trace is sampled.
 config :sentry,
   enable_source_code_context: true,
   root_source_code_paths: [File.cwd!()],
   source_code_path_pattern: "lib/**/*.ex",
   in_app_otp_apps: [:mithril],
   traces_sample_rate: 1.0,
-  traces_sampler: fn sampling_context ->
-    Mithril.Sentry.traces_sampler(sampling_context)
-  end,
   before_send: {Mithril.Sentry, :before_send},
   logs: [capture_metadata: [:request_id]],
   integrations: [

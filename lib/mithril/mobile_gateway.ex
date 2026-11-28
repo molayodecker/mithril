@@ -135,7 +135,11 @@ defmodule Mithril.MobileGateway do
 
   @doc false
   def sanitize_guest_rpc_result({:ok, result}, name)
-      when name in ["compute_booking_pricing", "compute_family_care_pricing", "compute_pet_care_pricing"] do
+      when name in [
+             "compute_booking_pricing",
+             "compute_family_care_pricing",
+             "compute_pet_care_pricing"
+           ] do
     {:ok, strip_private_pricing_fields(result)}
   end
 
