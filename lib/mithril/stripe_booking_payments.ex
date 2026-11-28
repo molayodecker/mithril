@@ -884,6 +884,20 @@ defmodule Mithril.StripeBookingPayments do
   defp subscription_gate(_customer_id, %{subscription_id: nil}), do: {:ok, false}
 
   defp subscription_gate(customer_id, %{subscription_id: subscription_id}) do
+    case dump_uuid(subscription_id) do
+      {:ok, subscription_uuid} ->
+        query_subscription_gate(customer_id, subscription_uuid)
+
+      :error ->
+        Logger.error(
+          "Stripe subscription gate got invalid subscription_id: #{inspect(subscription_id)}"
+        )
+
+        {:error, {:status, 400, %{error: "The linked subscription is invalid."}}}
+    end
+  end
+
+  defp query_subscription_gate(customer_id, subscription_uuid) do
     case Repo.query(
            """
            SELECT status, recurrence_interval
@@ -891,7 +905,7 @@ defmodule Mithril.StripeBookingPayments do
            WHERE id = $1::uuid AND customer_id = $2::uuid
            LIMIT 1
            """,
-           [subscription_id, customer_id]
+           [subscription_uuid, customer_id]
          ) do
       {:ok, %{rows: [[status, recurrence_interval]]}} ->
         case classify_subscription(status, recurrence_interval) do
