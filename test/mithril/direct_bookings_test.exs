@@ -265,8 +265,13 @@ defmodule Mithril.DirectBookingsTest do
       }
     }
 
+    assert {:ok, preview} = DirectBookings.preview_price(params)
+    assert preview["pricingVersion"] == "family_care_v1"
+    assert preview["durationHours"] == 4
+
     assert {:ok, created} = DirectBookings.create_customer_booking(customer_id, params)
     assert created.amountMinor == 10_000
+    assert created.amountMinor == preview["finalAmountMinor"]
 
     assert [[false, cover_amount, duration_hours, notes, "family_care_v1"]] =
              Repo.query!(
@@ -282,6 +287,39 @@ defmodule Mithril.DirectBookingsTest do
     assert Decimal.compare(duration_hours, 4) == :eq
     assert notes =~ "1 child"
     assert notes =~ "Live-out"
+
+    assert {:ok, rescheduled} =
+             DirectBookings.reschedule(customer_id, created.id, %{
+               "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 5)),
+               "scheduledTime" => "14:00",
+               "durationHours" => 8
+             })
+
+    assert rescheduled["amountMinor"] == 10_000
+
+    assert [[duration_hours, duration_final]] =
+             Repo.query!(
+               "SELECT duration_hours, duration_final FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(created.id)]
+             ).rows
+
+    assert Decimal.compare(duration_hours, 4) == :eq
+    assert Decimal.compare(duration_final, 4) == :eq
+
+    for invalid <- [
+          put_in(params, ["familyCare", "frequency"], "weekly"),
+          put_in(params, ["familyCare", "frequency"], "monthly"),
+          put_in(params, ["familyCare"], %{
+            "carePackage" => "half_day",
+            "childCount" => 1,
+            "frequency" => "custom",
+            "selectedDayCount" => 2
+          }),
+          Map.put(params, "recurrenceInterval", "weekly")
+        ] do
+      assert {:error, :invalid_request} = DirectBookings.preview_price(invalid)
+      assert {:error, :invalid_request} = DirectBookings.create_customer_booking(customer_id, invalid)
+    end
 
     assert {:error, :invalid_request} =
              DirectBookings.create_customer_booking(

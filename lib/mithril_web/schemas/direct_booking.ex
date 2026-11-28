@@ -114,8 +114,38 @@ defmodule MithrilWeb.Schemas.DirectBooking do
     })
   end
 
+  defmodule FamilyCareCheckout do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectFamilyCareCheckout",
+      type: :object,
+      description:
+        "Single Child Care or Senior Care visit priced at the day rate. Recurrence is unsupported.",
+      properties: %{
+        carePackage: %Schema{
+          type: :string,
+          enum: ~w(half_day full_day experienced negotiable)
+        },
+        childCount: %Schema{type: :integer, minimum: 1, maximum: 12},
+        frequency: %Schema{
+          type: :string,
+          enum: ~w(once daily custom)
+        },
+        customDailyMajor: %Schema{type: :number, nullable: true, minimum: 0},
+        selectedDayCount: %Schema{type: :integer, nullable: true, minimum: 1, maximum: 1},
+        mobility: %Schema{type: :boolean, default: false},
+        errands: %Schema{type: :boolean, default: false},
+        appointments: %Schema{type: :boolean, default: false}
+      },
+      required: [:carePackage, :childCount, :frequency]
+    })
+  end
+
   defmodule BookingPricingRequest do
     require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectBooking.FamilyCareCheckout
     alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{
@@ -144,7 +174,8 @@ defmodule MithrilWeb.Schemas.DirectBooking do
           type: :boolean,
           default: true,
           description: "When false, booking cover is omitted from the price. Defaults to true."
-        }
+        },
+        familyCare: FamilyCareCheckout
       },
       required: [:serviceId, :cleanerId, :scheduledDate, :durationHours]
     })
@@ -198,35 +229,6 @@ defmodule MithrilWeb.Schemas.DirectBooking do
         :suppliesAllowanceMinor,
         :cleanerEarningsMinor
       ]
-    })
-  end
-
-  defmodule FamilyCareCheckout do
-    require OpenApiSpex
-    alias OpenApiSpex.Schema
-
-    OpenApiSpex.schema(%{
-      title: "DirectFamilyCareCheckout",
-      type: :object,
-      description:
-        "Child Care or Senior Care day-rate visit. When present, checkout uses compute_family_care_pricing instead of hourly cleaning pricing.",
-      properties: %{
-        carePackage: %Schema{
-          type: :string,
-          enum: ~w(half_day full_day experienced negotiable)
-        },
-        childCount: %Schema{type: :integer, minimum: 1, maximum: 12},
-        frequency: %Schema{
-          type: :string,
-          enum: ~w(once daily weekly monthly custom)
-        },
-        customDailyMajor: %Schema{type: :number, nullable: true, minimum: 0},
-        selectedDayCount: %Schema{type: :integer, nullable: true, minimum: 1, maximum: 7},
-        mobility: %Schema{type: :boolean, default: false},
-        errands: %Schema{type: :boolean, default: false},
-        appointments: %Schema{type: :boolean, default: false}
-      },
-      required: [:carePackage, :childCount, :frequency]
     })
   end
 

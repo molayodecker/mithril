@@ -1137,7 +1137,7 @@ defmodule Mithril.DirectBookings do
              'recurringAmountMinor', p.recurring_amount_minor,
              'firstChargeAmountMinor', p.first_charge_amount_minor,
              'discountRateBps', p.discount_rate_bps
-           )
+           ), p.billable_days
            FROM public.compute_family_care_pricing(
              $1::integer,
              $2::text,
@@ -1164,9 +1164,12 @@ defmodule Mithril.DirectBookings do
              care.appointments
            ]
          ) do
-      {:ok, %{rows: [[pricing]]}} ->
+      {:ok, %{rows: [[pricing, 1]]}} ->
         # Day-rate pricing already excludes booking cover.
         {:ok, Map.put(pricing, "includeBookingCover", false)}
+
+      {:ok, %{rows: [[_pricing, _days]]}} ->
+        {:error, :invalid_request}
 
       {:ok, %{rows: []}} ->
         {:error, :pricing_unavailable}
@@ -1767,6 +1770,7 @@ defmodule Mithril.DirectBookings do
     duration_hours =
       case path do
         :paid -> booking.duration_hours
+        :unpaid when booking.pricing_version == "family_care_v1" -> booking.duration_hours
         :unpaid -> input.duration_hours || booking.duration_hours
       end
 
@@ -2168,7 +2172,9 @@ defmodule Mithril.DirectBookings do
          {:ok, scheduled_date} <- iso_date(params["scheduledDate"]),
          {:ok, duration_hours} <- positive_number(params["durationHours"]),
          {:ok, recurrence_interval} <- optional_recurrence_interval(params["recurrenceInterval"]),
-         {:ok, include_booking_cover} <- boolean_param(params["includeBookingCover"], true) do
+         {:ok, include_booking_cover} <- boolean_param(params["includeBookingCover"], true),
+         {:ok, family_care} <- optional_family_care(params),
+         :ok <- validate_family_care_visit(family_care, recurrence_interval) do
       {:ok,
        %{
          service_id: service_id,
@@ -2177,7 +2183,8 @@ defmodule Mithril.DirectBookings do
          duration_hours: duration_hours,
          timezone: normalize_timezone(params["timezone"]),
          recurrence_interval: recurrence_interval,
-         include_booking_cover: include_booking_cover
+         include_booking_cover: include_booking_cover,
+         family_care: family_care
        }}
     else
       _ -> {:error, :invalid_request}
@@ -2191,16 +2198,14 @@ defmodule Mithril.DirectBookings do
          {:ok, idempotency_key} <- optional_idempotency_key(params["idempotencyKey"]),
          {:ok, visit} <- visit_details(params),
          {:ok, legacy} <- legacy_booking_metadata(params),
-         {:ok, direct_assignment} <- boolean_param(params["directAssignment"], false),
-         {:ok, family_care} <- optional_family_care(params) do
+         {:ok, direct_assignment} <- boolean_param(params["directAssignment"], false) do
       {:ok,
        Map.merge(input, %{
          scheduled_time: scheduled_time,
          address: address,
          special_instructions: optional_text(params["specialInstructions"], 4_000),
          idempotency_key: idempotency_key,
-         direct_assignment: direct_assignment,
-         family_care: family_care
+         direct_assignment: direct_assignment
        })
        |> Map.merge(visit)
        |> Map.merge(legacy)}
@@ -2660,6 +2665,14 @@ defmodule Mithril.DirectBookings do
 
   defp optional_family_care(%{"familyCare" => _}), do: {:error, :invalid_request}
   defp optional_family_care(_params), do: {:ok, nil}
+
+  defp validate_family_care_visit(nil, _recurrence_interval), do: :ok
+
+  defp validate_family_care_visit(%{frequency: frequency, selected_day_count: day_count}, nil)
+       when frequency in ~w(once daily custom) and day_count in [nil, 1],
+       do: :ok
+
+  defp validate_family_care_visit(_care, _recurrence_interval), do: {:error, :invalid_request}
 
   defp parse_family_care(value) do
     with {:ok, care_package} <- family_care_package(value["carePackage"]),
