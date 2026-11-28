@@ -318,7 +318,9 @@ defmodule Mithril.DirectBookingsTest do
           Map.put(params, "recurrenceInterval", "weekly")
         ] do
       assert {:error, :invalid_request} = DirectBookings.preview_price(invalid)
-      assert {:error, :invalid_request} = DirectBookings.create_customer_booking(customer_id, invalid)
+
+      assert {:error, :invalid_request} =
+               DirectBookings.create_customer_booking(customer_id, invalid)
     end
 
     assert {:error, :invalid_request} =
