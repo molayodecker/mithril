@@ -243,13 +243,13 @@ defmodule Mithril.DirectBookingsTest do
       """
       INSERT INTO public.cleaner_data (
         user_id, verified, status, hourly_rate, specialties
-      ) VALUES ($1, true, 'active', 50, ARRAY['regular_cleaning'])
+      ) VALUES ($1, true, 'active', 50, ARRAY['child_care', 'regular_cleaning'])
       """,
       [Ecto.UUID.dump!(cleaner_id)]
     )
 
     params = %{
-      "serviceId" => 1,
+      "serviceId" => 2,
       "cleanerId" => cleaner_id,
       "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 3)),
       "scheduledTime" => "14:00",
@@ -264,6 +264,15 @@ defmodule Mithril.DirectBookingsTest do
         "frequency" => "once"
       }
     }
+
+    assert {:error, :invalid_request} =
+             DirectBookings.preview_price(Map.delete(params, "familyCare"))
+
+    assert {:error, :invalid_request} =
+             DirectBookings.create_customer_booking(customer_id, Map.delete(params, "familyCare"))
+
+    assert {:error, :invalid_request} =
+             DirectBookings.preview_price(Map.put(params, "serviceId", 1))
 
     assert {:ok, preview} = DirectBookings.preview_price(params)
     assert preview["pricingVersion"] == "family_care_v1"
@@ -2167,18 +2176,31 @@ defmodule Mithril.DirectBookingsTest do
     )
     """)
 
+    Repo.query!("DROP TABLE IF EXISTS public.service_categories CASCADE")
+
+    Repo.query!("""
+    CREATE TABLE public.service_categories (id integer PRIMARY KEY, slug text)
+    """)
+
+    Repo.query!("INSERT INTO public.service_categories (id, slug) VALUES (2, 'caregiving')")
+
     Repo.query!("""
     CREATE TABLE public.service_types (
       id integer PRIMARY KEY,
       name text NOT NULL,
       price numeric,
       active boolean NOT NULL DEFAULT true,
-      specialty_slug text
+      specialty_slug text,
+      category_id integer
     )
     """)
 
     Repo.query!(
       "INSERT INTO public.service_types (id, name, specialty_slug) VALUES (1, 'Regular Cleaning', 'regular_cleaning')"
+    )
+
+    Repo.query!(
+      "INSERT INTO public.service_types (id, name, specialty_slug, category_id) VALUES (2, 'Child Care', 'child_care', 2)"
     )
 
     Repo.query!("""

@@ -1040,11 +1040,17 @@ defmodule Mithril.DirectBookings do
     """
   end
 
-  defp compute_pricing(%{family_care: care} = input) when is_map(care) do
-    compute_family_care_checkout_pricing(input, care)
+  defp compute_pricing(input) do
+    with {:ok, service} <- service_details(input.service_id) do
+      case {service.family_care?, Map.get(input, :family_care)} do
+        {true, care} when is_map(care) -> compute_family_care_checkout_pricing(input, care)
+        {false, nil} -> compute_standard_pricing(input)
+        _ -> {:error, :invalid_request}
+      end
+    end
   end
 
-  defp compute_pricing(input) do
+  defp compute_standard_pricing(input) do
     # Live Postgres has two compute_booking_pricing overloads with overlapping
     # defaults. Pass the extra-task arguments so PostgreSQL can pick one.
     case Repo.query(
@@ -1191,16 +1197,19 @@ defmodule Mithril.DirectBookings do
   defp service_details(service_id) do
     case Repo.query(
            """
-           SELECT name, specialty_slug
-           FROM public.service_types
-           WHERE id = $1 AND active = true
+           SELECT st.name, st.specialty_slug,
+                  COALESCE(sc.slug = 'caregiving', false)
+                    OR COALESCE(st.specialty_slug IN ('child_care', 'senior_care'), false)
+           FROM public.service_types st
+           LEFT JOIN public.service_categories sc ON sc.id = st.category_id
+           WHERE st.id = $1 AND st.active = true
            LIMIT 1
            """,
            [service_id]
          ) do
-      {:ok, %{rows: [[name, specialty_slug]]}}
+      {:ok, %{rows: [[name, specialty_slug, family_care?]]}}
       when is_binary(specialty_slug) and specialty_slug != "" ->
-        {:ok, %{name: name, specialty_slug: specialty_slug}}
+        {:ok, %{name: name, specialty_slug: specialty_slug, family_care?: family_care?}}
 
       {:ok, %{rows: _}} ->
         {:error, :invalid_service}
