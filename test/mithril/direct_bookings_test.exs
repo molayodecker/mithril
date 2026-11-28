@@ -219,6 +219,77 @@ defmodule Mithril.DirectBookingsTest do
              DirectBookings.preview_price(Map.put(params, "includeBookingCover", "no"))
   end
 
+  test "family care checkout stores the day-rate price and the visit notes" do
+    previous = Application.get_env(:mithril, :direct_client_bookings, false)
+    Application.put_env(:mithril, :direct_client_bookings, true)
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :direct_client_bookings, previous)
+    end)
+
+    customer_id = Ecto.UUID.generate()
+    cleaner_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.users (id, email, status)
+      VALUES ($1, 'customer@example.com', 'active'),
+             ($2, 'cleaner@example.com', 'active')
+      """,
+      [Ecto.UUID.dump!(customer_id), Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_data (
+        user_id, verified, status, hourly_rate, specialties
+      ) VALUES ($1, true, 'active', 50, ARRAY['regular_cleaning'])
+      """,
+      [Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    params = %{
+      "serviceId" => 1,
+      "cleanerId" => cleaner_id,
+      "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 3)),
+      "scheduledTime" => "14:00",
+      "durationHours" => 3,
+      "address" => "Labone, Accra",
+      "specialInstructions" => "Care recipients: 1 child\nArrangement: Live-out",
+      "timezone" => "Africa/Accra",
+      "includeBookingCover" => false,
+      "familyCare" => %{
+        "carePackage" => "half_day",
+        "childCount" => 1,
+        "frequency" => "once"
+      }
+    }
+
+    assert {:ok, created} = DirectBookings.create_customer_booking(customer_id, params)
+    assert created.amountMinor == 10_000
+
+    assert [[false, cover_amount, duration_hours, notes, "family_care_v1"]] =
+             Repo.query!(
+               """
+               SELECT booking_cover, booking_cover_amount, duration_hours,
+                      special_instructions, pricing_version
+               FROM public.bookings WHERE id = $1
+               """,
+               [Ecto.UUID.dump!(created.id)]
+             ).rows
+
+    assert Decimal.compare(cover_amount, 0) == :eq
+    assert Decimal.compare(duration_hours, 4) == :eq
+    assert notes =~ "1 child"
+    assert notes =~ "Live-out"
+
+    assert {:error, :invalid_request} =
+             DirectBookings.create_customer_booking(
+               customer_id,
+               Map.put(params, "familyCare", %{"carePackage" => "overnight"})
+             )
+  end
+
   test "recurring checkout creates one pending subscription for each Paystack interval" do
     previous = Application.get_env(:mithril, :direct_client_bookings, false)
     Application.put_env(:mithril, :direct_client_bookings, true)
@@ -2317,6 +2388,91 @@ defmodule Mithril.DirectBookingsTest do
         CASE WHEN p_is_recurring THEN 16448 ELSE NULL END,
         CASE WHEN p_is_recurring THEN 19350 ELSE NULL END,
         CASE WHEN p_is_recurring THEN 1500 ELSE NULL END
+    $$
+    """)
+
+    Repo.query!("""
+    CREATE FUNCTION public.compute_family_care_pricing(
+      p_service_id integer,
+      p_care_package text,
+      p_child_count integer,
+      p_scheduled_date date,
+      p_frequency text,
+      p_custom_daily_major numeric DEFAULT NULL,
+      p_selected_day_count integer DEFAULT NULL,
+      p_mobility boolean DEFAULT false,
+      p_errands boolean DEFAULT false,
+      p_appointments boolean DEFAULT false
+    ) RETURNS TABLE (
+      pricing_version text,
+      currency text,
+      care_package text,
+      child_count integer,
+      duration_hours numeric,
+      work_rate_ghs_per_hour numeric,
+      base_daily_major numeric,
+      children_surcharge_daily_major numeric,
+      extras_surcharge_daily_major numeric,
+      daily_major numeric,
+      billable_days integer,
+      subtotal_major numeric,
+      frequency_discount_bps integer,
+      frequency_discount_major numeric,
+      subtotal_labor_major numeric,
+      platform_fee_major numeric,
+      booking_cover_major numeric,
+      core_amount_minor integer,
+      same_day_surcharge_bps integer,
+      weekend_surcharge_bps integer,
+      recurring_weekly_discount_bps integer,
+      recurring_monthly_discount_bps integer,
+      same_day_surcharge_minor integer,
+      weekend_surcharge_minor integer,
+      recurring_discount_minor integer,
+      final_amount_minor integer,
+      recurring_amount_minor integer,
+      first_charge_amount_minor integer,
+      discount_rate_bps integer,
+      is_same_day boolean,
+      is_weekend boolean,
+      minimum_duration_hours numeric,
+      cleaner_earnings_minor integer
+    )
+    LANGUAGE sql AS $$
+      SELECT
+        'family_care_v1',
+        'GHS',
+        p_care_package,
+        p_child_count,
+        4::numeric,
+        25::numeric,
+        100::numeric,
+        0::numeric,
+        0::numeric,
+        100::numeric,
+        1,
+        100::numeric,
+        0,
+        0::numeric,
+        100::numeric,
+        15::numeric,
+        0::numeric,
+        10000,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        10000,
+        10000,
+        10000,
+        0,
+        false,
+        false,
+        4::numeric,
+        8500
     $$
     """)
 

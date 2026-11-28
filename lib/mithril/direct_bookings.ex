@@ -1040,6 +1040,10 @@ defmodule Mithril.DirectBookings do
     """
   end
 
+  defp compute_pricing(%{family_care: care} = input) when is_map(care) do
+    compute_family_care_checkout_pricing(input, care)
+  end
+
   defp compute_pricing(input) do
     # Live Postgres has two compute_booking_pricing overloads with overlapping
     # defaults. Pass the extra-task arguments so PostgreSQL can pick one.
@@ -1105,6 +1109,74 @@ defmodule Mithril.DirectBookings do
 
       {:error, error} ->
         Logger.warning("Direct booking pricing failed: #{inspect(error)}")
+        {:error, :pricing_unavailable}
+    end
+  end
+
+  defp compute_family_care_checkout_pricing(input, care) do
+    case Repo.query(
+           """
+           SELECT jsonb_build_object(
+             'currency', p.currency,
+             'pricingVersion', p.pricing_version,
+             'durationHours', p.duration_hours,
+             'workRateGhsPerHour', p.work_rate_ghs_per_hour,
+             'subtotalLaborMajor', p.subtotal_labor_major,
+             'platformFeeMajor', p.platform_fee_major,
+             'bookingCoverMajor', p.booking_cover_major,
+             'coreAmountMinor', p.core_amount_minor,
+             'sameDaySurchargeMinor', p.same_day_surcharge_minor,
+             'weekendSurchargeMinor', p.weekend_surcharge_minor,
+             'recurringDiscountMinor', p.recurring_discount_minor,
+             'finalAmountMinor', p.final_amount_minor,
+             'isSameDay', p.is_same_day,
+             'isWeekend', p.is_weekend,
+             'suppliesOption', 'customer_provided',
+             'suppliesAllowanceMinor', 0,
+             'cleanerEarningsMinor', p.cleaner_earnings_minor,
+             'recurringAmountMinor', p.recurring_amount_minor,
+             'firstChargeAmountMinor', p.first_charge_amount_minor,
+             'discountRateBps', p.discount_rate_bps
+           )
+           FROM public.compute_family_care_pricing(
+             $1::integer,
+             $2::text,
+             $3::integer,
+             $4::date,
+             $5::text,
+             $6::numeric,
+             $7::integer,
+             $8::boolean,
+             $9::boolean,
+             $10::boolean
+           ) p
+           """,
+           [
+             input.service_id,
+             care.care_package,
+             care.child_count,
+             input.scheduled_date,
+             care.frequency,
+             care.custom_daily_major,
+             care.selected_day_count,
+             care.mobility,
+             care.errands,
+             care.appointments
+           ]
+         ) do
+      {:ok, %{rows: [[pricing]]}} ->
+        # Day-rate pricing already excludes booking cover.
+        {:ok, Map.put(pricing, "includeBookingCover", false)}
+
+      {:ok, %{rows: []}} ->
+        {:error, :pricing_unavailable}
+
+      {:error, %Postgrex.Error{postgres: %{code: :raise_exception, message: message}}}
+      when is_binary(message) and message != "" ->
+        {:error, {:invalid_request, message}}
+
+      {:error, error} ->
+        Logger.warning("Family care booking pricing failed: #{inspect(error)}")
         {:error, :pricing_unavailable}
     end
   end
@@ -1596,7 +1668,8 @@ defmodule Mithril.DirectBookings do
                'Africa/Accra'
              ) AS timezone,
              turnover_guest_checkout_at, turnover_next_checkin_at, turnover_opportunity_id, property_id,
-             COALESCE(b.booking_cover, true)
+             COALESCE(b.booking_cover, true),
+             b.pricing_version
            FROM public.bookings b
            WHERE id = $1 AND customer_id = $2
            FOR UPDATE
@@ -1630,7 +1703,8 @@ defmodule Mithril.DirectBookings do
          turnover_next_checkin_at,
          turnover_opportunity_id,
          property_id,
-         booking_cover
+         booking_cover,
+         pricing_version
        ]) do
     %{
       id: id,
@@ -1648,7 +1722,8 @@ defmodule Mithril.DirectBookings do
       turnover_next_checkin_at: turnover_next_checkin_at,
       turnover_opportunity_id: turnover_opportunity_id,
       property_id: property_id,
-      booking_cover: booking_cover != false
+      booking_cover: booking_cover != false,
+      pricing_version: pricing_version
     }
   end
 
@@ -1725,12 +1800,26 @@ defmodule Mithril.DirectBookings do
     {:ok, %{"durationHours" => booking.duration_hours}}
   end
 
+  defp reschedule_pricing(:unpaid, %{pricing_version: "family_care_v1"} = booking, _schedule) do
+    {:ok, %{"durationHours" => booking.duration_hours}}
+  end
+
   defp reschedule_pricing(:unpaid, _booking, schedule) do
     compute_pricing(schedule)
   end
 
   defp apply_reschedule(:paid, booking, schedule, _pricing, customer_id) do
     update_reschedule_schedule(booking, schedule, customer_id, :paid)
+  end
+
+  defp apply_reschedule(
+         :unpaid,
+         %{pricing_version: "family_care_v1"} = booking,
+         schedule,
+         _pricing,
+         customer_id
+       ) do
+    update_reschedule_schedule(booking, schedule, customer_id, :unpaid)
   end
 
   defp apply_reschedule(:unpaid, booking, schedule, pricing, customer_id) do
@@ -2102,14 +2191,16 @@ defmodule Mithril.DirectBookings do
          {:ok, idempotency_key} <- optional_idempotency_key(params["idempotencyKey"]),
          {:ok, visit} <- visit_details(params),
          {:ok, legacy} <- legacy_booking_metadata(params),
-         {:ok, direct_assignment} <- boolean_param(params["directAssignment"], false) do
+         {:ok, direct_assignment} <- boolean_param(params["directAssignment"], false),
+         {:ok, family_care} <- optional_family_care(params) do
       {:ok,
        Map.merge(input, %{
          scheduled_time: scheduled_time,
          address: address,
          special_instructions: optional_text(params["specialInstructions"], 4_000),
          idempotency_key: idempotency_key,
-         direct_assignment: direct_assignment
+         direct_assignment: direct_assignment,
+         family_care: family_care
        })
        |> Map.merge(visit)
        |> Map.merge(legacy)}
@@ -2558,6 +2649,69 @@ defmodule Mithril.DirectBookings do
       _ -> :error
     end
   end
+
+  @family_care_packages ~w(half_day full_day experienced negotiable)
+  @family_care_frequencies ~w(once daily weekly monthly custom)
+
+  defp optional_family_care(%{"familyCare" => nil}), do: {:ok, nil}
+
+  defp optional_family_care(%{"familyCare" => value}) when is_map(value),
+    do: parse_family_care(value)
+
+  defp optional_family_care(%{"familyCare" => _}), do: {:error, :invalid_request}
+  defp optional_family_care(_params), do: {:ok, nil}
+
+  defp parse_family_care(value) do
+    with {:ok, care_package} <- family_care_package(value["carePackage"]),
+         {:ok, child_count} <- family_care_child_count(value["childCount"]),
+         {:ok, frequency} <- family_care_frequency(value["frequency"]),
+         {:ok, custom_daily_major} <- optional_non_negative_number(value["customDailyMajor"]),
+         {:ok, selected_day_count} <- optional_selected_day_count(value["selectedDayCount"]),
+         {:ok, mobility} <- boolean_param(value["mobility"], false),
+         {:ok, errands} <- boolean_param(value["errands"], false),
+         {:ok, appointments} <- boolean_param(value["appointments"], false) do
+      {:ok,
+       %{
+         care_package: care_package,
+         child_count: child_count,
+         frequency: frequency,
+         custom_daily_major: custom_daily_major,
+         selected_day_count: selected_day_count,
+         mobility: mobility,
+         errands: errands,
+         appointments: appointments
+       }}
+    else
+      _ -> {:error, :invalid_request}
+    end
+  end
+
+  defp family_care_package(value) when value in @family_care_packages, do: {:ok, value}
+  defp family_care_package(_), do: :error
+
+  defp family_care_frequency(value) when value in @family_care_frequencies, do: {:ok, value}
+  defp family_care_frequency(_), do: :error
+
+  defp family_care_child_count(value) when is_integer(value) and value >= 1 and value <= 12,
+    do: {:ok, value}
+
+  defp family_care_child_count(_), do: :error
+
+  defp optional_non_negative_number(nil), do: {:ok, nil}
+
+  defp optional_non_negative_number(value) do
+    case decimal_number(value) do
+      number when is_number(number) and number >= 0 -> {:ok, number}
+      _ -> :error
+    end
+  end
+
+  defp optional_selected_day_count(nil), do: {:ok, nil}
+
+  defp optional_selected_day_count(value) when is_integer(value) and value >= 1 and value <= 7,
+    do: {:ok, value}
+
+  defp optional_selected_day_count(_), do: :error
 
   defp boolean_param(nil, default), do: {:ok, default}
   defp boolean_param(value, _default) when is_boolean(value), do: {:ok, value}

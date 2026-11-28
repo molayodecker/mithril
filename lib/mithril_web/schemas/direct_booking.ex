@@ -201,8 +201,38 @@ defmodule MithrilWeb.Schemas.DirectBooking do
     })
   end
 
+  defmodule FamilyCareCheckout do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectFamilyCareCheckout",
+      type: :object,
+      description:
+        "Child Care or Senior Care day-rate visit. When present, checkout uses compute_family_care_pricing instead of hourly cleaning pricing.",
+      properties: %{
+        carePackage: %Schema{
+          type: :string,
+          enum: ~w(half_day full_day experienced negotiable)
+        },
+        childCount: %Schema{type: :integer, minimum: 1, maximum: 12},
+        frequency: %Schema{
+          type: :string,
+          enum: ~w(once daily weekly monthly custom)
+        },
+        customDailyMajor: %Schema{type: :number, nullable: true, minimum: 0},
+        selectedDayCount: %Schema{type: :integer, nullable: true, minimum: 1, maximum: 7},
+        mobility: %Schema{type: :boolean, default: false},
+        errands: %Schema{type: :boolean, default: false},
+        appointments: %Schema{type: :boolean, default: false}
+      },
+      required: [:carePackage, :childCount, :frequency]
+    })
+  end
+
   defmodule CreateBookingRequest do
     require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectBooking.FamilyCareCheckout
     alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{
@@ -280,7 +310,8 @@ defmodule MithrilWeb.Schemas.DirectBooking do
           default: true,
           description:
             "When false, booking cover is omitted from the price and the saved booking. Defaults to true."
-        }
+        },
+        familyCare: FamilyCareCheckout
       },
       required: [
         :serviceId,
@@ -295,6 +326,7 @@ defmodule MithrilWeb.Schemas.DirectBooking do
 
   defmodule ReplaceUnpaidBookingRequest do
     require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectBooking.FamilyCareCheckout
     alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{
@@ -370,7 +402,8 @@ defmodule MithrilWeb.Schemas.DirectBooking do
           default: true,
           description:
             "When false, booking cover is omitted from the price and the saved booking. Defaults to true."
-        }
+        },
+        familyCare: FamilyCareCheckout
       },
       required: [
         :serviceId,
