@@ -28,6 +28,14 @@ defmodule Mithril.MobileGatewayGuestRpcTest do
            }) == {:error, :forbidden}
   end
 
+  test "family care pricing is readable before sign-in" do
+    assert "compute_family_care_pricing" in MobileGateway.guest_rpc_names()
+  end
+
+  test "pet care pricing is readable before sign-in" do
+    assert "compute_pet_care_pricing" in MobileGateway.guest_rpc_names()
+  end
+
   test "public booking pricing hides compensation and margin fields" do
     payload = [
       %{
@@ -40,6 +48,14 @@ defmodule Mithril.MobileGatewayGuestRpcTest do
     ]
 
     assert MobileGateway.sanitize_guest_rpc_result({:ok, payload}, "compute_booking_pricing") ==
+             {:ok,
+              [%{"final_amount_minor" => 12_000, "details" => %{"customer_total" => 12_000}}]}
+
+    assert MobileGateway.sanitize_guest_rpc_result({:ok, payload}, "compute_family_care_pricing") ==
+             {:ok,
+              [%{"final_amount_minor" => 12_000, "details" => %{"customer_total" => 12_000}}]}
+
+    assert MobileGateway.sanitize_guest_rpc_result({:ok, payload}, "compute_pet_care_pricing") ==
              {:ok,
               [%{"final_amount_minor" => 12_000, "details" => %{"customer_total" => 12_000}}]}
 

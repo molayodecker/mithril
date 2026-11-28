@@ -826,6 +826,7 @@ defmodule Mithril.DirectPayments do
                """,
                [booking_id, attempt.reference]
              ),
+           :ok <- Mithril.FamilyCareVisits.settle(booking_id),
            :ok <- Mithril.Paystack.Webhook.reconcile_verified_first_charge!(booking_id, receipt) do
         booking_status
       else

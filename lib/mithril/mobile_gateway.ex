@@ -72,6 +72,8 @@ defmodule Mithril.MobileGateway do
   # customer-scoped functions stay on the authenticated RPC route.
   @guest_rpcs MapSet.new(~w(
     compute_booking_pricing
+    compute_family_care_pricing
+    compute_pet_care_pricing
     compute_extra_task_labor_quotes
     get_active_pricing_rule
     get_ai_match_settings
@@ -132,7 +134,8 @@ defmodule Mithril.MobileGateway do
   def call_guest_function(_name, _body), do: {:error, :bad_request}
 
   @doc false
-  def sanitize_guest_rpc_result({:ok, result}, "compute_booking_pricing") do
+  def sanitize_guest_rpc_result({:ok, result}, name)
+      when name in ["compute_booking_pricing", "compute_family_care_pricing", "compute_pet_care_pricing"] do
     {:ok, strip_private_pricing_fields(result)}
   end
 
