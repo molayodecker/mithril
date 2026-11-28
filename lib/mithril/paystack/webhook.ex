@@ -429,7 +429,8 @@ defmodule Mithril.Paystack.Webhook do
                AND reference = $2
              """,
              [attempt.booking_uuid, attempt.reference]
-           ) do
+           ),
+         :ok <- Mithril.FamilyCareVisits.settle(attempt.booking_uuid) do
       :ok
     else
       {:ok, %{num_rows: 0}} -> Repo.rollback(:payment_reference_mismatch)

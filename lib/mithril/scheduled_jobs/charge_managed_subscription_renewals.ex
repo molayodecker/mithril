@@ -265,7 +265,7 @@ defmodule Mithril.ScheduledJobs.ChargeManagedSubscriptionRenewals do
            [booking_id, status]
          ) do
       {:ok, %{num_rows: 1}} ->
-        :ok
+        Mithril.FamilyCareVisits.settle(booking_id)
 
       {:ok, %{num_rows: 0}} ->
         case Repo.query("SELECT status::text FROM public.bookings WHERE id = $1::uuid", [

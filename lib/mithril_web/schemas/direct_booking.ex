@@ -114,8 +114,68 @@ defmodule MithrilWeb.Schemas.DirectBooking do
     })
   end
 
+  defmodule FamilyCareCheckout do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectFamilyCareCheckout",
+      type: :object,
+      description:
+        "Child Care or Senior Care day-rate visit. Monthly plans use the fixed package fee for Monday–Friday. weekdays lists optional weekend days or the weekly/custom days.",
+      properties: %{
+        carePackage: %Schema{
+          type: :string,
+          enum: ~w(half_day full_day experienced negotiable)
+        },
+        childCount: %Schema{type: :integer, minimum: 1, maximum: 12},
+        frequency: %Schema{
+          type: :string,
+          enum: ~w(once daily weekly monthly custom)
+        },
+        customDailyMajor: %Schema{type: :number, nullable: true, minimum: 0},
+        selectedDayCount: %Schema{type: :integer, nullable: true, minimum: 1, maximum: 7},
+        weekdays: %Schema{
+          type: :array,
+          items: %Schema{type: :string, enum: ~w(mon tue wed thu fri sat sun)}
+        },
+        mobility: %Schema{type: :boolean, default: false},
+        errands: %Schema{type: :boolean, default: false},
+        appointments: %Schema{type: :boolean, default: false}
+      },
+      required: [:carePackage, :childCount, :frequency]
+    })
+  end
+
+  defmodule PetCareCheckout do
+    require OpenApiSpex
+    alias OpenApiSpex.Schema
+
+    OpenApiSpex.schema(%{
+      title: "DirectPetCareCheckout",
+      type: :object,
+      description:
+        "One-time Pet Sitting, Dog Walking, or Feeding / Check-in list-price visit. Mithril prices this with compute_pet_care_pricing.",
+      properties: %{
+        carePackage: %Schema{
+          type: :string,
+          enum: ~w(hours_2 hours_4 hours_8 overnight hours_24 custom min_30 min_60)
+        },
+        petCount: %Schema{type: :integer, minimum: 1, maximum: 20},
+        frequency: %Schema{type: :string, enum: ~w(once)},
+        customVisitMajor: %Schema{type: :number, nullable: true, minimum: 0},
+        selectedDayCount: %Schema{type: :integer, nullable: true, minimum: 1, maximum: 7},
+        extraAttention: %Schema{type: :boolean, default: false},
+        medicationRequired: %Schema{type: :boolean, default: false}
+      },
+      required: [:carePackage, :petCount, :frequency]
+    })
+  end
+
   defmodule BookingPricingRequest do
     require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectBooking.FamilyCareCheckout
+    alias MithrilWeb.Schemas.DirectBooking.PetCareCheckout
     alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{
@@ -144,7 +204,9 @@ defmodule MithrilWeb.Schemas.DirectBooking do
           type: :boolean,
           default: true,
           description: "When false, booking cover is omitted from the price. Defaults to true."
-        }
+        },
+        familyCare: FamilyCareCheckout,
+        petCare: PetCareCheckout
       },
       required: [:serviceId, :cleanerId, :scheduledDate, :durationHours]
     })
@@ -203,6 +265,8 @@ defmodule MithrilWeb.Schemas.DirectBooking do
 
   defmodule CreateBookingRequest do
     require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectBooking.FamilyCareCheckout
+    alias MithrilWeb.Schemas.DirectBooking.PetCareCheckout
     alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{
@@ -280,7 +344,9 @@ defmodule MithrilWeb.Schemas.DirectBooking do
           default: true,
           description:
             "When false, booking cover is omitted from the price and the saved booking. Defaults to true."
-        }
+        },
+        familyCare: FamilyCareCheckout,
+        petCare: PetCareCheckout
       },
       required: [
         :serviceId,
@@ -295,6 +361,8 @@ defmodule MithrilWeb.Schemas.DirectBooking do
 
   defmodule ReplaceUnpaidBookingRequest do
     require OpenApiSpex
+    alias MithrilWeb.Schemas.DirectBooking.FamilyCareCheckout
+    alias MithrilWeb.Schemas.DirectBooking.PetCareCheckout
     alias OpenApiSpex.Schema
 
     OpenApiSpex.schema(%{
@@ -370,7 +438,9 @@ defmodule MithrilWeb.Schemas.DirectBooking do
           default: true,
           description:
             "When false, booking cover is omitted from the price and the saved booking. Defaults to true."
-        }
+        },
+        familyCare: FamilyCareCheckout,
+        petCare: PetCareCheckout
       },
       required: [
         :serviceId,

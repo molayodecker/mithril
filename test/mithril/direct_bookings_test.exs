@@ -4,6 +4,7 @@ defmodule Mithril.DirectBookingsTest do
   alias Ecto.Adapters.SQL.Sandbox
   alias Mithril.DirectBookingCancels
   alias Mithril.DirectBookings
+  alias Mithril.FamilyCareVisits
   alias Mithril.Repo
 
   setup do
@@ -217,6 +218,573 @@ defmodule Mithril.DirectBookingsTest do
 
     assert {:error, :invalid_request} =
              DirectBookings.preview_price(Map.put(params, "includeBookingCover", "no"))
+  end
+
+  test "family care checkout accepts an afternoon full day when the cleaning workday would reject it" do
+    previous = Application.get_env(:mithril, :direct_client_bookings, false)
+    Application.put_env(:mithril, :direct_client_bookings, true)
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :direct_client_bookings, previous)
+    end)
+
+    Repo.query!(
+      "DROP FUNCTION IF EXISTS public.validate_booking_timeslot_24h(text, numeric, date, text)"
+    )
+
+    Repo.query!("""
+    CREATE FUNCTION public.validate_booking_timeslot_24h(
+      text, numeric, date, text
+    ) RETURNS boolean
+    LANGUAGE sql AS $$ SELECT false $$
+    """)
+
+    customer_id = Ecto.UUID.generate()
+    cleaner_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.users (id, email, status)
+      VALUES ($1, 'customer@example.com', 'active'),
+             ($2, 'cleaner@example.com', 'active')
+      """,
+      [Ecto.UUID.dump!(customer_id), Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_data (
+        user_id, verified, status, hourly_rate, specialties
+      ) VALUES ($1, true, 'active', 50, ARRAY['child_care', 'regular_cleaning'])
+      """,
+      [Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    care_params = %{
+      "serviceId" => 2,
+      "cleanerId" => cleaner_id,
+      "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 3)),
+      "scheduledTime" => "12:00",
+      "durationHours" => 8,
+      "address" => "Labone, Accra",
+      "timezone" => "Africa/Accra",
+      "includeBookingCover" => false,
+      "recurrenceInterval" => "weekly",
+      "familyCare" => %{
+        "carePackage" => "full_day",
+        "childCount" => 1,
+        "frequency" => "weekly",
+        "selectedDayCount" => 3,
+        "weekdays" => ["mon", "tue", "wed"]
+      }
+    }
+
+    assert {:ok, created} = DirectBookings.create_customer_booking(customer_id, care_params)
+    assert created.subscriptionId
+
+    cleaning_params = %{
+      "serviceId" => 1,
+      "cleanerId" => cleaner_id,
+      "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 4)),
+      "scheduledTime" => "12:00",
+      "durationHours" => 8,
+      "address" => "Labone, Accra",
+      "timezone" => "Africa/Accra"
+    }
+
+    assert {:error, :invalid_timeslot} =
+             DirectBookings.create_customer_booking(customer_id, cleaning_params)
+  end
+
+  test "one-time pet sitting checkout stores the list price when the cleaning workday would reject it" do
+    previous = Application.get_env(:mithril, :direct_client_bookings, false)
+    Application.put_env(:mithril, :direct_client_bookings, true)
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :direct_client_bookings, previous)
+    end)
+
+    Repo.query!(
+      "DROP FUNCTION IF EXISTS public.validate_booking_timeslot_24h(text, numeric, date, text)"
+    )
+
+    Repo.query!("""
+    CREATE FUNCTION public.validate_booking_timeslot_24h(
+      text, numeric, date, text
+    ) RETURNS boolean
+    LANGUAGE sql AS $$ SELECT false $$
+    """)
+
+    Repo.query!("""
+    CREATE FUNCTION public.compute_pet_care_pricing(
+      p_service_id integer,
+      p_care_package text,
+      p_pet_count integer,
+      p_scheduled_date date,
+      p_frequency text,
+      p_custom_visit_major numeric DEFAULT NULL,
+      p_selected_day_count integer DEFAULT NULL,
+      p_extra_attention boolean DEFAULT false,
+      p_medication_required boolean DEFAULT false
+    ) RETURNS TABLE (
+      pricing_version text,
+      currency text,
+      care_package text,
+      pet_count integer,
+      duration_hours numeric,
+      work_rate_ghs_per_hour numeric,
+      base_visit_major numeric,
+      extras_surcharge_visit_major numeric,
+      visit_major numeric,
+      billable_days integer,
+      subtotal_major numeric,
+      frequency_discount_bps integer,
+      frequency_discount_major numeric,
+      subtotal_labor_major numeric,
+      platform_fee_major numeric,
+      booking_cover_major numeric,
+      core_amount_minor integer,
+      same_day_surcharge_bps integer,
+      weekend_surcharge_bps integer,
+      recurring_weekly_discount_bps integer,
+      recurring_monthly_discount_bps integer,
+      same_day_surcharge_minor integer,
+      weekend_surcharge_minor integer,
+      recurring_discount_minor integer,
+      final_amount_minor integer,
+      recurring_amount_minor integer,
+      first_charge_amount_minor integer,
+      discount_rate_bps integer,
+      is_same_day boolean,
+      is_weekend boolean,
+      minimum_duration_hours numeric,
+      cleaner_earnings_minor integer
+    )
+    LANGUAGE sql AS $$
+      SELECT
+        'pet_care_v1',
+        'GHS',
+        p_care_package,
+        p_pet_count,
+        12::numeric,
+        16.67::numeric,
+        200::numeric,
+        0::numeric,
+        200::numeric,
+        1,
+        200::numeric,
+        0,
+        0::numeric,
+        200::numeric,
+        30::numeric,
+        0::numeric,
+        20000,
+        0,
+        0,
+        500,
+        1000,
+        0,
+        0,
+        0,
+        20000,
+        20000,
+        20000,
+        0,
+        false,
+        false,
+        12::numeric,
+        17000
+    $$
+    """)
+
+    customer_id = Ecto.UUID.generate()
+    cleaner_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.users (id, email, status)
+      VALUES ($1, 'pet-customer@example.com', 'active'),
+             ($2, 'pet-cleaner@example.com', 'active')
+      """,
+      [Ecto.UUID.dump!(customer_id), Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    Repo.query!(
+      "INSERT INTO public.service_types (id, name, specialty_slug) VALUES (4, 'Pet Sitting', 'pet_sitting')"
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_data (
+        user_id, verified, status, hourly_rate, specialties
+      ) VALUES ($1, true, 'active', 50, ARRAY['pet_sitting', 'regular_cleaning'])
+      """,
+      [Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    params = %{
+      "serviceId" => 4,
+      "cleanerId" => cleaner_id,
+      "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 3)),
+      "scheduledTime" => "12:00",
+      "durationHours" => 12,
+      "address" => "Teshie, Accra",
+      "timezone" => "Africa/Accra",
+      "includeBookingCover" => false,
+      "idempotencyKey" => "pet-sitting-once-1",
+      "petCare" => %{
+        "carePackage" => "overnight",
+        "petCount" => 1,
+        "frequency" => "once",
+        "selectedDayCount" => 1,
+        "extraAttention" => false,
+        "medicationRequired" => false
+      }
+    }
+
+    assert {:ok, created} = DirectBookings.create_customer_booking(customer_id, params)
+    assert created.amountMinor == 20_000
+    refute Map.has_key?(created, :subscriptionId)
+
+    assert [[duration, version]] =
+             Repo.query!(
+               "SELECT duration_hours, pricing_version FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(created.id)]
+             ).rows
+
+    assert Decimal.compare(duration, 12) == :eq
+    assert version == "pet_care_v1"
+  end
+
+  test "family care checkout stores the day-rate price and the visit notes" do
+    previous = Application.get_env(:mithril, :direct_client_bookings, false)
+    Application.put_env(:mithril, :direct_client_bookings, true)
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :direct_client_bookings, previous)
+    end)
+
+    customer_id = Ecto.UUID.generate()
+    cleaner_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.users (id, email, status)
+      VALUES ($1, 'customer@example.com', 'active'),
+             ($2, 'cleaner@example.com', 'active')
+      """,
+      [Ecto.UUID.dump!(customer_id), Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_data (
+        user_id, verified, status, hourly_rate, specialties
+      ) VALUES ($1, true, 'active', 50, ARRAY['child_care', 'regular_cleaning'])
+      """,
+      [Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    params = %{
+      "serviceId" => 2,
+      "cleanerId" => cleaner_id,
+      "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 3)),
+      "scheduledTime" => "14:00",
+      "durationHours" => 3,
+      "address" => "Labone, Accra",
+      "specialInstructions" => "Care recipients: 1 child\nArrangement: Live-out",
+      "timezone" => "Africa/Accra",
+      "includeBookingCover" => false,
+      "familyCare" => %{
+        "carePackage" => "half_day",
+        "childCount" => 1,
+        "frequency" => "once"
+      }
+    }
+
+    assert {:error, :invalid_request} =
+             DirectBookings.preview_price(Map.delete(params, "familyCare"))
+
+    assert {:error, :invalid_request} =
+             DirectBookings.create_customer_booking(customer_id, Map.delete(params, "familyCare"))
+
+    assert {:error, :invalid_request} =
+             DirectBookings.preview_price(Map.put(params, "serviceId", 1))
+
+    assert {:ok, preview} = DirectBookings.preview_price(params)
+    assert preview["pricingVersion"] == "family_care_v1"
+    assert preview["durationHours"] == 4
+
+    assert {:ok, created} = DirectBookings.create_customer_booking(customer_id, params)
+    assert created.amountMinor == 10_000
+    assert created.amountMinor == preview["finalAmountMinor"]
+
+    assert [[false, cover_amount, duration_hours, notes, "family_care_v1"]] =
+             Repo.query!(
+               """
+               SELECT booking_cover, booking_cover_amount, duration_hours,
+                      special_instructions, pricing_version
+               FROM public.bookings WHERE id = $1
+               """,
+               [Ecto.UUID.dump!(created.id)]
+             ).rows
+
+    assert Decimal.compare(cover_amount, 0) == :eq
+    assert Decimal.compare(duration_hours, 4) == :eq
+    assert notes =~ "1 child"
+    assert notes =~ "Live-out"
+
+    assert {:ok, rescheduled} =
+             DirectBookings.reschedule(customer_id, created.id, %{
+               "scheduledDate" => Date.to_iso8601(Date.add(Date.utc_today(), 5)),
+               "scheduledTime" => "14:00",
+               "durationHours" => 8
+             })
+
+    assert rescheduled["amountMinor"] == 10_000
+
+    assert [[duration_hours, duration_final]] =
+             Repo.query!(
+               "SELECT duration_hours, duration_final FROM public.bookings WHERE id = $1",
+               [Ecto.UUID.dump!(created.id)]
+             ).rows
+
+    assert Decimal.compare(duration_hours, 4) == :eq
+    assert Decimal.compare(duration_final, 4) == :eq
+
+    one_day_week =
+      params
+      |> Map.put("scheduledDate", Date.to_iso8601(Date.add(Date.utc_today(), 10)))
+      |> put_in(["familyCare", "frequency"], "weekly")
+      |> put_in(["familyCare", "selectedDayCount"], 1)
+      |> Map.put("recurrenceInterval", "weekly")
+
+    assert {:ok, one_day} = DirectBookings.create_customer_booking(customer_id, one_day_week)
+    assert one_day.amountMinor == 10_000
+    assert one_day.subscriptionId
+
+    assert [[1]] =
+             Repo.query!(
+               "SELECT count(*) FROM public.bookings WHERE subscription_id = $1",
+               [Ecto.UUID.dump!(one_day.subscriptionId)]
+             ).rows
+
+    zero_days =
+      params
+      |> Map.put("scheduledDate", Date.to_iso8601(Date.add(Date.utc_today(), 11)))
+      |> put_in(["familyCare", "selectedDayCount"], 0)
+
+    assert {:ok, zero_day_visit} = DirectBookings.create_customer_booking(customer_id, zero_days)
+    assert zero_day_visit.amountMinor == 10_000
+
+    for invalid <- [
+          put_in(params, ["familyCare", "frequency"], "weekly"),
+          put_in(params, ["familyCare", "frequency"], "monthly"),
+          put_in(params, ["familyCare"], %{
+            "carePackage" => "half_day",
+            "childCount" => 1,
+            "frequency" => "custom",
+            "selectedDayCount" => 2
+          }),
+          Map.put(params, "recurrenceInterval", "weekly")
+        ] do
+      assert {:error, {:invalid_request, message}} = DirectBookings.preview_price(invalid)
+      assert message =~ "Choose one visit"
+
+      assert {:error, {:invalid_request, message}} =
+               DirectBookings.create_customer_booking(customer_id, invalid)
+
+      assert message =~ "Choose one visit"
+    end
+
+    assert {:error, :invalid_request} =
+             DirectBookings.create_customer_booking(
+               customer_id,
+               Map.put(params, "familyCare", %{"carePackage" => "overnight"})
+             )
+  end
+
+  test "monthly family care charges the package fee and creates one visit per weekday" do
+    previous = Application.get_env(:mithril, :direct_client_bookings, false)
+    Application.put_env(:mithril, :direct_client_bookings, true)
+
+    on_exit(fn ->
+      Application.put_env(:mithril, :direct_client_bookings, previous)
+    end)
+
+    customer_id = Ecto.UUID.generate()
+    cleaner_id = Ecto.UUID.generate()
+
+    Repo.query!(
+      """
+      INSERT INTO public.users (id, email, status)
+      VALUES ($1, 'customer@example.com', 'active'),
+             ($2, 'cleaner@example.com', 'active')
+      """,
+      [Ecto.UUID.dump!(customer_id), Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    Repo.query!(
+      """
+      INSERT INTO public.cleaner_data (
+        user_id, verified, status, hourly_rate, specialties
+      ) VALUES ($1, true, 'active', 50, ARRAY['child_care', 'senior_care'])
+      """,
+      [Ecto.UUID.dump!(cleaner_id)]
+    )
+
+    for {service_id, package, amount_minor} <- [
+          {2, "half_day", 170_000},
+          {2, "full_day", 250_000},
+          {2, "experienced", 300_000},
+          {3, "half_day", 200_000},
+          {3, "full_day", 300_000}
+        ] do
+      assert {:ok, quoted} =
+               DirectBookings.preview_price(
+                 monthly_family_care_params(cleaner_id, service_id, package, ~D[2027-02-01])
+               )
+
+      assert quoted["finalAmountMinor"] == amount_minor
+      assert quoted["recurringAmountMinor"] == amount_minor
+      assert quoted["firstChargeAmountMinor"] == amount_minor
+      assert quoted["billableDays"] == 20
+      assert quoted["discountRateBps"] == 0
+    end
+
+    full_day = monthly_family_care_params(cleaner_id, 2, "full_day", ~D[2027-02-01])
+    assert {:ok, february} = DirectBookings.create_customer_booking(customer_id, full_day)
+    assert february.amountMinor == 250_000
+
+    assert {:ok, replayed} = DirectBookings.create_customer_booking(customer_id, full_day)
+    assert replayed.id == february.id
+    assert visit_count(february.subscriptionId) == 1
+
+    assert :ok = FamilyCareVisits.settle(february.id)
+    assert visit_count(february.subscriptionId) == 20
+    assert charged_visit_count(february.subscriptionId, 250_000) == 1
+    assert :ok = FamilyCareVisits.settle(february.id)
+    assert visit_count(february.subscriptionId) == 20
+
+    march = monthly_family_care_params(cleaner_id, 2, "full_day", ~D[2027-03-01])
+    assert {:ok, quoted_march} = DirectBookings.preview_price(march)
+    assert quoted_march["finalAmountMinor"] == 250_000
+    assert quoted_march["billableDays"] == 23
+    assert {:ok, march_booking} = DirectBookings.create_customer_booking(customer_id, march)
+    assert :ok = FamilyCareVisits.settle(march_booking.id)
+    assert visit_count(march_booking.subscriptionId) == 23
+    assert charged_visit_count(march_booking.subscriptionId, 250_000) == 1
+
+    experienced = monthly_family_care_params(cleaner_id, 2, "experienced", ~D[2027-02-01])
+
+    assert {:ok, experienced_booking} =
+             DirectBookings.create_customer_booking(customer_id, experienced)
+
+    assert experienced_booking.amountMinor == 300_000
+
+    assert [[300_000, 300_000, "monthly"]] =
+             Repo.query!(
+               """
+               SELECT recurring_amount_minor, first_charge_amount_minor,
+                      family_care_schedule->>'frequency'
+               FROM public.subscriptions
+               WHERE id = $1
+               """,
+               [Ecto.UUID.dump!(experienced_booking.subscriptionId)]
+             ).rows
+
+    assert :ok = FamilyCareVisits.settle(experienced_booking.id)
+    assert visit_count(experienced_booking.subscriptionId) == 20
+
+    %{rows: [[renewal_id]]} =
+      Repo.query!(
+        """
+        INSERT INTO public.bookings (
+          customer_id, cleaner_id, service_id, title, scheduled_date, scheduled_time,
+          duration_hours, address, total_price, final_amount_minor, core_amount_minor,
+          currency, status, payment_status, reference, subscription_id, pricing_version,
+          timezone, idempotency_key, recurrence_interval
+        )
+        SELECT customer_id, cleaner_id, service_id, title, '2027-03-01'::date, scheduled_time,
+               duration_hours, address, final_amount_minor, final_amount_minor, final_amount_minor,
+               currency, 'confirmed', 'paid', 'MGR-experienced-20270301', subscription_id,
+               pricing_version, timezone, 'MGR-experienced-20270301', recurrence_interval
+        FROM public.bookings
+        WHERE id = $1
+        RETURNING id::text
+        """,
+        [Ecto.UUID.dump!(experienced_booking.id)]
+      )
+
+    assert :ok = FamilyCareVisits.settle(renewal_id)
+    assert period_visit_count(experienced_booking.subscriptionId, ~D[2027-03-01]) == 23
+    assert :ok = FamilyCareVisits.settle(renewal_id)
+    assert period_visit_count(experienced_booking.subscriptionId, ~D[2027-03-01]) == 23
+    assert charged_visit_count(experienced_booking.subscriptionId, 300_000) == 2
+    assert visit_count(experienced_booking.subscriptionId) == 43
+  end
+
+  defp monthly_family_care_params(cleaner_id, service_id, package, date) do
+    %{
+      "serviceId" => service_id,
+      "cleanerId" => cleaner_id,
+      "scheduledDate" => Date.to_iso8601(date),
+      "scheduledTime" => "14:00",
+      "durationHours" => 8,
+      "address" => "Labone, Accra",
+      "timezone" => "Africa/Accra",
+      "includeBookingCover" => false,
+      "recurrenceInterval" => "monthly",
+      "idempotencyKey" => "family-care-#{service_id}-#{package}-#{Date.to_iso8601(date)}",
+      "familyCare" => %{
+        "carePackage" => package,
+        "childCount" => 1,
+        "frequency" => "monthly",
+        "weekdays" => []
+      }
+    }
+  end
+
+  defp visit_count(subscription_id) do
+    [[count]] =
+      Repo.query!(
+        "SELECT count(*) FROM public.bookings WHERE subscription_id = $1 AND status <> 'cancelled'",
+        [Ecto.UUID.dump!(subscription_id)]
+      ).rows
+
+    count
+  end
+
+  defp period_visit_count(subscription_id, period_start) do
+    [[count]] =
+      Repo.query!(
+        """
+        SELECT count(*)
+        FROM public.bookings
+        WHERE subscription_id = $1
+          AND billing_period_start = $2
+          AND status <> 'cancelled'
+        """,
+        [Ecto.UUID.dump!(subscription_id), period_start]
+      ).rows
+
+    count
+  end
+
+  defp charged_visit_count(subscription_id, amount_minor) do
+    [[count]] =
+      Repo.query!(
+        """
+        SELECT count(*)
+        FROM public.bookings
+        WHERE subscription_id = $1
+          AND final_amount_minor = $2
+          AND covered_by_booking_id IS NULL
+        """,
+        [Ecto.UUID.dump!(subscription_id), amount_minor]
+      ).rows
+
+    count
   end
 
   test "recurring checkout creates one pending subscription for each Paystack interval" do
@@ -2056,18 +2624,35 @@ defmodule Mithril.DirectBookingsTest do
     )
     """)
 
+    Repo.query!("DROP TABLE IF EXISTS public.service_categories CASCADE")
+
+    Repo.query!("""
+    CREATE TABLE public.service_categories (id integer PRIMARY KEY, slug text)
+    """)
+
+    Repo.query!("INSERT INTO public.service_categories (id, slug) VALUES (2, 'caregiving')")
+
     Repo.query!("""
     CREATE TABLE public.service_types (
       id integer PRIMARY KEY,
       name text NOT NULL,
       price numeric,
       active boolean NOT NULL DEFAULT true,
-      specialty_slug text
+      specialty_slug text,
+      category_id integer
     )
     """)
 
     Repo.query!(
       "INSERT INTO public.service_types (id, name, specialty_slug) VALUES (1, 'Regular Cleaning', 'regular_cleaning')"
+    )
+
+    Repo.query!(
+      "INSERT INTO public.service_types (id, name, specialty_slug, category_id) VALUES (2, 'Child Care', 'child_care', 2)"
+    )
+
+    Repo.query!(
+      "INSERT INTO public.service_types (id, name, specialty_slug, category_id) VALUES (3, 'Senior Care', 'senior_care', 2)"
     )
 
     Repo.query!("""
@@ -2092,6 +2677,7 @@ defmodule Mithril.DirectBookingsTest do
       title text,
       status text NOT NULL DEFAULT 'pending',
       payment_status text NOT NULL DEFAULT 'pending',
+      payment_method text,
       reference text,
       scheduled_date date,
       scheduled_time time,
@@ -2174,7 +2760,9 @@ defmodule Mithril.DirectBookingsTest do
       cancellation_tier text,
       cancellation_reason text,
       cancellation_reason_code text,
-      updated_at timestamptz NOT NULL DEFAULT now()
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      billing_period_start date,
+      covered_by_booking_id uuid
     )
     """)
 
@@ -2202,7 +2790,8 @@ defmodule Mithril.DirectBookingsTest do
       paystack_plan_interval text,
       billing_mode text,
       home_size text,
-      extra_task_ids text[]
+      extra_task_ids text[],
+      family_care_schedule jsonb
     )
     """)
 
@@ -2210,6 +2799,13 @@ defmodule Mithril.DirectBookingsTest do
     CREATE UNIQUE INDEX bookings_customer_idempotency_key_uidx
     ON public.bookings (customer_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL
+    """)
+
+    Repo.query!("""
+    CREATE UNIQUE INDEX bookings_family_care_period_visit_uidx
+    ON public.bookings (subscription_id, billing_period_start, scheduled_date)
+    WHERE billing_period_start IS NOT NULL
+      AND status <> 'cancelled'
     """)
 
     Repo.query!("""
@@ -2317,6 +2913,137 @@ defmodule Mithril.DirectBookingsTest do
         CASE WHEN p_is_recurring THEN 16448 ELSE NULL END,
         CASE WHEN p_is_recurring THEN 19350 ELSE NULL END,
         CASE WHEN p_is_recurring THEN 1500 ELSE NULL END
+    $$
+    """)
+
+    Repo.query!("""
+    CREATE FUNCTION public.compute_family_care_pricing(
+      p_service_id integer,
+      p_care_package text,
+      p_child_count integer,
+      p_scheduled_date date,
+      p_frequency text,
+      p_custom_daily_major numeric DEFAULT NULL,
+      p_selected_day_count integer DEFAULT NULL,
+      p_mobility boolean DEFAULT false,
+      p_errands boolean DEFAULT false,
+      p_appointments boolean DEFAULT false,
+      p_weekdays text[] DEFAULT NULL
+    ) RETURNS TABLE (
+      pricing_version text,
+      currency text,
+      care_package text,
+      child_count integer,
+      duration_hours numeric,
+      work_rate_ghs_per_hour numeric,
+      base_daily_major numeric,
+      children_surcharge_daily_major numeric,
+      extras_surcharge_daily_major numeric,
+      daily_major numeric,
+      billable_days integer,
+      subtotal_major numeric,
+      frequency_discount_bps integer,
+      frequency_discount_major numeric,
+      subtotal_labor_major numeric,
+      platform_fee_major numeric,
+      booking_cover_major numeric,
+      core_amount_minor integer,
+      same_day_surcharge_bps integer,
+      weekend_surcharge_bps integer,
+      recurring_weekly_discount_bps integer,
+      recurring_monthly_discount_bps integer,
+      same_day_surcharge_minor integer,
+      weekend_surcharge_minor integer,
+      recurring_discount_minor integer,
+      final_amount_minor integer,
+      recurring_amount_minor integer,
+      first_charge_amount_minor integer,
+      discount_rate_bps integer,
+      is_same_day boolean,
+      is_weekend boolean,
+      minimum_duration_hours numeric,
+      cleaner_earnings_minor integer
+    )
+    LANGUAGE sql AS $$
+      WITH quote AS (
+        SELECT
+          CASE
+            WHEN p_frequency <> 'monthly' THEN 10000
+            WHEN p_service_id = 3 AND p_care_package = 'half_day' THEN 200000
+            WHEN p_service_id = 3 THEN 300000
+            WHEN p_care_package = 'half_day' THEN 170000
+            WHEN p_care_package = 'experienced' THEN 300000
+            ELSE 250000
+          END AS amount_minor,
+          CASE
+            WHEN p_frequency = 'monthly' THEN
+              (
+                SELECT count(*)::int
+                FROM generate_series(
+                  p_scheduled_date,
+                  (date_trunc('month', p_scheduled_date) + interval '1 month - 1 day')::date,
+                  '1 day'
+                ) AS visit_day
+                WHERE EXTRACT(ISODOW FROM visit_day) BETWEEN 1 AND 5
+                   OR (
+                     EXTRACT(ISODOW FROM visit_day) = 6
+                     AND 'sat' = ANY (COALESCE(p_weekdays, ARRAY[]::text[]))
+                   )
+                   OR (
+                     EXTRACT(ISODOW FROM visit_day) = 7
+                     AND 'sun' = ANY (COALESCE(p_weekdays, ARRAY[]::text[]))
+                   )
+              )
+            WHEN p_frequency IN ('weekly', 'custom') THEN
+              GREATEST(
+                1,
+                LEAST(
+                  7,
+                  COALESCE(
+                    NULLIF(p_selected_day_count, 0),
+                    CASE WHEN p_frequency = 'weekly' THEN 7 ELSE 1 END
+                  )
+                )
+              )
+            ELSE 1
+          END AS visit_count,
+          CASE WHEN p_care_package = 'half_day' THEN 4 ELSE 8 END AS duration_hours
+      )
+      SELECT
+        'family_care_v1',
+        'GHS',
+        p_care_package,
+        p_child_count,
+        quote.duration_hours::numeric,
+        25::numeric,
+        100::numeric,
+        0::numeric,
+        0::numeric,
+        100::numeric,
+        quote.visit_count,
+        CASE WHEN p_frequency = 'monthly' THEN quote.amount_minor / 100.0 ELSE 100::numeric END,
+        0,
+        0::numeric,
+        CASE WHEN p_frequency = 'monthly' THEN quote.amount_minor / 100.0 ELSE 100::numeric END,
+        15::numeric,
+        0::numeric,
+        quote.amount_minor,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        quote.amount_minor,
+        quote.amount_minor,
+        quote.amount_minor,
+        0,
+        false,
+        false,
+        quote.duration_hours::numeric,
+        8500
+      FROM quote
     $$
     """)
 

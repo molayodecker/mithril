@@ -57,7 +57,6 @@ config :sentry,
   source_code_path_pattern: "lib/**/*.ex",
   in_app_otp_apps: [:mithril],
   traces_sample_rate: 1.0,
-  traces_sampler: {Mithril.Sentry, :traces_sampler},
   before_send: {Mithril.Sentry, :before_send},
   logs: [capture_metadata: [:request_id]],
   integrations: [

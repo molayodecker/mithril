@@ -9,6 +9,7 @@ defmodule Mithril.DirectBookings do
 
   require Logger
 
+  alias Mithril.FamilyCareSchedule
   alias Mithril.Paystack
   alias Mithril.Repo
   alias Mithril.Stripe
@@ -16,6 +17,7 @@ defmodule Mithril.DirectBookings do
   @default_timezone "Africa/Accra"
   # Paystack plan intervals. Hourly and legacy bi-weekly stay unbookable.
   @bookable_recurrence_intervals ~w(daily weekly monthly quarterly annually)
+  @family_care_multiday_checkout_message "Weekly, monthly, and multi-day family care cannot be booked yet. Choose one visit."
   @property_types ~w(residential vacant_home office commercial airbnb_turnover post_construction)
   # Preserve operationally distinct linen choices; existing legacy values remain accepted.
   @linen_handling ~w(replace_no_wash wash_hang_dry wash_dry_repack_onsite no_bedding_replace clean_linen_provided launder_on_site no_linen_change)
@@ -167,6 +169,8 @@ defmodule Mithril.DirectBookings do
                  :ok <- cleaner_eligible(input.cleaner_id, service.specialty_slug),
                  {:ok, pricing} <- compute_pricing(input),
                  :ok <- validate_turnover_context(customer_id, input, pricing),
+                 :ok <- assert_family_care_visits(input, pricing),
+                 :ok <- assert_pet_care_visits(input, pricing),
                  :ok <- validate_timeslot(input, pricing),
                  :ok <- validate_cleaner_availability(input, pricing, nil),
                  :ok <- ensure_customer_profile(customer_id),
@@ -1041,6 +1045,28 @@ defmodule Mithril.DirectBookings do
   end
 
   defp compute_pricing(input) do
+    with {:ok, service} <- service_details(input.service_id) do
+      family_care = Map.get(input, :family_care)
+      pet_care = Map.get(input, :pet_care)
+
+      cond do
+        service.family_care? and is_map(family_care) and is_nil(pet_care) ->
+          compute_family_care_checkout_pricing(input, family_care)
+
+        service.pet_care? and is_map(pet_care) and is_nil(family_care) ->
+          compute_pet_care_checkout_pricing(input, pet_care)
+
+        not service.family_care? and not service.pet_care? and is_nil(family_care) and
+            is_nil(pet_care) ->
+          compute_standard_pricing(input)
+
+        true ->
+          {:error, :invalid_request}
+      end
+    end
+  end
+
+  defp compute_standard_pricing(input) do
     # Live Postgres has two compute_booking_pricing overloads with overlapping
     # defaults. Pass the extra-task arguments so PostgreSQL can pick one.
     case Repo.query(
@@ -1109,6 +1135,146 @@ defmodule Mithril.DirectBookings do
     end
   end
 
+  defp compute_family_care_checkout_pricing(input, care) do
+    case Repo.query(
+           """
+           SELECT jsonb_build_object(
+             'currency', p.currency,
+             'pricingVersion', p.pricing_version,
+             'durationHours', p.duration_hours,
+             'workRateGhsPerHour', p.work_rate_ghs_per_hour,
+             'subtotalLaborMajor', p.subtotal_labor_major,
+             'platformFeeMajor', p.platform_fee_major,
+             'bookingCoverMajor', p.booking_cover_major,
+             'coreAmountMinor', p.core_amount_minor,
+             'sameDaySurchargeMinor', p.same_day_surcharge_minor,
+             'weekendSurchargeMinor', p.weekend_surcharge_minor,
+             'recurringDiscountMinor', p.recurring_discount_minor,
+             'finalAmountMinor', p.final_amount_minor,
+             'isSameDay', p.is_same_day,
+             'isWeekend', p.is_weekend,
+             'suppliesOption', 'customer_provided',
+             'suppliesAllowanceMinor', 0,
+             'cleanerEarningsMinor', p.cleaner_earnings_minor,
+             'recurringAmountMinor', p.recurring_amount_minor,
+             'firstChargeAmountMinor', p.first_charge_amount_minor,
+             'discountRateBps', p.discount_rate_bps
+           ), p.billable_days
+           FROM public.compute_family_care_pricing(
+             $1::integer,
+             $2::text,
+             $3::integer,
+             $4::date,
+             $5::text,
+             $6::numeric,
+             $7::integer,
+             $8::boolean,
+             $9::boolean,
+             $10::boolean,
+             $11::text[]
+           ) p
+           """,
+           [
+             input.service_id,
+             care.care_package,
+             care.child_count,
+             input.scheduled_date,
+             care.frequency,
+             care.custom_daily_major,
+             care.selected_day_count,
+             care.mobility,
+             care.errands,
+             care.appointments,
+             care.weekdays
+           ]
+         ) do
+      {:ok, %{rows: [[pricing, days]]}} when is_integer(days) and days >= 1 ->
+        {:ok,
+         pricing
+         |> Map.put("includeBookingCover", false)
+         |> Map.put("billableDays", days)}
+
+      {:ok, %{rows: []}} ->
+        {:error, :pricing_unavailable}
+
+      {:error, %Postgrex.Error{postgres: %{code: :raise_exception, message: message}}}
+      when is_binary(message) and message != "" ->
+        {:error, {:invalid_request, message}}
+
+      {:error, error} ->
+        Logger.warning("Family care booking pricing failed: #{inspect(error)}")
+        {:error, :pricing_unavailable}
+    end
+  end
+
+  defp compute_pet_care_checkout_pricing(input, care) do
+    case Repo.query(
+           """
+           SELECT jsonb_build_object(
+             'currency', p.currency,
+             'pricingVersion', p.pricing_version,
+             'durationHours', p.duration_hours,
+             'workRateGhsPerHour', p.work_rate_ghs_per_hour,
+             'subtotalLaborMajor', p.subtotal_labor_major,
+             'platformFeeMajor', p.platform_fee_major,
+             'bookingCoverMajor', p.booking_cover_major,
+             'coreAmountMinor', p.core_amount_minor,
+             'sameDaySurchargeMinor', p.same_day_surcharge_minor,
+             'weekendSurchargeMinor', p.weekend_surcharge_minor,
+             'recurringDiscountMinor', p.recurring_discount_minor,
+             'finalAmountMinor', p.final_amount_minor,
+             'isSameDay', p.is_same_day,
+             'isWeekend', p.is_weekend,
+             'suppliesOption', 'customer_provided',
+             'suppliesAllowanceMinor', 0,
+             'cleanerEarningsMinor', p.cleaner_earnings_minor,
+             'recurringAmountMinor', p.recurring_amount_minor,
+             'firstChargeAmountMinor', p.first_charge_amount_minor,
+             'discountRateBps', p.discount_rate_bps
+           ), p.billable_days
+           FROM public.compute_pet_care_pricing(
+             $1::integer,
+             $2::text,
+             $3::integer,
+             $4::date,
+             $5::text,
+             $6::numeric,
+             $7::integer,
+             $8::boolean,
+             $9::boolean
+           ) p
+           """,
+           [
+             input.service_id,
+             care.care_package,
+             care.pet_count,
+             input.scheduled_date,
+             care.frequency,
+             care.custom_visit_major,
+             care.selected_day_count,
+             care.extra_attention,
+             care.medication_required
+           ]
+         ) do
+      {:ok, %{rows: [[pricing, days]]}} when is_integer(days) and days >= 1 ->
+        {:ok,
+         pricing
+         |> Map.put("includeBookingCover", false)
+         |> Map.put("billableDays", days)}
+
+      {:ok, %{rows: []}} ->
+        {:error, :pricing_unavailable}
+
+      {:error, %Postgrex.Error{postgres: %{code: :raise_exception, message: message}}}
+      when is_binary(message) and message != "" ->
+        {:error, {:invalid_request, message}}
+
+      {:error, error} ->
+        Logger.warning("Pet care booking pricing failed: #{inspect(error)}")
+        {:error, :pricing_unavailable}
+    end
+  end
+
   defp include_booking_cover?(input) do
     Map.get(input, :include_booking_cover, true) != false
   end
@@ -1116,16 +1282,29 @@ defmodule Mithril.DirectBookings do
   defp service_details(service_id) do
     case Repo.query(
            """
-           SELECT name, specialty_slug
-           FROM public.service_types
-           WHERE id = $1 AND active = true
+           SELECT st.name, st.specialty_slug,
+                  COALESCE(sc.slug = 'caregiving', false)
+                    OR COALESCE(st.specialty_slug IN ('child_care', 'senior_care'), false),
+                  COALESCE(
+                    st.specialty_slug IN ('pet_sitting', 'dog_walking', 'feeding_checkins'),
+                    false
+                  )
+           FROM public.service_types st
+           LEFT JOIN public.service_categories sc ON sc.id = st.category_id
+           WHERE st.id = $1 AND st.active = true
            LIMIT 1
            """,
            [service_id]
          ) do
-      {:ok, %{rows: [[name, specialty_slug]]}}
+      {:ok, %{rows: [[name, specialty_slug, family_care?, pet_care?]]}}
       when is_binary(specialty_slug) and specialty_slug != "" ->
-        {:ok, %{name: name, specialty_slug: specialty_slug}}
+        {:ok,
+         %{
+           name: name,
+           specialty_slug: specialty_slug,
+           family_care?: family_care?,
+           pet_care?: pet_care?
+         }}
 
       {:ok, %{rows: _}} ->
         {:error, :invalid_service}
@@ -1158,6 +1337,37 @@ defmodule Mithril.DirectBookings do
   end
 
   defp validate_timeslot(input, pricing) do
+    if family_care_day_rate?(input, pricing) do
+      validate_family_care_start(input)
+    else
+      validate_workday_timeslot(input, pricing)
+    end
+  end
+
+  # Care visits are priced as a package. A full day or overnight often starts at noon
+  # and lasts past 5pm, so the cleaning workday rule would reject a normal visit.
+  # The visit still has to start in the future.
+  defp family_care_day_rate?(%{family_care: care}, _pricing) when is_map(care), do: true
+  defp family_care_day_rate?(%{pet_care: care}, _pricing) when is_map(care), do: true
+  defp family_care_day_rate?(_input, %{"pricingVersion" => "family_care_v1"}), do: true
+  defp family_care_day_rate?(_input, %{"pricingVersion" => "pet_care_v1"}), do: true
+  defp family_care_day_rate?(_input, _pricing), do: false
+
+  defp validate_family_care_start(input) do
+    case scheduled_at(input.scheduled_date, input.scheduled_time, input.timezone) do
+      %DateTime{} = starts_at ->
+        if DateTime.compare(starts_at, DateTime.utc_now()) == :gt do
+          :ok
+        else
+          {:error, :invalid_timeslot}
+        end
+
+      _ ->
+        {:error, :invalid_timeslot}
+    end
+  end
+
+  defp validate_workday_timeslot(input, pricing) do
     duration_hours = pricing["durationHours"] || input.duration_hours
 
     case Repo.query(
@@ -1370,11 +1580,12 @@ defmodule Mithril.DirectBookings do
              paystack_plan_interval,
              billing_mode,
              home_size,
-             extra_task_ids
+             extra_task_ids,
+             family_care_schedule
            ) VALUES (
              $1, $2, $3, $4, $5::numeric, $6, $7, $7, $8, $9, $10,
              $6, $11, 'pending', $12::date, $12::date, $13::time, NULLIF($14::text, ''),
-             $6, 'paystack_plan', NULLIF($15::text, ''), $16::text[]
+             $6, 'paystack_plan', NULLIF($15::text, ''), $16::text[], $17::text::jsonb
            )
            RETURNING id::text
            """,
@@ -1394,7 +1605,8 @@ defmodule Mithril.DirectBookings do
              input.scheduled_time,
              input.special_instructions || "",
              blank_to_nil(Map.get(input, :home_size)),
-             legacy_extra_task_ids_for_storage(input)
+             legacy_extra_task_ids_for_storage(input),
+             family_care_schedule_json(input, pricing)
            ]
          ) do
       {:ok, %{rows: [[id]]}} -> {:ok, id}
@@ -1596,7 +1808,8 @@ defmodule Mithril.DirectBookings do
                'Africa/Accra'
              ) AS timezone,
              turnover_guest_checkout_at, turnover_next_checkin_at, turnover_opportunity_id, property_id,
-             COALESCE(b.booking_cover, true)
+             COALESCE(b.booking_cover, true),
+             b.pricing_version
            FROM public.bookings b
            WHERE id = $1 AND customer_id = $2
            FOR UPDATE
@@ -1630,7 +1843,8 @@ defmodule Mithril.DirectBookings do
          turnover_next_checkin_at,
          turnover_opportunity_id,
          property_id,
-         booking_cover
+         booking_cover,
+         pricing_version
        ]) do
     %{
       id: id,
@@ -1648,7 +1862,8 @@ defmodule Mithril.DirectBookings do
       turnover_next_checkin_at: turnover_next_checkin_at,
       turnover_opportunity_id: turnover_opportunity_id,
       property_id: property_id,
-      booking_cover: booking_cover != false
+      booking_cover: booking_cover != false,
+      pricing_version: pricing_version
     }
   end
 
@@ -1691,8 +1906,14 @@ defmodule Mithril.DirectBookings do
   defp merge_reschedule_schedule(path, booking, input) do
     duration_hours =
       case path do
-        :paid -> booking.duration_hours
-        :unpaid -> input.duration_hours || booking.duration_hours
+        :paid ->
+          booking.duration_hours
+
+        :unpaid when booking.pricing_version in ["family_care_v1", "pet_care_v1"] ->
+          booking.duration_hours
+
+        :unpaid ->
+          input.duration_hours || booking.duration_hours
       end
 
     %{
@@ -1722,15 +1943,38 @@ defmodule Mithril.DirectBookings do
   end
 
   defp reschedule_pricing(:paid, booking, _schedule) do
-    {:ok, %{"durationHours" => booking.duration_hours}}
+    {:ok, reschedule_timeslot_quote(booking)}
+  end
+
+  defp reschedule_pricing(:unpaid, %{pricing_version: version} = booking, _schedule)
+       when version in ["family_care_v1", "pet_care_v1"] do
+    {:ok, reschedule_timeslot_quote(booking)}
   end
 
   defp reschedule_pricing(:unpaid, _booking, schedule) do
     compute_pricing(schedule)
   end
 
+  defp reschedule_timeslot_quote(booking) do
+    %{
+      "durationHours" => booking.duration_hours,
+      "pricingVersion" => booking.pricing_version
+    }
+  end
+
   defp apply_reschedule(:paid, booking, schedule, _pricing, customer_id) do
     update_reschedule_schedule(booking, schedule, customer_id, :paid)
+  end
+
+  defp apply_reschedule(
+         :unpaid,
+         %{pricing_version: version} = booking,
+         schedule,
+         _pricing,
+         customer_id
+       )
+       when version in ["family_care_v1", "pet_care_v1"] do
+    update_reschedule_schedule(booking, schedule, customer_id, :unpaid)
   end
 
   defp apply_reschedule(:unpaid, booking, schedule, pricing, customer_id) do
@@ -2079,7 +2323,11 @@ defmodule Mithril.DirectBookings do
          {:ok, scheduled_date} <- iso_date(params["scheduledDate"]),
          {:ok, duration_hours} <- positive_number(params["durationHours"]),
          {:ok, recurrence_interval} <- optional_recurrence_interval(params["recurrenceInterval"]),
-         {:ok, include_booking_cover} <- boolean_param(params["includeBookingCover"], true) do
+         {:ok, include_booking_cover} <- boolean_param(params["includeBookingCover"], true),
+         {:ok, family_care} <- optional_family_care(params),
+         {:ok, pet_care} <- optional_pet_care(params),
+         :ok <- validate_family_care_visit(family_care, recurrence_interval),
+         :ok <- validate_pet_care_visit(pet_care, recurrence_interval) do
       {:ok,
        %{
          service_id: service_id,
@@ -2088,9 +2336,12 @@ defmodule Mithril.DirectBookings do
          duration_hours: duration_hours,
          timezone: normalize_timezone(params["timezone"]),
          recurrence_interval: recurrence_interval,
-         include_booking_cover: include_booking_cover
+         include_booking_cover: include_booking_cover,
+         family_care: family_care,
+         pet_care: pet_care
        }}
     else
+      {:error, {:invalid_request, message}} = error when is_binary(message) -> error
       _ -> {:error, :invalid_request}
     end
   end
@@ -2114,6 +2365,7 @@ defmodule Mithril.DirectBookings do
        |> Map.merge(visit)
        |> Map.merge(legacy)}
     else
+      {:error, {:invalid_request, message}} = error when is_binary(message) -> error
       _ -> {:error, :invalid_request}
     end
   end
@@ -2558,6 +2810,239 @@ defmodule Mithril.DirectBookings do
       _ -> :error
     end
   end
+
+  @family_care_packages ~w(half_day full_day experienced negotiable)
+  @family_care_frequencies ~w(once daily weekly monthly custom)
+
+  defp optional_family_care(%{"familyCare" => nil}), do: {:ok, nil}
+
+  defp optional_family_care(%{"familyCare" => value}) when is_map(value),
+    do: parse_family_care(value)
+
+  defp optional_family_care(%{"familyCare" => _}), do: {:error, :invalid_request}
+  defp optional_family_care(_params), do: {:ok, nil}
+
+  defp validate_family_care_visit(nil, _recurrence_interval), do: :ok
+
+  defp validate_family_care_visit(care, recurrence_interval) do
+    cond do
+      care.frequency == "monthly" and care.care_package == "negotiable" ->
+        {:error, {:invalid_request, "Monthly family care uses a listed package."}}
+
+      not family_care_recurrence_matches?(care.frequency, recurrence_interval) ->
+        {:error, {:invalid_request, @family_care_multiday_checkout_message}}
+
+      not family_care_weekdays_match?(care) ->
+        {:error, {:invalid_request, "Choose the days for this family care schedule."}}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp family_care_recurrence_matches?("once", nil), do: true
+
+  defp family_care_recurrence_matches?("daily", interval) when interval in [nil, "daily"],
+    do: true
+
+  defp family_care_recurrence_matches?("weekly", "weekly"), do: true
+  defp family_care_recurrence_matches?("custom", "weekly"), do: true
+  defp family_care_recurrence_matches?("monthly", "monthly"), do: true
+  defp family_care_recurrence_matches?(_frequency, _interval), do: false
+
+  defp family_care_weekdays_match?(%{
+         frequency: frequency,
+         weekdays: weekdays,
+         selected_day_count: count
+       })
+       when frequency in ["weekly", "custom"] do
+    cond do
+      weekdays == [] and frequency == "weekly" and count in [nil, 1, 7] -> true
+      weekdays == [] and frequency == "custom" and count in [nil, 1] -> true
+      is_integer(count) and length(weekdays) == count -> true
+      count == nil and weekdays != [] -> true
+      true -> false
+    end
+  end
+
+  defp family_care_weekdays_match?(_care), do: true
+
+  @pet_care_packages ~w(hours_2 hours_4 hours_8 overnight hours_24 custom min_30 min_60)
+
+  defp optional_pet_care(%{"petCare" => nil}), do: {:ok, nil}
+
+  defp optional_pet_care(%{"petCare" => value}) when is_map(value), do: parse_pet_care(value)
+
+  defp optional_pet_care(%{"petCare" => _}), do: {:error, :invalid_request}
+
+  defp optional_pet_care(_params), do: {:ok, nil}
+
+  defp validate_pet_care_visit(nil, _recurrence_interval), do: :ok
+
+  defp validate_pet_care_visit(%{frequency: "once"}, nil), do: :ok
+
+  defp validate_pet_care_visit(_care, _recurrence_interval),
+    do: {:error, {:invalid_request, "Recurring Pet Care is not available yet. Choose Just once."}}
+
+  defp assert_pet_care_visits(%{pet_care: nil}, _pricing), do: :ok
+
+  defp assert_pet_care_visits(%{pet_care: %{frequency: "once"}}, %{"billableDays" => 1}), do: :ok
+
+  defp assert_pet_care_visits(%{pet_care: care}, _pricing) when is_map(care),
+    do: {:error, :invalid_request}
+
+  defp assert_pet_care_visits(_input, _pricing), do: :ok
+
+  defp parse_pet_care(value) do
+    with {:ok, care_package} <- pet_care_package(value["carePackage"]),
+         {:ok, pet_count} <- pet_care_pet_count(value["petCount"]),
+         {:ok, frequency} <- pet_care_frequency(value["frequency"]),
+         {:ok, custom_visit_major} <- optional_non_negative_number(value["customVisitMajor"]),
+         {:ok, selected_day_count} <- optional_selected_day_count(value["selectedDayCount"]),
+         {:ok, extra_attention} <- boolean_param(value["extraAttention"], false),
+         {:ok, medication_required} <- boolean_param(value["medicationRequired"], false) do
+      {:ok,
+       %{
+         care_package: care_package,
+         pet_count: pet_count,
+         frequency: frequency,
+         custom_visit_major: custom_visit_major,
+         selected_day_count: selected_day_count,
+         extra_attention: extra_attention,
+         medication_required: medication_required
+       }}
+    else
+      _ -> {:error, :invalid_request}
+    end
+  end
+
+  defp pet_care_package(value) when value in @pet_care_packages, do: {:ok, value}
+  defp pet_care_package(_), do: :error
+
+  defp pet_care_frequency("once"), do: {:ok, "once"}
+  defp pet_care_frequency(_), do: :error
+
+  defp pet_care_pet_count(value) when is_integer(value) and value >= 1 and value <= 20,
+    do: {:ok, value}
+
+  defp pet_care_pet_count(_), do: :error
+
+  defp assert_family_care_visits(%{family_care: nil}, _pricing), do: :ok
+
+  defp assert_family_care_visits(%{family_care: care} = input, pricing) do
+    dates = family_care_visit_dates(care, input.scheduled_date)
+
+    if length(dates) == pricing["billableDays"] do
+      :ok
+    else
+      {:error, {:invalid_request, "This family care schedule does not match the quoted visits."}}
+    end
+  end
+
+  defp family_care_visit_dates(care, %Date{} = anchor) do
+    weekdays =
+      FamilyCareSchedule.stored_weekdays(
+        care.frequency,
+        care.weekdays,
+        anchor,
+        care.selected_day_count
+      )
+
+    FamilyCareSchedule.visit_dates(
+      %{"frequency" => care.frequency, "weekdays" => weekdays},
+      anchor
+    )
+  end
+
+  defp family_care_schedule_json(%{family_care: care} = input, pricing) when is_map(care) do
+    Jason.encode!(%{
+      "frequency" => care.frequency,
+      "weekdays" =>
+        FamilyCareSchedule.stored_weekdays(
+          care.frequency,
+          care.weekdays,
+          input.scheduled_date,
+          care.selected_day_count
+        ),
+      "carePackage" => care.care_package,
+      "childCount" => care.child_count,
+      "billableDays" => pricing["billableDays"],
+      "agreedAmountMinor" => pricing["finalAmountMinor"]
+    })
+  end
+
+  defp family_care_schedule_json(_input, _pricing), do: nil
+
+  defp parse_family_care(value) do
+    with {:ok, care_package} <- family_care_package(value["carePackage"]),
+         {:ok, child_count} <- family_care_child_count(value["childCount"]),
+         {:ok, frequency} <- family_care_frequency(value["frequency"]),
+         {:ok, custom_daily_major} <- optional_non_negative_number(value["customDailyMajor"]),
+         {:ok, selected_day_count} <- optional_selected_day_count(value["selectedDayCount"]),
+         {:ok, weekdays} <- optional_weekdays(value["weekdays"]),
+         {:ok, mobility} <- boolean_param(value["mobility"], false),
+         {:ok, errands} <- boolean_param(value["errands"], false),
+         {:ok, appointments} <- boolean_param(value["appointments"], false) do
+      {:ok,
+       %{
+         care_package: care_package,
+         child_count: child_count,
+         frequency: frequency,
+         custom_daily_major: custom_daily_major,
+         selected_day_count: selected_day_count,
+         weekdays: weekdays,
+         mobility: mobility,
+         errands: errands,
+         appointments: appointments
+       }}
+    else
+      _ -> {:error, :invalid_request}
+    end
+  end
+
+  @family_care_weekday_names ~w(mon tue wed thu fri sat sun)
+
+  defp optional_weekdays(nil), do: {:ok, []}
+
+  defp optional_weekdays(values) when is_list(values) do
+    names = Enum.map(values, &to_string/1)
+
+    if names == Enum.uniq(names) and Enum.all?(names, &(&1 in @family_care_weekday_names)) do
+      {:ok, names}
+    else
+      :error
+    end
+  end
+
+  defp optional_weekdays(_values), do: :error
+
+  defp family_care_package(value) when value in @family_care_packages, do: {:ok, value}
+  defp family_care_package(_), do: :error
+
+  defp family_care_frequency(value) when value in @family_care_frequencies, do: {:ok, value}
+  defp family_care_frequency(_), do: :error
+
+  defp family_care_child_count(value) when is_integer(value) and value >= 1 and value <= 12,
+    do: {:ok, value}
+
+  defp family_care_child_count(_), do: :error
+
+  defp optional_non_negative_number(nil), do: {:ok, nil}
+
+  defp optional_non_negative_number(value) do
+    case decimal_number(value) do
+      number when is_number(number) and number >= 0 -> {:ok, number}
+      _ -> :error
+    end
+  end
+
+  defp optional_selected_day_count(nil), do: {:ok, nil}
+  defp optional_selected_day_count(0), do: {:ok, nil}
+
+  defp optional_selected_day_count(value) when is_integer(value) and value >= 1 and value <= 7,
+    do: {:ok, value}
+
+  defp optional_selected_day_count(_), do: :error
 
   defp boolean_param(nil, default), do: {:ok, default}
   defp boolean_param(value, _default) when is_boolean(value), do: {:ok, value}
